@@ -2,10 +2,15 @@ import { OperatorToken, SPToken } from "../../lexer/tokens";
 import { ParsingError } from "../../errors";
 import { ILexerToken, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
+import { Expunge } from "./expunge";
 import * as MailboxData from "./mailbox";
 import StatusResponse from "./status";
 
-type ContentType = CapabilityList | StatusResponse | MailboxData.ContentType;
+type ContentType =
+	| CapabilityList
+	| Expunge
+	| StatusResponse
+	| MailboxData.ContentType;
 
 // From spec:
 // response-data   = "*" SP (resp-cond-state / resp-cond-bye /
@@ -16,6 +21,7 @@ type ContentType = CapabilityList | StatusResponse | MailboxData.ContentType;
 //   StatusResponse     === resp-cond-state / resp-cond-bye
 //   MailboxData.*      === mailbox-data
 //   CapabilityResponse === capability-data
+//   Expunge            === message-data.Expunge
 export default class UntaggedResponse {
 	public readonly content: ContentType;
 	public readonly type: string;
@@ -47,7 +53,7 @@ export default class UntaggedResponse {
 			const toCheckList = [
 				StatusResponse,
 				CapabilityList,
-				MailboxData,
+				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {
 				this.content = check.match(contentTokens);
@@ -55,13 +61,28 @@ export default class UntaggedResponse {
 					break;
 				}
 			}
-
-			if (!this.content) {
-				throw new ParsingError(
-					`Parsing for command ${this.type} is not yet supported`,
-					tokens,
-				);
+		} else if (contentTypeToken.type === TokenTypes.number) {
+			// The content type token indicates we've got a number first,
+			// which matches another set of response types
+			const toCheckList = [
+				MailboxData.ExistsCount,
+				Expunge,
+				MailboxData.RecentCount,
+			];
+			for (const check of toCheckList) {
+				this.content = check.match(contentTokens);
+				if (this.content) {
+					this.type = check.commandType;
+					break;
+				}
 			}
+		}
+
+		if (!this.content) {
+			throw new ParsingError(
+				`Parsing for response is not yet supported`,
+				tokens,
+			);
 		}
 	}
 }

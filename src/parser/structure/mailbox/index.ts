@@ -31,8 +31,8 @@ export function match(tokens: ILexerToken<unknown>[]): ContentType {
 		SearchResponse,
 		ExtendedSearchResponse,
 		MailboxStatus,
-		ExistsCount,
-		RecentCount,
+		// Exists/Recent will not be matched here, see
+		// UntaggedResponse for more information.
 	] as const;
 	for (const check of toCheckList) {
 		const match = check.match(tokens);

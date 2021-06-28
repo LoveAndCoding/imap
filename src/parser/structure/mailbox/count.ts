@@ -3,6 +3,8 @@ import { matchesFormat } from "../../utility";
 
 // From spec: number SP "EXISTS"
 export class ExistsCount {
+	public static readonly commandType = "EXISTS";
+
 	public static match(tokens: ILexerToken<unknown>[]) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
@@ -22,6 +24,8 @@ export class ExistsCount {
 
 // From spec: number SP "RECENT"
 export class RecentCount {
+	public static readonly commandType = "RECENT";
+
 	public static match(tokens: ILexerToken<unknown>[]) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
