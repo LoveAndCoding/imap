@@ -7,6 +7,8 @@ const statuses = ["OK", "NO", "BAD", "PREAUTH", "BYE"] as const;
 type Status = typeof statuses[number];
 
 export default class StatusResponse {
+	public static readonly commandType = "STATUS";
+
 	public readonly text?: ResponseText;
 
 	protected static isStatusCode(maybeStatus: string): maybeStatus is Status {

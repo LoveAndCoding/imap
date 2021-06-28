@@ -10,6 +10,8 @@ import {
 
 // From spec: "STATUS" SP mailbox SP "(" [status-att-list] ")"
 export class MailboxStatus {
+	public static readonly commandType = "MAILBOX-STATUS";
+
 	public readonly name: string;
 
 	public readonly messages: number;

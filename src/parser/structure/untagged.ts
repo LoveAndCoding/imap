@@ -58,6 +58,9 @@ export default class UntaggedResponse {
 			for (const check of toCheckList) {
 				this.content = check.match(contentTokens);
 				if (this.content) {
+					if ("commandType" in check) {
+						this.type = check.commandType;
+					}
 					break;
 				}
 			}
