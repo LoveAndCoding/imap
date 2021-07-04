@@ -363,6 +363,19 @@ const simpleSet: TestSpec[] = [
 				atom("message"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					status: "OK",
+					text: {
+						code: {
+							value: 17,
+							kind: "UNSEEN",
+						},
+						content: "Message 17 is the first unseen message",
+					},
+				},
+				type: "STATUS",
+			},
 		},
 	},
 	{
@@ -413,6 +426,15 @@ const simpleSet: TestSpec[] = [
 				atom("Ready"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					status: "OK",
+					text: {
+						content: "IMAP4rev1 Service Ready",
+					},
+				},
+				type: "STATUS",
+			},
 		},
 	},
 	{
@@ -427,6 +449,12 @@ const simpleSet: TestSpec[] = [
 				atom("EXISTS"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					count: 18,
+				},
+				type: "EXISTS",
+			},
 		},
 	},
 	{
@@ -441,6 +469,32 @@ const simpleSet: TestSpec[] = [
 				atom("RECENT"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					count: 2,
+				},
+				type: "RECENT",
+			},
+		},
+	},
+	{
+		name: "Expunge message",
+		input: ["* 44 EXPUNGE", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				num(44),
+				tokenSP,
+				atom("EXPUNGE"),
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					sequenceNumber: 44,
+				},
+				type: "EXPUNGE",
+			},
 		},
 	},
 ];

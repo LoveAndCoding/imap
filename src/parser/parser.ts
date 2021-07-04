@@ -30,6 +30,7 @@ import {
 import ParserStream from "./stream";
 import ContinueResponse from "./structure/continue";
 import TaggedResponse from "./structure/tagged";
+import UntaggedResponse from "./structure/untagged";
 
 function indexOfCh(buffer, len, i, ch) {
 	let r = -1;
@@ -228,7 +229,24 @@ export default class Parser extends EventEmitter {
 			this.buffer = this.buffer.replace(RE_LITERAL, LITPLACEHOLDER);
 			this.literallen = parseInt(m[1], 10);
 		} else if ((m = RE_UNTAGGED.exec(this.buffer))) {
+			const tokens = this.lexer.tokenize(this.buffer);
 			this.buffer = "";
+
+			try {
+				const resp = new UntaggedResponse(tokens);
+				this.emit("untagged", resp);
+				return;
+			} catch (err) {
+				// log the error, but fallback
+				this.debug(
+					[
+						"New parsing method not supported:",
+						err && err.message ? err.message : err,
+						"Falling back to old parsing method.",
+					].join("\n"),
+				);
+			}
+
 			// normal single line response
 
 			// m[1] or m[3] = response type
