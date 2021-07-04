@@ -1,4 +1,3 @@
-import { SPToken } from "../lexer/tokens";
 import { LexerTokenList, TokenTypes } from "../lexer/types";
 
 export function* pairedArrayLoopGenerator<T>(arr: T[]) {
@@ -40,7 +39,7 @@ export function splitSpaceSeparatedList(
 		}
 
 		// If we're at a space, split
-		if (token instanceof SPToken) {
+		if (token.type === TokenTypes.space) {
 			currBlock = [];
 			blocks.push(currBlock);
 		} else if (
@@ -92,7 +91,7 @@ export function matchesFormat(
 		if (format.instance && !(token instanceof format.instance)) {
 			return false;
 		}
-		if (format.sp && !(token instanceof SPToken)) {
+		if (format.sp && token.type !== TokenTypes.space) {
 			return false;
 		}
 		if (

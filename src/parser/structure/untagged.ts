@@ -1,4 +1,4 @@
-import { OperatorToken, SPToken } from "../../lexer/tokens";
+import { OperatorToken } from "../../lexer/tokens";
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
@@ -33,7 +33,7 @@ export default class UntaggedResponse {
 			!firstToken ||
 			!(firstToken instanceof OperatorToken) ||
 			firstToken.getTrueValue() !== "*" ||
-			!(secondToken instanceof SPToken)
+			secondToken.type !== TokenTypes.space
 		) {
 			throw new ParsingError(
 				"Instantiating UntaggedResponse with a response of the wrong format",

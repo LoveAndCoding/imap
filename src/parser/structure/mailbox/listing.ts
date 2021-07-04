@@ -78,9 +78,7 @@ export class MailboxListing {
 				name = token.value;
 			}
 		} else {
-			if (
-				nameTokens.find((token) => token.type === TokenTypes.seperator)
-			) {
+			if (nameTokens.find((token) => token.type === TokenTypes.space)) {
 				throw new ParsingError(
 					"Invalid character found in mailbox listing name",
 					tokens,

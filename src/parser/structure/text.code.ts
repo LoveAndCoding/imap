@@ -1,5 +1,5 @@
 import { ParsingError } from "../../errors";
-import { NumberToken, SPToken } from "../../lexer/tokens";
+import { NumberToken } from "../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
@@ -99,7 +99,7 @@ export function match(
 		// We found a full text code so get the right class and return
 		const kind = matchedTokens[1]?.value;
 		const contents = matchedTokens.slice(2, -1);
-		if (contents[0] && contents[0] instanceof SPToken) {
+		if (contents[0] && contents[0].type === TokenTypes.space) {
 			contents.shift();
 		}
 		let code: TextCode = null;

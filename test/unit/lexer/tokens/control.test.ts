@@ -41,13 +41,13 @@ describe("SPToken", () => {
 
 		// Assert
 		expect(token.value).toBe(value);
-		expect(token.type).toBe(TokenTypes.seperator);
+		expect(token.type).toBe(TokenTypes.space);
 		expect(token.getTrueValue()).toBe(value);
 	});
 });
 
 describe("CRLFToken", () => {
-	test("Initializes correctly and true value is space", () => {
+	test("Initializes correctly and true value is eol", () => {
 		// Arrange
 		const value = "\r\n";
 
@@ -56,7 +56,7 @@ describe("CRLFToken", () => {
 
 		// Assert
 		expect(token.value).toBe(value);
-		expect(token.type).toBe(TokenTypes.seperator);
+		expect(token.type).toBe(TokenTypes.eol);
 		expect(token.getTrueValue()).toBe(value);
 	});
 });

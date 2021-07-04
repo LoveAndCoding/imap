@@ -35,7 +35,7 @@ export class MailboxStatus {
 
 	constructor(tokens: LexerTokenList) {
 		const nextSpIndex = tokens.findIndex(
-			(token) => token.type === TokenTypes.seperator,
+			(token) => token.type === TokenTypes.space,
 		);
 		if (nextSpIndex <= 0) {
 			throw new ParsingError(

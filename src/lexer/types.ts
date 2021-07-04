@@ -3,10 +3,11 @@
 // https://datatracker.ietf.org/doc/html/rfc3501#section-4
 export enum TokenTypes {
 	atom,
+	eol,
 	nil,
 	number,
 	operator,
-	seperator,
+	space,
 	string,
 }
 

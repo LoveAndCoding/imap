@@ -33,7 +33,7 @@ export class SPToken implements ILexerToken<" "> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: " ") {
-		this.type = TokenTypes.seperator;
+		this.type = TokenTypes.space;
 	}
 
 	getTrueValue(): " " {
@@ -42,19 +42,16 @@ export class SPToken implements ILexerToken<" "> {
 }
 
 /**
- * SP Token
+ * CRLF Token
  *
- * An SP token simply represents a standard whitespace character.
- * For lexing, this will most often be just be used to separate
- * other tokens. The IMAP spec itself specifies a single space be
- * used for separating other tokens, so we want to include each SP
- * on its own. The parser can then decide if it wants to be strict.
+ * An CRLF token represents a standard newline marker in IMAP.
+ * Most often this will denote the end of a command or response.
  */
 export class CRLFToken implements ILexerToken<"\r\n"> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: "\r\n") {
-		this.type = TokenTypes.seperator;
+		this.type = TokenTypes.eol;
 	}
 
 	getTrueValue(): "\r\n" {
