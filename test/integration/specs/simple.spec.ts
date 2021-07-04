@@ -46,7 +46,6 @@ const simpleSet: TestSpec[] = [
 				status: {
 					status: "OK",
 					text: {
-						code: null,
 						content: "LOGIN completed",
 					},
 				},
@@ -65,7 +64,6 @@ const simpleSet: TestSpec[] = [
 				status: {
 					status: "OK",
 					text: {
-						code: null,
 						content: "",
 					},
 				},
@@ -82,7 +80,6 @@ const simpleSet: TestSpec[] = [
 			lexer: [tokenPlus, tokenSP, atom("idling"), tokenCRLF],
 			parser: {
 				text: {
-					code: null,
 					content: "idling",
 				},
 			},
@@ -106,9 +103,6 @@ const simpleSet: TestSpec[] = [
 				text: {
 					code: {
 						kind: "ALERT",
-						contents: [],
-						startingIndex: 0,
-						endingIndex: 2,
 					},
 					content: "idling",
 				},

@@ -5,138 +5,136 @@ import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
 import { FlagList } from "./flag";
 
-export default class TextCode {
-	public readonly contents: ILexerToken<unknown>[];
-	public readonly kind?: string;
-	protected capabilityList?: CapabilityList;
-	protected flagList?: FlagList;
+export class BadCharsetTextCode {
+	public readonly kind = "BADCHARSET";
+	public readonly contents: string[];
 
-	protected static isOpenToken(token: ILexerToken<unknown>) {
-		return (
-			token && token.type === TokenTypes.operator && token.value === "["
+	constructor(tokens: ILexerToken<unknown>[]) {
+		this.contents = splitSpaceSeparatedList(tokens).map((tkn): string =>
+			getOriginalInput(tkn),
 		);
 	}
+}
 
-	protected static isCloseToken(token: ILexerToken<unknown>) {
-		return (
-			token && token.type === TokenTypes.operator && token.value === "]"
-		);
+export class CapabilityTextCode {
+	public readonly kind = "CAPABILITIES";
+	public readonly capabilities: CapabilityList;
+
+	constructor(tokens: ILexerToken<unknown>[]) {
+		this.capabilities = new CapabilityList(tokens);
 	}
+}
 
-	public static match(
-		tokens: ILexerToken<unknown>[],
-		startingIndex = 0,
-	): null | TextCode {
-		const matchedTokens: ILexerToken<unknown>[] = [];
-		let i = startingIndex;
-		if (TextCode.isOpenToken(tokens[startingIndex])) {
-			for (; i < tokens.length; i++) {
-				const token = tokens[i];
-				matchedTokens.push(token);
-				if (TextCode.isCloseToken(token)) {
-					break;
-				}
-			}
-		}
+export class PermentantFlagsTextCode {
+	public readonly kind = "PERMANENTFLAGS";
+	public readonly flags: FlagList;
 
-		if (TextCode.isCloseToken(matchedTokens[matchedTokens.length - 1])) {
-			// We found a full text code so initiate and return it
-			return new TextCode(matchedTokens, startingIndex, i);
-		}
-
-		// TODO: Should we throw if we find an opening "[" value, but
-		//       not a close one? Technically speaking the spec allows
-		//       `text` to include an "[" (and even a "]") so, while it
-		//       would be extremely confusing for the parser, a valid
-		//       response can look like a text code without being one.
-		//       So maybe a throw here isn't correct?
-
-		// If we didn't find a code, return null indicating as much
-		return null;
+	constructor(tokens: ILexerToken<unknown>[]) {
+		this.flags = new FlagList(tokens);
 	}
+}
+
+export class AtomTextCode {
+	constructor(public readonly kind: string, tokens: ILexerToken<unknown>[]) {}
+}
+
+export class NumberTextCode {
+	public readonly value: number;
 
 	constructor(
+		public readonly kind: "UIDNEXT" | "UIDVALIDITY" | "UNSEEN",
 		tokens: ILexerToken<unknown>[],
-		public readonly startingIndex: number,
-		public readonly endingIndex: number,
 	) {
-		this.kind = tokens[1]?.value; // First token is "["
-		this.contents = tokens.slice(1, tokens.length - 2);
-
-		const firstToken = this.contents[0];
-		if (firstToken && firstToken instanceof SPToken) {
-			// We can skip the first space token
-			this.contents.shift();
-		}
-	}
-
-	public get badcharset(): string[] {
-		if (this.kind !== "BADCHARSET") {
-			return null;
-		}
-
-		// spec: "BADCHARSET" [SP "(" astring *(SP astring) ")" ]
-		const tokenBlocks = splitSpaceSeparatedList(this.contents);
-		return tokenBlocks.map((block) => getOriginalInput(block));
-	}
-
-	public get capabilities(): CapabilityList {
-		if (this.kind !== "CAPABILITIES") {
-			return null;
-		}
-
-		if (!this.capabilityList) {
-			this.capabilityList = new CapabilityList(this.contents);
-		}
-
-		return this.capabilityList;
-	}
-
-	public get flags(): FlagList {
-		if (this.kind !== "PERMANENTFLAGS") {
-			return null;
-		}
-
-		if (!this.flagList) {
-			this.flagList = new FlagList(this.contents);
-		}
-
-		return this.flagList;
-	}
-
-	public get uidNext(): number {
-		return this.getNZNumberTextCodeValue("UIDNEXT");
-	}
-
-	public get uidValidity(): number {
-		return this.getNZNumberTextCodeValue("UIDVALIDITY");
-	}
-
-	public get unseen(): number {
-		return this.getNZNumberTextCodeValue("UNSEEN");
-	}
-
-	private getNZNumberTextCodeValue(kindToValidate: string) {
-		if (this.kind !== kindToValidate) {
-			return null;
-		}
-
 		// spec: "UIDNEXT" SP nz-number
-		const numToken = this.contents[0];
+		const numToken = tokens[0];
 		if (!numToken || !(numToken instanceof NumberToken)) {
 			throw new ParsingError(
-				`Recieved invalid format for ${kindToValidate}`,
-				this.contents,
+				`Recieved invalid format for ${kind}`,
+				tokens,
 			);
 		}
 
 		const num = numToken.getTrueValue();
 		if (num === 0) {
 			throw new ParsingError(
-				`Recieved invalid number for ${kindToValidate}`,
+				`Recieved invalid number for ${kind}`,
 				numToken.value,
 			);
 		}
-		return num;
+		this.value = num;
 	}
+}
+
+export type TextCode =
+	| AtomTextCode
+	| BadCharsetTextCode
+	| CapabilityTextCode
+	| PermentantFlagsTextCode
+	| NumberTextCode;
+
+function isOpenToken(token: ILexerToken<unknown>) {
+	return token && token.type === TokenTypes.operator && token.value === "[";
+}
+
+function isCloseToken(token: ILexerToken<unknown>) {
+	return token && token.type === TokenTypes.operator && token.value === "]";
+}
+
+export function match(
+	tokens: ILexerToken<unknown>[],
+): null | { code: TextCode; endingIndex: number } {
+	const matchedTokens: ILexerToken<unknown>[] = [];
+	let endingIndex = 0;
+	if (isOpenToken(tokens[0])) {
+		for (; endingIndex < tokens.length; endingIndex++) {
+			const token = tokens[endingIndex];
+			matchedTokens.push(token);
+			if (isCloseToken(token)) {
+				break;
+			}
+		}
+	}
+
+	if (isCloseToken(matchedTokens[matchedTokens.length - 1])) {
+		// We found a full text code so get the right class and return
+		const kind = matchedTokens[1]?.value;
+		const contents = matchedTokens.slice(2, -1);
+		if (contents[0] && contents[0] instanceof SPToken) {
+			contents.shift();
+		}
+		let code: TextCode = null;
+		switch (kind) {
+			case "BADCHARSET":
+				code = new BadCharsetTextCode(contents);
+				break;
+			case "CAPABILITIES":
+				code = new CapabilityTextCode(contents);
+				break;
+			case "PERMENANTFLAGS":
+				code = new PermentantFlagsTextCode(contents);
+				break;
+			case "UIDNEXT":
+			case "UIDVALIDITY":
+			case "UNSEEN":
+				code = new NumberTextCode(kind, contents);
+				break;
+			default:
+				code = new AtomTextCode(kind, contents);
+		}
+
+		return {
+			code,
+			endingIndex,
+		};
+	}
+
+	// TODO: Should we throw if we find an opening "[" value, but
+	//       not a close one? Technically speaking the spec allows
+	//       `text` to include an "[" (and even a "]") so, while it
+	//       would be extremely confusing for the parser, a valid
+	//       response can look like a text code without being one.
+	//       So maybe a throw here isn't correct?
+
+	// If we didn't find a code, return null indicating as much
+	return null;
 }
