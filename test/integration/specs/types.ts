@@ -1,11 +1,11 @@
-import { ILexerToken } from "../../../src/lexer/types";
+import { LexerTokenList } from "../../../src/lexer/types";
 
 export type TestSpec = {
 	name: string;
 	input: string;
 	results:
 		| {
-				lexer: ILexerToken<unknown>[];
+				lexer: LexerTokenList;
 				parser?: Record<string, any>;
 		  }
 		| {

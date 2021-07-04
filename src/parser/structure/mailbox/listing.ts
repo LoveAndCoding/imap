@@ -1,6 +1,6 @@
 import { ParsingError } from "../../../errors";
 import { OperatorToken } from "../../../lexer/tokens";
-import { ILexerToken, TokenTypes } from "../../../lexer/types";
+import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { utf7 } from "../../encoding";
 import { getOriginalInput } from "../../utility";
 import { FlagList } from "../flag";
@@ -11,7 +11,7 @@ import { FlagList } from "../flag";
 export class MailboxListing {
 	public readonly name: string;
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const isMatch =
 			tokens[0]?.value === "LIST" || tokens[0]?.value === "LSUB";
 		if (isMatch) {
@@ -21,7 +21,7 @@ export class MailboxListing {
 		return null;
 	}
 
-	public static fromListing(tokens: ILexerToken<unknown>[]) {
+	public static fromListing(tokens: LexerTokenList) {
 		const flagListEndIndex = tokens.findIndex(
 			(token) =>
 				token.type === TokenTypes.operator &&

@@ -12,7 +12,7 @@
 //                   ; registered with IANA as standard or
 //                   ; standards-track
 import { ParsingError } from "../../errors";
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 
 export interface ICapability {
@@ -201,7 +201,7 @@ export class UnknownCapability implements ICapability {
 export class CapabilityList {
 	protected capabilityMap: Map<string, ICapability>;
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
 		if (
 			firstToken &&
@@ -214,7 +214,7 @@ export class CapabilityList {
 		return null;
 	}
 
-	constructor(tokens: ILexerToken<unknown>[], isWrappedInParens = true) {
+	constructor(tokens: LexerTokenList, isWrappedInParens = true) {
 		this.capabilityMap = new Map();
 
 		const blocks = splitSpaceSeparatedList(

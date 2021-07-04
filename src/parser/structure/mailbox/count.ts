@@ -1,11 +1,11 @@
-import { ILexerToken, TokenTypes } from "../../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
 
 // From spec: number SP "EXISTS"
 export class ExistsCount {
 	public static readonly commandType = "EXISTS";
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
 			{ sp: true },
@@ -26,7 +26,7 @@ export class ExistsCount {
 export class RecentCount {
 	public static readonly commandType = "RECENT";
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
 			{ sp: true },

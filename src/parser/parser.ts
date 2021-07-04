@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { inspect } from "util";
 
 import Lexer from "../lexer/lexer";
-import { ILexerToken } from "../lexer/types";
+import { LexerTokenList } from "../lexer/types";
 import { CH_LF, LITPLACEHOLDER } from "./constants";
 import {
 	RE_BODYLITERAL,
@@ -193,7 +193,7 @@ export default class Parser extends EventEmitter {
 		}
 	}
 
-	private resTagged(tokens: ILexerToken<unknown>[]) {
+	private resTagged(tokens: LexerTokenList) {
 		let m: RegExpExecArray;
 		if ((m = RE_LITERAL.exec(this.buffer))) {
 			// non-BODY literal -- buffer it
@@ -336,7 +336,7 @@ export default class Parser extends EventEmitter {
 		}
 	}
 
-	private resContinue(tokens: ILexerToken<unknown>[]) {
+	private resContinue(tokens: LexerTokenList) {
 		this.buffer = "";
 		this.emit("continue", new ContinueResponse(tokens));
 	}

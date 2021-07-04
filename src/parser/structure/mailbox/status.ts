@@ -1,5 +1,5 @@
 import { ParsingError } from "../../../errors";
-import { ILexerToken, TokenTypes } from "../../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { utf7 } from "../../encoding";
 import {
 	getOriginalInput,
@@ -20,7 +20,7 @@ export class MailboxStatus {
 	public readonly uidvalidity: number;
 	public readonly unseen: number;
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "STATUS" },
 			{ sp: true },
@@ -33,7 +33,7 @@ export class MailboxStatus {
 		return null;
 	}
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		const nextSpIndex = tokens.findIndex(
 			(token) => token.type === TokenTypes.seperator,
 		);

@@ -1,6 +1,6 @@
 import { OperatorToken, SPToken } from "../../lexer/tokens";
 import { ParsingError } from "../../errors";
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
 import { Expunge } from "./expunge";
 import * as MailboxData from "./mailbox";
@@ -26,7 +26,7 @@ export default class UntaggedResponse {
 	public readonly content: ContentType;
 	public readonly type: string;
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
 		const secondToken = tokens[1];
 		if (

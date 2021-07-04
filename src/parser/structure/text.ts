@@ -1,4 +1,4 @@
-import { ILexerToken } from "../../lexer/types";
+import { LexerTokenList } from "../../lexer/types";
 import { getOriginalInput } from "../utility";
 import { match as textCodeMatch, TextCode } from "./text.code";
 
@@ -6,7 +6,7 @@ export default class ResponseText {
 	public readonly code?: TextCode;
 	public readonly content: string;
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		// Check if we have a text code, and grab it if we do
 		const codeMatch = textCodeMatch(tokens);
 		if (codeMatch) {

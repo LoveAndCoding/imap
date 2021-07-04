@@ -1,11 +1,11 @@
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { matchesFormat } from "../utility";
 
 // From spec: nz-number SP "EXPUNGE"
 export class Expunge {
 	public static readonly commandType = "EXPUNGE";
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
 			{ sp: true },

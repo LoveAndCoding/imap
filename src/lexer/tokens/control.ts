@@ -1,4 +1,4 @@
-import { ILexerToken, OperatorTokenValues, TokenTypes } from "../types";
+import { ILexerToken, TokenTypes } from "../types";
 
 /**
  * Operator Token

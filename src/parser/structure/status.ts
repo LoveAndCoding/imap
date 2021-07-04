@@ -1,6 +1,6 @@
 import { ParsingError } from "../../errors";
 import { AtomToken } from "../../lexer/tokens";
-import { ILexerToken } from "../../lexer/types";
+import { LexerTokenList } from "../../lexer/types";
 import ResponseText from "./text";
 
 const statuses = ["OK", "NO", "BAD", "PREAUTH", "BYE"] as const;
@@ -21,7 +21,7 @@ export default class StatusResponse {
 	// resp-cond-state = ("OK" / "NO" / "BAD") SP resp-text
 	//                   ; Status condition
 	public static match(
-		tokens: ILexerToken<unknown>[],
+		tokens: LexerTokenList,
 		startingIndex = 0,
 	): null | StatusResponse {
 		const firstToken = tokens[startingIndex];
@@ -38,10 +38,7 @@ export default class StatusResponse {
 		);
 	}
 
-	constructor(
-		public readonly status: Status,
-		tokens: ILexerToken<unknown>[],
-	) {
+	constructor(public readonly status: Status, tokens: LexerTokenList) {
 		if (!tokens.length || status !== tokens[0].value) {
 			throw new ParsingError(
 				`Status ${status} does not match token list provided`,

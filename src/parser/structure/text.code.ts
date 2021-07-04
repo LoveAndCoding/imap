@@ -1,6 +1,6 @@
 import { ParsingError } from "../../errors";
 import { NumberToken, SPToken } from "../../lexer/tokens";
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
 import { FlagList } from "./flag";
@@ -9,7 +9,7 @@ export class BadCharsetTextCode {
 	public readonly kind = "BADCHARSET";
 	public readonly contents: string[];
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		this.contents = splitSpaceSeparatedList(tokens).map((tkn): string =>
 			getOriginalInput(tkn),
 		);
@@ -20,7 +20,7 @@ export class CapabilityTextCode {
 	public readonly kind = "CAPABILITIES";
 	public readonly capabilities: CapabilityList;
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		this.capabilities = new CapabilityList(tokens);
 	}
 }
@@ -29,13 +29,13 @@ export class PermentantFlagsTextCode {
 	public readonly kind = "PERMANENTFLAGS";
 	public readonly flags: FlagList;
 
-	constructor(tokens: ILexerToken<unknown>[]) {
+	constructor(tokens: LexerTokenList) {
 		this.flags = new FlagList(tokens);
 	}
 }
 
 export class AtomTextCode {
-	constructor(public readonly kind: string, tokens: ILexerToken<unknown>[]) {}
+	constructor(public readonly kind: string, tokens: LexerTokenList) {}
 }
 
 export class NumberTextCode {
@@ -43,7 +43,7 @@ export class NumberTextCode {
 
 	constructor(
 		public readonly kind: "UIDNEXT" | "UIDVALIDITY" | "UNSEEN",
-		tokens: ILexerToken<unknown>[],
+		tokens: LexerTokenList,
 	) {
 		// spec: "UIDNEXT" SP nz-number
 		const numToken = tokens[0];
@@ -81,9 +81,9 @@ function isCloseToken(token: ILexerToken<unknown>) {
 }
 
 export function match(
-	tokens: ILexerToken<unknown>[],
+	tokens: LexerTokenList,
 ): null | { code: TextCode; endingIndex: number } {
-	const matchedTokens: ILexerToken<unknown>[] = [];
+	const matchedTokens: LexerTokenList = [];
 	let endingIndex = 0;
 	if (isOpenToken(tokens[0])) {
 		for (; endingIndex < tokens.length; endingIndex++) {

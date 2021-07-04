@@ -3,7 +3,6 @@
 // https://datatracker.ietf.org/doc/html/rfc3501#section-4
 export enum TokenTypes {
 	atom,
-	literal,
 	nil,
 	number,
 	operator,
@@ -21,6 +20,8 @@ export interface ILexerToken<T> {
 
 	getTrueValue(): T;
 }
+
+export type LexerTokenList = ILexerToken<unknown>[];
 
 export type CTL =
 	| "\x00"

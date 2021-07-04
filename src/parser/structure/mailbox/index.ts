@@ -1,4 +1,4 @@
-import { ILexerToken } from "../../../lexer/types";
+import { LexerTokenList } from "../../../lexer/types";
 import { FlagList } from "../flag";
 import { ExistsCount, RecentCount } from "./count";
 import { MailboxListing } from "./listing";
@@ -24,7 +24,7 @@ export type ContentType =
 //                   "LSUB" SP mailbox-list / "SEARCH" *(SP nz-number) /
 //                   "STATUS" SP mailbox SP "(" [status-att-list] ")" /
 //                   number SP "EXISTS" / number SP "RECENT"
-export function match(tokens: ILexerToken<unknown>[]): ContentType {
+export function match(tokens: LexerTokenList): ContentType {
 	const toCheckList = [
 		FlagList,
 		MailboxListing,

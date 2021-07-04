@@ -1,4 +1,4 @@
-import { ILexerToken } from "./lexer/types";
+import { LexerTokenList } from "./lexer/types";
 
 export class IMAPError extends Error {
 	public source?: string;
@@ -30,7 +30,7 @@ export class TokenizationError extends Error {
 export class ParsingError extends Error {
 	constructor(
 		message: string,
-		public readonly input?: string | ILexerToken<unknown>[],
+		public readonly input?: string | LexerTokenList,
 	) {
 		super(message);
 	}

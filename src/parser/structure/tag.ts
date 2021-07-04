@@ -1,14 +1,11 @@
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 
 const RE_TAG_MATCH = /^A[0-9]+$/i;
 
 export default class Tag {
 	public readonly id: number;
 
-	public static match(
-		tokens: ILexerToken<unknown>[],
-		startingIndex = 0,
-	): null | Tag {
+	public static match(tokens: LexerTokenList, startingIndex = 0): null | Tag {
 		const token = tokens[startingIndex];
 
 		if (

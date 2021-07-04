@@ -8,7 +8,7 @@ import {
 	SPRule,
 	StringRule,
 } from "./rules";
-import { ILexerRule, ILexerToken } from "./types";
+import { ILexerRule, ILexerToken, LexerTokenList } from "./types";
 
 type PrioritizedRule = {
 	order: number;
@@ -61,8 +61,8 @@ export default class Lexer {
 		}
 	}
 
-	public tokenize(content: string): ILexerToken<unknown>[] {
-		const tokens: ILexerToken<unknown>[] = [];
+	public tokenize(content: string): LexerTokenList {
+		const tokens: LexerTokenList = [];
 
 		let processing = content;
 		let originalPos = 0;

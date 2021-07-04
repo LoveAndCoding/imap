@@ -1,5 +1,5 @@
 import { SPToken } from "../lexer/tokens";
-import { ILexerToken, TokenTypes } from "../lexer/types";
+import { LexerTokenList, TokenTypes } from "../lexer/types";
 
 export function* pairedArrayLoopGenerator<T>(arr: T[]) {
 	for (let i = 0; i < arr.length; i += 2) {
@@ -8,17 +8,17 @@ export function* pairedArrayLoopGenerator<T>(arr: T[]) {
 }
 
 export function splitSpaceSeparatedList(
-	listTokens: ILexerToken<unknown>[],
+	listTokens: LexerTokenList,
 	startTokenValue = "(",
 	endTokenValue = ")",
-): ILexerToken<unknown>[][] {
+): LexerTokenList[] {
 	// Safety check to skip a null value here
 	if (!listTokens) {
 		return [];
 	}
 
-	const blocks: ILexerToken<unknown>[][] = [];
-	let currBlock: ILexerToken<unknown>[];
+	const blocks: LexerTokenList[] = [];
+	let currBlock: LexerTokenList;
 
 	// Mark the list as started if we don't have a token marking the
 	// starting point (i.e. consider us in the list already)
@@ -64,7 +64,7 @@ export function splitSpaceSeparatedList(
 	return blocks;
 }
 
-export function getOriginalInput(tokens: ILexerToken<unknown>[]) {
+export function getOriginalInput(tokens: LexerTokenList) {
 	return tokens.reduce((input, token) => input + token.value, "");
 }
 
@@ -77,7 +77,7 @@ type IFormat = {
 };
 
 export function matchesFormat(
-	tokens: ILexerToken<unknown>[],
+	tokens: LexerTokenList,
 	formats: IFormat[],
 ): boolean {
 	for (let i = 0; i < formats.length; i++) {

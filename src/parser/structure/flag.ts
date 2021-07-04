@@ -1,4 +1,4 @@
-import { ILexerToken, TokenTypes } from "../../lexer/types";
+import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 
 const KNOWN_FLAG_NAMES = [
@@ -26,7 +26,7 @@ export class FlagList {
 	protected flagMap: Map<string, Flag>;
 	protected hasWildcard: boolean;
 
-	public static match(tokens: ILexerToken<unknown>[]) {
+	public static match(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
 		if (
 			firstToken &&
@@ -39,7 +39,7 @@ export class FlagList {
 		return null;
 	}
 
-	constructor(tokens: ILexerToken<unknown>[], isWrappedInParens = true) {
+	constructor(tokens: LexerTokenList, isWrappedInParens = true) {
 		this.flagMap = new Map();
 
 		const blocks = splitSpaceSeparatedList(
