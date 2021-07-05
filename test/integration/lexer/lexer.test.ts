@@ -1,4 +1,5 @@
 import Lexer from "../../../src/lexer/lexer";
+import FetchSpecs from "../specs/fetch.spec";
 import SimpleSpecs from "../specs/simple.spec";
 
 describe("Lexer Simple Spec Tests", () => {
@@ -7,7 +8,7 @@ describe("Lexer Simple Spec Tests", () => {
 		lexer = new Lexer();
 	});
 
-	test.each(SimpleSpecs)(`Simple Spec: $name`, ({ input, results }) => {
+	const validateResults = ({ input, results }) => {
 		if ("error" in results) {
 			// We expect an error to be thrown during parsing
 			const shouldThrow = () => {
@@ -22,5 +23,8 @@ describe("Lexer Simple Spec Tests", () => {
 			expect(output).toHaveLength(results.lexer.length);
 			expect(output).toEqual(results.lexer);
 		}
-	});
+	};
+
+	test.each(SimpleSpecs)(`Simple Spec: $name`, validateResults);
+	test.each(FetchSpecs)(`Fetch Spec: $name`, validateResults);
 });

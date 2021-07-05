@@ -1,4 +1,5 @@
 import Parser from "../../../src/parser";
+import FetchSpecs from "../specs/fetch.spec";
 import SimpleSpecs from "../specs/simple.spec";
 import { TestSpec } from "../specs/types";
 
@@ -18,6 +19,11 @@ describe("Parser Tests", () => {
 
 	test.each(SimpleSpecs.filter(withParserResults))(
 		`Simple Spec: $name`,
+		validateResults,
+	);
+
+	test.each(FetchSpecs.filter(withParserResults))(
+		`Fetch Spec: $name`,
 		validateResults,
 	);
 });

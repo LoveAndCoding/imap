@@ -3,6 +3,7 @@ import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
 import { Expunge } from "./expunge";
+import { Fetch } from "./fetch";
 import * as MailboxData from "./mailbox";
 import StatusResponse from "./status";
 
@@ -70,6 +71,7 @@ export default class UntaggedResponse {
 			const toCheckList = [
 				MailboxData.ExistsCount,
 				Expunge,
+				Fetch,
 				MailboxData.RecentCount,
 			];
 			for (const check of toCheckList) {

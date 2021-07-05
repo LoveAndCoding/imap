@@ -20,6 +20,10 @@ export function qString(str: string) {
 	return new tokens.QuotedStringToken(`"${str}"`);
 }
 
+export function litString(str: string) {
+	return new tokens.LiteralStringToken(`{${str.length}}${CRLF}${str}`);
+}
+
 export function atom(str: string) {
 	return new tokens.AtomToken(str);
 }
