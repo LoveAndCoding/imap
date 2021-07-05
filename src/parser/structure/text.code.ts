@@ -35,7 +35,15 @@ export class PermentantFlagsTextCode {
 }
 
 export class AtomTextCode {
-	constructor(public readonly kind: string, tokens: LexerTokenList) {}
+	public readonly contents?: string[];
+
+	constructor(public readonly kind: string, tokens: LexerTokenList) {
+		if (tokens && tokens.length) {
+			this.contents = splitSpaceSeparatedList(tokens).map((tkn): string =>
+				getOriginalInput(tkn),
+			);
+		}
+	}
 }
 
 export class NumberTextCode {
