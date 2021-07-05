@@ -13,6 +13,7 @@ export enum TokenTypes {
 
 export interface ILexerRule<T> {
 	match(content: string, originalPosition: number): null | ILexerToken<T>;
+	matchIncludingEOL?(tokens: LexerTokenList): number;
 }
 
 export interface ILexerToken<T> {

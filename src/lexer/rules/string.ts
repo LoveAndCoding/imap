@@ -1,6 +1,6 @@
 import { TokenizationError } from "../../errors";
 import { LiteralStringToken, QuotedStringToken } from "../tokens/string";
-import { ILexerRule } from "../types";
+import { ILexerRule, ILexerToken, LexerTokenList, TokenTypes } from "../types";
 
 export class StringRule implements ILexerRule<string> {
 	public match(
@@ -53,5 +53,26 @@ export class StringRule implements ILexerRule<string> {
 
 		// Else we found nothing, return null
 		return null;
+	}
+
+	public matchIncludingEOL(tokens: LexerTokenList): number {
+		const [
+			expectOpenBrack,
+			expectNumber,
+			expectCloseBrack,
+			expectCRLF,
+		] = tokens.slice(-4);
+		if (
+			expectOpenBrack.type === TokenTypes.operator &&
+			expectOpenBrack.value === "{" &&
+			expectCloseBrack.type === TokenTypes.operator &&
+			expectCloseBrack.value === "{" &&
+			expectCRLF.type === TokenTypes.eol &&
+			expectNumber.type === TokenTypes.number
+		) {
+			return (expectNumber as ILexerToken<number>).getTrueValue();
+		}
+
+		return 0;
 	}
 }
