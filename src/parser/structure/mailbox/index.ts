@@ -33,6 +33,9 @@ export function match(tokens: LexerTokenList): ContentType {
 		MailboxStatus,
 		// Exists/Recent will not be matched here, see
 		// UntaggedResponse for more information.
+		// TODO: It'd be good to convert this format
+		// over to mirror what other files do better
+		// for matching. That is, use a wrapper class.
 	] as const;
 	for (const check of toCheckList) {
 		const match = check.match(tokens);

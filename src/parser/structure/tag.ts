@@ -2,7 +2,7 @@ import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 
 const RE_TAG_MATCH = /^A[0-9]+$/i;
 
-export default class Tag {
+export class Tag {
 	public readonly id: number;
 
 	public static match(tokens: LexerTokenList, startingIndex = 0): null | Tag {

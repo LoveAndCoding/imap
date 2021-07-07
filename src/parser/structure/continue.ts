@@ -1,6 +1,6 @@
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
-import ResponseText from "./text";
+import { ResponseText } from "./text";
 
 const CONTENT_TOKENS_START_INDEX = 2;
 

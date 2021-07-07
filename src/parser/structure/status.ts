@@ -1,12 +1,12 @@
 import { ParsingError } from "../../errors";
 import { AtomToken } from "../../lexer/tokens";
 import { LexerTokenList } from "../../lexer/types";
-import ResponseText from "./text";
+import { ResponseText } from "./text";
 
 const statuses = ["OK", "NO", "BAD", "PREAUTH", "BYE"] as const;
 type Status = typeof statuses[number];
 
-export default class StatusResponse {
+export class StatusResponse {
 	public static readonly commandType = "STATUS";
 
 	public readonly text?: ResponseText;

@@ -2,7 +2,7 @@ import { LexerTokenList } from "../../lexer/types";
 import { getOriginalInput } from "../utility";
 import { match as textCodeMatch, TextCode } from "./text.code";
 
-export default class ResponseText {
+export class ResponseText {
 	public readonly code?: TextCode;
 	public readonly content: string;
 

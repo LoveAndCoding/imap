@@ -5,7 +5,7 @@ import { CapabilityList } from "./capability";
 import { Expunge } from "./expunge";
 import { Fetch } from "./fetch";
 import * as MailboxData from "./mailbox";
-import StatusResponse from "./status";
+import { StatusResponse } from "./status";
 
 type ContentType =
 	| CapabilityList

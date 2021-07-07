@@ -1,5 +1,5 @@
 import Parser from "./parser";
 
-export * from "./sections";
+export * from "./structure";
 
 export default Parser;

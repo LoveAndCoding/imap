@@ -6,7 +6,9 @@ import TaggedResponse from "./structure/tagged";
 import UnknownResponse from "./structure/unknown";
 import UntaggedResponse from "./structure/untagged";
 
-type ResponseType =
+export * from "./structure";
+
+export type ResponseType =
 	| ContinueResponse
 	| TaggedResponse
 	| UntaggedResponse

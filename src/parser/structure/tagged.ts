@@ -1,7 +1,7 @@
 import { ParsingError } from "../../errors";
 import { LexerTokenList } from "../../lexer/types";
-import StatusResponse from "./status";
-import Tag from "./tag";
+import { StatusResponse } from "./status";
+import { Tag } from "./tag";
 
 // From spec:
 // response-tagged = tag SP resp-cond-state CRLF

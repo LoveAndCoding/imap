@@ -4,6 +4,8 @@ import { matchesFormat } from "../../utility";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
 import { UID, match as UIDMatch } from "./uid";
 
+export { InternalDate, UID };
+
 type FetchMatch = InternalDate | UID;
 
 const FETCH_MATCHERS = [InternalDateMatch, UIDMatch] as const;
