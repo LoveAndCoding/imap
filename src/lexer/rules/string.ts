@@ -8,8 +8,16 @@ export class StringRule implements ILexerRule<string> {
 	): null | LiteralStringToken | QuotedStringToken {
 		if (content.startsWith('"')) {
 			// We have a quoted string, grab and return it
-			const index = content.search(/[^\\]"/);
-			if (index < 0) {
+			let index = 0;
+			while (++index < content.length) {
+				if (content.charAt(index) === '"') {
+					break;
+				} else if (content.charAt(index) === "\\") {
+					// If we escaping a character, skip ahead
+					++index;
+				}
+			}
+			if (index === 0 || content.charAt(index) !== '"') {
 				throw new TokenizationError(
 					"Unable to find end of string",
 					content,
@@ -17,7 +25,7 @@ export class StringRule implements ILexerRule<string> {
 			}
 			// We need to add two because the search actually
 			// finds the character before the end quote.
-			const string = content.substr(0, index + 2);
+			const string = content.substr(0, index + 1);
 			return new QuotedStringToken(string);
 		}
 
