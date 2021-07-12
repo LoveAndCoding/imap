@@ -1,14 +1,16 @@
 import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
+import { Envelope, match as EnvelopeMatch } from "./envelope";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
 import { UID, match as UIDMatch } from "./uid";
 
-export { InternalDate, UID };
+export { Address, AddressList } from "./address";
+export { Envelope, InternalDate, UID };
 
-type FetchMatch = InternalDate | UID;
+type FetchMatch = Envelope | InternalDate | UID;
 
-const FETCH_MATCHERS = [InternalDateMatch, UIDMatch] as const;
+const FETCH_MATCHERS = [EnvelopeMatch, InternalDateMatch, UIDMatch] as const;
 
 function findFetchMatch(tokens: LexerTokenList) {
 	for (const matcher of FETCH_MATCHERS) {
@@ -25,6 +27,9 @@ function* fetchMatchIterator(tokens: LexerTokenList): Generator<FetchMatch> {
 		}
 		yield matched.match;
 		tokens = tokens.slice(matched.length);
+		if (tokens[0] && tokens[0].type === TokenTypes.space) {
+			tokens.shift();
+		}
 	}
 }
 
@@ -33,6 +38,8 @@ export class Fetch {
 	public static readonly commandType = "FETCH";
 
 	public readonly date?: Date;
+	public readonly envelope?: Envelope;
+	public readonly size?: number;
 	public readonly uid?: UID;
 
 	public static match(tokens: LexerTokenList) {
@@ -66,6 +73,8 @@ export class Fetch {
 				this.date = piece.datetime;
 			} else if (piece instanceof UID) {
 				this.uid = piece;
+			} else if (piece instanceof Envelope) {
+				this.envelope = piece;
 			} else {
 				// Safety check. All cases should be accounted for above
 				throw new ParsingError(

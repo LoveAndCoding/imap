@@ -1,4 +1,5 @@
-import { LexerTokenList, TokenTypes } from "../lexer/types";
+import { ParsingError } from "../errors";
+import { ILexerToken, LexerTokenList, TokenTypes } from "../lexer/types";
 
 export function* pairedArrayLoopGenerator<T>(arr: T[]) {
 	for (let i = 0; i < arr.length; i += 2) {
@@ -22,6 +23,7 @@ export function splitSpaceSeparatedList(
 	// Mark the list as started if we don't have a token marking the
 	// starting point (i.e. consider us in the list already)
 	let startedList = !startTokenValue;
+	let nestedListDepth = 0;
 	for (const token of listTokens) {
 		// If we're at the start of the list, mark it and proceed
 		if (
@@ -31,18 +33,24 @@ export function splitSpaceSeparatedList(
 		) {
 			startedList = true;
 			continue;
+		} else if (
+			token.type === TokenTypes.operator &&
+			token.value === startTokenValue
+		) {
+			nestedListDepth++;
 		}
 
-		// If we're not in the list yet, move on
 		if (!startedList) {
+			// If we're not in the list yet, move on
 			continue;
 		}
 
-		// If we're at a space, split
-		if (token.type === TokenTypes.space) {
+		// If we're at a space and not nested, split
+		if (token.type === TokenTypes.space && !nestedListDepth) {
 			currBlock = [];
 			blocks.push(currBlock);
 		} else if (
+			!nestedListDepth &&
 			endTokenValue &&
 			token.type === TokenTypes.operator &&
 			token.value === endTokenValue
@@ -57,6 +65,15 @@ export function splitSpaceSeparatedList(
 
 			// ... and push our token onto the current block
 			currBlock.push(token);
+
+			// Also, if we're at the end of a nested list, mark it
+			if (
+				endTokenValue &&
+				token.type === TokenTypes.operator &&
+				token.value === endTokenValue
+			) {
+				nestedListDepth--;
+			}
 		}
 	}
 
@@ -65,6 +82,25 @@ export function splitSpaceSeparatedList(
 
 export function getOriginalInput(tokens: LexerTokenList) {
 	return tokens.reduce((input, token) => input + token.value, "");
+}
+
+export function getNStringValue(tokens: LexerTokenList): null | string {
+	if (tokens.length !== 1) {
+		throw new ParsingError(
+			"One and only one token can be parsed into nstring value.",
+			tokens,
+		);
+	}
+	const [token] = tokens;
+
+	if (token.type !== TokenTypes.nil && token.type !== TokenTypes.string) {
+		throw new ParsingError(
+			`Cannot convert token type ${token.type} to nstring value`,
+			tokens,
+		);
+	}
+
+	return (token as ILexerToken<null> | ILexerToken<string>).getTrueValue();
 }
 
 type IFormat = {
