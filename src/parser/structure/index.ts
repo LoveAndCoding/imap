@@ -7,6 +7,7 @@ export * from "./capability";
 export * from "./expunge";
 export * from "./fetch";
 export * from "./flag";
+export * from "./id";
 export * from "./namespace";
 export * from "./status";
 export * from "./tag";

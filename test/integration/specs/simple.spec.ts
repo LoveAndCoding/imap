@@ -403,6 +403,77 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Untagged ID Spec Example #1 - Values",
+		input: [
+			'* ID ("name" "Cyrus" "version" "1.5" "os" "sunos" ',
+			'"os-version" "5.5" "support-url" ',
+			'"mailto:cyrus-bugs+@andrew.cmu.edu")',
+			CRLF,
+		].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("ID"),
+				tokenSP,
+				tokenOpenParen,
+				qString("name"),
+				tokenSP,
+				qString("Cyrus"),
+				tokenSP,
+				qString("version"),
+				tokenSP,
+				qString("1.5"),
+				tokenSP,
+				qString("os"),
+				tokenSP,
+				qString("sunos"),
+				tokenSP,
+				qString("os-version"),
+				tokenSP,
+				qString("5.5"),
+				tokenSP,
+				qString("support-url"),
+				tokenSP,
+				qString("mailto:cyrus-bugs+@andrew.cmu.edu"),
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					details: new Map([
+						["name", "Cyrus"],
+						["version", "1.5"],
+						["os", "sunos"],
+						["os-version", "5.5"],
+						["support-url", "mailto:cyrus-bugs+@andrew.cmu.edu"],
+					]),
+				},
+				type: "ID",
+			},
+		},
+	},
+	{
+		name: "Untagged ID Spec Example #2 - Nil",
+		input: ["* ID NIL", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("ID"),
+				tokenSP,
+				tokenNil,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					details: null,
+				},
+				type: "ID",
+			},
+		},
+	},
+	{
 		name: "Untagged OK (with text code, with text)",
 		input: [
 			"* OK [UNSEEN 17] Message 17 is the first unseen message",

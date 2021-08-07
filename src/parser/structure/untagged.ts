@@ -4,6 +4,7 @@ import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
 import { Expunge } from "./expunge";
 import { Fetch } from "./fetch";
+import { IDResponse } from "./id";
 import * as MailboxData from "./mailbox";
 import { NamespaceResponse } from "./namespace";
 import { StatusResponse } from "./status";
@@ -11,6 +12,7 @@ import { StatusResponse } from "./status";
 type ContentType =
 	| CapabilityList
 	| Expunge
+	| IDResponse
 	| NamespaceResponse
 	| StatusResponse
 	| MailboxData.ContentType;
@@ -56,6 +58,7 @@ export default class UntaggedResponse {
 			const toCheckList = [
 				StatusResponse,
 				CapabilityList,
+				IDResponse,
 				NamespaceResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
