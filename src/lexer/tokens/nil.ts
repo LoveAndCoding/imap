@@ -1,4 +1,5 @@
 import { ILexerToken, TokenTypes } from "../types";
+import { BaseToken } from "./base";
 
 /**
  * NIL Token
@@ -19,11 +20,11 @@ import { ILexerToken, TokenTypes } from "../types";
  *
  * This second special case about an atom
  */
-export class NilToken implements ILexerToken<null> {
+export class NilToken extends BaseToken<null> implements ILexerToken<null> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: "NIL") {
-		this.type = TokenTypes.nil;
+		super(TokenTypes.nil);
 	}
 
 	getTrueValue(): null {

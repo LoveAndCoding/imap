@@ -71,14 +71,14 @@ export class StringRule implements ILexerRule<string> {
 			expectCRLF,
 		] = tokens.slice(-4);
 		if (
-			expectOpenBrack.type === TokenTypes.operator &&
+			expectOpenBrack.isType(TokenTypes.operator) &&
 			expectOpenBrack.value === "{" &&
-			expectCloseBrack.type === TokenTypes.operator &&
+			expectCloseBrack.isType(TokenTypes.operator) &&
 			expectCloseBrack.value === "{" &&
-			expectCRLF.type === TokenTypes.eol &&
-			expectNumber.type === TokenTypes.number
+			expectCRLF.isType(TokenTypes.eol) &&
+			expectNumber.isType(TokenTypes.number)
 		) {
-			return (expectNumber as ILexerToken<number>).getTrueValue();
+			return expectNumber.getTrueValue();
 		}
 
 		return 0;

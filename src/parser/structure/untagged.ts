@@ -34,7 +34,7 @@ export default class UntaggedResponse {
 			!firstToken ||
 			!(firstToken instanceof OperatorToken) ||
 			firstToken.getTrueValue() !== "*" ||
-			secondToken.type !== TokenTypes.space
+			!secondToken.isType(TokenTypes.space)
 		) {
 			throw new ParsingError(
 				"Instantiating UntaggedResponse with a response of the wrong format",
@@ -46,10 +46,10 @@ export default class UntaggedResponse {
 		const contentTokens = tokens.slice(2);
 		const contentTypeToken = contentTokens[0];
 
-		if (contentTypeToken.type === TokenTypes.atom) {
+		if (contentTypeToken.isType(TokenTypes.atom)) {
 			// We have an Atom token, which means we want to search for
 			// the matching command for that atom
-			this.type = contentTypeToken.getTrueValue() as string;
+			this.type = contentTypeToken.getTrueValue();
 
 			const toCheckList = [
 				StatusResponse,
@@ -65,7 +65,7 @@ export default class UntaggedResponse {
 					break;
 				}
 			}
-		} else if (contentTypeToken.type === TokenTypes.number) {
+		} else if (contentTypeToken.isType(TokenTypes.number)) {
 			// The content type token indicates we've got a number first,
 			// which matches another set of response types
 			const toCheckList = [

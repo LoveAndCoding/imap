@@ -11,6 +11,16 @@ export enum TokenTypes {
 	string,
 }
 
+type TokenTypeTrueValueMap = {
+	[TokenTypes.atom]: string;
+	[TokenTypes.eol]: "\r\n";
+	[TokenTypes.nil]: null;
+	[TokenTypes.number]: number;
+	[TokenTypes.operator]: string;
+	[TokenTypes.space]: " ";
+	[TokenTypes.string]: string;
+};
+
 export interface ILexerRule<T> {
 	match(content: string, originalPosition: number): null | ILexerToken<T>;
 	matchIncludingEOL?(tokens: LexerTokenList): number;
@@ -21,6 +31,9 @@ export interface ILexerToken<T> {
 	readonly value: string;
 
 	getTrueValue(): T;
+	isType<T extends TokenTypes>(
+		type: T,
+	): this is ILexerToken<TokenTypeTrueValueMap[T]>;
 }
 
 export type LexerTokenList = ILexerToken<unknown>[];

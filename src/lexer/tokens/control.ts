@@ -1,4 +1,5 @@
 import { ILexerToken, TokenTypes } from "../types";
+import { BaseToken } from "./base";
 
 /**
  * Operator Token
@@ -6,13 +7,15 @@ import { ILexerToken, TokenTypes } from "../types";
  * While not specifically defined in the spec, these are characters
  * that specify an action or change in context. E.g. `(` or `]`.
  */
-export class OperatorToken implements ILexerToken<string> {
+export class OperatorToken
+	extends BaseToken<string>
+	implements ILexerToken<string> {
 	public readonly type: TokenTypes;
 
 	// `value` is a subtype of string specifically to enforce typing upon
 	// instantiation of the class. We only want and expect certain values
 	constructor(public readonly value: string) {
-		this.type = TokenTypes.operator;
+		super(TokenTypes.operator);
 	}
 
 	getTrueValue(): string {
@@ -29,11 +32,11 @@ export class OperatorToken implements ILexerToken<string> {
  * used for separating other tokens, so we want to include each SP
  * on its own. The parser can then decide if it wants to be strict.
  */
-export class SPToken implements ILexerToken<" "> {
+export class SPToken extends BaseToken<" "> implements ILexerToken<" "> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: " ") {
-		this.type = TokenTypes.space;
+		super(TokenTypes.space);
 	}
 
 	getTrueValue(): " " {
@@ -47,11 +50,13 @@ export class SPToken implements ILexerToken<" "> {
  * An CRLF token represents a standard newline marker in IMAP.
  * Most often this will denote the end of a command or response.
  */
-export class CRLFToken implements ILexerToken<"\r\n"> {
+export class CRLFToken
+	extends BaseToken<"\r\n">
+	implements ILexerToken<"\r\n"> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: "\r\n") {
-		this.type = TokenTypes.eol;
+		super(TokenTypes.eol);
 	}
 
 	getTrueValue(): "\r\n" {

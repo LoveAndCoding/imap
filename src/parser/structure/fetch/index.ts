@@ -27,7 +27,7 @@ function* fetchMatchIterator(tokens: LexerTokenList): Generator<FetchMatch> {
 		}
 		yield matched.match;
 		tokens = tokens.slice(matched.length);
-		if (tokens[0] && tokens[0].type === TokenTypes.space) {
+		if (tokens[0] && tokens[0].isType(TokenTypes.space)) {
 			tokens.shift();
 		}
 	}

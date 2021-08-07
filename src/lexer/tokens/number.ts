@@ -1,5 +1,6 @@
 import { TokenizationError } from "../../errors";
 import { ILexerToken, TokenTypes } from "../types";
+import { BaseToken } from "./base";
 
 // According to the spec, max int should be 4,294,967,296
 const MAX_ALLOWED_NUMBER = 4294967296;
@@ -11,11 +12,13 @@ const MAX_ALLOWED_NUMBER = 4294967296;
  * > A number consists of one or more digit characters, and
  * > represents a numeric value.
  */
-export class NumberToken implements ILexerToken<number> {
+export class NumberToken
+	extends BaseToken<number>
+	implements ILexerToken<number> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: string) {
-		this.type = TokenTypes.number;
+		super(TokenTypes.number);
 	}
 
 	getTrueValue(): number {

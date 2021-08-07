@@ -28,14 +28,14 @@ export function splitSpaceSeparatedList(
 		// If we're at the start of the list, mark it and proceed
 		if (
 			!startedList &&
-			token.type === TokenTypes.operator &&
-			token.value === startTokenValue
+			token.isType(TokenTypes.operator) &&
+			token.getTrueValue() === startTokenValue
 		) {
 			startedList = true;
 			continue;
 		} else if (
-			token.type === TokenTypes.operator &&
-			token.value === startTokenValue
+			token.isType(TokenTypes.operator) &&
+			token.getTrueValue() === startTokenValue
 		) {
 			nestedListDepth++;
 		}
@@ -46,14 +46,14 @@ export function splitSpaceSeparatedList(
 		}
 
 		// If we're at a space and not nested, split
-		if (token.type === TokenTypes.space && !nestedListDepth) {
+		if (token.isType(TokenTypes.space) && !nestedListDepth) {
 			currBlock = [];
 			blocks.push(currBlock);
 		} else if (
 			!nestedListDepth &&
 			endTokenValue &&
-			token.type === TokenTypes.operator &&
-			token.value === endTokenValue
+			token.isType(TokenTypes.operator) &&
+			token.getTrueValue() === endTokenValue
 		) {
 			break;
 		} else {
@@ -69,8 +69,8 @@ export function splitSpaceSeparatedList(
 			// Also, if we're at the end of a nested list, mark it
 			if (
 				endTokenValue &&
-				token.type === TokenTypes.operator &&
-				token.value === endTokenValue
+				token.isType(TokenTypes.operator) &&
+				token.getTrueValue() === endTokenValue
 			) {
 				nestedListDepth--;
 			}
@@ -93,14 +93,14 @@ export function getNStringValue(tokens: LexerTokenList): null | string {
 	}
 	const [token] = tokens;
 
-	if (token.type !== TokenTypes.nil && token.type !== TokenTypes.string) {
+	if (!token.isType(TokenTypes.nil) && !token.isType(TokenTypes.string)) {
 		throw new ParsingError(
 			`Cannot convert token type ${token.type} to nstring value`,
 			tokens,
 		);
 	}
 
-	return (token as ILexerToken<null> | ILexerToken<string>).getTrueValue();
+	return token.getTrueValue();
 }
 
 type IFormat = {
@@ -127,7 +127,7 @@ export function matchesFormat(
 		if (format.instance && !(token instanceof format.instance)) {
 			return false;
 		}
-		if (format.sp && token.type !== TokenTypes.space) {
+		if (format.sp && !token.isType(TokenTypes.space)) {
 			return false;
 		}
 		if (

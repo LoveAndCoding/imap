@@ -14,7 +14,7 @@ export default class ContinueResponse {
 	// base64-terminal = (2base64-char "==") / (3base64-char "=")
 	constructor(tokens: LexerTokenList) {
 		if (
-			tokens[0].type !== TokenTypes.operator ||
+			!tokens[0].isType(TokenTypes.operator) ||
 			tokens[0].getTrueValue() !== "+"
 		) {
 			throw new ParsingError(

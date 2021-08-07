@@ -24,12 +24,12 @@ export class MailboxListing {
 	public static fromListing(tokens: LexerTokenList) {
 		const flagListEndIndex = tokens.findIndex(
 			(token) =>
-				token.type === TokenTypes.operator &&
+				token.isType(TokenTypes.operator) &&
 				(token as OperatorToken).getTrueValue() === ")",
 		);
 		if (
 			flagListEndIndex <= 0 ||
-			tokens[0].type !== TokenTypes.operator ||
+			!tokens[0].isType(TokenTypes.operator) ||
 			tokens[0].getTrueValue() !== "("
 		) {
 			throw new ParsingError(
@@ -65,20 +65,20 @@ export class MailboxListing {
 		} else if (nameTokens.length === 1) {
 			const token = nameTokens[0];
 			if (
-				token.type === TokenTypes.string ||
-				token.type === TokenTypes.atom
+				token.isType(TokenTypes.string) ||
+				token.isType(TokenTypes.atom)
 			) {
-				name = (token as ILexerToken<string>).getTrueValue();
+				name = token.getTrueValue();
 			} else if (
-				token.type === TokenTypes.number ||
-				token.type === TokenTypes.nil
+				token.isType(TokenTypes.number) ||
+				token.isType(TokenTypes.nil)
 			) {
 				// Both Numbers and Nils can technically be Atom
 				// strings so if we see them, treat them as such
 				name = token.value;
 			}
 		} else {
-			if (nameTokens.find((token) => token.type === TokenTypes.space)) {
+			if (nameTokens.find((token) => token.isType(TokenTypes.space))) {
 				throw new ParsingError(
 					"Invalid character found in mailbox listing name",
 					tokens,

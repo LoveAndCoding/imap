@@ -81,11 +81,19 @@ export type TextCode =
 	| NumberTextCode;
 
 function isOpenToken(token: ILexerToken<unknown>) {
-	return token && token.type === TokenTypes.operator && token.value === "[";
+	return (
+		token &&
+		token.isType(TokenTypes.operator) &&
+		token.getTrueValue() === "["
+	);
 }
 
 function isCloseToken(token: ILexerToken<unknown>) {
-	return token && token.type === TokenTypes.operator && token.value === "]";
+	return (
+		token &&
+		token.isType(TokenTypes.operator) &&
+		token.getTrueValue() === "]"
+	);
 }
 
 export function match(
@@ -107,7 +115,7 @@ export function match(
 		// We found a full text code so get the right class and return
 		const kind = matchedTokens[1]?.value;
 		const contents = matchedTokens.slice(2, -1);
-		if (contents[0] && contents[0].type === TokenTypes.space) {
+		if (contents[0] && contents[0].isType(TokenTypes.space)) {
 			contents.shift();
 		}
 		let code: TextCode = null;

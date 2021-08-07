@@ -101,7 +101,7 @@ class Parser extends Transform {
 		}
 
 		const lastToken = tokens[tokens.length - 1];
-		if (lastToken.type === TokenTypes.eol) {
+		if (lastToken.isType(TokenTypes.eol)) {
 			// Remove the EOL token, as we don't need it in
 			// parsing, it's just to know the line ended
 			tokens = tokens.slice(0, -1);
@@ -109,18 +109,18 @@ class Parser extends Transform {
 
 		const firstToken = tokens[0];
 		if (
-			firstToken.type === TokenTypes.operator &&
+			firstToken.isType(TokenTypes.operator) &&
 			firstToken.getTrueValue() === "*"
 		) {
 			return new UntaggedResponse(tokens);
 		} else if (
-			firstToken.type === TokenTypes.operator &&
+			firstToken.isType(TokenTypes.operator) &&
 			firstToken.getTrueValue() === "+"
 		) {
 			return new ContinueResponse(tokens);
 		} else if (
-			firstToken.type === TokenTypes.atom &&
-			firstToken.value.match(/^A[0-9]+$/)
+			firstToken.isType(TokenTypes.atom) &&
+			firstToken.getTrueValue().match(/^A[0-9]+$/)
 		) {
 			return new TaggedResponse(tokens);
 		} else {

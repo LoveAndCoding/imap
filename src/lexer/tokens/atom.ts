@@ -1,4 +1,5 @@
 import { ILexerToken, TokenTypes } from "../types";
+import { BaseToken } from "./base";
 
 /**
  * Atom Token
@@ -6,11 +7,13 @@ import { ILexerToken, TokenTypes } from "../types";
  * From the spec:
  * > An atom consists of one or more non-special characters.
  */
-export class AtomToken implements ILexerToken<string> {
+export class AtomToken
+	extends BaseToken<string>
+	implements ILexerToken<string> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: string) {
-		this.type = TokenTypes.atom;
+		super(TokenTypes.atom);
 	}
 
 	getTrueValue(): string {

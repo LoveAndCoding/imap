@@ -205,7 +205,7 @@ export class CapabilityList {
 		const firstToken = tokens[0];
 		if (
 			firstToken &&
-			firstToken.type === TokenTypes.atom &&
+			firstToken.isType(TokenTypes.atom) &&
 			firstToken.getTrueValue() === "CAPABILITY"
 		) {
 			return new CapabilityList(tokens.slice(1), false);

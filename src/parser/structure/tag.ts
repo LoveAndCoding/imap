@@ -10,11 +10,10 @@ export class Tag {
 
 		if (
 			token &&
-			token.type === TokenTypes.atom &&
-			token.value.match(RE_TAG_MATCH)
+			token.isType(TokenTypes.atom) &&
+			token.getTrueValue().match(RE_TAG_MATCH)
 		) {
-			// Because it's an Atom, we know it is a string token
-			return new Tag(token as ILexerToken<string>);
+			return new Tag(token);
 		}
 
 		return null;

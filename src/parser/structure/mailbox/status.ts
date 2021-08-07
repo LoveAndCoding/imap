@@ -34,8 +34,8 @@ export class MailboxStatus {
 	}
 
 	constructor(tokens: LexerTokenList) {
-		const nextSpIndex = tokens.findIndex(
-			(token) => token.type === TokenTypes.space,
+		const nextSpIndex = tokens.findIndex((token) =>
+			token.isType(TokenTypes.space),
 		);
 		if (nextSpIndex <= 0) {
 			throw new ParsingError(
@@ -62,13 +62,13 @@ export class MailboxStatus {
 			const [keyToken] = keyTokens;
 			const [valueToken] = valueTokens;
 
-			if (valueToken.type !== TokenTypes.number) {
+			if (!valueToken.isType(TokenTypes.number)) {
 				throw new ParsingError(
 					"Unexpected value in mailbox status response",
 					attListTokens,
 				);
 			}
-			const num = valueToken.getTrueValue() as number;
+			const num = valueToken.getTrueValue();
 
 			switch (keyToken.value) {
 				case "MESSAGES":

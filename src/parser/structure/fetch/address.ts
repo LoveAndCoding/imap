@@ -21,7 +21,7 @@ export class AddressList {
 	protected list: Address[];
 
 	constructor(tokens: LexerTokenList) {
-		if (tokens.length === 1 && tokens[0].type === TokenTypes.nil) {
+		if (tokens.length === 1 && tokens[0].isType(TokenTypes.nil)) {
 			// For NIL lists, just be empty
 			this.list = [];
 			return;

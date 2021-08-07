@@ -30,7 +30,7 @@ export class FlagList {
 		const firstToken = tokens[0];
 		if (
 			firstToken &&
-			firstToken.type === TokenTypes.atom &&
+			firstToken.isType(TokenTypes.atom) &&
 			firstToken.getTrueValue() === "FLAGS"
 		) {
 			return new FlagList(tokens.slice(1), false);

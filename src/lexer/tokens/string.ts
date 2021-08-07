@@ -1,6 +1,7 @@
 import { imap } from "utf7";
 
 import { ILexerToken, TokenTypes } from "../types";
+import { BaseToken } from "./base";
 
 /**
  * Quoted String Token
@@ -10,11 +11,13 @@ import { ILexerToken, TokenTypes } from "../types";
  * > excluding CR and LF, with double quote (<">) characters at each
  * > end.
  */
-export class QuotedStringToken implements ILexerToken<string> {
+export class QuotedStringToken
+	extends BaseToken<string>
+	implements ILexerToken<string> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: string) {
-		this.type = TokenTypes.string;
+		super(TokenTypes.string);
 	}
 
 	getTrueValue(): string {
@@ -35,11 +38,13 @@ export class QuotedStringToken implements ILexerToken<string> {
  * > In the case of literals transmitted from server to client, the
  * > CRLF is immediately followed by the octet data.
  */
-export class LiteralStringToken implements ILexerToken<string> {
+export class LiteralStringToken
+	extends BaseToken<string>
+	implements ILexerToken<string> {
 	public readonly type: TokenTypes;
 
 	constructor(public readonly value: string) {
-		this.type = TokenTypes.string;
+		super(TokenTypes.string);
 	}
 
 	getTrueValue(): string {
