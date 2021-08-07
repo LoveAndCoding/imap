@@ -5,11 +5,13 @@ import { CapabilityList } from "./capability";
 import { Expunge } from "./expunge";
 import { Fetch } from "./fetch";
 import * as MailboxData from "./mailbox";
+import { NamespaceResponse } from "./namespace";
 import { StatusResponse } from "./status";
 
 type ContentType =
 	| CapabilityList
 	| Expunge
+	| NamespaceResponse
 	| StatusResponse
 	| MailboxData.ContentType;
 
@@ -54,6 +56,7 @@ export default class UntaggedResponse {
 			const toCheckList = [
 				StatusResponse,
 				CapabilityList,
+				NamespaceResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {

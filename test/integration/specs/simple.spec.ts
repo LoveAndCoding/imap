@@ -168,6 +168,56 @@ const simpleSet: TestSpec[] = [
 				tokenCloseParen,
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					personal: {
+						configurations: [
+							{
+								delimeter: "/",
+								prefix: "",
+								extensions: [],
+							},
+						],
+						kind: 0, // NamespaceKind.Personal === 0
+					},
+					others: {
+						configurations: [
+							{
+								delimeter: "/",
+								prefix: "~",
+								extensions: [],
+							},
+						],
+						kind: 1, // NamespaceKind.Others === 1
+					},
+					shared: {
+						configurations: [
+							{
+								delimeter: "/",
+								prefix: "#shared/",
+								extensions: [],
+							},
+							{
+								delimeter: "/",
+								prefix: "#public/",
+								extensions: [],
+							},
+							{
+								delimeter: "/",
+								prefix: "#ftp/",
+								extensions: [],
+							},
+							{
+								delimeter: ".",
+								prefix: "#news.",
+								extensions: [],
+							},
+						],
+						kind: 2, // NamespaceKind.Shared === 2
+					},
+				},
+				type: "NAMESPACE",
+			},
 		},
 	},
 	{
@@ -210,6 +260,28 @@ const simpleSet: TestSpec[] = [
 				tokenNil,
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					personal: {
+						configurations: [
+							{
+								delimeter: "/",
+								prefix: "",
+								extensions: [
+									{
+										name: "X-PARAM",
+										values: ["FLAG1", "FLAG2"],
+									},
+								],
+							},
+						],
+						kind: 0, // NamespaceKind.Personal === 0
+					},
+					others: null,
+					shared: null,
+				},
+				type: "NAMESPACE",
+			},
 		},
 	},
 	{
