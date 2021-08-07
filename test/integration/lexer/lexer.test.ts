@@ -2,6 +2,7 @@ import Lexer from "../../../src/lexer/lexer";
 import FetchSpecs from "../specs/fetch.spec";
 import LexerComplexitySpec from "../specs/lexer.complexity.spec";
 import SimpleSpecs from "../specs/simple.spec";
+import UIDPLUSSpecs from "../specs/uidplus.spec";
 
 describe("Lexer Simple Spec Tests", () => {
 	let lexer: Lexer;
@@ -27,6 +28,7 @@ describe("Lexer Simple Spec Tests", () => {
 
 	test.each(SimpleSpecs)(`Simple Spec: $name`, validateResults);
 	test.each(FetchSpecs)(`Fetch Spec: $name`, validateResults);
+	test.each(UIDPLUSSpecs)(`UIDPLUS Spec: $name`, validateResults);
 	test.each(LexerComplexitySpec)(
 		`Lexer Complexity Spec: $name`,
 		validateResults,

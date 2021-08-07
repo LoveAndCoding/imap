@@ -1,9 +1,10 @@
 import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
+import { UID } from "../uid";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
-import { UID, match as UIDMatch } from "./uid";
+import { match as UIDMatch } from "./uid";
 
 export { Address, AddressList } from "./address";
 export { Envelope, InternalDate, UID };

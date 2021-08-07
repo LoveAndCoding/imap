@@ -4,6 +4,34 @@ import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
 import { FlagList } from "./flag";
+import { UIDSet } from "./uid";
+
+export class AppendUIDTextCode {
+	public readonly kind = "APPENDUID";
+	public readonly uids: UIDSet;
+	public readonly uidvalidity: number;
+
+	constructor(tokens: LexerTokenList) {
+		const [uidvalidity, uidset] = splitSpaceSeparatedList(
+			tokens,
+			null,
+			null,
+		);
+
+		if (
+			!uidvalidity ||
+			uidvalidity.length !== 1 ||
+			!uidvalidity[0].isType(TokenTypes.number) ||
+			!uidset ||
+			!uidset.length
+		) {
+			throw new ParsingError("Invalid format for APPENDUID", tokens);
+		}
+
+		this.uidvalidity = uidvalidity[0].getTrueValue();
+		this.uids = new UIDSet(uidset);
+	}
+}
 
 export class BadCharsetTextCode {
 	public readonly kind = "BADCHARSET";
@@ -22,6 +50,37 @@ export class CapabilityTextCode {
 
 	constructor(tokens: LexerTokenList) {
 		this.capabilities = new CapabilityList(tokens);
+	}
+}
+
+export class CopyUIDTextCode {
+	public readonly kind = "COPYUID";
+	public readonly fromUIDs: UIDSet;
+	public readonly toUIDs: UIDSet;
+	public readonly uidvalidity: number;
+
+	constructor(tokens: LexerTokenList) {
+		const [uidvalidity, fromSet, toSet] = splitSpaceSeparatedList(
+			tokens,
+			null,
+			null,
+		);
+
+		if (
+			!uidvalidity ||
+			uidvalidity.length !== 1 ||
+			!uidvalidity[0].isType(TokenTypes.number) ||
+			!fromSet ||
+			!fromSet.length ||
+			!toSet ||
+			!toSet.length
+		) {
+			throw new ParsingError("Invalid format for COPYUID", tokens);
+		}
+
+		this.uidvalidity = uidvalidity[0].getTrueValue();
+		this.fromUIDs = new UIDSet(fromSet);
+		this.toUIDs = new UIDSet(toSet);
 	}
 }
 
@@ -74,9 +133,11 @@ export class NumberTextCode {
 }
 
 export type TextCode =
+	| AppendUIDTextCode
 	| AtomTextCode
 	| BadCharsetTextCode
 	| CapabilityTextCode
+	| CopyUIDTextCode
 	| PermentantFlagsTextCode
 	| NumberTextCode;
 
@@ -120,11 +181,17 @@ export function match(
 		}
 		let code: TextCode = null;
 		switch (kind) {
+			case "APPENDUID":
+				code = new AppendUIDTextCode(contents);
+				break;
 			case "BADCHARSET":
 				code = new BadCharsetTextCode(contents);
 				break;
 			case "CAPABILITIES":
 				code = new CapabilityTextCode(contents);
+				break;
+			case "COPYUID":
+				code = new CopyUIDTextCode(contents);
 				break;
 			case "PERMENANTFLAGS":
 				code = new PermentantFlagsTextCode(contents);

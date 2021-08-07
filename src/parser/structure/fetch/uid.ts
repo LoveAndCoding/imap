@@ -1,10 +1,6 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
-
-// From spec: "UID" SP uniqueid
-export class UID {
-	constructor(public readonly id: number) {}
-}
+import { UID } from "../uid";
 
 export function match(
 	tokens: LexerTokenList,
