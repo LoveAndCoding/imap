@@ -109,7 +109,11 @@ export class NumberTextCode {
 	public readonly value: number;
 
 	constructor(
-		public readonly kind: "UIDNEXT" | "UIDVALIDITY" | "UNSEEN",
+		public readonly kind:
+			| "HIGHESTMODSEQ"
+			| "UIDNEXT"
+			| "UIDVALIDITY"
+			| "UNSEEN",
 		tokens: LexerTokenList,
 	) {
 		// spec: "UIDNEXT" SP nz-number
@@ -196,6 +200,7 @@ export function match(
 			case "PERMENANTFLAGS":
 				code = new PermentantFlagsTextCode(contents);
 				break;
+			case "HIGHESTMODSEQ":
 			case "UIDNEXT":
 			case "UIDVALIDITY":
 			case "UNSEEN":
