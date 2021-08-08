@@ -4,14 +4,20 @@ import { matchesFormat } from "../../utility";
 import { UID } from "../uid";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
+import { RFC822Size, match as RFCMatch } from "./rfc822";
 import { match as UIDMatch } from "./uid";
 
 export { Address, AddressList } from "./address";
-export { Envelope, InternalDate, UID };
+export { Envelope, InternalDate, RFC822Size, UID };
 
-type FetchMatch = Envelope | InternalDate | UID;
+type FetchMatch = Envelope | InternalDate | RFC822Size | UID;
 
-const FETCH_MATCHERS = [EnvelopeMatch, InternalDateMatch, UIDMatch] as const;
+const FETCH_MATCHERS = [
+	EnvelopeMatch,
+	InternalDateMatch,
+	RFCMatch,
+	UIDMatch,
+] as const;
 
 function findFetchMatch(tokens: LexerTokenList) {
 	for (const matcher of FETCH_MATCHERS) {
@@ -76,6 +82,8 @@ export class Fetch {
 				this.uid = piece;
 			} else if (piece instanceof Envelope) {
 				this.envelope = piece;
+			} else if (piece instanceof RFC822Size) {
+				this.size = piece.size;
 			} else {
 				// Safety check. All cases should be accounted for above
 				throw new ParsingError(
