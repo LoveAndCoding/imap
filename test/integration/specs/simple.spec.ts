@@ -474,6 +474,39 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Untagged Sort Spec Example #1",
+		input: ["* SORT 2 3 6", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("SORT"),
+				tokenSP,
+				num(2),
+				tokenSP,
+				num(3),
+				tokenSP,
+				num(6),
+				tokenCRLF,
+			],
+			parser: {
+				content: { ids: [2, 3, 6] },
+				type: "SORT",
+			},
+		},
+	},
+	{
+		name: "Untagged Sort Spec Example #2 - Empty",
+		input: ["* SORT", CRLF].join(""),
+		results: {
+			lexer: [tokenStar, tokenSP, atom("SORT"), tokenCRLF],
+			parser: {
+				content: { ids: [] },
+				type: "SORT",
+			},
+		},
+	},
+	{
 		name: "Untagged OK (with text code, with text)",
 		input: [
 			"* OK [UNSEEN 17] Message 17 is the first unseen message",

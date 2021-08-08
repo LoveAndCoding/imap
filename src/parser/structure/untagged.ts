@@ -7,6 +7,7 @@ import { Fetch } from "./fetch";
 import { IDResponse } from "./id";
 import * as MailboxData from "./mailbox";
 import { NamespaceResponse } from "./namespace";
+import { SortResponse } from "./sort";
 import { StatusResponse } from "./status";
 
 type ContentType =
@@ -14,6 +15,7 @@ type ContentType =
 	| Expunge
 	| IDResponse
 	| NamespaceResponse
+	| SortResponse
 	| StatusResponse
 	| MailboxData.ContentType;
 
@@ -60,6 +62,7 @@ export default class UntaggedResponse {
 				CapabilityList,
 				IDResponse,
 				NamespaceResponse,
+				SortResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {

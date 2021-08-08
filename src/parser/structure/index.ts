@@ -9,6 +9,7 @@ export * from "./fetch";
 export * from "./flag";
 export * from "./id";
 export * from "./namespace";
+export * from "./sort";
 export * from "./status";
 export * from "./tag";
 export * from "./text.code";
