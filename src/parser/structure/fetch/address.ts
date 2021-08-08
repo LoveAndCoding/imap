@@ -1,5 +1,9 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer";
-import { getNStringValue, splitSpaceSeparatedList } from "../../utility";
+import {
+	getNStringValue,
+	splitUnseparatedListofLists,
+	splitSpaceSeparatedList,
+} from "../../utility";
 
 export class Address {
 	public readonly name: null | string;
@@ -27,7 +31,8 @@ export class AddressList {
 			return;
 		}
 
-		const addrs = splitSpaceSeparatedList(tokens);
+		// Remove the surrounding () tokens
+		const addrs = splitUnseparatedListofLists(tokens.slice(1, -1));
 		this.list = addrs.map((addr) => new Address(addr));
 	}
 }

@@ -56,9 +56,6 @@ export function match(
 
 	if (isMatch) {
 		const envTokenBlocks = splitSpaceSeparatedList(tokens);
-		const totalLen =
-			envTokenBlocks.length +
-			envTokenBlocks.reduce((count, block) => count + block.length, 0);
 
 		return {
 			match: new Envelope(envTokenBlocks),
