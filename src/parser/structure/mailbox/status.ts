@@ -14,6 +14,7 @@ export class MailboxStatus {
 
 	public readonly name: string;
 
+	public readonly highestmodseq: number;
 	public readonly messages: number;
 	public readonly recent: number;
 	public readonly uidnext: number;
@@ -85,6 +86,9 @@ export class MailboxStatus {
 					break;
 				case "UNSEEN":
 					this.unseen = num;
+					break;
+				case "HIGHESTMODSEQ":
+					this.highestmodseq = num;
 					break;
 				default:
 					throw new ParsingError(
