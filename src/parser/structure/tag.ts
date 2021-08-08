@@ -20,6 +20,6 @@ export class Tag {
 	}
 
 	constructor(token: ILexerToken<string>) {
-		this.id = parseInt(token.value.substr(1));
+		this.id = parseInt(token.getTrueValue().substr(1));
 	}
 }

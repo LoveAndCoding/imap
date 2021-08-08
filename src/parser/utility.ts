@@ -114,6 +114,42 @@ export function getOriginalInput(tokens: LexerTokenList) {
 	return tokens.reduce((input, token) => input + token.value, "");
 }
 
+export function getAStringValue(tokens: LexerTokenList): string {
+	if (tokens.length < 1) {
+		throw new ParsingError(
+			"Must have at least one token for an astring value",
+			tokens,
+		);
+	} else if (tokens.length > 1 && tokens[0].isType(TokenTypes.string)) {
+		throw new ParsingError(
+			"Cannot have multiple strings in an astring value",
+			tokens,
+		);
+	} else if (
+		tokens.some(
+			(t) => t.isType(TokenTypes.space) || t.isType(TokenTypes.eol),
+		)
+	) {
+		throw new ParsingError(
+			"Cannot have whitespace in an astring value",
+			tokens,
+		);
+	}
+
+	// If we have only a single token, just return that value
+	if (tokens.length === 1) {
+		const tkn = tokens[0];
+		// Technically speaking NIL is an atom, it's just sometimes
+		// a special atom. But astring's don't support NIL values so
+		// we're gonna treat NIL here as a regular atom
+		return tkn.isType(TokenTypes.nil) ? tkn.value : `${tkn.getTrueValue()}`;
+	}
+
+	// Otherwise, we have an atom, likely with some special
+	// characters. Just concat the raw values
+	return getOriginalInput(tokens);
+}
+
 export function getNStringValue(tokens: LexerTokenList): null | string {
 	if (tokens.length !== 1) {
 		throw new ParsingError(
