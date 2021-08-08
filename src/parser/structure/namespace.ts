@@ -4,6 +4,7 @@ import {
 	matchesFormat,
 	pairedArrayLoopGenerator,
 	splitSpaceSeparatedList,
+	splitUnseparatedListofLists,
 } from "../utility";
 
 // Namespace responses take a format that is different from most other
@@ -36,39 +37,6 @@ function splitNamespaceResponseLists(tokens: LexerTokenList) {
 	}
 
 	return blocks;
-}
-
-// The Namespace response contains a list of lists that are not separated
-// by a space, unfortunately. This means we can't use our utility function.
-// But we do have a fairly predictable pattern
-function splitUnseparatedListofLists(tokens: LexerTokenList) {
-	const lists: LexerTokenList[] = [];
-	let currList: LexerTokenList;
-	let openParenCount = 0;
-
-	for (const tkn of tokens) {
-		if (tkn.isType(TokenTypes.operator) && tkn.getTrueValue() === "(") {
-			if (!openParenCount) {
-				// Starting a new block
-				currList = [];
-				lists.push(currList);
-			}
-			openParenCount++;
-		}
-
-		if (currList) {
-			currList.push(tkn);
-		}
-
-		if (tkn.isType(TokenTypes.operator) && tkn.getTrueValue() === ")") {
-			openParenCount--;
-			if (!openParenCount) {
-				currList = null;
-			}
-		}
-	}
-
-	return lists;
 }
 
 export enum NamespaceKind {

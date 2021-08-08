@@ -507,6 +507,127 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Untagged Thread Spec Example #1 - Empty",
+		input: ["* THREAD", CRLF].join(""),
+		results: {
+			lexer: [tokenStar, tokenSP, atom("THREAD"), tokenCRLF],
+			parser: {
+				content: { threads: [] },
+				type: "THREAD",
+			},
+		},
+	},
+	{
+		name: "Untagged Thread Spec Example #2 - Split Threads",
+		input: ["* THREAD (2)(3 6 (4 23)(44 7 96))", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("THREAD"),
+				tokenSP,
+				tokenOpenParen,
+				num(2),
+				tokenCloseParen,
+				tokenOpenParen,
+				num(3),
+				tokenSP,
+				num(6),
+				tokenSP,
+				tokenOpenParen,
+				num(4),
+				tokenSP,
+				num(23),
+				tokenCloseParen,
+				tokenOpenParen,
+				num(44),
+				tokenSP,
+				num(7),
+				tokenSP,
+				num(96),
+				tokenCloseParen,
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					threads: [
+						{
+							id: 2,
+							_children: [],
+						},
+						{
+							id: 3,
+							_children: [
+								{
+									id: 6,
+									_children: [
+										{
+											id: 4,
+											_children: [
+												{ id: 23, _children: [] },
+											],
+										},
+										{
+											id: 44,
+											_children: [
+												{
+													id: 7,
+													_children: [
+														{
+															id: 96,
+															_children: [],
+														},
+													],
+												},
+											],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+				type: "THREAD",
+			},
+		},
+	},
+	{
+		name: "Untagged Thread Spec Example #3 - No Parent",
+		input: ["* THREAD ((3)(5))", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("THREAD"),
+				tokenSP,
+				tokenOpenParen,
+				tokenOpenParen,
+				num(3),
+				tokenCloseParen,
+				tokenOpenParen,
+				num(5),
+				tokenCloseParen,
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					threads: [
+						{
+							id: undefined,
+							_children: [
+								{ id: 3, _children: [] },
+								{ id: 5, _children: [] },
+							],
+						},
+					],
+				},
+				type: "THREAD",
+			},
+		},
+	},
+	{
 		name: "Untagged OK (with text code, with text)",
 		input: [
 			"* OK [UNSEEN 17] Message 17 is the first unseen message",

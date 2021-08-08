@@ -9,6 +9,7 @@ import * as MailboxData from "./mailbox";
 import { NamespaceResponse } from "./namespace";
 import { SortResponse } from "./sort";
 import { StatusResponse } from "./status";
+import { ThreadResponse } from "./thread";
 
 type ContentType =
 	| CapabilityList
@@ -17,6 +18,7 @@ type ContentType =
 	| NamespaceResponse
 	| SortResponse
 	| StatusResponse
+	| ThreadResponse
 	| MailboxData.ContentType;
 
 // From spec:
@@ -63,6 +65,7 @@ export default class UntaggedResponse {
 				IDResponse,
 				NamespaceResponse,
 				SortResponse,
+				ThreadResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {

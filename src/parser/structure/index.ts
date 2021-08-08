@@ -14,6 +14,7 @@ export * from "./status";
 export * from "./tag";
 export * from "./text.code";
 export * from "./text";
+export * from "./thread";
 
 // Mailbox data is a bit messier due to Exists/Recent having
 // different formats and therefore being tested in a slightly

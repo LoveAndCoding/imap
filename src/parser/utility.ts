@@ -80,6 +80,36 @@ export function splitSpaceSeparatedList(
 	return blocks;
 }
 
+export function splitUnseparatedListofLists(tokens: LexerTokenList) {
+	const lists: LexerTokenList[] = [];
+	let currList: LexerTokenList;
+	let openParenCount = 0;
+
+	for (const tkn of tokens) {
+		if (tkn.isType(TokenTypes.operator) && tkn.getTrueValue() === "(") {
+			if (!openParenCount) {
+				// Starting a new block
+				currList = [];
+				lists.push(currList);
+			}
+			openParenCount++;
+		}
+
+		if (currList) {
+			currList.push(tkn);
+		}
+
+		if (tkn.isType(TokenTypes.operator) && tkn.getTrueValue() === ")") {
+			openParenCount--;
+			if (!openParenCount) {
+				currList = null;
+			}
+		}
+	}
+
+	return lists;
+}
+
 export function getOriginalInput(tokens: LexerTokenList) {
 	return tokens.reduce((input, token) => input + token.value, "");
 }
