@@ -3,14 +3,14 @@ import { LexerTokenList, TokenTypes } from "../../lexer/types";
 
 // From spec: "UID" SP uniqueid
 export class UID {
-	constructor(public readonly id: number) {}
+	constructor(public readonly id: number | "*") {}
 }
 
 // From spec: uid-range       = (uniqueid ":" uniqueid)
 export class UIDRange {
 	constructor(
-		public readonly startId: number,
-		public readonly endId: number,
+		public readonly startId: number | "*",
+		public readonly endId: number | "*",
 	) {
 		// Make sure we have the UIDs in order
 		//
@@ -18,7 +18,10 @@ export class UIDRange {
 		//   two uniqueid values and all values
 		//   between these two regards of order.
 		//   Example: 2:4 and 4:2 are equivalent
-		if (this.endId < this.startId) {
+		if (
+			this.endId < this.startId ||
+			(this.startId === "*" && this.endId !== "*")
+		) {
 			[this.startId, this.endId] = [this.endId, this.startId];
 		}
 	}
