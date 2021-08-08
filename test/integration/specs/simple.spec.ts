@@ -628,6 +628,166 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Untagged Quota Spec Example #1 - Empty Name + Storage",
+		input: ['* QUOTA "" (STORAGE 10 512)', CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("QUOTA"),
+				tokenSP,
+				qString(""),
+				tokenSP,
+				tokenOpenParen,
+				atom("STORAGE"),
+				tokenSP,
+				num(10),
+				tokenSP,
+				num(512),
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					rootName: "",
+					quotas: [
+						{
+							resource: "STORAGE",
+							current: 10,
+							limit: 512,
+						},
+					],
+				},
+				type: "QUOTA",
+			},
+		},
+	},
+	{
+		name: "Untagged Quota Spec #2 - Name + No Triplets",
+		input: ['* QUOTA "Shared" ()', CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("QUOTA"),
+				tokenSP,
+				qString("Shared"),
+				tokenSP,
+				tokenOpenParen,
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					rootName: "Shared",
+					quotas: [],
+				},
+				type: "QUOTA",
+			},
+		},
+	},
+	{
+		name: "Untagged Quota Spec #3 - Multiple Triplets",
+		input: ['* QUOTA "" (STORAGE 10 512 "COUNTS" 1 40000)', CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("QUOTA"),
+				tokenSP,
+				qString(""),
+				tokenSP,
+				tokenOpenParen,
+				atom("STORAGE"),
+				tokenSP,
+				num(10),
+				tokenSP,
+				num(512),
+				tokenSP,
+				qString("COUNTS"),
+				tokenSP,
+				num(1),
+				tokenSP,
+				num(40000),
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					rootName: "",
+					quotas: [
+						{
+							resource: "STORAGE",
+							current: 10,
+							limit: 512,
+						},
+						{
+							resource: "COUNTS",
+							current: 1,
+							limit: 40000,
+						},
+					],
+				},
+				type: "QUOTA",
+			},
+		},
+	},
+	{
+		name: "Untagged QuotaRoot Spec Example #1 - Multiple names",
+		input: ['* QUOTAROOT INBOX ""', CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("QUOTAROOT"),
+				tokenSP,
+				atom("INBOX"),
+				tokenSP,
+				qString(""),
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					rootNames: ["INBOX", ""],
+				},
+				type: "QUOTAROOT",
+			},
+		},
+	},
+	{
+		name: "Untagged QuotaRoot Spec Example #2 - One Name",
+		input: ["* QUOTAROOT comp.mail.mime", CRLF].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("QUOTAROOT"),
+				tokenSP,
+				atom("comp.mail.mime"),
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					rootNames: ["comp.mail.mime"],
+				},
+				type: "QUOTAROOT",
+			},
+		},
+	},
+	{
+		name: "Untagged QuotaRoot Spec #3 - Zero Names",
+		input: ["* QUOTAROOT", CRLF].join(""),
+		results: {
+			lexer: [tokenStar, tokenSP, atom("QUOTAROOT"), tokenCRLF],
+			parser: {
+				content: {
+					rootNames: [],
+				},
+				type: "QUOTAROOT",
+			},
+		},
+	},
+	{
 		name: "Untagged OK (with text code, with text)",
 		input: [
 			"* OK [UNSEEN 17] Message 17 is the first unseen message",

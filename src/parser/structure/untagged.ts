@@ -7,6 +7,7 @@ import { Fetch } from "./fetch";
 import { IDResponse } from "./id";
 import * as MailboxData from "./mailbox";
 import { NamespaceResponse } from "./namespace";
+import { QuotaResponse, QuotaRootResponse } from "./quota";
 import { SortResponse } from "./sort";
 import { StatusResponse } from "./status";
 import { ThreadResponse } from "./thread";
@@ -16,6 +17,8 @@ type ContentType =
 	| Expunge
 	| IDResponse
 	| NamespaceResponse
+	| QuotaResponse
+	| QuotaRootResponse
 	| SortResponse
 	| StatusResponse
 	| ThreadResponse
@@ -64,6 +67,8 @@ export default class UntaggedResponse {
 				CapabilityList,
 				IDResponse,
 				NamespaceResponse,
+				QuotaRootResponse,
+				QuotaResponse,
 				SortResponse,
 				ThreadResponse,
 				MailboxData, // See below for Exists/Recent
