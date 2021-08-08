@@ -558,6 +558,26 @@ const simpleSet: TestSpec[] = [
 				atom("~/Mail/foo"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					name: "~/Mail/foo",
+					flags: {
+						hasWildcard: false,
+						flagMap: new Map([
+							[
+								"\\Noselect",
+								{
+									name: "\\Noselect",
+									isWildcard: false,
+									isKnownName: false,
+								},
+							],
+						]),
+					},
+					separator: "/",
+				},
+				type: "XLIST",
+			},
 		},
 	},
 	{
@@ -579,6 +599,81 @@ const simpleSet: TestSpec[] = [
 				atom("~/Mail/foo"),
 				tokenCRLF,
 			],
+			parser: {
+				content: {
+					name: "~/Mail/foo",
+					flags: {
+						hasWildcard: false,
+						flagMap: new Map([
+							[
+								"\\Noselect",
+								{
+									name: "\\Noselect",
+									isWildcard: false,
+									isKnownName: false,
+								},
+							],
+						]),
+					},
+					separator: "/",
+				},
+				type: "LIST",
+			},
+		},
+	},
+	{
+		name: "LIST Special Use",
+		input: [
+			'* LIST (\\HasNoChildren \\All) "/" "[Gmail]/All Mail"',
+			CRLF,
+		].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("LIST"),
+				tokenSP,
+				tokenOpenParen,
+				op("\\"),
+				atom("HasNoChildren"),
+				tokenSP,
+				op("\\"),
+				atom("All"),
+				tokenCloseParen,
+				tokenSP,
+				qString("/"),
+				tokenSP,
+				qString("[Gmail]/All Mail"),
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					name: "[Gmail]/All Mail",
+					flags: {
+						hasWildcard: false,
+						flagMap: new Map([
+							[
+								"\\HasNoChildren",
+								{
+									name: "\\HasNoChildren",
+									isWildcard: false,
+									isKnownName: false,
+								},
+							],
+							[
+								"\\All",
+								{
+									name: "\\All",
+									isWildcard: false,
+									isKnownName: true,
+								},
+							],
+						]),
+					},
+					separator: "/",
+				},
+				type: "LIST",
+			},
 		},
 	},
 	{

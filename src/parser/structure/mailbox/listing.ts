@@ -2,7 +2,7 @@ import { ParsingError } from "../../../errors";
 import { OperatorToken } from "../../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { utf7 } from "../../encoding";
-import { getOriginalInput } from "../../utility";
+import { getAStringValue } from "../../utility";
 import { FlagList } from "../flag";
 
 // From spec:
@@ -13,7 +13,9 @@ export class MailboxListing {
 
 	public static match(tokens: LexerTokenList) {
 		const isMatch =
-			tokens[0]?.value === "LIST" || tokens[0]?.value === "LSUB";
+			tokens[0]?.value === "LIST" ||
+			tokens[0]?.value === "LSUB" ||
+			tokens[0]?.value === "XLIST";
 		if (isMatch) {
 			return MailboxListing.fromListing(tokens.slice(2));
 		}
@@ -56,36 +58,7 @@ export class MailboxListing {
 		}
 
 		const nameTokens = tokens.slice(flagListEndIndex + 4);
-		let name: string;
-		if (!nameTokens.length) {
-			throw new ParsingError(
-				"Mailbox listing does not include a name?!?",
-				tokens,
-			);
-		} else if (nameTokens.length === 1) {
-			const token = nameTokens[0];
-			if (
-				token.isType(TokenTypes.string) ||
-				token.isType(TokenTypes.atom)
-			) {
-				name = token.getTrueValue();
-			} else if (
-				token.isType(TokenTypes.number) ||
-				token.isType(TokenTypes.nil)
-			) {
-				// Both Numbers and Nils can technically be Atom
-				// strings so if we see them, treat them as such
-				name = token.value;
-			}
-		} else {
-			if (nameTokens.find((token) => token.isType(TokenTypes.space))) {
-				throw new ParsingError(
-					"Invalid character found in mailbox listing name",
-					tokens,
-				);
-			}
-			name = getOriginalInput(nameTokens);
-		}
+		const name = getAStringValue(nameTokens);
 
 		if (!name) {
 			throw new ParsingError("Mailbox listing name is empty");
@@ -102,7 +75,39 @@ export class MailboxListing {
 		this.name = utf7.decode(name);
 	}
 
+	public isAll(): boolean {
+		return this.flags.has("\\All");
+	}
+
+	public isArchive(): boolean {
+		return this.flags.has("\\Archive");
+	}
+
+	public isDrafts(): boolean {
+		return this.flags.has("\\Drafts");
+	}
+
+	public isFlagged(): boolean {
+		return this.flags.has("\\Flagged");
+	}
+
+	public isImportant(): boolean {
+		return this.flags.has("\\Important");
+	}
+
 	public isInbox(): boolean {
 		return this.name.toUpperCase() === "INBOX";
+	}
+
+	public isJunk(): boolean {
+		return this.flags.has("\\Junk");
+	}
+
+	public isSent(): boolean {
+		return this.flags.has("\\Sent");
+	}
+
+	public isTrash(): boolean {
+		return this.flags.has("\\Trash");
 	}
 }

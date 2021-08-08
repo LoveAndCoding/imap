@@ -2,6 +2,17 @@ import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 
 const KNOWN_FLAG_NAMES = [
+	// Mailbox
+	"\\All",
+	"\\Archive",
+	"\\Drafts",
+	"\\Flagged",
+	"\\Important",
+	"\\Junk",
+	"\\Sent",
+	"\\Trash",
+
+	// Message
 	"\\Answered",
 	"\\Flagged",
 	"\\Deleted",
