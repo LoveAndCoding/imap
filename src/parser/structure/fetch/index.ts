@@ -1,19 +1,22 @@
 import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
+import { FlagList } from "../flag";
 import { UID } from "../uid";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
+import { match as FlagMatch } from "./flag";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
 import { RFC822Size, match as RFCMatch } from "./rfc822";
 import { match as UIDMatch } from "./uid";
 
 export { Address, AddressList } from "./address";
-export { Envelope, InternalDate, RFC822Size, UID };
+export { Envelope, FlagList, InternalDate, RFC822Size, UID };
 
-type FetchMatch = Envelope | InternalDate | RFC822Size | UID;
+type FetchMatch = Envelope | FlagList | InternalDate | RFC822Size | UID;
 
 const FETCH_MATCHERS = [
 	EnvelopeMatch,
+	FlagMatch,
 	InternalDateMatch,
 	RFCMatch,
 	UIDMatch,
@@ -46,6 +49,7 @@ export class Fetch {
 
 	public readonly date?: Date;
 	public readonly envelope?: Envelope;
+	public readonly flags?: FlagList;
 	public readonly size?: number;
 	public readonly uid?: UID;
 
@@ -82,6 +86,8 @@ export class Fetch {
 				this.uid = piece;
 			} else if (piece instanceof Envelope) {
 				this.envelope = piece;
+			} else if (piece instanceof FlagList) {
+				this.flags = piece;
 			} else if (piece instanceof RFC822Size) {
 				this.size = piece.size;
 			} else {
