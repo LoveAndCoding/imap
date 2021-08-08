@@ -74,6 +74,57 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Tagged OK Modified Text Code",
+		input: [
+			"a106 OK [MODIFIED 101,110:111] Conditional STORE failed",
+			CRLF,
+		].join(""),
+		results: {
+			lexer: [
+				atom("a106"),
+				tokenSP,
+				atom("OK"),
+				tokenSP,
+				tokenOpenBrack,
+				atom("MODIFIED"),
+				tokenSP,
+				num(101),
+				op(","),
+				num(110),
+				op(":"),
+				num(111),
+				tokenCloseBrack,
+				tokenSP,
+				atom("Conditional"),
+				tokenSP,
+				atom("STORE"),
+				tokenSP,
+				atom("failed"),
+				tokenCRLF,
+			],
+			parser: {
+				status: {
+					status: "OK",
+					text: {
+						code: {
+							kind: "MODIFIED",
+							uids: {
+								set: [
+									{ id: 101 },
+									{ startId: 110, endId: 111 },
+								],
+							},
+						},
+						content: "Conditional STORE failed",
+					},
+				},
+				tag: {
+					id: 106,
+				},
+			},
+		},
+	},
+	{
 		name: "Continuation",
 		input: ["+ idling", CRLF].join(""),
 		results: {

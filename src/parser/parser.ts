@@ -120,7 +120,7 @@ class Parser extends Transform {
 			return new ContinueResponse(tokens);
 		} else if (
 			firstToken.isType(TokenTypes.atom) &&
-			firstToken.getTrueValue().match(/^A[0-9]+$/)
+			firstToken.getTrueValue().match(/^A[0-9]+$/i)
 		) {
 			return new TaggedResponse(tokens);
 		} else {

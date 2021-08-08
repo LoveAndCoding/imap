@@ -84,6 +84,15 @@ export class CopyUIDTextCode {
 	}
 }
 
+export class ModifiedTextCode {
+	public readonly kind = "MODIFIED";
+	public readonly uids: UIDSet;
+
+	constructor(tokens: LexerTokenList) {
+		this.uids = new UIDSet(tokens);
+	}
+}
+
 export class PermentantFlagsTextCode {
 	public readonly kind = "PERMANENTFLAGS";
 	public readonly flags: FlagList;
@@ -142,6 +151,7 @@ export type TextCode =
 	| BadCharsetTextCode
 	| CapabilityTextCode
 	| CopyUIDTextCode
+	| ModifiedTextCode
 	| PermentantFlagsTextCode
 	| NumberTextCode;
 
@@ -196,6 +206,9 @@ export function match(
 				break;
 			case "COPYUID":
 				code = new CopyUIDTextCode(contents);
+				break;
+			case "MODIFIED":
+				code = new ModifiedTextCode(contents);
 				break;
 			case "PERMENANTFLAGS":
 				code = new PermentantFlagsTextCode(contents);
