@@ -62,7 +62,6 @@ export function parseHeader(str: string, noDecode: boolean = false) {
 		let hvs;
 		Object.keys(header).forEach((hdr) => {
 			hvs = header[hdr];
-			console.log(hvs);
 			for (i = 0, len = header[hdr].length; i < len; ++i) {
 				hvs[i] = decodeWords(hvs[i], state);
 			}

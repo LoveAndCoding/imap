@@ -3,22 +3,42 @@ import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
 import { FlagList } from "../flag";
 import { UID } from "../uid";
+import { MessageBody, match as BodyMatch, MessageBodyPiece } from "./body";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
 import { match as FlagMatch } from "./flag";
+import { MessageHeader, match as HeaderMatch } from "./header";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
 import { RFC822Size, match as RFCMatch } from "./rfc822";
 import { match as UIDMatch } from "./uid";
 
 export { Address, AddressList } from "./address";
-export { Envelope, FlagList, InternalDate, RFC822Size, UID };
+export {
+	Envelope,
+	FlagList,
+	InternalDate,
+	MessageBody,
+	MessageHeader,
+	RFC822Size,
+	UID,
+};
 
-type FetchMatch = Envelope | FlagList | InternalDate | RFC822Size | UID;
+type FetchMatch =
+	| Envelope
+	| FlagList
+	| InternalDate
+	| MessageBody
+	| MessageBodyPiece
+	| MessageHeader
+	| RFC822Size
+	| UID;
 
 const FETCH_MATCHERS = [
 	EnvelopeMatch,
 	FlagMatch,
 	InternalDateMatch,
 	RFCMatch,
+	BodyMatch,
+	HeaderMatch,
 	UIDMatch,
 ] as const;
 
@@ -47,6 +67,7 @@ function* fetchMatchIterator(tokens: LexerTokenList): Generator<FetchMatch> {
 export class Fetch {
 	public static readonly commandType = "FETCH";
 
+	public readonly body?: MessageBody;
 	public readonly date?: Date;
 	public readonly envelope?: Envelope;
 	public readonly flags?: FlagList;
@@ -90,6 +111,17 @@ export class Fetch {
 				this.flags = piece;
 			} else if (piece instanceof RFC822Size) {
 				this.size = piece.size;
+			} else if (piece instanceof MessageBody) {
+				if (this.body) {
+					this.body.mergeIn(piece);
+				} else {
+					this.body = piece;
+				}
+			} else if (MessageBody.isMessageBodyPiece(piece)) {
+				if (!this.body) {
+					this.body = new MessageBody();
+				}
+				this.body.addMessageBodyPiece(piece);
 			} else {
 				// Safety check. All cases should be accounted for above
 				throw new ParsingError(

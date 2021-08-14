@@ -17,7 +17,11 @@ import { ILexerRule } from "../types";
 //
 // This regexp will match any character that begins an atom
 // and go until it sees an invalid character.
-const RE_ATOM_MATCH = /^[^ \(\)\{\x00-\x1F%\*"\\\]]+/;
+//
+// We also exclude "[" even though it is not on the atom-specials
+// list because most of the time this will be an operator, and it
+// is easy enough to merge back in in the cases it is not
+const RE_ATOM_MATCH = /^[^ \(\)\{\x00-\x1F%\*"\\\[\]]+/;
 const RE_BEGIN_LINE_CONTROL = /^[\+\*]/;
 
 export class AtomRule implements ILexerRule<string> {

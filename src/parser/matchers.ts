@@ -12,6 +12,7 @@ export const RE_HDR = /^([^:]+):[ \t]?(.+)?$/;
 export const RE_ENCWORD = /=\?([^?*]*?)(?:\*.*?)?\?([qb])\?(.*?)\?=/gi;
 export const RE_ENCWORD_END = /=\?([^?*]*?)(?:\*.*?)?\?([qb])\?(.*?)\?=$/i;
 export const RE_ENCWORD_BEGIN = /^[ \t]=\?([^?*]*?)(?:\*.*?)?\?([qb])\?(.*?)\?=/i;
+export const RE_ENCWORD_FOLDING_BOUNDARY = /(=\?([^?*]*?)(?:\*.*?)?\?([qb])\?(.*?)\?=)\r\n[ \t](=\?([^?*]*?)(?:\*.*?)?\?([qb])\?(.*?)\?=)/i;
 export const RE_QENC = /(?:=([a-fA-F0-9]{2}))|_/g;
 export const RE_SEARCH_MODSEQ = /^(.+) \(MODSEQ (.+?)\)$/i;
 export const RE_LWS_ONLY = /^[ \t]*$/;

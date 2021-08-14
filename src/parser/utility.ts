@@ -1,7 +1,7 @@
 import { ParsingError } from "../errors";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../lexer/types";
 
-export function* pairedArrayLoopGenerator<T>(arr: T[]) {
+export function* pairedArrayLoopGenerator<T>(arr: T[]): Generator<[T, T]> {
 	for (let i = 0; i < arr.length; i += 2) {
 		yield [arr[i], arr[i + 1]];
 	}
@@ -150,23 +150,52 @@ export function getAStringValue(tokens: LexerTokenList): string {
 	return getOriginalInput(tokens);
 }
 
-export function getNStringValue(tokens: LexerTokenList): null | string {
-	if (tokens.length !== 1) {
+export function getNStringValue(
+	token: ILexerToken<unknown> | LexerTokenList,
+): null | string {
+	if (Array.isArray(token) && token.length !== 1) {
 		throw new ParsingError(
 			"One and only one token can be parsed into nstring value.",
-			tokens,
+			token,
 		);
+	} else if (Array.isArray(token)) {
+		[token] = token;
 	}
-	const [token] = tokens;
 
 	if (!token.isType(TokenTypes.nil) && !token.isType(TokenTypes.string)) {
 		throw new ParsingError(
 			`Cannot convert token type ${token.type} to nstring value`,
-			tokens,
+			[token],
 		);
 	}
 
 	return token.getTrueValue();
+}
+
+export function getSpaceSeparatedStringList(
+	tokens: LexerTokenList,
+	allowEmpty = false,
+): string[] {
+	const list = [];
+	const splitTokens = splitSpaceSeparatedList(tokens);
+	for (const [shouldBeString, ...shouldBeEmpty] of splitTokens) {
+		if (!shouldBeString.isType(TokenTypes.string) || shouldBeEmpty.length) {
+			throw new ParsingError(
+				"Invalid format for space separated string list",
+				tokens,
+			);
+		}
+		list.push(shouldBeString.getTrueValue());
+	}
+
+	if (!allowEmpty && !list.length) {
+		throw new ParsingError(
+			"No string tokens found in space separated string list. Expected at least one",
+			tokens,
+		);
+	}
+
+	return list;
 }
 
 type IFormat = {
@@ -179,7 +208,7 @@ type IFormat = {
 
 export function matchesFormat(
 	tokens: LexerTokenList,
-	formats: IFormat[],
+	formats: (IFormat | IFormat[])[],
 ): boolean {
 	for (let i = 0; i < formats.length; i++) {
 		const token = tokens[i];
@@ -190,6 +219,18 @@ export function matchesFormat(
 		}
 
 		const format = formats[i];
+		if (Array.isArray(format)) {
+			// We are OR-ing formats in our array
+			const anyMatch = format.some((format) =>
+				matchesFormat([token], [format]),
+			);
+			if (!anyMatch) {
+				return false;
+			}
+			// The rest is for a single entry, skip
+			continue;
+		}
+
 		if (format.instance && !(token instanceof format.instance)) {
 			return false;
 		}
@@ -202,7 +243,7 @@ export function matchesFormat(
 		) {
 			return false;
 		}
-		if ("type" in format && token.type !== format.type) {
+		if ("type" in format && !token.isType(format.type)) {
 			return false;
 		}
 		if ("value" in format && token.value !== format.value) {
