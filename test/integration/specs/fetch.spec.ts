@@ -360,6 +360,28 @@ Content-Type: TEXT/PLAIN; CHARSET=US-ASCII\r
 		},
 	},
 	{
+		name: "CONDSTORE Fetch MODSEQ Spec Example #1",
+		input: "* 7 FETCH (MODSEQ (12121231777))" + CRLF,
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				num(7),
+				tokenSP,
+				atom("FETCH"),
+				tokenSP,
+				tokenOpenParen,
+				atom("MODSEQ"),
+				tokenSP,
+				tokenOpenParen,
+				num(12121231777),
+				tokenCloseParen,
+				tokenCloseParen,
+				tokenCRLF,
+			],
+		},
+	},
+	{
 		// From: https://www.atmail.com/blog/imap-101-manual-imap-sessions/
 		name: "atmail IMAP 101 Example RFC822 Fetch",
 		input:

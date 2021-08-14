@@ -8,6 +8,7 @@ import { Envelope, match as EnvelopeMatch } from "./envelope";
 import { match as FlagMatch } from "./flag";
 import { MessageHeader, match as HeaderMatch } from "./header";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
+import { ModSeqBodyResponse, match as ModSeqMatch } from "./modseq";
 import { RFC822Size, match as RFCMatch } from "./rfc822";
 import { match as UIDMatch } from "./uid";
 
@@ -29,6 +30,7 @@ type FetchMatch =
 	| MessageBody
 	| MessageBodyPiece
 	| MessageHeader
+	| ModSeqBodyResponse
 	| RFC822Size
 	| UID;
 
@@ -40,6 +42,7 @@ const FETCH_MATCHERS = [
 	BodyMatch,
 	HeaderMatch,
 	UIDMatch,
+	ModSeqMatch,
 ] as const;
 
 function findFetchMatch(tokens: LexerTokenList) {
@@ -71,6 +74,7 @@ export class Fetch {
 	public readonly date?: Date;
 	public readonly envelope?: Envelope;
 	public readonly flags?: FlagList;
+	public readonly modseq?: number;
 	public readonly size?: number;
 	public readonly uid?: UID;
 
@@ -105,6 +109,8 @@ export class Fetch {
 				this.date = piece.datetime;
 			} else if (piece instanceof UID) {
 				this.uid = piece;
+			} else if (piece instanceof ModSeqBodyResponse) {
+				this.modseq = piece.modseq;
 			} else if (piece instanceof Envelope) {
 				this.envelope = piece;
 			} else if (piece instanceof FlagList) {
