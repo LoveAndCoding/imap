@@ -6,7 +6,12 @@ export class ResponseText {
 	public readonly code?: TextCode;
 	public readonly content: string;
 
-	constructor(tokens: LexerTokenList) {
+	constructor(tokens: LexerTokenList | string) {
+		if (typeof tokens === "string") {
+			this.content = tokens;
+			return;
+		}
+
 		// Check if we have a text code, and grab it if we do
 		const codeMatch = textCodeMatch(tokens);
 		if (codeMatch) {
