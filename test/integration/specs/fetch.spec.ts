@@ -22,6 +22,7 @@ import {
 	tokenNil,
 	tokenOpenBrack,
 	tokenCloseBrack,
+	bigint,
 } from "./constants";
 import { TestSpec } from "./types";
 
@@ -374,7 +375,7 @@ Content-Type: TEXT/PLAIN; CHARSET=US-ASCII\r
 				atom("MODSEQ"),
 				tokenSP,
 				tokenOpenParen,
-				num(12121231777),
+				bigint(12121231777n),
 				tokenCloseParen,
 				tokenCloseParen,
 				tokenCRLF,

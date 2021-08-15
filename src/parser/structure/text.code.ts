@@ -1,5 +1,4 @@
 import { ParsingError } from "../../errors";
-import { NumberToken } from "../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
@@ -115,7 +114,7 @@ export class AtomTextCode {
 }
 
 export class NumberTextCode {
-	public readonly value: number;
+	public readonly value: number | bigint;
 
 	constructor(
 		public readonly kind:
@@ -124,10 +123,17 @@ export class NumberTextCode {
 			| "UIDVALIDITY"
 			| "UNSEEN",
 		tokens: LexerTokenList,
+		allow64BitNumber = false,
 	) {
 		// spec: "UIDNEXT" SP nz-number
 		const numToken = tokens[0];
-		if (!numToken || !(numToken instanceof NumberToken)) {
+		if (
+			!numToken ||
+			!(
+				numToken.isType(TokenTypes.number) ||
+				(allow64BitNumber && numToken.isType(TokenTypes.bigint))
+			)
+		) {
 			throw new ParsingError(
 				`Recieved invalid format for ${kind}`,
 				tokens,
@@ -217,7 +223,11 @@ export function match(
 			case "UIDNEXT":
 			case "UIDVALIDITY":
 			case "UNSEEN":
-				code = new NumberTextCode(kind, contents);
+				code = new NumberTextCode(
+					kind,
+					contents,
+					kind === "HIGHESTMODSEQ", // MODSEQ allows 64-bit numbers
+				);
 				break;
 			default:
 				code = new AtomTextCode(kind, contents);

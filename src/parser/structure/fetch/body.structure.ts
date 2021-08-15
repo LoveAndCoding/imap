@@ -18,7 +18,11 @@ import { Envelope } from "./envelope";
 //                       ; body-extension fields except as defined by
 //                       ; future standard or standards-track
 //                       ; revisions of this specification.
-type AdditionalExtensionData = string | number | AdditionalExtensionData[];
+type AdditionalExtensionData =
+	| string
+	| number
+	| bigint
+	| AdditionalExtensionData[];
 
 type Disposition = {
 	type: string;
@@ -116,7 +120,8 @@ export class MessageBodyStructure {
 				const token = tokenSet[0];
 				if (
 					token.isType(TokenTypes.string) ||
-					token.isType(TokenTypes.number)
+					token.isType(TokenTypes.number) ||
+					token.isType(TokenTypes.bigint)
 				) {
 					data.push(token.getTrueValue());
 				} else {

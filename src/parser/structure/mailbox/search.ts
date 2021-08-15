@@ -61,7 +61,7 @@ export function* esearchKeyValuePairGenerator(tokens: LexerTokenList) {
 
 export class SearchResponse {
 	public readonly results: number[];
-	public readonly modseq?: number;
+	public readonly modseq?: number | bigint;
 
 	// From spec:
 	//   "SEARCH" *(SP nz-number) [SP "(" "MODSEQ" SP mod-sequence-value ")"]
@@ -83,7 +83,12 @@ export class SearchResponse {
 			const modseqTokens = tokens.slice(modseqIndex - 2);
 			tokens = tokens.slice(0, modseqIndex - 2);
 			const shouldBeNumber = modseqTokens[4];
-			if (!shouldBeNumber.isType(TokenTypes.number)) {
+			if (
+				!(
+					shouldBeNumber.isType(TokenTypes.number) ||
+					shouldBeNumber.isType(TokenTypes.bigint)
+				)
+			) {
 				throw new ParsingError("Invalid MODSEQ value provided", tokens);
 			}
 			this.modseq = shouldBeNumber.getTrueValue();
@@ -111,7 +116,7 @@ export class ExtendedSearchResponse {
 	public readonly count?: number;
 	public readonly max?: number;
 	public readonly min?: number;
-	public readonly modSequenceValue?: number;
+	public readonly modSequenceValue?: number | bigint;
 	public readonly results?: UIDSet;
 
 	public readonly data: Map<string, UIDSet | number | ESearchComplexValue>;
@@ -188,6 +193,9 @@ export class ExtendedSearchResponse {
 			const uKey = key.toUpperCase();
 			const valIsNum =
 				value.length === 1 && value[0].isType(TokenTypes.number);
+			const valIsBigIntOrNum =
+				valIsNum ||
+				(value.length === 1 && value[0].isType(TokenTypes.bigint));
 
 			if (uKey === "COUNT" && valIsNum) {
 				this.count = (value[0] as ILexerToken<number>).getTrueValue();
@@ -195,9 +203,9 @@ export class ExtendedSearchResponse {
 				this.min = (value[0] as ILexerToken<number>).getTrueValue();
 			} else if (uKey === "MAX" && valIsNum) {
 				this.max = (value[0] as ILexerToken<number>).getTrueValue();
-			} else if (uKey === "MODSEQ" && valIsNum) {
+			} else if (uKey === "MODSEQ" && valIsBigIntOrNum) {
 				this.modSequenceValue = (value[0] as ILexerToken<
-					number
+					number | bigint
 				>).getTrueValue();
 			} else if (uKey === "ALL" && isRange(value)) {
 				this.results = new UIDSet(value);

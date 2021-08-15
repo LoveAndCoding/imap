@@ -74,7 +74,7 @@ export class Fetch {
 	public readonly date?: Date;
 	public readonly envelope?: Envelope;
 	public readonly flags?: FlagList;
-	public readonly modseq?: number;
+	public readonly modseq?: number | bigint;
 	public readonly size?: number;
 	public readonly uid?: UID;
 

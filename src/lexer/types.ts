@@ -3,6 +3,7 @@
 // https://datatracker.ietf.org/doc/html/rfc3501#section-4
 export enum TokenTypes {
 	atom,
+	bigint,
 	eol,
 	nil,
 	number,
@@ -13,6 +14,7 @@ export enum TokenTypes {
 
 type TokenTypeTrueValueMap = {
 	[TokenTypes.atom]: string;
+	[TokenTypes.bigint]: number | bigint;
 	[TokenTypes.eol]: "\r\n";
 	[TokenTypes.nil]: null;
 	[TokenTypes.number]: number;

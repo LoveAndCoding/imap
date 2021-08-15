@@ -1,5 +1,5 @@
 import { NumberRule } from "../../../../src/lexer/rules/number";
-import { NumberToken } from "../../../../src/lexer/tokens/number";
+import { BigIntToken, NumberToken } from "../../../../src/lexer/tokens/number";
 
 jest.mock("../../../../src/lexer/tokens/number");
 
@@ -25,19 +25,19 @@ describe("NumberRule", () => {
 		expect(NumberTokenMock.mock.calls[0][0]).toBe(str);
 	});
 
-	test("Matches an unsafe large integer value", () => {
+	test("Matches an large integer value with bigint", () => {
 		// Arrange
-		const str = "13000000000000000000000000000000000000000000000000000";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
-			typeof NumberToken
+		const str = "1300000000000000000000";
+		const BigIntTokenMock = BigIntToken as jest.MockedClass<
+			typeof BigIntToken
 		>;
 
 		// Act
 		const match = rule.match(str);
 
 		// Assert
-		expect(NumberTokenMock.mock.instances).toHaveLength(1);
-		expect(NumberTokenMock.mock.calls[0][0]).toBe(str);
+		expect(BigIntTokenMock.mock.instances).toHaveLength(1);
+		expect(BigIntTokenMock.mock.calls[0][0]).toBe(str);
 	});
 
 	test("Partial match to a number with other characters", () => {

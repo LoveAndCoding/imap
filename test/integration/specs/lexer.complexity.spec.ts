@@ -1,4 +1,3 @@
-import { NumberToken } from "../../../src/lexer/tokens";
 import {
 	// Helper FNs
 	atom,
@@ -10,6 +9,7 @@ import {
 	tokenOpenParen,
 	tokenCloseParen,
 	tokenSP,
+	bigint,
 } from "./constants";
 import { TestSpec } from "./types";
 
@@ -63,11 +63,7 @@ const lexerComplexitySpec: TestSpec[] = [
 		name: "Integer exceeding JavaScript max int size",
 		input: "RFC822.SIZE 9007199254740993",
 		results: {
-			lexer: [
-				atom("RFC822.SIZE"),
-				tokenSP,
-				new NumberToken("9007199254740993"),
-			],
+			lexer: [atom("RFC822.SIZE"), tokenSP, bigint(9007199254740993n)],
 		},
 	},
 	{

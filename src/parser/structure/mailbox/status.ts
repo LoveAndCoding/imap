@@ -14,7 +14,7 @@ export class MailboxStatus {
 
 	public readonly name: string;
 
-	public readonly highestmodseq: number;
+	public readonly highestmodseq: number | bigint;
 	public readonly messages: number;
 	public readonly recent: number;
 	public readonly uidnext: number;
@@ -63,7 +63,21 @@ export class MailboxStatus {
 			const [keyToken] = keyTokens;
 			const [valueToken] = valueTokens;
 
-			if (!valueToken.isType(TokenTypes.number)) {
+			if (!keyToken.isType(TokenTypes.atom)) {
+				throw new ParsingError(
+					"Unexpected key in mailbox status response",
+					attListTokens,
+				);
+			}
+			const key = keyToken.getTrueValue().toUpperCase();
+
+			if (
+				!(
+					valueToken.isType(TokenTypes.number) ||
+					(key === "HIGHESTMODSEQ" &&
+						valueToken.isType(TokenTypes.bigint))
+				)
+			) {
 				throw new ParsingError(
 					"Unexpected value in mailbox status response",
 					attListTokens,
@@ -71,21 +85,21 @@ export class MailboxStatus {
 			}
 			const num = valueToken.getTrueValue();
 
-			switch (keyToken.value) {
+			switch (key) {
 				case "MESSAGES":
-					this.messages = num;
+					this.messages = num as number; // BigInt only for MODSEQ
 					break;
 				case "RECENT":
-					this.recent = num;
+					this.recent = num as number; // BigInt only for MODSEQ
 					break;
 				case "UIDNEXT":
-					this.uidnext = num;
+					this.uidnext = num as number; // BigInt only for MODSEQ
 					break;
 				case "UIDVALIDITY":
-					this.uidvalidity = num;
+					this.uidvalidity = num as number; // BigInt only for MODSEQ
 					break;
 				case "UNSEEN":
-					this.unseen = num;
+					this.unseen = num as number; // BigInt only for MODSEQ
 					break;
 				case "HIGHESTMODSEQ":
 					this.highestmodseq = num;
@@ -93,7 +107,7 @@ export class MailboxStatus {
 				default:
 					throw new ParsingError(
 						"Unexpected mailbox status key",
-						keyToken.value,
+						key,
 					);
 			}
 		}
