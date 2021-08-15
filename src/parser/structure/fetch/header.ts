@@ -39,8 +39,15 @@ export class MessageHeader {
 		cleanedHeader = cleanedHeader.replace(/\r\n(\s)/g, "$1");
 		const lines = cleanedHeader.split("\r\n");
 		// If the first line is empty, ignore it
-		if (lines[0] && !lines[0].trim()) {
+		if (typeof lines[0] !== "undefined" && !lines[0].trim()) {
 			lines.shift();
+		}
+		// We likely end on a CRLF, so remove that too
+		if (
+			typeof lines[lines.length - 1] !== "undefined" &&
+			!lines[lines.length - 1].trim()
+		) {
+			lines.pop();
 		}
 
 		for (const line of lines) {
