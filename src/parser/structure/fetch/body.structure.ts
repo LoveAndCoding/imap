@@ -45,7 +45,7 @@ export class MessageBodyStructure {
 	public readonly parameters: null | Map<string, string>;
 	public readonly id: string;
 	public readonly description: string;
-	public readonly encoding: string;
+	public readonly encoding: null | string;
 	public readonly octets: number;
 	// Message type structures
 	public readonly envelope?: Envelope;
@@ -96,7 +96,11 @@ export class MessageBodyStructure {
 	// From spec: body-fld-lang   = nstring / "(" string *(SP string) ")"
 	public static parseLanguage(lang: LexerTokenList): string[] {
 		if (lang && lang.length === 1) {
-			return [getNStringValue(lang)];
+			const val = getNStringValue(lang);
+			if (val !== null) {
+				return [val];
+			}
+			return null;
 		} else if (lang && lang.length) {
 			return getSpaceSeparatedStringList(lang);
 		}
@@ -163,7 +167,15 @@ export class MessageBodyStructure {
 		...otherData
 	]: LexerTokenList[]) {
 		// Type checks that aren't handled in other functions
-		if (encoding.length !== 1 || !encoding[0].isType(TokenTypes.string)) {
+		// Technically Nil is not a valid encoding, but it seems some
+		// servers in the wild do return it sometimes.
+		if (
+			encoding.length !== 1 ||
+			!(
+				encoding[0].isType(TokenTypes.string) ||
+				encoding[0].isType(TokenTypes.nil)
+			)
+		) {
 			throw new ParsingError(
 				"Invalid encoding type for body structure",
 				encoding,
@@ -249,7 +261,7 @@ export class MessageBodyStructure {
 //   body-type-mpart = 1*body SP media-subtype
 //                     [SP body-ext-mpart]
 export class MessageBodyMultipartStructure {
-	public readonly additionalExtensionData: AdditionalExtensionData;
+	public readonly additionalExtensionData?: AdditionalExtensionData;
 	public readonly parameters?: Map<string, string>;
 	public readonly disposition?: Disposition;
 	public readonly language?: string[];
