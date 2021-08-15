@@ -13,8 +13,8 @@
 	},
 	"scripts": {
 		"build": "tsc -d",
-		"test": "node test/test.js",
-		"test:jest": "jest"
+		"test": "jest",
+		"test:old": "node test/test.js"
 	},
 	"engines": {
 		"node": ">=14.0.0"

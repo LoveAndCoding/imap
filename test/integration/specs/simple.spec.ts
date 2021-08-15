@@ -6,6 +6,7 @@
 // by simply reading the input
 //
 // Many of these examples are pulled directly from the IMAP specification.
+import { NumberToken } from "../../../src/lexer/tokens";
 import {
 	CRLF,
 	// Helper FNs
@@ -52,6 +53,66 @@ const simpleSet: TestSpec[] = [
 				tag: {
 					id: 1,
 				},
+			},
+		},
+	},
+	{
+		name: "Unknown line",
+		input: ["IDLE OK IDLE terminated", CRLF].join(""),
+		results: {
+			lexer: [
+				atom("IDLE"),
+				tokenSP,
+				atom("OK"),
+				tokenSP,
+				atom("IDLE"),
+				tokenSP,
+				atom("terminated"),
+				tokenCRLF,
+			],
+			parser: { text: "IDLE OK IDLE terminated" },
+		},
+	},
+	{
+		name: "Unknown line with + char",
+		input: [
+			"IDLE OK Idle completed (0.002 + 1.783 + 1.783 secs).",
+			CRLF,
+		].join(""),
+		results: {
+			lexer: [
+				atom("IDLE"),
+				tokenSP,
+				atom("OK"),
+				tokenSP,
+				atom("Idle"),
+				tokenSP,
+				atom("completed"),
+				tokenSP,
+				tokenOpenParen,
+				num(0),
+				op("."),
+				new NumberToken("002"),
+				tokenSP,
+				tokenPlus,
+				tokenSP,
+				num(1),
+				op("."),
+				num(783),
+				tokenSP,
+				tokenPlus,
+				tokenSP,
+				num(1),
+				op("."),
+				num(783),
+				tokenSP,
+				atom("secs"),
+				tokenCloseParen,
+				op("."),
+				tokenCRLF,
+			],
+			parser: {
+				text: "IDLE OK Idle completed (0.002 + 1.783 + 1.783 secs).",
 			},
 		},
 	},
@@ -156,6 +217,18 @@ const simpleSet: TestSpec[] = [
 						kind: "ALERT",
 					},
 					content: "idling",
+				},
+			},
+		},
+	},
+	{
+		name: "Continuation (broken -- RFC violation) sent by AOL IMAP",
+		input: `+${CRLF}`,
+		results: {
+			lexer: [tokenPlus, tokenCRLF],
+			parser: {
+				text: {
+					content: "",
 				},
 			},
 		},
@@ -1219,6 +1292,37 @@ const simpleSet: TestSpec[] = [
 		},
 	},
 	{
+		name: "Untagged OK (no text code, with text) (RFC violation)",
+		input: `* OK [UNSEEN 17]${CRLF}`,
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				atom("OK"),
+				tokenSP,
+				tokenOpenBrack,
+				atom("UNSEEN"),
+				tokenSP,
+				num(17),
+				tokenCloseBrack,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					status: "OK",
+					text: {
+						code: {
+							kind: "UNSEEN",
+							value: 17,
+						},
+						content: "",
+					},
+				},
+				type: "STATUS",
+			},
+		},
+	},
+	{
 		name: "Untagged OK (no text code, with text)",
 		input: ["* OK IMAP4rev1 Service Ready", CRLF].join(""),
 		results: {
@@ -1239,6 +1343,22 @@ const simpleSet: TestSpec[] = [
 					status: "OK",
 					text: {
 						content: "IMAP4rev1 Service Ready",
+					},
+				},
+				type: "STATUS",
+			},
+		},
+	},
+	{
+		name: "Untagged OK (no text code, no text) (RFC violation)",
+		input: `* OK${CRLF}`,
+		results: {
+			lexer: [tokenStar, tokenSP, atom("OK"), tokenCRLF],
+			parser: {
+				content: {
+					status: "OK",
+					text: {
+						content: "",
 					},
 				},
 				type: "STATUS",
