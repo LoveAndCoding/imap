@@ -22,7 +22,7 @@ import {
 	tokenNil,
 	tokenOpenBrack,
 	tokenCloseBrack,
-	bigint,
+	bigInt,
 } from "./constants";
 import { TestSpec } from "./types";
 
@@ -375,7 +375,7 @@ Content-Type: TEXT/PLAIN; CHARSET=US-ASCII\r
 				atom("MODSEQ"),
 				tokenSP,
 				tokenOpenParen,
-				bigint(12121231777n),
+				bigInt(12121231777n),
 				tokenCloseParen,
 				tokenCloseParen,
 				tokenCRLF,
@@ -931,6 +931,108 @@ ding-right:0 !important;padding-left:0 !important;\"/></body></html>\r
 							},
 						],
 					},
+				},
+				type: "FETCH",
+			},
+		},
+	},
+	{
+		name: "Gmail Extensions (Labels, Message ID, Thread ID)",
+		input: [
+			`* 1 FETCH (X-GM-MSGID 1278455344230334865 `,
+			`X-GM-THRID 1278455344230334865 X-GM-LABELS `,
+			`(\\Inbox \\Sent Important "Muy Importante"))`,
+			CRLF,
+		].join(""),
+		results: {
+			lexer: [
+				tokenStar,
+				tokenSP,
+				num(1),
+				tokenSP,
+				atom("FETCH"),
+				tokenSP,
+				tokenOpenParen,
+				atom("X-GM-MSGID"),
+				tokenSP,
+				bigInt(1278455344230334865n),
+				tokenSP,
+				atom("X-GM-THRID"),
+				tokenSP,
+				bigInt(1278455344230334865n),
+				tokenSP,
+				atom("X-GM-LABELS"),
+				tokenSP,
+				tokenOpenParen,
+				op("\\"),
+				atom("Inbox"),
+				tokenSP,
+				op("\\"),
+				atom("Sent"),
+				tokenSP,
+				atom("Important"),
+				tokenSP,
+				qString("Muy Importante"),
+				tokenCloseParen,
+				tokenCloseParen,
+				tokenCRLF,
+			],
+			parser: {
+				content: {
+					extensions: new Map([
+						[
+							"X-GM-MSGID",
+							{ type: "X-GM-MSGID", id: 1278455344230334865n },
+						],
+						[
+							"X-GM-THRID",
+							{ type: "X-GM-THRID", id: 1278455344230334865n },
+						],
+						[
+							"X-GM-LABELS",
+							{
+								type: "X-GM-LABELS",
+								labels: {
+									flagMap: new Map([
+										[
+											"\\Inbox",
+											{
+												name: "\\Inbox",
+												isKnownName: false,
+												isWildcard: false,
+											},
+										],
+										[
+											"\\Sent",
+											{
+												name: "\\Sent",
+												isKnownName: true,
+												isWildcard: false,
+											},
+										],
+										[
+											"Important",
+											{
+												name: "Important",
+												isKnownName: false,
+												isWildcard: false,
+											},
+										],
+										[
+											"Muy Importante",
+											{
+												name: "Muy Importante",
+												isKnownName: false,
+												isWildcard: false,
+											},
+										],
+									]),
+									hasWildcard: false,
+								},
+							},
+						],
+					]),
+					sequenceNumber: 1,
 				},
 				type: "FETCH",
 			},

@@ -9,7 +9,7 @@ import {
 	tokenOpenParen,
 	tokenCloseParen,
 	tokenSP,
-	bigint,
+	bigInt,
 } from "./constants";
 import { TestSpec } from "./types";
 
@@ -63,7 +63,7 @@ const lexerComplexitySpec: TestSpec[] = [
 		name: "Integer exceeding JavaScript max int size",
 		input: "RFC822.SIZE 9007199254740993",
 		results: {
-			lexer: [atom("RFC822.SIZE"), tokenSP, bigint(9007199254740993n)],
+			lexer: [atom("RFC822.SIZE"), tokenSP, bigInt(9007199254740993n)],
 		},
 	},
 	{

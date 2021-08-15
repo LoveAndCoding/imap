@@ -5,6 +5,13 @@ import { FlagList } from "../flag";
 import { UID } from "../uid";
 import { MessageBody, match as BodyMatch, MessageBodyPiece } from "./body";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
+import {
+	ExtensionsSupported,
+	GmailLabels,
+	GmailMessageId,
+	GmailThreadId,
+	match as ExtensionsMatch,
+} from "./extension";
 import { match as FlagMatch } from "./flag";
 import { MessageHeader, match as HeaderMatch } from "./header";
 import { InternalDate, match as InternalDateMatch } from "./internaldate";
@@ -16,6 +23,9 @@ export { Address, AddressList } from "./address";
 export {
 	Envelope,
 	FlagList,
+	GmailLabels,
+	GmailMessageId,
+	GmailThreadId,
 	InternalDate,
 	MessageBody,
 	MessageHeader,
@@ -25,6 +35,7 @@ export {
 
 type FetchMatch =
 	| Envelope
+	| ExtensionsSupported
 	| FlagList
 	| InternalDate
 	| MessageBody
@@ -43,6 +54,7 @@ const FETCH_MATCHERS = [
 	HeaderMatch,
 	UIDMatch,
 	ModSeqMatch,
+	ExtensionsMatch,
 ] as const;
 
 function findFetchMatch(tokens: LexerTokenList) {
@@ -73,6 +85,7 @@ export class Fetch {
 	public readonly body?: MessageBody;
 	public readonly date?: Date;
 	public readonly envelope?: Envelope;
+	public readonly extensions?: Map<string, ExtensionsSupported>;
 	public readonly flags?: FlagList;
 	public readonly modseq?: number | bigint;
 	public readonly size?: number;
@@ -128,6 +141,15 @@ export class Fetch {
 					this.body = new MessageBody();
 				}
 				this.body.addMessageBodyPiece(piece);
+			} else if (
+				piece instanceof GmailLabels ||
+				piece instanceof GmailMessageId ||
+				piece instanceof GmailThreadId
+			) {
+				if (!this.extensions) {
+					this.extensions = new Map();
+				}
+				this.extensions.set(piece.type, piece);
 			} else {
 				// Safety check. All cases should be accounted for above
 				throw new ParsingError(

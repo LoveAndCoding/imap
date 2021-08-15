@@ -1,5 +1,5 @@
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
-import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
+import { getAStringValue, splitSpaceSeparatedList } from "../utility";
 
 const KNOWN_FLAG_NAMES = [
 	// Mailbox
@@ -59,7 +59,7 @@ export class FlagList {
 			isWrappedInParens ? ")" : null,
 		);
 		blocks.map((block) => {
-			this.add(getOriginalInput(block));
+			this.add(getAStringValue(block));
 		});
 	}
 

@@ -36,6 +36,6 @@ export function num(number: number) {
 	return new tokens.NumberToken(`${number}`);
 }
 
-export function bigint(number: number | bigint) {
+export function bigInt(number: number | bigint) {
 	return new tokens.BigIntToken(`${number}`);
 }
