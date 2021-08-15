@@ -1,3 +1,4 @@
+import { decodeWords } from "../../encoding";
 import { LexerTokenList, TokenTypes } from "../../../lexer";
 import {
 	getNStringValue,
@@ -34,6 +35,9 @@ export class Envelope {
 
 		this.date = getNStringValue(date);
 		this.subject = getNStringValue(subject);
+		if (this.subject) {
+			this.subject = decodeWords(this.subject);
+		}
 		this.from = new AddressList(from);
 		this.sender = new AddressList(sender);
 		this.replyTo = new AddressList(replyTo);
