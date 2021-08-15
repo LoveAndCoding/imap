@@ -2,6 +2,8 @@ import { EventEmitter } from "events";
 import { Socket } from "net";
 import * as tls from "tls";
 
+import type { FlagList } from "../parser";
+
 export interface IConfig {
 	authTimeout?: number;
 	autotls?: "never" | "always" | "required";
@@ -40,11 +42,11 @@ export interface ICommand {
 
 export interface IBox {
 	name: string;
-	flags: string[];
+	flags: FlagList;
 	readOnly: boolean;
 	uidvalidity: number;
 	uidnext: number;
-	permFlags: string[];
+	permFlags: FlagList;
 	keywords: string[];
 	newKeywords: boolean;
 	persistentUIDs: boolean;

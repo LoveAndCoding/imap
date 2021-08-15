@@ -5,6 +5,18 @@ import { utf7 } from "../../encoding";
 import { getAStringValue } from "../../utility";
 import { FlagList } from "../flag";
 
+export enum SpecialUse {
+	"All" = "All",
+	"Archive" = "Archive",
+	"Drafts" = "Drafts",
+	"Flagged" = "Flagged",
+	"Important" = "Important",
+	"Inbox" = "Inbox",
+	"Junk" = "Junk",
+	"Sent" = "Sent",
+	"Trash" = "Trash",
+}
+
 // From spec:
 // mailbox-list    = "(" [mbx-list-flags] ")" SP
 //                   (DQUOTE QUOTED-CHAR DQUOTE / nil) SP mailbox
@@ -73,6 +85,18 @@ export class MailboxListing {
 		public readonly separator: null | string,
 	) {
 		this.name = utf7.decode(name);
+	}
+
+	public getSpecialUse(): SpecialUse {
+		if (this.isAll()) return SpecialUse.All;
+		if (this.isArchive()) return SpecialUse.Archive;
+		if (this.isDrafts()) return SpecialUse.Drafts;
+		if (this.isFlagged()) return SpecialUse.Flagged;
+		if (this.isImportant()) return SpecialUse.Important;
+		if (this.isInbox()) return SpecialUse.Inbox;
+		if (this.isJunk()) return SpecialUse.Junk;
+		if (this.isSent()) return SpecialUse.Sent;
+		if (this.isTrash()) return SpecialUse.Trash;
 	}
 
 	public isAll(): boolean {

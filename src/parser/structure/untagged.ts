@@ -15,6 +15,7 @@ import { ThreadResponse } from "./thread";
 type ContentType =
 	| CapabilityList
 	| Expunge
+	| Fetch
 	| IDResponse
 	| NamespaceResponse
 	| QuotaResponse

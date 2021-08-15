@@ -4,10 +4,37 @@ import { Socket } from "net";
 import { clearTimeout, setTimeout } from "timers";
 import * as tls from "tls";
 import { imap as utf7 } from "utf7";
-import { inspect, isDate } from "util";
+import { inspect, types } from "util";
 
 import { IMAPError } from "../errors";
-import Parser, { parseExpr, parseHeader } from "../parser";
+import NewlineTranform from "../newline.transform";
+import Lexer from "../lexer";
+import Parser, {
+	AppendUIDTextCode,
+	CapabilityList,
+	ContinueResponse,
+	CopyUIDTextCode,
+	ExistsCount,
+	Expunge,
+	ExtendedSearchResponse,
+	Fetch,
+	FlagList,
+	IDResponse,
+	MailboxListing,
+	MailboxStatus,
+	NamespaceResponse,
+	NumberTextCode,
+	PermentantFlagsTextCode,
+	QuotaResponse,
+	RecentCount,
+	SearchResponse,
+	SortResponse,
+	StatusResponse,
+	TaggedResponse,
+	ThreadResponse,
+	UnknownResponse,
+	UntaggedResponse,
+} from "../parser";
 import {
 	MAX_INT,
 	KEEPALIVE_INTERVAL,
@@ -111,11 +138,9 @@ export default class Connection extends EventEmitter {
 		};
 	}
 
-	public static parseHeader = parseHeader; // from Parser.js
-
 	private static getDefaultBox(): IBox {
 		return {
-			flags: [],
+			flags: new FlagList([]),
 			keywords: [],
 			messages: {
 				new: 0,
@@ -124,7 +149,7 @@ export default class Connection extends EventEmitter {
 			name: "",
 			newKeywords: false,
 			nomodseq: false,
-			permFlags: [],
+			permFlags: new FlagList([]),
 			persistentUIDs: true,
 			readOnly: false,
 			uidnext: 0,
@@ -133,17 +158,19 @@ export default class Connection extends EventEmitter {
 	}
 
 	public delimiter: void | string;
-	public namespaces: void | INamespaces;
+	public namespaces: void | NamespaceResponse;
 	public state: "disconnected" | "connected" | "authenticated";
+	public lexer: Lexer;
+	public parser: Parser;
 
 	private debug: (msg: string) => void;
 	private box: undefined | IBox;
-	private caps: undefined | string[];
+	private caps: undefined | CapabilityList;
 	private config: IConfig;
 	private curReq: undefined | ICommand;
 	private idle: { started: undefined | number; enabled: boolean };
-	private parser: undefined | Parser;
 	private queue: ICommand[];
+	private newlineTransform: NewlineTranform;
 	private sock: undefined | Socket;
 	private tagcount: number;
 	private tmrAuth: undefined | NodeJS.Timeout;
@@ -199,7 +226,6 @@ export default class Connection extends EventEmitter {
 	public connect() {
 		const config = this.config;
 		let socket: Socket;
-		let parser: Parser;
 		let tlsOptions: tls.ConnectionOptions;
 
 		socket = config.socket || new Socket();
@@ -317,56 +343,22 @@ export default class Connection extends EventEmitter {
 			this.emit("end");
 		});
 
-		this.parser = parser = new Parser(this.sock, this.debug);
+		const newlineTransform = new NewlineTranform();
+		this.newlineTransform = newlineTransform;
+		const lexer = new Lexer();
+		this.lexer = lexer;
+		const parser = new Parser();
+		this.parser = parser;
 
-		parser.on("untagged", (info) => {
-			this.resUntagged(info);
+		socket.pipe(newlineTransform).pipe(lexer).pipe(parser);
+
+		parser.on("untagged", (resp: UntaggedResponse) => {
+			this.resUntagged(resp);
 		});
-		parser.on("tagged", (info) => {
-			this.resTagged(info);
+		parser.on("tagged", (resp: TaggedResponse) => {
+			this.resTagged(resp);
 		});
-		parser.on("body", (stream, info) => {
-			if (!this.curReq) {
-				throw new IMAPError(
-					"Unable to find current request during parsing",
-				);
-			}
-
-			let msg = this.curReq.fetchCache[info.seqno];
-			let toget;
-
-			if (msg === undefined) {
-				msg = this.curReq.fetchCache[info.seqno] = {
-					attrs: {},
-					ended: false,
-					msgEmitter: new EventEmitter(),
-					toget: this.curReq.fetching.slice(0),
-				};
-
-				this.curReq.bodyEmitter.emit(
-					"message",
-					msg.msgEmitter,
-					info.seqno,
-				);
-			}
-
-			toget = msg.toget;
-
-			// here we compare the parsed version of the expression inside BODY[]
-			// because 'HEADER.FIELDS (TO FROM)' really is equivalent to
-			// 'HEADER.FIELDS ("TO" "FROM")' and some servers will actually send the
-			// quoted form even if the client did not use quotes
-			const thisbody = parseExpr(info.which);
-			for (let i = 0, len = toget.length; i < len; ++i) {
-				if (deepEqual(thisbody, toget[i])) {
-					toget.splice(i, 1);
-					msg.msgEmitter.emit("body", stream, info);
-					return;
-				}
-			}
-			stream.resume(); // a body we didn't ask for?
-		});
-		parser.on("continue", (info) => {
+		parser.on("continue", (resp: ContinueResponse) => {
 			if (!this.curReq) {
 				throw new IMAPError(
 					"Unable to find current request during parsing",
@@ -396,7 +388,7 @@ export default class Connection extends EventEmitter {
 				this.idle.started = Date.now();
 			} else if (/^AUTHENTICATE XOAUTH/.test(this.curReq.fullcmd)) {
 				this.curReq.oauthError = Buffer.from(
-					info.text,
+					resp.text.content,
 					"base64",
 				).toString("utf8");
 				this.debug("=> " + inspect(CRLF));
@@ -409,8 +401,8 @@ export default class Connection extends EventEmitter {
 				this.sock.write(line, "binary");
 			}
 		});
-		parser.on("other", (line) => {
-			const m = RE_IDLENOOPRES.exec(line);
+		parser.on("unknown", (resp: UnknownResponse) => {
+			const m = RE_IDLENOOPRES.exec(resp.text);
 			if (m) {
 				// no longer idling
 				this.idle.enabled = false;
@@ -453,14 +445,15 @@ export default class Connection extends EventEmitter {
 		});
 	}
 
-	public serverSupports(cap) {
-		return this.caps && this.caps.indexOf(cap) > -1;
+	public serverSupports(cap: string): boolean {
+		return this.caps.has(cap);
 	}
 
 	public destroy() {
 		this.queue = [];
 		this.curReq = undefined;
 		if (this.sock) {
+			this.sock.unpipe(this.newlineTransform);
 			this.sock.end();
 		}
 	}
@@ -473,13 +466,25 @@ export default class Connection extends EventEmitter {
 		});
 	}
 
-	public append(data, options, cb) {
+	public append(data: string | Buffer, cb: Function);
+	public append(
+		data: string | Buffer,
+		options: Record<string, any>,
+		cb: Function,
+	);
+	public append(
+		data: string | Buffer,
+		optionsOrCb: Record<string, any> | Function,
+		cb?: Function,
+	) {
 		const literal = this.serverSupports("LITERAL+");
-		if (typeof options === "function") {
-			cb = options;
-			options = undefined;
+		let options: Record<string, any>;
+		if (typeof optionsOrCb === "function") {
+			cb = optionsOrCb;
+			options = {};
+		} else {
+			options = optionsOrCb;
 		}
-		options = options || {};
 		if (!options.mailbox) {
 			if (!this.box) {
 				throw new IMAPError(
@@ -507,7 +512,7 @@ export default class Connection extends EventEmitter {
 			}
 		}
 		if (options.date) {
-			if (!isDate(options.date)) {
+			if (!types.isDate(options.date)) {
 				throw new IMAPError("`date` is not a Date object");
 			}
 			cmd += ' "';
@@ -540,11 +545,13 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	public getSpecialUseBoxes(cb) {
+	public getSpecialUseBoxes(cb: Function) {
 		this.enqueue('XLIST "" "*"', cb);
 	}
 
-	public getBoxes(namespace, cb) {
+	public getBoxes(cb: Function);
+	public getBoxes(namespace: string, cb: Function);
+	public getBoxes(namespace: string | Function, cb?: Function) {
 		if (typeof namespace === "function") {
 			cb = namespace;
 			namespace = "";
@@ -555,7 +562,7 @@ export default class Connection extends EventEmitter {
 		this.enqueue('LIST "' + namespace + '" "*"', cb);
 	}
 
-	public id(identification, cb) {
+	public id(identification: null | Record<string, string>, cb: Function) {
 		if (!this.serverSupports("ID")) {
 			throw new IMAPError("Server does not support ID");
 		}
@@ -585,7 +592,20 @@ export default class Connection extends EventEmitter {
 		this.enqueue(cmd, cb);
 	}
 
-	public openBox(name, readOnly, cb) {
+	public openBox(
+		name: string,
+		cb: (err: undefined | Error, box?: IBox) => void,
+	);
+	public openBox(
+		name: string,
+		readonly: boolean,
+		cb: (err: undefined | Error, box?: IBox) => void,
+	);
+	public openBox(
+		name: string,
+		readOnly: boolean | ((err: undefined | Error, box: IBox) => void),
+		cb?: (err: undefined | Error, box?: IBox) => void,
+	) {
 		if (this.state !== "authenticated") {
 			throw new IMAPError("Not authenticated");
 		}
@@ -618,7 +638,12 @@ export default class Connection extends EventEmitter {
 		});
 	}
 
-	public closeBox(shouldExpunge, cb) {
+	public closeBox(cb: (err?: Error) => void);
+	public closeBox(shouldExpunge: boolean, cb: (err?: Error) => void);
+	public closeBox(
+		shouldExpunge: boolean | ((err?: Error) => void),
+		cb?: (err?: Error) => void,
+	) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		}
@@ -659,15 +684,19 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	public addBox(name, cb) {
+	public addBox(name: string, cb: Function) {
 		this.enqueue('CREATE "' + escape(utf7.encode("" + name)) + '"', cb);
 	}
 
-	public delBox(name, cb) {
+	public delBox(name: string, cb: Function) {
 		this.enqueue('DELETE "' + escape(utf7.encode("" + name)) + '"', cb);
 	}
 
-	public renameBox(oldname, newname, cb) {
+	public renameBox(
+		oldname: string,
+		newname: string,
+		cb: (err?: Error, box?: IBox) => void,
+	) {
 		const encoldname = escape(utf7.encode("" + oldname));
 		const encnewname = escape(utf7.encode("" + newname));
 
@@ -692,18 +721,20 @@ export default class Connection extends EventEmitter {
 		);
 	}
 
-	public subscribeBox(name, cb) {
+	public subscribeBox(name: string, cb: Function) {
 		this.enqueue('SUBSCRIBE "' + escape(utf7.encode("" + name)) + '"', cb);
 	}
 
-	public unsubscribeBox(name, cb) {
+	public unsubscribeBox(name: string, cb: Function) {
 		this.enqueue(
 			'UNSUBSCRIBE "' + escape(utf7.encode("" + name)) + '"',
 			cb,
 		);
 	}
 
-	public getSubscribedBoxes(namespace, cb) {
+	public getSubscribedBoxes(cb: Function);
+	public getSubscribedBoxes(namespace: string, cb: Function);
+	public getSubscribedBoxes(namespace: string | Function, cb?: Function) {
 		if (typeof namespace === "function") {
 			cb = namespace;
 			namespace = "";
@@ -714,7 +745,7 @@ export default class Connection extends EventEmitter {
 		this.enqueue('LSUB "' + namespace + '" "*"', cb);
 	}
 
-	public status(boxName, cb) {
+	public status(boxName: string, cb: Function) {
 		if (this.box && this.box.name === boxName) {
 			throw new IMAPError(
 				"Cannot call status on currently selected mailbox",
@@ -771,68 +802,96 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	public search(criteria, cb) {
+	public search(criteria: string | string[], cb: Function) {
 		this._search("UID ", criteria, cb);
 	}
 
-	public addFlags(uids, flags, cb) {
+	public addFlags(
+		uids: string | string[],
+		flags: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "+", flags }, cb);
 	}
 
-	public delFlags(uids, flags, cb) {
+	public delFlags(
+		uids: string | string[],
+		flags: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "-", flags }, cb);
 	}
 
-	public setFlags(uids, flags, cb) {
+	public setFlags(
+		uids: string | string[],
+		flags: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "", flags }, cb);
 	}
 
-	public addKeywords(uids, keywords, cb) {
+	public addKeywords(
+		uids: string | string[],
+		keywords: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "+", keywords }, cb);
 	}
 
-	public delKeywords(uids, keywords, cb) {
+	public delKeywords(
+		uids: string | string[],
+		keywords: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "-", keywords }, cb);
 	}
 
-	public setKeywords(uids, keywords, cb) {
+	public setKeywords(
+		uids: string | string[],
+		keywords: string | string[],
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "", keywords }, cb);
 	}
 
-	public copy(uids, boxTo, cb) {
+	public copy(uids: string | string[], boxTo: string, cb: Function) {
 		this._copy("UID ", uids, boxTo, cb);
 	}
 
-	public move(uids, boxTo, cb) {
+	public move(uids: string | string[], boxTo: string, cb: Function) {
 		this._move("UID ", uids, boxTo, cb);
 	}
 
-	public fetch(uids, options) {
+	public fetch(uids: string | string[], options) {
 		return this._fetch("UID ", uids, options);
 	}
 
 	// Extension methods ===========================================================
-	public setLabels(uids, labels, cb) {
+	public setLabels(
+		uids: string | string[],
+		labels: string | string[],
+		cb: Function,
+	) {
 		this.storeLabels("UID ", uids, labels, "", cb);
 	}
 
-	public addLabels(uids, labels, cb) {
+	public addLabels(uids, labels, cb: Function) {
 		this.storeLabels("UID ", uids, labels, "+", cb);
 	}
 
-	public delLabels(uids, labels, cb) {
+	public delLabels(uids, labels, cb: Function) {
 		this.storeLabels("UID ", uids, labels, "-", cb);
 	}
 
-	public sort(sorts, criteria, cb) {
+	public sort(sorts, criteria: string[], cb: Function) {
 		this._sort("UID ", sorts, criteria, cb);
 	}
 
-	public esearch(criteria, options, cb) {
+	public esearch(criteria: string[], options, cb: Function) {
 		this._esearch("UID ", criteria, options, cb);
 	}
 
-	public setQuota(quotaRoot, limits, cb) {
+	public setQuota(quotaRoot: string, limits, cb: Function) {
 		if (typeof limits === "function") {
 			cb = limits;
 			limits = {};
@@ -860,7 +919,7 @@ export default class Connection extends EventEmitter {
 		);
 	}
 
-	public getQuota(quotaRoot, cb) {
+	public getQuota(quotaRoot: string, cb: Function) {
 		quotaRoot = escape(utf7.encode("" + quotaRoot));
 
 		this.enqueue('GETQUOTA "' + quotaRoot + '"', (err, quotalist) => {
@@ -872,7 +931,7 @@ export default class Connection extends EventEmitter {
 		});
 	}
 
-	public getQuotaRoot(boxName, cb) {
+	public getQuotaRoot(boxName: string, cb: Function) {
 		boxName = escape(utf7.encode("" + boxName));
 
 		this.enqueue('GETQUOTAROOT "' + boxName + '"', (err, quotalist) => {
@@ -891,35 +950,65 @@ export default class Connection extends EventEmitter {
 		});
 	}
 
-	public thread(algorithm, criteria, cb) {
+	public thread(algorithm: string, criteria: string[], cb: Function) {
 		this._thread("UID ", algorithm, criteria, cb);
 	}
 
-	public addFlagsSince(uids, flags, modseq, cb) {
+	public addFlagsSince(
+		uids: string | string[],
+		flags: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "+", flags, modseq }, cb);
 	}
 
-	public delFlagsSince(uids, flags, modseq, cb) {
+	public delFlagsSince(
+		uids: string | string[],
+		flags: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "-", flags, modseq }, cb);
 	}
 
-	public setFlagsSince(uids, flags, modseq, cb) {
+	public setFlagsSince(
+		uids: string | string[],
+		flags: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "", flags, modseq }, cb);
 	}
 
-	public addKeywordsSince(uids, keywords, modseq, cb) {
+	public addKeywordsSince(
+		uids: string | string[],
+		keywords: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "+", keywords, modseq }, cb);
 	}
 
-	public delKeywordsSince(uids, keywords, modseq, cb) {
+	public delKeywordsSince(
+		uids: string | string[],
+		keywords: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "-", keywords, modseq }, cb);
 	}
 
-	public setKeywordsSince(uids, keywords, modseq, cb) {
+	public setKeywordsSince(
+		uids: string | string[],
+		keywords: string | string[],
+		modseq: number,
+		cb: Function,
+	) {
 		this.store("UID ", uids, { mode: "", keywords, modseq }, cb);
 	}
 
-	private _search(which, criteria, cb) {
+	private _search(which, criteria, cb: Function) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		} else if (!Array.isArray(criteria)) {
@@ -943,10 +1032,17 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	private store(which, uids, cfg, cb) {
+	private store(
+		which: string,
+		uids: string[] | string,
+		cfg:
+			| { mode: string; flags: string | string[]; modseq?: number }
+			| { mode: string; keywords: string | string[]; modseq?: number },
+		cb: Function,
+	) {
 		const mode = cfg.mode;
-		const isFlags = cfg.flags !== undefined;
-		let items = isFlags ? cfg.flags : cfg.keywords;
+		const isFlags = "flags" in cfg;
+		let items = "flags" in cfg ? cfg.flags : cfg.keywords;
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		} else if (uids === undefined) {
@@ -1016,7 +1112,7 @@ export default class Connection extends EventEmitter {
 		);
 	}
 
-	private _copy(which, uids, boxTo, cb) {
+	private _copy(which, uids, boxTo, cb: Function) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		}
@@ -1037,7 +1133,7 @@ export default class Connection extends EventEmitter {
 		this.enqueue(which + "COPY " + uids.join(",") + ' "' + boxTo + '"', cb);
 	}
 
-	private _move(which, uids, boxTo, cb) {
+	private _move(which, uids, boxTo, cb: Function) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		}
@@ -1061,8 +1157,8 @@ export default class Connection extends EventEmitter {
 
 			this.enqueue(which + "MOVE " + uids + ' "' + boxTo + '"', cb);
 		} else if (
-			this.box.permFlags.indexOf("\\Deleted") === -1 &&
-			this.box.flags.indexOf("\\Deleted") === -1
+			!this.box.permFlags.has("\\Deleted") &&
+			!this.box.flags.has("\\Deleted")
 		) {
 			throw new IMAPError(
 				"Cannot move message: " +
@@ -1151,7 +1247,7 @@ export default class Connection extends EventEmitter {
 
 		if (uids.length === 0) {
 			throw new IMAPError(
-				"Empty " + (which === "" ? "sequence number" : "uid") + "list",
+				"Empty " + (which === "" ? "sequence number" : "uid") + " list",
 			);
 		}
 
@@ -1202,7 +1298,7 @@ export default class Connection extends EventEmitter {
 					bodies = [bodies];
 				}
 				for (i = 0, len = bodies.length; i < len; ++i) {
-					fetching.push(parseExpr("" + bodies[i]));
+					fetching.push(bodies[i]);
 					cmd += " BODY" + prefix + "[" + bodies[i] + "]";
 				}
 			}
@@ -1237,7 +1333,7 @@ export default class Connection extends EventEmitter {
 		return (req.bodyEmitter = new EventEmitter());
 	}
 
-	private storeLabels(which, uids, labels, mode, cb) {
+	private storeLabels(which, uids, labels, mode, cb: Function) {
 		if (!this.serverSupports("X-GM-EXT-1")) {
 			throw new IMAPError("Server must support X-GM-EXT-1 capability");
 		} else if (this.box === undefined) {
@@ -1290,7 +1386,7 @@ export default class Connection extends EventEmitter {
 		);
 	}
 
-	private _sort(which, sorts, criteria, cb) {
+	private _sort(which, sorts, criteria, cb: Function) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		} else if (!Array.isArray(sorts) || !sorts.length) {
@@ -1352,7 +1448,7 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	private _esearch(which, criteria, options, cb) {
+	private _esearch(which, criteria, options, cb: Function) {
 		if (this.box === undefined) {
 			throw new IMAPError("No mailbox is currently selected");
 		} else if (!Array.isArray(criteria)) {
@@ -1390,7 +1486,7 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	private _thread(which, algorithm, criteria, cb) {
+	private _thread(which, algorithm, criteria, cb: Function) {
 		algorithm = algorithm.toUpperCase();
 
 		if (!this.serverSupports("THREAD=" + algorithm)) {
@@ -1416,59 +1512,60 @@ export default class Connection extends EventEmitter {
 		}
 	}
 
-	private resUntagged(info) {
-		const type = info.type;
+	private resUntagged(resp: UntaggedResponse) {
+		const { content, type } = resp;
 		let i;
 		let len;
 		let box;
-		let attrs;
-		let key;
-		console.log(info);
-		if (type === "bye") {
+		if (content instanceof StatusResponse && content.status === "BYE") {
 			if (this.sock) {
 				this.sock.end();
 			}
-		} else if (type === "namespace") {
-			this.namespaces = info.text;
-		} else if (type === "id") {
-			this.curReq?.cbargs.push(info.text);
-		} else if (type === "capability") {
-			this.caps = info.text.map((v) => {
-				return v.toUpperCase();
-			});
-		} else if (type === "preauth") {
+		} else if (
+			type === "NAMESPACE" &&
+			content instanceof NamespaceResponse
+		) {
+			this.namespaces = content;
+		} else if (type === "ID" && content instanceof IDResponse) {
+			this.curReq?.cbargs.push(content.details);
+		} else if (type === "CAPABILITY" && content instanceof CapabilityList) {
+			this.caps = content;
+		} else if (
+			content instanceof StatusResponse &&
+			content.status === "PREAUTH"
+		) {
 			this.state = "authenticated";
-		} else if (type === "sort" || type === "thread" || type === "esearch") {
-			this.curReq.cbargs.push(info.text);
-		} else if (type === "search") {
-			if (info.text.results !== undefined) {
-				// CONDSTORE-modified search results
-				this.curReq.cbargs.push(info.text.results);
-				this.curReq.cbargs.push(info.text.modseq);
-			} else {
-				this.curReq.cbargs.push(info.text);
-			}
-		} else if (type === "quota") {
-			const cbargs = this.curReq.cbargs;
-			if (!cbargs.length) {
-				cbargs.push([]);
-			}
-			cbargs[0].push(info.text);
-		} else if (type === "recent") {
+		} else if (content instanceof SortResponse) {
+			this.curReq.cbargs.push(content.ids);
+		} else if (content instanceof ExtendedSearchResponse) {
+			this.curReq.cbargs.push(content);
+		} else if (content instanceof ThreadResponse) {
+			this.curReq.cbargs.push(content.threads);
+		} else if (content instanceof SearchResponse) {
+			// CONDSTORE-modified search results
+			this.curReq.cbargs.push(content.results);
+			this.curReq.cbargs.push(content.modseq);
+		} else if (content instanceof QuotaResponse) {
+			this.curReq.cbargs.push(content.quotas);
+			this.curReq.cbargs.push(content.rootName);
+		} else if (content instanceof RecentCount) {
 			if (!this.box && RE_OPENBOX.test(this.curReq.type)) {
 				this.box = Connection.getDefaultBox();
 			}
 			if (this.box) {
-				this.box.messages.new = info.num;
+				this.box.messages.new = content.count;
 			}
-		} else if (type === "flags") {
+		} else if (content instanceof FlagList) {
 			if (!this.box && RE_OPENBOX.test(this.curReq.type)) {
 				this.box = Connection.getDefaultBox();
 			}
 			if (this.box) {
-				this.box.flags = info.text;
+				this.box.flags = content;
 			}
-		} else if (type === "bad" || type === "no") {
+		} else if (
+			content instanceof StatusResponse &&
+			(content.status === "BAD" || content.status === "NO")
+		) {
 			if (this.state === "connected" && !this.curReq) {
 				if (typeof this.tmrConn !== "undefined") {
 					clearTimeout(this.tmrConn);
@@ -1477,7 +1574,7 @@ export default class Connection extends EventEmitter {
 					clearTimeout(this.tmrAuth);
 				}
 				const err = new IMAPError(
-					"Received negative welcome: " + info.text,
+					"Received negative welcome: " + content.text,
 				);
 				err.source = "protocol";
 				this.emit("error", err);
@@ -1485,37 +1582,42 @@ export default class Connection extends EventEmitter {
 					this.sock.end();
 				}
 			}
-		} else if (type === "exists") {
+		} else if (content instanceof ExistsCount) {
 			if (!this.box && RE_OPENBOX.test(this.curReq.type)) {
 				this.box = Connection.getDefaultBox();
 			}
 			if (this.box) {
 				const prev = this.box.messages.total;
-				const now = info.num;
+				const now = content.count;
 				this.box.messages.total = now;
 				if (now > prev && this.state === "authenticated") {
 					this.box.messages.new = now - prev;
 					this.emit("mail", this.box.messages.new);
 				}
 			}
-		} else if (type === "expunge") {
+		} else if (content instanceof Expunge) {
 			if (this.box) {
 				if (this.box.messages.total > 0) {
 					--this.box.messages.total;
 				}
-				this.emit("expunge", info.num);
+				this.emit("expunge", content.sequenceNumber);
 			}
-		} else if (type === "ok") {
+		} else if (
+			content instanceof StatusResponse &&
+			content.status === "OK"
+		) {
 			if (this.state === "connected" && !this.curReq) {
 				this.login();
 			} else if (
-				typeof info.textCode === "string" &&
-				info.textCode.toUpperCase() === "ALERT"
+				content.text &&
+				content.text.code &&
+				content.text.code.kind === "ALERT"
 			) {
-				this.emit("alert", info.text);
+				this.emit("alert", content.text.content);
 			} else if (
 				this.curReq &&
-				info.textCode &&
+				content.text &&
+				content.text.code &&
 				RE_OPENBOX.test(this.curReq.type)
 			) {
 				// we're opening a mailbox
@@ -1523,67 +1625,67 @@ export default class Connection extends EventEmitter {
 				if (!this.box) {
 					this.box = Connection.getDefaultBox();
 				}
+				const code = content.text.code;
+				const kind = code.kind;
 
-				if (info.textCode.key) {
-					key = info.textCode.key.toUpperCase();
-				} else {
-					key = info.textCode;
-				}
-
-				if (key === "UIDVALIDITY") {
-					this.box.uidvalidity = info.textCode.val;
-				} else if (key === "UIDNEXT") {
-					this.box.uidnext = info.textCode.val;
-				} else if (key === "HIGHESTMODSEQ") {
-					this.box.highestmodseq = "" + info.textCode.val;
-				} else if (key === "PERMANENTFLAGS") {
-					let permFlags;
+				if (
+					kind === "UIDVALIDITY" &&
+					code instanceof NumberTextCode &&
+					typeof code.value === "number"
+				) {
+					this.box.uidvalidity = code.value;
+				} else if (
+					kind === "UIDNEXT" &&
+					code instanceof NumberTextCode &&
+					typeof code.value === "number"
+				) {
+					this.box.uidnext = code.value;
+				} else if (
+					kind === "HIGHESTMODSEQ" &&
+					code instanceof NumberTextCode
+				) {
+					this.box.highestmodseq = "" + code.value;
+				} else if (code instanceof PermentantFlagsTextCode) {
+					let permFlags: FlagList;
 					let keywords;
-					this.box.permFlags = permFlags = info.textCode.val;
-					const idx = this.box.permFlags.indexOf("\\*");
-					if (idx > -1) {
-						this.box.newKeywords = true;
-						permFlags.splice(idx, 1);
-					}
-					this.box.keywords = keywords = permFlags.filter((f) => {
-						return f[0] !== "\\";
-					});
-					for (i = 0, len = keywords.length; i < len; ++i) {
-						permFlags.splice(permFlags.indexOf(keywords[i]), 1);
-					}
-				} else if (key === "UIDNOTSTICKY") {
+					this.box.permFlags = permFlags = code.flags;
+					this.box.newKeywords = permFlags.includesWildcard;
+					this.box.keywords = keywords = permFlags.flags
+						.filter((f) => {
+							return f.name[0] !== "\\" && !f.isWildcard;
+						})
+						.map((f) => f.name);
+				} else if (kind === "UIDNOTSTICKY") {
 					this.box.persistentUIDs = false;
-				} else if (key === "NOMODSEQ") {
+				} else if (kind === "NOMODSEQ") {
 					this.box.nomodseq = true;
 				}
 			} else if (
-				typeof info.textCode === "string" &&
-				info.textCode.toUpperCase() === "UIDVALIDITY"
+				content.text &&
+				content.text.code &&
+				content.text.code.kind === "UIDVALIDITY" &&
+				content.text.code instanceof NumberTextCode
 			) {
-				this.emit("uidvalidity", info.text);
+				this.emit("uidvalidity", content.text.code.value);
 			}
-		} else if (type === "list" || type === "lsub" || type === "xlist") {
+		} else if (content instanceof MailboxListing) {
 			if (this.delimiter === undefined) {
-				this.delimiter = info.text.delimiter;
+				this.delimiter = content.separator;
 			} else {
 				if (this.curReq.cbargs.length === 0) {
 					this.curReq.cbargs.push({});
 				}
 
 				box = {
-					attribs: info.text.flags,
+					attribs: content.flags,
 					children: null,
-					delimiter: info.text.delimiter,
+					delimiter: content.separator,
 					parent: null,
 				};
 
-				for (i = 0, len = SPECIAL_USE_ATTRIBUTES.length; i < len; ++i) {
-					if (box.attribs.indexOf(SPECIAL_USE_ATTRIBUTES[i]) > -1) {
-						box.special_use_attrib = SPECIAL_USE_ATTRIBUTES[i];
-					}
-				}
+				box.special_use_attrib = content.getSpecialUse();
 
-				let name = info.text.name;
+				let name = content.name;
 				let curChildren = this.curReq.cbargs[0];
 
 				if (box.delimiter) {
@@ -1607,139 +1709,24 @@ export default class Connection extends EventEmitter {
 				}
 				curChildren[name] = box;
 			}
-		} else if (type === "status") {
-			box = {
-				messages: {
-					new: 0,
-					total: 0,
-					unseen: 0,
-				},
-				name: info.text.name,
-				uidnext: 0,
-				uidvalidity: 0,
-			};
-			attrs = info.text.attrs;
-
-			if (attrs) {
-				if (attrs.recent !== undefined) {
-					box.messages.new = attrs.recent;
-				}
-				if (attrs.unseen !== undefined) {
-					box.messages.unseen = attrs.unseen;
-				}
-				if (attrs.messages !== undefined) {
-					box.messages.total = attrs.messages;
-				}
-				if (attrs.uidnext !== undefined) {
-					box.uidnext = attrs.uidnext;
-				}
-				if (attrs.uidvalidity !== undefined) {
-					box.uidvalidity = attrs.uidvalidity;
-				}
-				if (attrs.highestmodseq !== undefined) {
-					// CONDSTORE
-					box.highestmodseq = "" + attrs.highestmodseq;
-				}
-			}
-			this.curReq.cbargs.push(box);
-		} else if (type === "fetch") {
+		} else if (content instanceof MailboxStatus) {
+			this.curReq.cbargs.push(content);
+		} else if (content instanceof Fetch) {
 			if (/^(?:UID )?FETCH/.test(this.curReq.fullcmd)) {
-				// FETCH response sent as result of FETCH request
-				const msg = this.curReq.fetchCache[info.num];
-				const keys = Object.keys(info.text);
-				const keyslen = keys.length;
-				let toget;
-				let msgEmitter;
-				let j;
-
-				if (msg === undefined) {
-					// simple case -- no bodies were streamed
-					toget = this.curReq.fetching.slice(0);
-					if (toget.length === 0) {
-						return;
-					}
-
-					msgEmitter = new EventEmitter();
-					attrs = {};
-
-					this.curReq.bodyEmitter.emit(
-						"message",
-						msgEmitter,
-						info.num,
-					);
-				} else {
-					toget = msg.toget;
-					msgEmitter = msg.msgEmitter;
-					attrs = msg.attrs;
-				}
-
-				i = toget.length;
-				if (i === 0) {
-					if (msg && !msg.ended) {
-						msg.ended = true;
-						process.nextTick(() => {
-							msgEmitter.emit("end");
-						});
-					}
-					return;
-				}
-
-				if (keyslen > 0) {
-					while (--i >= 0) {
-						j = keyslen;
-						while (--j >= 0) {
-							if (keys[j].toUpperCase() === toget[i]) {
-								if (!RE_BODYPART.test(toget[i])) {
-									if (toget[i] === "X-GM-LABELS") {
-										const labels = info.text[keys[j]];
-										for (
-											let k = 0, lenk = labels.length;
-											k < lenk;
-											++k
-										) {
-											labels[k] = (
-												"" + labels[k]
-											).replace(RE_ESCAPE, "\\");
-										}
-									}
-									key = FETCH_ATTR_MAP[toget[i]];
-									if (!key) {
-										key = toget[i].toLowerCase();
-									}
-									attrs[key] = info.text[keys[j]];
-								}
-								toget.splice(i, 1);
-								break;
-							}
-						}
-					}
-				}
-
-				if (toget.length === 0) {
-					if (msg) {
-						msg.ended = true;
-					}
-					process.nextTick(() => {
-						msgEmitter.emit("attributes", attrs);
-						msgEmitter.emit("end");
-					});
-				} else if (msg === undefined) {
-					this.curReq.fetchCache[info.num] = {
-						attrs,
-						ended: false,
-						msgEmitter,
-						toget,
-					};
-				}
+				this.curReq.bodyEmitter.emit(
+					"message",
+					content,
+					content.sequenceNumber,
+				);
 			} else {
 				// FETCH response sent as result of STORE request or sent unilaterally,
 				// treat them as the same for now for simplicity
-				this.emit("update", info.num, info.text);
+				this.emit("update", content.sequenceNumber, content);
 			}
 		}
 	}
 
-	private resTagged(info) {
+	private resTagged(info: TaggedResponse) {
 		const req = this.curReq;
 		let err;
 
@@ -1749,22 +1736,22 @@ export default class Connection extends EventEmitter {
 
 		this.curReq = undefined;
 
-		if (info.type === "no" || info.type === "bad") {
-			let errtext;
-			if (info.text) {
-				errtext = info.text;
+		const status = info.status.status;
+		const statusText = info.status.text;
+		const statusCode = statusText?.code;
+		if (status === "NO" || status === "BAD") {
+			if (statusText) {
+				err = new IMAPError(statusText.content);
+				err.textCode = statusText.code;
 			} else {
-				errtext = req.oauthError;
+				err = new IMAPError(req.oauthError);
 			}
-			err = new IMAPError(errtext);
-			err.type = info.type;
-			err.textCode = info.textCode;
+			err.type = status;
 			err.source = "protocol";
 		} else if (this.box) {
 			if (req.type === "EXAMINE" || req.type === "SELECT") {
 				this.box.readOnly =
-					typeof info.textCode === "string" &&
-					info.textCode.toUpperCase() === "READ-ONLY";
+					statusCode && statusCode.kind.toUpperCase() === "READ-ONLY";
 			}
 
 			// According to RFC 3501, UID commands do not give errors for
@@ -1788,14 +1775,11 @@ export default class Connection extends EventEmitter {
 			});
 		} else {
 			req.cbargs.unshift(err);
-			if (info.textCode && info.textCode.key) {
-				const key = info.textCode.key.toUpperCase();
-				if (key === "APPENDUID") {
-					// [uidvalidity, newUID]
-					req.cbargs.push(info.textCode.val[1]);
-				} else if (key === "COPYUID") {
-					// [uidvalidity, sourceUIDs, destUIDs]
-					req.cbargs.push(info.textCode.val[2]);
+			if (statusCode) {
+				if (statusCode instanceof AppendUIDTextCode) {
+					req.cbargs.push(statusCode.uids);
+				} else if (statusCode instanceof CopyUIDTextCode) {
+					req.cbargs.push(statusCode.toUIDs);
 				}
 			}
 			if (req.cb) {
@@ -1995,6 +1979,7 @@ export default class Connection extends EventEmitter {
 			Object.assign(tlsOptions, this.config.tlsOptions);
 			if (this.sock) {
 				tlsOptions.socket = this.sock;
+				this.sock.unpipe(this.newlineTransform);
 			}
 
 			this.sock = tls.connect(tlsOptions, () => {
@@ -2005,7 +1990,10 @@ export default class Connection extends EventEmitter {
 			this.sock.on("timeout", this.onSocketTimeout);
 			this.sock.setTimeout(this.config.socketTimeout);
 
-			this.parser.setStream(this.sock);
+			// The rest of the piping should still be setup,
+			// so just reattach the socket to the start of
+			// of the pipeline
+			this.sock.pipe(this.newlineTransform);
 		});
 	}
 
