@@ -1,7 +1,7 @@
 import { imap } from "utf7";
 
 import { RE_ENCWORD, RE_LWS_ONLY, RE_QENC } from "./matchers";
-import { IReplaces, ISequence, IState } from "./types";
+import { ISequence, IState } from "./types";
 
 export const utf7 = imap;
 
