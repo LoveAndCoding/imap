@@ -4,6 +4,20 @@ import * as tls from "tls";
 
 import type { FlagList } from "../parser";
 
+export enum TLSSetting {
+	"DEFAULT" = "on",
+	"STARTTLS" = "starttls",
+	"FORCE_OFF" = "off",
+}
+
+export type IMAPConnectionConfiguration = {
+	host: string;
+	port?: number;
+	tls?: TLSSetting;
+	tlsOptions?: tls.ConnectionOptions;
+	timeout?: number;
+};
+
 export interface IConfig {
 	authTimeout?: number;
 	autotls?: "never" | "always" | "required";
