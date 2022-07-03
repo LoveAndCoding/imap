@@ -54,7 +54,10 @@ export abstract class Command<T = string> extends EventEmitter {
 
 	protected readonly commandPromise: Promise<T>;
 
-	constructor(public readonly type: CommandType) {
+	constructor(
+		public readonly type: CommandType,
+		public readonly requiresOwnContext: boolean = false,
+	) {
 		super();
 		this.id = NEXT_COMMAND_ID++;
 		// Reset our ID count if we go over max safe integer

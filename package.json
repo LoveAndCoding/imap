@@ -9,6 +9,7 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"dependencies": {
+		"tiny-typed-emitter": "2.1.0",
 		"utf7": "git+https://github.com/LoveAndCoding/utf7.git"
 	},
 	"scripts": {

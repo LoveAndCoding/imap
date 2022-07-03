@@ -1,12 +1,17 @@
-import { EventEmitter } from "events";
-import { Socket } from "net";
 import * as tls from "tls";
 
-import type { FlagList } from "../parser";
+import {
+	ContinueResponse,
+	TaggedResponse,
+	UnknownResponse,
+	UntaggedResponse,
+} from "../parser";
+import { ConnectionErrors } from "./errors";
 
 export enum TLSSetting {
 	"DEFAULT" = "on",
 	"STARTTLS" = "starttls",
+	"STARTTLS_OPTIONAL" = "opportunistic",
 	"FORCE_OFF" = "off",
 }
 
@@ -18,62 +23,23 @@ export type IMAPConnectionConfiguration = {
 	timeout?: number;
 };
 
-export interface IConfig {
-	authTimeout?: number;
-	autotls?: "never" | "always" | "required";
-	connTimeout?: number;
-	debug?: (msg: string) => void;
-	host: string;
-	keepalive:
-		| boolean
-		| { interval?: number; idleInterval?: number; forceNoop?: boolean };
-	localAddress: string;
-	password: string;
-	port: number;
-	socket?: Socket;
-	socketTimeout?: number;
-	tls?: boolean;
-	tlsOptions?: tls.ConnectionOptions;
-	user: string;
-	xoauth: string;
-	xoauth2: string;
-}
+export interface IConnectionEvents {
+	// Connection Events
+	ready: (isSecure: boolean) => void;
+	connectionError: (error: ConnectionErrors) => void;
+	disconnected: (wasGraceful: boolean) => void;
 
-export interface ICommand {
-	appendData?: any;
-	bodyEmitter?: EventEmitter;
-	cb: Function;
-	cbargs: any[];
-	data?: any;
-	fetchCache?: any;
-	fetching?: string[];
-	fullcmd?: string;
-	lines?: string[];
-	literalAppendData?: any;
-	oauthError?: string;
-	type: string;
-}
-
-export interface IBox {
-	name: string;
-	flags: FlagList;
-	readOnly: boolean;
-	uidvalidity: number;
-	uidnext: number;
-	permFlags: FlagList;
-	keywords: string[];
-	newKeywords: boolean;
-	persistentUIDs: boolean;
-	nomodseq: boolean;
-	highestmodseq?: string;
-	messages: {
-		total: number;
-		new: number;
-	};
-}
-
-export interface INamespaces {
-	personal: string[];
-	other: string[];
-	shared: string[];
+	// Response Events
+	serverStatus: (response: UntaggedResponse) => void;
+	response: (
+		response:
+			| ContinueResponse
+			| TaggedResponse
+			| UnknownResponse
+			| UntaggedResponse,
+	) => void;
+	continueResponse: (response: ContinueResponse) => void;
+	taggedResponse: (response: TaggedResponse) => void;
+	unknownResponse: (response: UnknownResponse) => void;
+	untaggedResponse: (response: UntaggedResponse) => void;
 }
