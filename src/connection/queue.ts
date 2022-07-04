@@ -155,6 +155,7 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		);
 		// remove it once the queue is idle
 		q.once("idle", () => this.removeQueueContext(q));
+		this.queueContexts.push(q);
 		return q;
 	}
 

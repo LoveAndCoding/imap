@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 
 import { IMAPError, NotImplementedError } from "../errors";
 
-import type Connection from "../connection";
+import Connection from "../connection";
 import { ContinueResponse, TaggedResponse, UntaggedResponse } from "../parser";
 
 // General commands
@@ -68,10 +68,10 @@ export abstract class Command<T = string> extends EventEmitter {
 		this.commandPromise = new Promise<T>(this.executor);
 	}
 
-	protected executor(
+	protected executor = (
 		resolve: (result: T) => void,
 		reject: (reason: any) => any,
-	): void {
+	): void => {
 		const cleanUpHandlers = () => {
 			this.off("results", successHandler);
 			this.off("error", errorHandler);
@@ -97,7 +97,7 @@ export abstract class Command<T = string> extends EventEmitter {
 		this.once("results", successHandler);
 		this.once("error", errorHandler);
 		this.once("cancel", cancelHandler);
-	}
+	};
 
 	protected getCommand(): string {
 		return this.type;

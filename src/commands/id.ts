@@ -23,7 +23,7 @@ export type IdCommandValues = Partial<
 	}
 >;
 
-export type IdResponseMap = Map<string, null | string>;
+export type IdResponseMap = ReadonlyMap<string, null | string>;
 
 const DEFAULT_ID_OPTS: IdCommandValues = {
 	name: "node-imap",

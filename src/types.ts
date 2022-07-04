@@ -1,5 +1,5 @@
-import { type IMAPConnectionConfiguration } from "./connection/types";
-import { type IdCommandValues } from "./commands";
+import type { IMAPConnectionConfiguration } from "./connection/types";
+import type { IdCommandValues } from "./commands";
 
 export type IMAPLogMessage =
 	| {

@@ -1,9 +1,9 @@
-import { Socket } from "net";
+import * as net from "net";
 import { clearTimeout, setTimeout } from "timers";
 import * as tls from "tls";
-import { TypedEmitter } from 'tiny-typed-emitter';
+import { TypedEmitter } from "tiny-typed-emitter";
 
-import { CapabilityCommand, StartTLSCommand, type Command } from "../commands";
+import { CapabilityCommand, StartTLSCommand, Command } from "../commands";
 import { IMAPError } from "../errors";
 import NewlineTranform from "../newline.transform";
 import Lexer from "../lexer";
@@ -16,17 +16,19 @@ import Parser, {
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
-import {
-	CRLF,
-} from "./constants";
+import { CRLF } from "./constants";
 import CommandQueue from "./queue";
-import { IConnectionEvents, IMAPConnectionConfiguration, TLSSetting } from "./types";
+import {
+	IConnectionEvents,
+	IMAPConnectionConfiguration,
+	TLSSetting,
+} from "./types";
 import { ConnectionTimeout, TLSSocketError } from "./errors";
 
 const DEFAULT_TIMEOUT = 10000;
 
 export default class Connection extends TypedEmitter<IConnectionEvents> {
-	public socket: undefined | Socket;
+	public socket: undefined | net.Socket | tls.TLSSocket;
 
 	protected lexer: Lexer;
 	protected parser: Parser;
@@ -43,8 +45,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.options = Object.assign({}, options);
 
 		// Set TLS setting to default if it is unset or invalid
-		let {tls} = this.options;
-		if(!tls || !(tls === TLSSetting.DEFAULT || tls === TLSSetting.STARTTLS || tls === TLSSetting.STARTTLS_OPTIONAL || tls === TLSSetting.FORCE_OFF)) {
+		let { tls } = this.options;
+		if (
+			!tls ||
+			!(
+				tls === TLSSetting.DEFAULT ||
+				tls === TLSSetting.STARTTLS ||
+				tls === TLSSetting.STARTTLS_OPTIONAL ||
+				tls === TLSSetting.FORCE_OFF
+			)
+		) {
 			this.options.tls = tls = TLSSetting.DEFAULT;
 		}
 
@@ -62,101 +72,121 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	}
 
 	public async connect(): Promise<boolean> {
-		if(this.connected) {
-			throw new IMAPError('Must end previous IMAP connection before starting a new one')
+		if (this.connected) {
+			throw new IMAPError(
+				"Must end previous IMAP connection before starting a new one",
+			);
 		} else if (this.socket) {
-			throw new IMAPError('Existing IMAP connection or connection attempt must be fully closed before a new one can be made')
+			throw new IMAPError(
+				"Existing IMAP connection or connection attempt must be fully closed before a new one can be made",
+			);
 		}
 
-		const config = this.options;
-		let socket: Socket;
-		let tlsOptions: tls.ConnectionOptions;
-
-		socket = new Socket();
-		socket.setKeepAlive(true);
+		const {
+			host,
+			port,
+			tls: tlsSetting,
+			tlsOptions,
+			timeout,
+		} = this.options;
+		let tlsSocketConfig: tls.ConnectionOptions;
 		this.socket = undefined;
 
-		if (config.tls === TLSSetting.DEFAULT) {
-			tlsOptions = {
+		if (tlsSetting === TLSSetting.DEFAULT) {
+			tlsSocketConfig = {
 				// Host name may be overridden by the tlsOptions
-				host: config.host,
+				host,
+				port,
+				servername: host,
 				// Explicitly reject unauthorized connections by default
 				rejectUnauthorized: true,
 			};
-			Object.assign(tlsOptions, config.tlsOptions);
+			Object.assign(tlsSocketConfig, tlsOptions);
 			// Socket cannot be overridden
-			tlsOptions.socket = socket;
+			delete tlsSocketConfig.socket;
 		}
 
 		let connected = await new Promise<boolean>((resolve, reject) => {
 			// Setup a simple timeout
-			const timeoutWait = config.timeout || DEFAULT_TIMEOUT
-			let timeout = setTimeout(() => {
+			const timeoutWait = timeout || DEFAULT_TIMEOUT;
+			let connTimeout = setTimeout(() => {
 				// Check to make sure we didn't already close the connection
-				if(socket.destroyed) { return; }
+				if (!this.socket) {
+					return;
+				}
 
-				timeout = undefined;
-				const tmrErr = new ConnectionTimeout(timeoutWait, 'Socket')
-				socket.destroy(tmrErr);
+				connTimeout = undefined;
+				const tmrErr = new ConnectionTimeout(timeoutWait, "Socket");
+				this.socket.destroy(tmrErr);
+				this.socket = undefined;
 				reject(tmrErr);
 			}, timeoutWait);
 			const clearTimer = (connected) => {
 				return () => {
-					if(timeout) {
-						clearTimeout(timeout);
-						timeout = undefined;
+					if (connTimeout) {
+						clearTimeout(connTimeout);
+						connTimeout = undefined;
 						resolve(connected);
 					}
-					this.socket.off('close', clearTimerBad);
-				}
-			}
+					this.socket.off("end", clearTimerBad);
+					this.socket.off("close", clearTimerBad);
+				};
+			};
 			const clearTimerGood = clearTimer(true);
 			const clearTimerBad = clearTimer(false);
-			if (tlsOptions) {
-				// Use a local reference here in case this.socket changes
-				const tlsSock = tls.connect(tlsOptions, clearTimerGood);
-				this.socket = tlsSock;
+			if (tlsSocketConfig) {
+				this.socket = tls.connect(tlsSocketConfig, clearTimerGood);
 				this.secure = true;
 			} else {
-				socket.connect({
-					host: config.host,
-					port: config.port,
-				}, clearTimerGood);
-				this.socket = socket;
+				this.socket = net.connect(
+					{
+						host,
+						port,
+					},
+					clearTimerGood,
+				);
 				this.secure = false;
 			}
-			this.socket.once('close', clearTimerBad);
+			this.socket.once("end", clearTimerBad);
+			this.socket.once("close", clearTimerBad);
 		});
 
-		if(!connected) {
+		if (!connected) {
+			this.socket = undefined;
 			return false;
 		}
 
 		this.socket.pipe(this.processingPipeline);
 
-		if(!this.isSecure && (config.tls === TLSSetting.STARTTLS || config.tls === TLSSetting.STARTTLS_OPTIONAL)) {
+		if (
+			!this.isSecure &&
+			(tlsSetting === TLSSetting.STARTTLS ||
+				tlsSetting === TLSSetting.STARTTLS_OPTIONAL)
+		) {
 			connected = await this.starttls();
-			if(!this.isSecure && config.tls === TLSSetting.STARTTLS) {
+			if (!this.isSecure && tlsSetting === TLSSetting.STARTTLS) {
 				this.socket.destroy();
 				this.socket = undefined;
-				throw new TLSSocketError('Could not establish a secure connection');
+				throw new TLSSocketError(
+					"Could not establish a secure connection",
+				);
 			}
 		}
 
 		this.connected = connected;
-		if(!connected) {
+		if (!connected) {
 			this.socket.destroy();
 			this.socket = undefined;
 			return false;
 		}
 
-		this.socket.on('error', this.onSocketError);
-		this.socket.once('end', this.onSocketEnd);
-		this.socket.once('close', this.onSocketClose);
+		this.socket.on("error", this.onSocketError);
+		this.socket.once("end", this.onSocketEnd);
+		this.socket.once("close", this.onSocketClose);
 
 		// Manually call because the ready event will likely have passed
 		this.onSocketReady();
-		this.emit('ready', this.isSecure);
+		this.emit("ready", this.isSecure);
 		return this.connected;
 	}
 
@@ -164,28 +194,28 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	protected onSocketReady = () => {
 		this.connected = true;
 		this.commandQueue.start();
-	}
+	};
 	protected onSocketError = (err) => {
-		this.emit('connectionError', new IMAPError(err));
-	}
+		this.emit("connectionError", new IMAPError(err));
+	};
 	protected onSocketClose = (hadErr: boolean) => {
 		this.commandQueue.stop();
 		this.connected = false;
-		this.socket.unpipe(this.processingPipeline)
+		this.socket.unpipe(this.processingPipeline);
 		this.processingPipeline.forceNewLine(false);
 		this.socket.removeAllListeners();
 		this.socket = undefined;
 		this.secure = undefined;
-		this.emit('disconnected', !hadErr)
-	}
+		this.emit("disconnected", !hadErr);
+	};
 	protected onSocketEnd = () => {
 		this.commandQueue.stop();
 		this.connected = false;
 		this.socket.end();
-	}
+	};
 
 	public async disconnect(error?: Error) {
-		if(!this.socket) {
+		if (!this.socket) {
 			return;
 		}
 
@@ -197,7 +227,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.commandQueue.add<T>(command);
 		return command.results;
 	}
-	
+
 	public send(toSend: string) {
 		this.socket.write(toSend + CRLF, "utf8");
 	}
@@ -206,7 +236,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.commandQueue = new CommandQueue(this, false);
 
 		// Setup our Lexing/Parsing
-		this.processingPipeline = new NewlineTranform({ allowHalfOpen: true, });
+		this.processingPipeline = new NewlineTranform({ allowHalfOpen: true });
 		this.lexer = new Lexer();
 		this.parser = new Parser();
 
@@ -214,8 +244,8 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.processingPipeline.pipe(this.lexer).pipe(this.parser);
 		// Once we hit the parser, we want to (mostly) bubble events
 		this.parser.on("untagged", (resp: UntaggedResponse) => {
-			if(resp.content instanceof StatusResponse) {
-				this.emit('serverStatus', resp);
+			if (resp.content instanceof StatusResponse) {
+				this.emit("serverStatus", resp);
 			} else {
 				this.emit("untaggedResponse", resp);
 				this.emit("response", resp);
@@ -236,48 +266,58 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	}
 
 	protected async starttls(): Promise<boolean> {
-		if(!this.connected || !this.socket || this.isSecure) {
+		if (!this.connected || !this.socket || this.isSecure) {
 			// Don't need to (or can't) do TLS in this case
 			return this.connected;
 		}
 
-		const greeting = await new Promise<UntaggedResponse>((resolve, reject) => {
-			const greetingTimeoutAmount = this.options.timeout || DEFAULT_TIMEOUT;
-			const greetingTimeout = setTimeout(() => {
-				reject(new ConnectionTimeout(greetingTimeoutAmount, 'Greeting'))
-			}, greetingTimeoutAmount)
-			this.once('serverStatus', (resp) => {
-				clearTimeout(greetingTimeout);
-				resolve(resp)
-			});
-		});
+		const greeting = await new Promise<UntaggedResponse>(
+			(resolve, reject) => {
+				const greetingTimeoutAmount =
+					this.options.timeout || DEFAULT_TIMEOUT;
+				const greetingTimeout = setTimeout(() => {
+					reject(
+						new ConnectionTimeout(
+							greetingTimeoutAmount,
+							"Greeting",
+						),
+					);
+				}, greetingTimeoutAmount);
+				this.once("serverStatus", (resp) => {
+					clearTimeout(greetingTimeout);
+					resolve(resp);
+				});
+			},
+		);
 
-		if(!(greeting.content instanceof StatusResponse)) {
-			throw new IMAPError('Error processing greeting message from server: Invalid content type');
+		if (!(greeting.content instanceof StatusResponse)) {
+			throw new IMAPError(
+				"Error processing greeting message from server: Invalid content type",
+			);
 		}
 
 		let capabilities: CapabilityList;
-		if(greeting.content.text?.code instanceof CapabilityTextCode) {
+		if (greeting.content.text?.code instanceof CapabilityTextCode) {
 			// We have a capability list already! Yay
-			capabilities = greeting.content.text.code.capabilities
+			capabilities = greeting.content.text.code.capabilities;
 		} else {
 			// We need to retrieve the capabilities
 			const cmd = new CapabilityCommand();
 			capabilities = await cmd.run(this);
 		}
 
-		if(capabilities.doesntHave('STARTTLS')) {
+		if (capabilities.doesntHave("STARTTLS")) {
 			return this.connected;
 		}
 
 		const tlsCmd = new StartTLSCommand();
 		const startNegotiation: boolean = await tlsCmd.run(this);
 
-		if(!startNegotiation) {
+		if (!startNegotiation) {
 			// In theory we shouldn't be able to hit this as
 			// the above should throw if we can't negotiate,
 			// but want to be safe
-			return false
+			return false;
 		}
 
 		return new Promise((resolve, reject) => {
@@ -292,27 +332,32 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			Object.assign(tlsOptions, this.options.tlsOptions);
 			tlsOptions.socket = previousSocket;
 
-			const timeoutWait = this.options.timeout || DEFAULT_TIMEOUT
+			const timeoutWait = this.options.timeout || DEFAULT_TIMEOUT;
 			let timeout = setTimeout(() => {
 				// Check to make sure we didn't already close the connection
-				if(previousSocket.destroyed) { return; }
+				if (previousSocket.destroyed) {
+					return;
+				}
 
 				timeout = undefined;
-				const tmrErr = new ConnectionTimeout(timeoutWait, 'TLS Negotiation')
+				const tmrErr = new ConnectionTimeout(
+					timeoutWait,
+					"TLS Negotiation",
+				);
 				previousSocket.destroy(tmrErr);
 				reject(tmrErr);
 			}, timeoutWait);
 			let tlsSock: tls.TLSSocket;
 			const clearTimer = (connected) => {
 				return () => {
-					if(timeout) {
+					if (timeout) {
 						clearTimeout(timeout);
 						timeout = undefined;
 						resolve(connected);
 					}
-					tlsSock.off('close', clearTimerBad);
-				}
-			}
+					tlsSock.off("close", clearTimerBad);
+				};
+			};
 			const clearTimerGood = clearTimer(true);
 			const clearTimerBad = clearTimer(false);
 

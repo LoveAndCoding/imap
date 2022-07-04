@@ -1,10 +1,9 @@
 import {CapabilityCommand, IdCommand, IdResponseMap} from "./commands";
 import Connection from "./connection";
-import { IMAPError } from "./errors";
-import { type CapabilityList } from "./parser";
-import { IMAPLogMessage, type IMAPConfiguration } from "./types";
+import { CapabilityList } from "./parser";
+import { IMAPLogMessage, IMAPConfiguration } from "./types";
 
-class IMAPSession {
+export default class Session {
 	protected authed: boolean;
 	protected capabilityList: CapabilityList;
 	protected connection: Connection;
@@ -36,13 +35,13 @@ class IMAPSession {
 
 	public async start() {
 		if (this.started) {
-			return true;
+			return this.connection.isActive;
 		}
 		this.started = true;
-		
+
 		try {
 			await this.connection.connect();
-			
+
 			// Get server information and capabilities to start with since
 			// that information will really always be helpful. Surround in
 			// a try/catch because if the server doesn't support this, it
@@ -50,12 +49,16 @@ class IMAPSession {
 			const capsCmd = new CapabilityCommand();
 			this.capabilityList = await this.connection.runCommand(capsCmd);
 
-			const idCmd = new IdCommand(this.options.id);
-			this.serverInfo = await this.connection.runCommand(idCmd);
-		} catch(error) {
+			if (this.capabilityList.has("ID")) {
+				const idCmd = new IdCommand(this.options.id);
+				this.serverInfo = await this.connection.runCommand(idCmd);
+			} else {
+				this.serverInfo = new Map();
+			}
+		} catch (error) {
 			// Try and destroy the connection
-			try{
-				this.connection.destroy();
+			try {
+				this.connection.disconnect();
 			} catch (_) {}
 			// Log the error
 			this.logger({
@@ -78,6 +81,6 @@ class IMAPSession {
 		this.started = false;
 		this.authed = false;
 		this.capabilityList = null;
-		this.connection.end();
+		this.connection.disconnect();
 	}
 }
