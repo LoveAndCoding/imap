@@ -47,10 +47,37 @@ export type StandardResponseTypes =
 	| TaggedResponse
 	| UntaggedResponse;
 
-let NEXT_COMMAND_ID = 1;
+const MAX_TAG_ALPHA_LENGTH = 400;
+
+function* commandIdGenerator(): Generator<string, never> {
+	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+	let alphaCount = 0;
+	do {
+		let lead = "";
+		let toAddCount = alphaCount;
+		while (toAddCount >= 0) {
+			lead += alpha[toAddCount % alpha.length];
+			toAddCount -= alpha.length;
+		}
+
+		for (let num = 1; num < Number.MAX_SAFE_INTEGER; num++) {
+			yield `${lead}${num.toString().padStart(5, "0")}`;
+		}
+
+		if (alphaCount >= MAX_TAG_ALPHA_LENGTH * 26) {
+			// We've sent more commands than is resonable already, but
+			// start over just in case. Are we approaching heat-death
+			// of the universe yet?
+			alphaCount = 0;
+		}
+	} while (++alphaCount < Number.MAX_SAFE_INTEGER);
+	throw new Error("How did you even get here?!?!");
+}
+
+const CommandId = commandIdGenerator();
 
 export abstract class Command<T = string> extends EventEmitter {
-	public readonly id: number;
+	public readonly id: string;
 
 	protected readonly commandPromise: Promise<T>;
 
@@ -59,11 +86,7 @@ export abstract class Command<T = string> extends EventEmitter {
 		public readonly requiresOwnContext: boolean = false,
 	) {
 		super();
-		this.id = NEXT_COMMAND_ID++;
-		// Reset our ID count if we go over max safe integer
-		if (NEXT_COMMAND_ID === Number.MAX_SAFE_INTEGER) {
-			NEXT_COMMAND_ID = 1;
-		}
+		this.id = CommandId.next().value;
 
 		this.commandPromise = new Promise<T>(this.executor);
 	}
@@ -129,7 +152,9 @@ export abstract class Command<T = string> extends EventEmitter {
 		return this.commandPromise;
 	}
 
-	protected parseNonOKResponse(responses: StandardResponseTypes[]): any {
+	protected parseNonOKResponse(
+		responses: StandardResponseTypes[],
+	): IMAPError {
 		const taggedResponse = responses[responses.length - 1];
 
 		if (taggedResponse && taggedResponse instanceof TaggedResponse) {
@@ -152,6 +177,6 @@ export abstract class Command<T = string> extends EventEmitter {
 	}
 
 	public getFullAnnotatedCommand() {
-		return `A${this.id.toString().padStart(5, "0")} ${this.getCommand()}`;
+		return `${this.id} ${this.getCommand()}`;
 	}
 }

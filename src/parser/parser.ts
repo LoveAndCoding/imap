@@ -2,7 +2,7 @@ import { Transform } from "stream";
 
 import { LexerTokenList, TokenTypes } from "../lexer/types";
 import ContinueResponse from "./structure/continue";
-import TaggedResponse from "./structure/tagged";
+import TaggedResponse, { RE_TAG_MATCH } from "./structure/tagged";
 import UnknownResponse from "./structure/unknown";
 import UntaggedResponse from "./structure/untagged";
 
@@ -120,7 +120,7 @@ class Parser extends Transform {
 			return new ContinueResponse(tokens);
 		} else if (
 			firstToken.isType(TokenTypes.atom) &&
-			firstToken.getTrueValue().match(/^A[0-9]+$/i)
+			firstToken.getTrueValue().match(RE_TAG_MATCH)
 		) {
 			return new TaggedResponse(tokens);
 		} else {
