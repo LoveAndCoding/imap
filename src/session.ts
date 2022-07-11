@@ -33,6 +33,10 @@ export default class Session {
 		return this.capabilityList;
 	}
 
+	public get server(): IdResponseMap {
+		return !this.serverInfo ? null : new Map(this.serverInfo);
+	}
+
 	public async start() {
 		if (this.started) {
 			return this.connection.isActive;
@@ -81,6 +85,7 @@ export default class Session {
 		this.started = false;
 		this.authed = false;
 		this.capabilityList = null;
+		this.serverInfo = null;
 		this.connection.disconnect();
 	}
 }
