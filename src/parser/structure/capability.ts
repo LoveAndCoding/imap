@@ -263,4 +263,9 @@ export class CapabilityList {
 	public has(capability: string) {
 		return this.capabilityMap.has(capability.toUpperCase());
 	}
+
+	// Some sugar
+	public doesntHave(capability: string) {
+		return !this.has(capability);
+	}
 }

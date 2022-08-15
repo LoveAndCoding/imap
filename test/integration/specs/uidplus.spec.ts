@@ -61,7 +61,7 @@ const uidplusSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 3,
+					id: "A003",
 				},
 			},
 		},
@@ -113,7 +113,7 @@ const uidplusSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 3,
+					id: "A003",
 				},
 			},
 		},
@@ -170,7 +170,7 @@ const uidplusSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 3,
+					id: "A003",
 				},
 			},
 		},
@@ -237,7 +237,7 @@ const uidplusSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 4,
+					id: "A004",
 				},
 			},
 		},
@@ -290,7 +290,7 @@ const uidplusSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 4,
+					id: "A004",
 				},
 			},
 		},
