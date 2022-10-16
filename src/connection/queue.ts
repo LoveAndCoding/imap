@@ -24,6 +24,7 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 	constructor(
 		public readonly connection: Connection,
 		immediatelyStart = false,
+		public readonly isIsolated: boolean = false,
 	) {
 		super();
 		this.commands = new Set();
@@ -59,8 +60,12 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 
 		this.running = true;
 		this.emit("start");
-		for (const cmd of this.commands) {
-			this.startCommand(cmd);
+		if (this.commands.size) {
+			for (const cmd of this.commands) {
+				this.startCommand(cmd);
+			}
+		} else {
+			this.emit("idle");
 		}
 	}
 
@@ -114,18 +119,14 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	add<T>(command: Command<T>) {
 		if (
 			!this.waitingContext ||
+			this.waitingContext.isIsolated ||
 			(command.requiresOwnContext && this.waitingContext.size > 0)
 		) {
-			const q = this.addQueueContext();
+			this.addQueueContext(command.requiresOwnContext);
 		}
 
 		// We just created it if it doesn't exist, so this is a safe add
 		(this.waitingContext as AsyncQueueContext).add(command);
-
-		if (command.requiresOwnContext) {
-			// This command needs to be isolated
-			this.addQueueContext();
-		}
 	}
 
 	cancelAllRunningCommands() {
@@ -146,12 +147,13 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		this.cancelAllRunningCommands();
 	}
 
-	private addQueueContext() {
+	private addQueueContext(isIsolated = false) {
 		const q = new AsyncQueueContext(
 			this.connection,
 			// Auto-start if we're the first in the queue and
 			// have an active connection
 			this.running && this.queueContexts.length === 0,
+			isIsolated,
 		);
 		// remove it once the queue is idle
 		q.once("idle", () => this.removeQueueContext(q));
