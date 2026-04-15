@@ -51,7 +51,7 @@ const simpleSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 1,
+					id: "A1",
 				},
 			},
 		},
@@ -129,7 +129,7 @@ const simpleSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 1,
+					id: "A1",
 				},
 			},
 		},
@@ -180,7 +180,7 @@ const simpleSet: TestSpec[] = [
 					},
 				},
 				tag: {
-					id: 106,
+					id: "a106",
 				},
 			},
 		},
@@ -585,7 +585,7 @@ const simpleSet: TestSpec[] = [
 						],
 					},
 					tag: {
-						id: 567,
+						id: "a567",
 					},
 				},
 				type: "ESEARCH",
@@ -656,7 +656,7 @@ const simpleSet: TestSpec[] = [
 					min: 7,
 					max: 3800,
 					tag: {
-						id: 285,
+						id: "A285",
 					},
 				},
 				type: "ESEARCH",

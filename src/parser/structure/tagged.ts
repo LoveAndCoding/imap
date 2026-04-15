@@ -3,6 +3,8 @@ import { LexerTokenList } from "../../lexer/types";
 import { StatusResponse } from "./status";
 import { Tag } from "./tag";
 
+export { RE_TAG_MATCH } from "./tag";
+
 // From spec:
 // response-tagged = tag SP resp-cond-state CRLF
 export default class TaggedResponse {
