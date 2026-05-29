@@ -25,6 +25,7 @@ import {
 	SubscribeCommand,
 } from "../../../src/commands";
 import Box from "../../../src/box";
+import { AuthenticationError } from "../../../src/errors";
 import Lexer from "../../../src/lexer";
 import Message from "../../../src/message";
 import Parser from "../../../src/parser";
@@ -78,10 +79,12 @@ async function runWith<T>(
 }
 
 describe("Command wire formats", () => {
-	test("LOGIN quotes its arguments", () => {
-		expect(commandText(new LoginCommand("me", "secret"))).toBe(
-			'LOGIN "me" "secret"',
-		);
+	test("LOGIN keeps credentials out of the public command text", () => {
+		const cmd = new LoginCommand("me", "secret");
+		// The public, loggable command text must not contain credentials.
+		expect(commandText(cmd)).toBe("LOGIN");
+		expect(cmd.getFullAnnotatedCommand()).not.toContain("secret");
+		expect(cmd.getFullAnnotatedCommand()).not.toContain("me");
 	});
 
 	test("CREATE / DELETE / SUBSCRIBE encode the mailbox name", () => {
@@ -323,6 +326,36 @@ describe("Command response parsing", () => {
 		const result = await promise;
 		expect(result).toBe(true);
 		expect(conn.sent).toContain("hello");
+	});
+});
+
+describe("Authentication error semantics", () => {
+	test("LOGIN resolves false when the server says NO", async () => {
+		const cmd = new LoginCommand("me", "wrong");
+		const conn = new FakeConnection();
+		const promise = cmd.run(conn as any);
+		conn.emit("response", resp(`${cmd.id} NO authentication failed`));
+		await expect(promise).resolves.toBe(false);
+	});
+
+	test("LOGIN throws AuthenticationError when the server says BAD", async () => {
+		const cmd = new LoginCommand("me", "x");
+		const conn = new FakeConnection();
+		const promise = cmd.run(conn as any);
+		conn.emit("response", resp(`${cmd.id} BAD plaintext auth disabled`));
+		await expect(promise).rejects.toBeInstanceOf(AuthenticationError);
+	});
+
+	test("AUTHENTICATE rejects bad credentials with a CREDENTIALS error", async () => {
+		const cmd = new AuthenticateCommand("PLAIN", {
+			username: "me",
+			password: "wrong",
+		});
+		const conn = new FakeConnection();
+		const promise = cmd.run(conn as any);
+		conn.emit("response", resp("+ "));
+		conn.emit("response", resp(`${cmd.id} NO invalid credentials`));
+		await expect(promise).rejects.toMatchObject({ type: "CREDENTIALS" });
 	});
 });
 

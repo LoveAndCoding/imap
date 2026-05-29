@@ -135,7 +135,11 @@ export abstract class Command<T = string> extends EventEmitter {
 	}
 
 	public run(connection: Connection): Promise<T> {
-		const cmdText = this.getFullAnnotatedCommand();
+		// getFullAnnotatedCommand is public and intentionally excludes any
+		// sensitive arguments (e.g. credentials). The bytes actually written
+		// to the socket include the sensitive suffix, if any.
+		const cmdText = this.getFullAnnotatedCommand() +
+			this.getSensitiveCommandSuffix();
 		let responses: StandardResponseTypes[] = [];
 		connection.send(cmdText);
 
@@ -153,7 +157,7 @@ export abstract class Command<T = string> extends EventEmitter {
 				this.onContinue(response, connection);
 			} else if (response instanceof TaggedResponse) {
 				if (response.tag.id === this.id) {
-					if (response.status.status === "OK") {
+					if (!this.shouldTreatAsError(response)) {
 						this.emit("results", this.parseResponse(responses));
 					} else {
 						this.emit("error", this.parseNonOKResponse(responses));
@@ -209,6 +213,27 @@ export abstract class Command<T = string> extends EventEmitter {
 		_connection: Connection,
 	): void {
 		// No-op by default
+	}
+
+	/**
+	 * Extra command text that should be written to the socket but kept out
+	 * of the public `getFullAnnotatedCommand()` (and therefore out of logs).
+	 * Commands carrying secrets (e.g. LOGIN) override this so credentials
+	 * are never exposed through the public command text. Includes its own
+	 * leading separator when non-empty.
+	 */
+	protected getSensitiveCommandSuffix(): string {
+		return "";
+	}
+
+	/**
+	 * Whether a tagged completion should be treated as an error (rejecting
+	 * the command) rather than a result. By default any non-OK status is an
+	 * error; commands that meaningfully handle NO (e.g. LOGIN treating it as
+	 * "wrong credentials") can narrow this.
+	 */
+	protected shouldTreatAsError(response: TaggedResponse): boolean {
+		return response.status.status !== "OK";
 	}
 
 	public get results(): Promise<T> {

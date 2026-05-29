@@ -82,13 +82,19 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 
 		this.emit("commandStart", command);
 		const cmdRun = command.run(this.connection);
-		cmdRun.finally(() => {
-			this.emit("commandDone", command);
-			this.commands.delete(command);
-			if (this.commands.size === 0) {
-				this.emit("idle");
-			}
-		});
+		cmdRun
+			.finally(() => {
+				this.emit("commandDone", command);
+				this.commands.delete(command);
+				if (this.commands.size === 0) {
+					this.emit("idle");
+				}
+			})
+			// The command's own result promise is what callers await (and
+			// handle errors on). This derived chain is only for queue
+			// bookkeeping, so swallow its rejection to avoid an unhandled
+			// rejection when a command errors or is canceled.
+			.catch(() => undefined);
 	}
 }
 

@@ -1,7 +1,7 @@
 import Connection from "../connection";
-import { IMAPError } from "../errors";
-import { ContinueResponse } from "../parser";
-import { Command } from "./base";
+import { AuthenticationError, IMAPError } from "../errors";
+import { ContinueResponse, TaggedResponse } from "../parser";
+import { Command, StandardResponseTypes } from "./base";
 
 export interface PlainCredentials {
 	username: string;
@@ -24,7 +24,9 @@ export type AuthMechanism = "PLAIN" | "XOAUTH2";
  * of real-world usage (password and OAuth2 bearer-token logins).
  */
 export class AuthenticateCommand extends Command<boolean> {
-	private readonly initialResponse: string;
+	// JS private field: the base64 client response embeds the credentials,
+	// so keep it off the (enumerable) instance surface.
+	#initialResponse: string;
 
 	constructor(
 		mechanism: "PLAIN",
@@ -40,7 +42,7 @@ export class AuthenticateCommand extends Command<boolean> {
 	) {
 		// AUTHENTICATE changes connection state, so isolate it.
 		super("AUTHENTICATE", true);
-		this.initialResponse = this.buildInitialResponse(
+		this.#initialResponse = this.buildInitialResponse(
 			mechanism,
 			credentials,
 		);
@@ -55,7 +57,20 @@ export class AuthenticateCommand extends Command<boolean> {
 		connection: Connection,
 	): void {
 		// Reply to the server's challenge with our base64 client response.
-		connection.send(this.initialResponse);
+		connection.send(this.#initialResponse);
+	}
+
+	protected parseNonOKResponse(
+		responses: StandardResponseTypes[],
+	): AuthenticationError {
+		const tagged = responses.find(
+			(r) => r instanceof TaggedResponse,
+		) as TaggedResponse;
+		const original = super.parseNonOKResponse(responses);
+		// NO => the server rejected our credentials; BAD => it refused the
+		// mechanism / the exchange was malformed.
+		const type = tagged?.status.status === "NO" ? "CREDENTIALS" : "MECHANISM";
+		return new AuthenticationError(type, original);
 	}
 
 	protected parseResponse(): boolean {

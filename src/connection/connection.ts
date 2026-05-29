@@ -263,6 +263,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			this.emit("unknownResponse", resp);
 			this.emit("response", resp);
 		});
+		// The parser is a Transform stream, but we consume parsed responses
+		// through the events above rather than its readable interface. Put it
+		// into flowing mode so emitted responses don't accumulate in the
+		// readable buffer and apply backpressure that would stall parsing
+		// after highWaterMark (16) responses.
+		this.parser.resume();
 	}
 
 	protected async starttls(): Promise<boolean> {

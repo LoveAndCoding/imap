@@ -2,29 +2,64 @@ import { Envelope, FlagList, MessageBody, Fetch } from "./parser";
 
 /**
  * A `Message` is a friendly wrapper around the data returned for a single
- * message by a FETCH (or STORE) command. The underlying parsed FETCH data
- * is preserved on `raw` for advanced use, while the most commonly needed
- * fields are surfaced directly.
+ * message by a FETCH (or STORE) command.
+ *
+ * A server may split the data for one message across several FETCH
+ * responses (and may even repeat the same sequence number), so a Message
+ * is built from one or more `Fetch` fragments. Scalar attributes use the
+ * first value seen (so an early UID is not clobbered by a later duplicate),
+ * while body sections are merged together. The original first fragment is
+ * preserved on `raw`.
  */
 export default class Message {
+	public readonly raw: Fetch;
 	public readonly sequenceNumber: number;
-	public readonly uid?: number | "*";
-	public readonly flags?: FlagList;
-	public readonly envelope?: Envelope;
-	public readonly internalDate?: Date;
-	public readonly size?: number;
-	public readonly modseq?: number | bigint;
-	public readonly body?: MessageBody;
+	public uid?: number | "*";
+	public flags?: FlagList;
+	public envelope?: Envelope;
+	public internalDate?: Date;
+	public size?: number;
+	public modseq?: number | bigint;
+	public body?: MessageBody;
 
-	constructor(public readonly raw: Fetch) {
-		this.sequenceNumber = raw.sequenceNumber;
-		this.uid = raw.uid?.id;
-		this.flags = raw.flags;
-		this.envelope = raw.envelope;
-		this.internalDate = raw.date;
-		this.size = raw.size;
-		this.modseq = raw.modseq;
-		this.body = raw.body;
+	constructor(raw: Fetch | Fetch[]) {
+		const fragments = Array.isArray(raw) ? raw : [raw];
+		this.raw = fragments[0];
+		this.sequenceNumber = this.raw.sequenceNumber;
+
+		for (const fragment of fragments) {
+			this.mergeFragment(fragment);
+		}
+	}
+
+	private mergeFragment(fragment: Fetch): void {
+		// First defined value wins for scalar attributes.
+		if (this.uid === undefined && fragment.uid) {
+			this.uid = fragment.uid.id;
+		}
+		if (this.internalDate === undefined && fragment.date) {
+			this.internalDate = fragment.date;
+		}
+		if (this.size === undefined && fragment.size !== undefined) {
+			this.size = fragment.size;
+		}
+		if (this.modseq === undefined && fragment.modseq !== undefined) {
+			this.modseq = fragment.modseq;
+		}
+		if (this.envelope === undefined && fragment.envelope) {
+			this.envelope = fragment.envelope;
+		}
+		if (this.flags === undefined && fragment.flags) {
+			this.flags = fragment.flags;
+		}
+		// Body sections accumulate across fragments.
+		if (fragment.body) {
+			if (this.body) {
+				this.body.mergeIn(fragment.body);
+			} else {
+				this.body = fragment.body;
+			}
+		}
 	}
 
 	/** The decoded subject line, when an envelope was fetched. */

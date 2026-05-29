@@ -76,3 +76,21 @@ export class NotImplementedError extends Error {
 		);
 	}
 }
+
+// Categories of authentication failure, kept distinct so callers can react
+// differently (e.g. retry with different credentials vs. abort because the
+// server refused the mechanism outright).
+export type AuthenticationErrorType =
+	| "INSECURE"
+	| "CREDENTIALS"
+	| "MECHANISM"
+	| "UNKNOWN";
+
+export class AuthenticationError extends IMAPError {
+	constructor(
+		public readonly type: AuthenticationErrorType,
+		wrappedError?: Error,
+	) {
+		super(`Authentication failed (${type})`, wrappedError);
+	}
+}
