@@ -223,7 +223,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.socket.destroy(error);
 	}
 
-	public async runCommand<K extends Command<T>, T>(command: K): Promise<T> {
+	public async runCommand<T>(command: Command<T>): Promise<T> {
 		this.commandQueue.add<T>(command);
 		return command.results;
 	}

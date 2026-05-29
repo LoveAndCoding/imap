@@ -6,7 +6,12 @@ import Connection from "../connection";
 import { ContinueResponse, TaggedResponse, UntaggedResponse } from "../parser";
 
 // General commands
-type GeneralCommandTypes = "CAPABILITY" | "ID" | "IDLE" | "NOOP";
+type GeneralCommandTypes =
+	| "CAPABILITY"
+	| "ENABLE"
+	| "ID"
+	| "IDLE"
+	| "NOOP";
 
 // Login/Auth commands
 type LoginOrAuthCommandTypes = "AUTHENTICATE" | "LOGIN" | "LOGOUT" | "STARTTLS";
@@ -19,6 +24,7 @@ type MailboxCommandTypes =
 	| "EXAMINE"
 	| "LIST"
 	| "LSUB"
+	| "NAMESPACE"
 	| "RENAME"
 	| "SELECT"
 	| "STATUS"
@@ -32,9 +38,11 @@ type MessageCommandTypes =
 	| "COPY"
 	| "EXPUNGE"
 	| "FETCH"
+	| "MOVE"
 	| "SEARCH"
 	| "STORE"
-	| "UID";
+	| "UID"
+	| "UNSELECT";
 
 export type CommandType =
 	| GeneralCommandTypes
@@ -131,16 +139,26 @@ export abstract class Command<T = string> extends EventEmitter {
 		let responses: StandardResponseTypes[] = [];
 		connection.send(cmdText);
 
+		const cleanUp = () => {
+			connection.off("response", responseHandler);
+			connection.off("serverStatus", responseHandler);
+		};
+
 		const responseHandler = (response: StandardResponseTypes) => {
 			responses.push(response);
-			if (response instanceof TaggedResponse) {
+			if (response instanceof ContinueResponse) {
+				// The server is asking us for more data before it will
+				// finish the command (e.g. AUTHENTICATE, APPEND, IDLE).
+				// Let the concrete command decide what to send back.
+				this.onContinue(response, connection);
+			} else if (response instanceof TaggedResponse) {
 				if (response.tag.id === this.id) {
 					if (response.status.status === "OK") {
 						this.emit("results", this.parseResponse(responses));
 					} else {
 						this.emit("error", this.parseNonOKResponse(responses));
 					}
-					connection.off("response", responseHandler);
+					cleanUp();
 				} else {
 					// If that was data for another command, clear it
 					responses = [];
@@ -149,6 +167,11 @@ export abstract class Command<T = string> extends EventEmitter {
 		};
 
 		connection.on("response", responseHandler);
+		// Untagged status responses (e.g. the `* OK [UIDVALIDITY ...]` lines
+		// sent during SELECT/EXAMINE) are delivered on the serverStatus
+		// channel rather than the generic response channel. We listen here so
+		// commands can incorporate them into their parsed result.
+		connection.on("serverStatus", responseHandler);
 		return this.commandPromise;
 	}
 
@@ -170,6 +193,22 @@ export abstract class Command<T = string> extends EventEmitter {
 		throw new NotImplementedError(
 			"Response parsing has not be implemented for this command",
 		);
+	}
+
+	/**
+	 * Hook invoked whenever the server sends a continuation request (a "+"
+	 * response) while this command is running. Commands that need to send
+	 * additional data mid-flight (such as AUTHENTICATE, APPEND, or IDLE)
+	 * should override this and use `connection.send(...)` to respond.
+	 *
+	 * The default implementation does nothing, which is correct for the
+	 * majority of commands that never trigger a continuation.
+	 */
+	protected onContinue(
+		_response: ContinueResponse,
+		_connection: Connection,
+	): void {
+		// No-op by default
 	}
 
 	public get results(): Promise<T> {
