@@ -27,9 +27,20 @@ export interface SelectOptions {
 	uidValidity?: number;
 	uidNext?: number;
 	readOnly?: boolean;
+	/** EXAMINE uses the identical §6.3.1 data set (§6.3.2). */
+	verb?: "SELECT" | "EXAMINE";
 }
 
-/** Expect SELECT <mailbox>; reply with the canonical §6.3.1 data set. */
+function escapeRegExp(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Expect SELECT (or EXAMINE) <mailbox>; reply with the canonical §6.3.1 data
+ * set. Mailbox matching is case-sensitive per RFC 3501 §5.1 — except INBOX,
+ * which is case-insensitive. The helper deliberately does NOT absorb client
+ * syntax sloppiness (quoting must be balanced or absent).
+ */
 export function selectExchange(mailbox: string, opts: SelectOptions = {}): ScriptStep[] {
 	const exists = opts.exists ?? 0;
 	const recent = opts.recent ?? 0;
@@ -37,9 +48,12 @@ export function selectExchange(mailbox: string, opts: SelectOptions = {}): Scrip
 	const uidValidity = opts.uidValidity ?? 1;
 	const uidNext = opts.uidNext ?? exists + 1;
 	const code = opts.readOnly ? "READ-ONLY" : "READ-WRITE";
+	const verb = opts.verb ?? "SELECT";
+	const name = escapeRegExp(mailbox);
+	const flags = mailbox.toUpperCase() === "INBOX" ? "i" : "";
 	return [
-		expectLine(command("SELECT", { args: new RegExp(`^"?${mailbox}"?$`, "i") })),
-		reply(`OK [${code}] SELECT completed`, [
+		expectLine(command(verb, { args: new RegExp(`^(?:${name}|"${name}")$`, flags) })),
+		reply(`OK [${code}] ${verb} completed`, [
 			`* ${exists} EXISTS`,
 			`* ${recent} RECENT`,
 			`* OK [UNSEEN ${unseen}] Message ${unseen} is first unseen`,

@@ -32,8 +32,16 @@ export default defineConfig({
 			}
 			const msg = parts.join(" ");
 			const known = [
+				// src/connection/connection.ts attaches its socket error listener
+				// only after connect succeeds, so identity-verification rejections
+				// escape uncaught — leaks from specs/rfc9525/identity.test.ts.
+				// REMOVE both once RFC9525-6.6-1 passes.
 				/ERR_TLS_CERT_ALTNAME_INVALID/,
 				/Hostname\/IP does not match certificate/,
+				// src/commands/base.ts rejects pending commands with the plain
+				// string "Command canceled" when the queue stops — leaks from
+				// specs/rfc3501/6.2-starttls.test.ts and rfc9525/identity.test.ts.
+				// REMOVE once RFC3501-6.2.1-* and RFC9525-6.6-1 pass.
 				/Command canceled/,
 			];
 			if (known.some((re) => re.test(msg))) return false;
