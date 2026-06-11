@@ -118,6 +118,16 @@ describe("aggregate", () => {
 		expect(bad.problems.some((p) => p.includes("NOPE-1.1-1"))).toBe(true);
 	});
 
+	test("reserved RFC0000 self-test namespace is ignored, even with an empty catalog", () => {
+		const selfTest = {
+			name: "runner self-test",
+			state: "passed" as const,
+			meta: { reqs: ["RFC0000-0.0-1"], profile: "rev1" as const },
+		};
+		expect(aggregate(catalog, [selfTest]).problems).toEqual([]);
+		expect(aggregate([], [selfTest]).problems).toEqual([]);
+	});
+
 	test("a violation outranks an unimplemented annotation", () => {
 		const mixed = aggregate(catalog, [
 			{

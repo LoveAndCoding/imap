@@ -50,6 +50,13 @@ export interface ComplianceReportData {
 
 const ALL_LEVELS: Rfc2119Level[] = ["MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY"];
 
+/**
+ * Requirement-id namespace reserved for the suite's own machinery self-tests
+ * (e.g., the runner-helper tests). Citations in this namespace are never
+ * catalog entries and are excluded from aggregation and unknown-id checks.
+ */
+const SELF_TEST_ID_PREFIX = "RFC0000-";
+
 export function aggregate(
 	catalog: CatalogModule[],
 	tests: TestRecord[],
@@ -65,18 +72,13 @@ export function aggregate(
 	}
 
 	// Index compliance test results by (reqId, profile).
-	// Only flag unknown requirement IDs when the catalog is non-empty: with an
-	// empty catalog every ID would be "unknown", producing noise before any
-	// catalog modules have been seeded (Phase 0 state).
-	const catalogPopulated = allReqs.length > 0;
 	const byReqProfile = new Map<string, TestRecord[]>();
 	for (const t of tests) {
 		if (!t.meta) continue; // machinery self-test — not a compliance test
 		for (const reqId of t.meta.reqs) {
+			if (reqId.startsWith(SELF_TEST_ID_PREFIX)) continue;
 			if (!knownIds.has(reqId)) {
-				if (catalogPopulated) {
-					problems.push(`test '${t.name}' cites unknown requirement id ${reqId}`);
-				}
+				problems.push(`test '${t.name}' cites unknown requirement id ${reqId}`);
 				continue;
 			}
 			const key = `${reqId} ${t.meta.profile}`;
