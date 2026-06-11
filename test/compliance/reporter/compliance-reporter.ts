@@ -41,13 +41,23 @@ export default class ComplianceReporter implements Reporter {
 		}
 		const data = aggregate(allCatalogModules, records);
 
-		fs.mkdirSync(this.outDir, { recursive: true });
-		fs.writeFileSync(
-			path.join(this.outDir, "compliance.json"),
-			JSON.stringify(data, null, "\t"),
-		);
-		fs.writeFileSync(path.join(this.outDir, "COMPLIANCE.md"), renderMarkdown(data));
+		// Fix 5: print console summary FIRST so results are visible even if file writes fail.
 		// eslint-disable-next-line no-console
 		console.log(renderConsole(data));
+
+		// Fix 5: wrap file writes in try/catch to log a clear one-line error on failure.
+		try {
+			fs.mkdirSync(this.outDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(this.outDir, "compliance.json"),
+				JSON.stringify(data, null, "\t"),
+			);
+			fs.writeFileSync(path.join(this.outDir, "COMPLIANCE.md"), renderMarkdown(data));
+		} catch (err) {
+			// eslint-disable-next-line no-console
+			console.error(
+				`compliance-reporter: failed to write reports to ${this.outDir}: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 	}
 }

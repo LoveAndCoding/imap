@@ -71,6 +71,10 @@ export function aggregate(
 		}
 	}
 
+	// Build a map of reqId → requirement for profile-mismatch checks.
+	const reqById = new Map<string, SpecRequirement>();
+	for (const req of allReqs) reqById.set(req.id, req);
+
 	// Index compliance test results by (reqId, profile).
 	const byReqProfile = new Map<string, TestRecord[]>();
 	for (const t of tests) {
@@ -80,6 +84,13 @@ export function aggregate(
 			if (!knownIds.has(reqId)) {
 				problems.push(`test '${t.name}' cites unknown requirement id ${reqId}`);
 				continue;
+			}
+			// Fix 4: warn when a test cites a req under a profile it doesn't apply to.
+			const req = reqById.get(reqId)!;
+			if (!req.profiles.includes(t.meta.profile)) {
+				problems.push(
+					`test '${t.name}' cites ${reqId} under profile '${t.meta.profile}' but the requirement only applies to [${req.profiles.join(", ")}]`,
+				);
 			}
 			const key = `${reqId} ${t.meta.profile}`;
 			const list = byReqProfile.get(key) ?? [];
@@ -105,18 +116,21 @@ export function aggregate(
 			if (!failures.length) {
 				byProfile[profile] = {
 					status: "pass",
-					tests: considered.map((r) => r.name),
+					tests: considered.map((r) => r.name).sort(),
 				};
 			} else {
-				const kind: FailureKind = failures.some(
-					(f) => f.meta?.failureKind === "violation",
-				)
-					? "violation"
-					: "unimplemented";
+				// Fix 3: a failure with NO failureKind annotation is a "violation"
+				// (e.g. vitest timeout bypasses the runner's catch block).
+				// Only annotated-unimplemented-only failures count as "unimplemented".
+				const kind: FailureKind =
+					failures.some((f) => f.meta?.failureKind === "violation") ||
+					failures.some((f) => !f.meta?.failureKind)
+						? "violation"
+						: "unimplemented";
 				byProfile[profile] = {
 					status: "fail",
 					failureKind: kind,
-					tests: considered.map((r) => r.name),
+					tests: considered.map((r) => r.name).sort(),
 				};
 			}
 		}
@@ -158,6 +172,14 @@ export function aggregate(
 					score: denom === 0 ? null : counts.pass / denom,
 				});
 			}
+		}
+	}
+
+	// Fix 1: sort for deterministic, diffable JSON output regardless of vitest file scheduling.
+	problems.sort();
+	for (const rr of requirements) {
+		for (const pr of Object.values(rr.byProfile)) {
+			if (pr) pr.tests.sort();
 		}
 	}
 

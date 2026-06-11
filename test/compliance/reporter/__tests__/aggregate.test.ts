@@ -144,4 +144,57 @@ describe("aggregate", () => {
 		const r = mixed.requirements.find((x) => x.req.id === "RFCTEST-1.1-1")!;
 		expect(r.byProfile.rev1!.failureKind).toBe("violation");
 	});
+
+	// Fix 1: deterministic output — two calls with the same records in different order must be deeply equal.
+	test("deterministic output: different input orders produce deeply-equal results", () => {
+		const recordsA: TestRecord[] = [
+			{ name: "t1", state: "passed", meta: { reqs: ["RFCTEST-1.1-1"], profile: "rev1" } },
+			{
+				name: "t2",
+				state: "failed",
+				meta: { reqs: ["RFCTEST-1.1-2"], profile: "rev1", failureKind: "unimplemented" },
+			},
+		];
+		const recordsB: TestRecord[] = [
+			{
+				name: "t2",
+				state: "failed",
+				meta: { reqs: ["RFCTEST-1.1-2"], profile: "rev1", failureKind: "unimplemented" },
+			},
+			{ name: "t1", state: "passed", meta: { reqs: ["RFCTEST-1.1-1"], profile: "rev1" } },
+		];
+		const a = aggregate(catalog, recordsA);
+		const b = aggregate(catalog, recordsB);
+		expect(JSON.stringify(a, null, "\t")).toBe(JSON.stringify(b, null, "\t"));
+		expect(a).toEqual(b);
+	});
+
+	// Fix 3: a failed record with meta lacking failureKind yields status fail with failureKind "violation".
+	test("failed test with no failureKind annotation defaults to 'violation'", () => {
+		const result = aggregate(catalog, [
+			{
+				name: "tTimeout",
+				state: "failed",
+				meta: { reqs: ["RFCTEST-1.1-1"], profile: "rev1" }, // no failureKind
+			},
+		]);
+		const r = result.requirements.find((x) => x.req.id === "RFCTEST-1.1-1")!;
+		expect(r.byProfile.rev1!.status).toBe("fail");
+		expect(r.byProfile.rev1!.failureKind).toBe("violation");
+	});
+
+	// Fix 4: cites a known requirement id under a profile NOT in that requirement's profiles list.
+	test("flags test citing req under a profile it doesn't apply to", () => {
+		// RFCTEST-1.1-1 only has profiles: ["rev1"]; citing under "rev2" should produce a problem.
+		const result = aggregate(catalog, [
+			{
+				name: "tWrongProfile",
+				state: "passed",
+				meta: { reqs: ["RFCTEST-1.1-1"], profile: "rev2" },
+			},
+		]);
+		expect(result.problems.some((p) =>
+			p.includes("RFCTEST-1.1-1") && p.includes("rev2") && p.includes("rev1"),
+		)).toBe(true);
+	});
 });

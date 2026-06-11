@@ -1,7 +1,16 @@
 import type { ComplianceReportData, SourceSummary } from "./aggregate";
 
 function pct(score: number | null): string {
-	return score === null ? "  n/a" : `${(score * 100).toFixed(0).padStart(4)}%`;
+	// Fix 6: use Math.floor so 0.995 never rounds up to display as 100%.
+	return score === null ? "  n/a" : `${String(Math.floor(score * 100)).padStart(4)}%`;
+}
+
+/**
+ * Fix 2: Escape a value for safe embedding in a Markdown table cell.
+ * Collapses all whitespace runs to single spaces and escapes `|` as `\|`.
+ */
+function cell(value: string): string {
+	return value.replace(/\s+/g, " ").replace(/\|/g, "\\|");
 }
 
 export function renderConsole(data: ComplianceReportData): string {
@@ -46,7 +55,7 @@ export function renderMarkdown(data: ComplianceReportData): string {
 	for (const s of data.summary) {
 		const c = s.counts;
 		lines.push(
-			`| ${s.source} | ${s.profile} | ${s.level} | ${pct(s.score).trim()} | ` +
+			`| ${cell(s.source)} | ${cell(s.profile)} | ${cell(s.level)} | ${pct(s.score).trim()} | ` +
 				`${c.pass} | ${c.violation} | ${c.unimplemented} | ${c.untested} | ${c.untestable} |`,
 		);
 	}
@@ -55,14 +64,20 @@ export function renderMarkdown(data: ComplianceReportData): string {
 	lines.push("|---|---|---|---|---|");
 	for (const rr of data.requirements) {
 		for (const [profile, pr] of Object.entries(rr.byProfile)) {
-			const detail =
-				pr.status === "fail"
-					? `${pr.failureKind}: ${rr.req.text.replace(/\s+/g, " ").slice(0, 160)}`
-					: pr.status === "untestable"
-						? (rr.req.untestableRationale ?? "")
-						: "";
+			let detail: string;
+			if (pr.status === "fail") {
+				const normalized = rr.req.text.replace(/\s+/g, " ");
+				const truncated = normalized.length > 160
+					? `${normalized.slice(0, 160)}…`
+					: normalized;
+				detail = cell(`${pr.failureKind}: ${truncated}`);
+			} else if (pr.status === "untestable") {
+				detail = cell(rr.req.untestableRationale ?? "");
+			} else {
+				detail = "";
+			}
 			lines.push(
-				`| ${rr.req.id} — ${rr.req.title} | ${rr.req.level} | ${profile} | ${pr.status} | ${detail} |`,
+				`| ${cell(`${rr.req.id} — ${rr.req.title}`)} | ${cell(rr.req.level)} | ${cell(profile)} | ${cell(pr.status)} | ${detail} |`,
 			);
 		}
 	}
