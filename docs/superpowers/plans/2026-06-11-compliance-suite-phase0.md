@@ -3121,6 +3121,21 @@ git commit -m "🛂 Import Hygiene Meta-Test + Phase 0 Verification"
 
 ---
 
+## Phase 1 carry-forward (from the final phase-boundary review)
+
+Schedule these machinery items at the START of Phase 1, before spec mass-production:
+
+1. **Happy-path TLS connect test** — driver `security: "implicit"` + valid localhost cert is never exercised successfully anywhere; one passing connect test prevents machinery bugs masquerading as compliance results.
+2. **Ambient literal `{n}`/continuation handling in the harness** (+ self-tests) — spec-promised; needed the moment LOGIN/APPEND specs send literals.
+3. **Containment for client-originated uncaught exceptions** — identity tests currently leak 3 run-level vitest errors per run; capture per-test without masking honest failures.
+4. Small items: `defineAcceptanceTable` lacks the `timeout` option `complianceTest` has; import-hygiene regex misses `require()`/dynamic `import()`/bare `/src` specifiers; add an abrupt-disconnect (destroy) script step; ID pair-counting understands quoted-string syntax only.
+
+Phase 1 catalog leads discovered by Phase 0 testing (genuine client gaps to catalog/cover properly):
+- Parser matches `"CAPABILITIES"` instead of `CAPABILITY` in resp-text-codes (`src/parser/structure/text.code.ts:210`) — greeting/tagged-OK capability data silently ignored.
+- `Session.start()` discards `connect()`'s boolean (`src/session.ts:47`) and hangs awaiting a command on a never-started queue.
+- STARTTLS non-functional: `connect()` calls `starttls()` before `connected = true`; guard returns immediately (`src/connection/connection.ts:166,269`).
+- BYE-greeting test passes via close-detection; a stronger variant sends BYE without closing.
+
 ## Task 14: Phase-boundary review
 
 - [ ] **Step 1: Subagent code review** — dispatch a code-review subagent over the full Phase 0 diff against this plan and the spec; fix actionable findings (driver protocol-logic leaks, assertion weakening, catalog/report mismatches are the priority items).
