@@ -181,6 +181,11 @@ class ConnectionRunner {
 		// Replace it with one that routes post-handshake errors into the failure path.
 		secured.removeAllListeners("error");
 		secured.on("error", (err) => {
+			// Teardown resets after the script has settled are expected noise
+			// (e.g., the test client destroying its socket); only live runs fail.
+			if (this.server.settled || secured.destroyed) {
+				return;
+			}
 			this.server.scriptFailed(`TLS socket error after handshake: ${err.message}`);
 			secured.destroy();
 		});
@@ -261,6 +266,11 @@ export class ScriptedServer {
 	public scriptFinished(): void {
 		this.scriptsFinished++;
 		this.settleIfDone();
+	}
+
+	/** @internal — true once the run's outcome can no longer change. */
+	public get settled(): boolean {
+		return this.isSettled();
 	}
 
 	/** @internal */
