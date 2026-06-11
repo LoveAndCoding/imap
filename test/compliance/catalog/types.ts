@@ -59,9 +59,10 @@ export function validateCatalog(modules: CatalogModule[]): string[] {
 			if (!req.id.startsWith(`${req.source}-${req.section}-`)) {
 				problems.push(`${where}: id must be '<source>-<section>-<ordinal>'`);
 			}
-			if (!/^\d+$/.test(req.id.slice(`${req.source}-${req.section}-`.length))) {
+			if (!/^[1-9]\d*$/.test(req.id.slice(`${req.source}-${req.section}-`.length))) {
 				problems.push(`${where}: ordinal must be a positive integer`);
 			}
+			if (!req.section.trim()) problems.push(`${where}: empty section`);
 			if (!req.title.trim()) problems.push(`${where}: empty title`);
 			if (!req.text.trim()) problems.push(`${where}: empty text`);
 			if (!LEVELS.has(req.level)) problems.push(`${where}: bad level '${req.level}'`);

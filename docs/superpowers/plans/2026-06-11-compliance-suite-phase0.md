@@ -11,6 +11,7 @@
 **Spec:** `docs/superpowers/specs/2026-06-11-imap-compliance-suite-design.md` — all decisions there are settled; do not re-litigate.
 
 **Execution environment notes:**
+- **Recorded deviations (Task 1, reviewed and approved):** (a) root `package.json` carries `"resolutions": {"vite": "^6.0.0"}` because this machine runs Node 20.12.2 and vite 7/8 require >= 20.19 — drop the pin once Node is upgraded past 20.19/22.12. (b) `test/compliance/package.json` contains `{"type": "module"}` so the ESM-style vitest config (`import.meta.url`) loads correctly under the CJS root package — permanent, do not remove.
 - Windows; repo at the worktree root. Use `yarn` (yarn.lock, yarn 1.22.5). Run commands from repo root.
 - `yarn test` runs the existing Jest suite (`test/(unit|integration)` only — it cannot see `test/compliance/`); it must stay green throughout.
 - Vitest does not type-check; the repo's TS 4.3 is irrelevant at runtime (esbuild transform). Don't "fix" type-version mismatches in editor tooling.
