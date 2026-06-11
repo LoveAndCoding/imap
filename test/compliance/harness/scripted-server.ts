@@ -29,6 +29,18 @@ class ConnectionRunner {
 		timer: NodeJS.Timeout;
 	};
 
+	// Literal assembly state
+	private segments: string[] = [];
+	private literalsBuf: Buffer[] = [];
+	private literalNonSync: boolean[] = [];
+	private literalRemaining = 0; // >0 while consuming literal octets
+	// Stash the completed literals until the expect step claims them
+	private lastLiterals: Buffer[] = [];
+	private lastNonSync: boolean[] = [];
+
+	private static readonly LITERAL_RE = /\{(\d+)(\+)?\}$/;
+	private static readonly MAX_LITERAL = 1024 * 1024;
+
 	constructor(
 		private socket: net.Socket | tls.TLSSocket,
 		private readonly steps: ScriptStep[],
@@ -59,6 +71,9 @@ class ConnectionRunner {
 						case "close":
 							this.socket.end();
 							break;
+						case "destroy":
+							this.socket.destroy();
+							break;
 					}
 				} catch (stepErr) {
 					const msg = stepErr instanceof Error ? stepErr.message : String(stepErr);
@@ -85,6 +100,20 @@ class ConnectionRunner {
 
 	private drainLines(): void {
 		if (!this.waiting) return;
+
+		// Consume pending literal octets first.
+		if (this.literalRemaining > 0) {
+			if (this.buffer.length < this.literalRemaining) return;
+			const idx = this.literalsBuf.length - 1;
+			this.literalsBuf[idx] = Buffer.concat([
+				this.literalsBuf[idx],
+				this.buffer.subarray(0, this.literalRemaining),
+			]);
+			this.buffer = this.buffer.subarray(this.literalRemaining);
+			this.literalRemaining = 0;
+			// Fall through to look for the next CRLF-terminated segment.
+		}
+
 		const idx = this.buffer.indexOf("\r\n");
 		if (idx === -1) {
 			// A bare LF without CR is a protocol violation worth failing fast on.
@@ -103,12 +132,51 @@ class ConnectionRunner {
 			}
 			return;
 		}
-		const line = this.buffer.subarray(0, idx).toString("latin1");
+
+		const segment = this.buffer.subarray(0, idx).toString("latin1");
 		this.buffer = this.buffer.subarray(idx + 2);
+
+		const lit = ConnectionRunner.LITERAL_RE.exec(segment);
+		if (lit) {
+			const size = Number(lit[1]);
+			if (size > ConnectionRunner.MAX_LITERAL) {
+				const w = this.waiting;
+				this.waiting = undefined;
+				clearTimeout(w.timer);
+				w.rejectLine(new Error(`literal announcement too large: ${size} octets`));
+				return;
+			}
+			this.segments.push(segment);
+			this.literalsBuf.push(Buffer.alloc(0));
+			this.literalNonSync.push(lit[2] === "+");
+			this.literalRemaining = size;
+			if (lit[2] !== "+") {
+				// Synchronizing literal: harness sends continuation automatically.
+				const cont = "+ Ready\r\n";
+				this.server.transcript.record("S", cont);
+				this.socket.write(cont);
+			}
+			// Payload may already be buffered — recurse to consume it.
+			this.drainLines();
+			return;
+		}
+
+		// Final segment: assemble the marker-flat logical line. Literal markers
+		// stay in place; payload bytes are exposed via commandLines[].literals,
+		// never inlined (payloads may contain CRLF / trailing whitespace, which
+		// would corrupt single-line grammar matching).
+		this.segments.push(segment);
+		const flat = this.segments.join("");
+		this.lastLiterals = this.literalsBuf;
+		this.lastNonSync = this.literalNonSync;
+		this.segments = [];
+		this.literalsBuf = [];
+		this.literalNonSync = [];
+
 		const w = this.waiting;
 		this.waiting = undefined;
 		clearTimeout(w.timer);
-		w.resolveLine(line);
+		w.resolveLine(flat);
 	}
 
 	private nextLine(description: string): Promise<string> {
@@ -153,7 +221,14 @@ class ConnectionRunner {
 		const result = step.matcher.match(line);
 		if (result.tag) {
 			this.server.commandTags.push(result.tag);
-			this.server.commandLines.push({ tag: result.tag, args: result.args ?? "" });
+			this.server.commandLines.push({
+				tag: result.tag,
+				args: result.args ?? "",
+				literals: this.lastLiterals,
+				nonSync: this.lastNonSync,
+			});
+			this.lastLiterals = [];
+			this.lastNonSync = [];
 			this.lastTag = result.tag;
 		}
 		if (!result.ok) {
@@ -224,7 +299,12 @@ export class ScriptedServer {
 	/** Tags of every command line matched by an expect step, in order. */
 	public readonly commandTags: string[] = [];
 	/** Tag and args of every tagged command line matched by an expect step, in order. */
-	public readonly commandLines: Array<{ tag: string; args: string }> = [];
+	public readonly commandLines: Array<{
+		tag: string;
+		args: string;
+		literals: Buffer[];
+		nonSync: boolean[];
+	}> = [];
 
 	private netServer!: net.Server;
 	private scripts: ScriptStep[][] = [];

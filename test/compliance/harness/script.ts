@@ -5,7 +5,8 @@ export type ScriptStep =
 	| { kind: "expect"; matcher: LineMatcher }
 	| { kind: "reply"; suffix: string; untagged?: string[] }
 	| { kind: "startTls" }
-	| { kind: "close" };
+	| { kind: "close" }
+	| { kind: "destroy" };
 
 export function send(
 	data: string | Buffer,
@@ -24,6 +25,10 @@ export function startTls(): ScriptStep {
 
 export function close(): ScriptStep {
 	return { kind: "close" };
+}
+
+export function destroy(): ScriptStep {
+	return { kind: "destroy" };
 }
 
 /**

@@ -16,14 +16,16 @@ function walk(dir: string): string[] {
 	return out;
 }
 
+const IMPORT_RE = /(?:from\s+|require\(\s*|import\(\s*)["']([^"']+)["']/g;
+
 test("compliance suite only touches the client via src/index", () => {
 	const offenders: string[] = [];
 	for (const sub of ["specs", "driver", "runner", "harness", "reporter", "catalog"]) {
 		for (const file of walk(path.join(complianceRoot, sub))) {
 			const content = fs.readFileSync(file, "utf8");
-			for (const m of content.matchAll(/from\s+["']([^"']+)["']/g)) {
+			for (const m of content.matchAll(IMPORT_RE)) {
 				const spec = m[1];
-				if (/\/src\//.test(spec) && !/\/src\/index$/.test(spec)) {
+				if (/\/src(\/|$)/.test(spec) && !/\/src\/index$/.test(spec)) {
 					offenders.push(`${path.relative(complianceRoot, file)} imports ${spec}`);
 				}
 			}
@@ -37,7 +39,8 @@ test("only the driver imports the client at all", () => {
 	for (const sub of ["specs", "runner", "harness", "reporter", "catalog"]) {
 		for (const file of walk(path.join(complianceRoot, sub))) {
 			const content = fs.readFileSync(file, "utf8");
-			if (/from\s+["'][^"']*\/src\/index["']/.test(content)) {
+			const matches = [...content.matchAll(IMPORT_RE)];
+			if (matches.some((m) => /\/src\/index$/.test(m[1]))) {
 				offenders.push(path.relative(complianceRoot, file));
 			}
 		}
