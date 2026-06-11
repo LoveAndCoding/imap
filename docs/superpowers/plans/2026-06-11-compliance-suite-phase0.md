@@ -1946,7 +1946,7 @@ export function aggregate(
 				problems.push(`test '${t.name}' cites unknown requirement id ${reqId}`);
 				continue;
 			}
-			const key = `${reqId} ${t.meta.profile}`;
+			const key = `${reqId} ${t.meta.profile}`;
 			const list = byReqProfile.get(key) ?? [];
 			list.push(t);
 			byReqProfile.set(key, list);
@@ -1960,7 +1960,7 @@ export function aggregate(
 				byProfile[profile] = { status: "untestable", tests: [] };
 				continue;
 			}
-			const records = byReqProfile.get(`${req.id} ${profile}`) ?? [];
+			const records = byReqProfile.get(`${req.id} ${profile}`) ?? [];
 			const considered = records.filter((r) => r.state !== "skipped");
 			if (!considered.length) {
 				byProfile[profile] = { status: "untested", tests: [] };
@@ -2202,6 +2202,8 @@ git commit -m "📊 Compliance Reporter (Console/JSON/Markdown)"
 - Create: `test/compliance/catalog/rfc9525.ts`
 - Modify: `test/compliance/catalog/index.ts`
 - Modify: `test/compliance/specs/meta/catalog.test.ts`
+
+> **Note (post-execution):** the committed catalog modules are canonical, not the drafts below. RFC verification during execution corrected two entries: PREAUTH is §7.1.4 (id `RFC3501-7.1.4-1`, not 7.1.2) and the cert-identity requirement is RFC 9525 §6.6 "Outcome" (id `RFC9525-6.6-1`, not 6.3), with corrected verbatim text.
 
 This is a Phase 0 **seed** — just enough RFC 3501/2971/9525 requirements to exercise every machinery path. Full extraction happens in Phases 1–3; ids assigned here are append-only and must survive that extraction (Phase 1 keeps these ids, adding new ones around them).
 
@@ -2565,7 +2567,7 @@ defineAcceptanceTable({
 
 complianceTest(
 	{
-		reqs: ["RFC3501-7.1.2-1"],
+		reqs: ["RFC3501-7.1.4-1"],
 		profiles: ["rev1"],
 		title: "PREAUTH greeting puts the session in authenticated state",
 	},
@@ -3001,7 +3003,7 @@ afterEach(async () => {
 
 complianceTest(
 	{
-		reqs: ["RFC9525-6.3-1"],
+		reqs: ["RFC9525-6.6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "implicit TLS: certificate for the wrong host is rejected",
 	},
