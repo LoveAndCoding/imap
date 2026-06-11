@@ -2,6 +2,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+import ComplianceReporter from "./reporter/compliance-reporter";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
@@ -16,5 +18,6 @@ export default defineConfig({
 		],
 		testTimeout: 15000,
 		hookTimeout: 15000,
+		reporters: ["default", new ComplianceReporter()],
 	},
 });
