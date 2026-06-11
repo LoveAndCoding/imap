@@ -1,10 +1,11 @@
 // Verifies the helpers register vitest tests with compliance meta attached.
 // Meta is asserted indirectly: the wrapper writes to task.meta, which the
 // test can read back from its own context.
-import { describe, expect } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { complianceTest } from "../compliance-test";
 import { defineAcceptanceTable } from "../acceptance-table";
+import { classifyFailure } from "../meta";
 import { NotImplementedError } from "../../driver/errors";
 
 describe("complianceTest", () => {
@@ -28,24 +29,18 @@ describe("complianceTest", () => {
 		},
 	);
 
-	complianceTest(
-		{
-			reqs: ["RFC0000-0.0-3"],
-			profiles: ["rev1"],
-			title: "tags NotImplementedError as unimplemented",
-			expectFailure: "unimplemented",
-		},
-		async (ctx) => {
-			try {
-				throw new NotImplementedError("DEMO");
-			} catch (err) {
-				// The wrapper re-tags and re-throws; here we just verify the
-				// classification helper directly.
-				expect(err).toBeInstanceOf(NotImplementedError);
-				ctx.task.meta.compliance!.failureKind = "unimplemented";
-			}
-		},
-	);
+});
+
+describe("classifyFailure", () => {
+	// Both wrappers delegate to this helper to tag failures for the reporter.
+	test("NotImplementedError → unimplemented", () => {
+		expect(classifyFailure(new NotImplementedError("DEMO"))).toBe("unimplemented");
+	});
+
+	test("any other error → violation", () => {
+		expect(classifyFailure(new Error("assertion failed"))).toBe("violation");
+		expect(classifyFailure("string throw")).toBe("violation");
+	});
 });
 
 describe("defineAcceptanceTable", () => {

@@ -1,9 +1,7 @@
 import { test, type TestContext } from "vitest";
 
 import type { Profile } from "../catalog/types";
-import { NotImplementedError } from "../driver/errors";
-import type { FailureKind } from "./meta";
-import "./meta";
+import { classifyFailure, type FailureKind } from "./meta";
 
 export interface ComplianceTestInfo {
 	reqs: string[];
@@ -28,8 +26,7 @@ export function complianceTest(
 			try {
 				await fn(Object.assign(tctx, { profile }) as ComplianceContext);
 			} catch (err) {
-				tctx.task.meta.compliance.failureKind =
-					err instanceof NotImplementedError ? "unimplemented" : "violation";
+				tctx.task.meta.compliance.failureKind = classifyFailure(err);
 				throw err;
 			}
 		});

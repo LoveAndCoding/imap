@@ -1,8 +1,7 @@
 import { test } from "vitest";
 
 import type { Profile } from "../catalog/types";
-import { NotImplementedError } from "../driver/errors";
-import "./meta";
+import { classifyFailure } from "./meta";
 
 export interface AcceptanceRowBase {
 	req: string;
@@ -26,8 +25,7 @@ export function defineAcceptanceTable<R extends AcceptanceRowBase>(
 				try {
 					await table.execute(row, { profile });
 				} catch (err) {
-					tctx.task.meta.compliance.failureKind =
-						err instanceof NotImplementedError ? "unimplemented" : "violation";
+					tctx.task.meta.compliance.failureKind = classifyFailure(err);
 					throw err;
 				}
 			});

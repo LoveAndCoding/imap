@@ -75,15 +75,22 @@ export class ComplianceDriver {
 		return this.session?.authenticated ?? false;
 	}
 
+	/**
+	 * Only meaningful after connectLow() — Session does not expose its inner
+	 * Connection, so on the connect() path this is always false. Tests
+	 * asserting TLS state must use the connectLow path.
+	 */
 	public get secure(): boolean {
 		return this.connection?.isSecure ?? false;
 	}
 
+	/** Session-path only (connect()); always false after connectLow(). */
 	public hasCapability(name: string): boolean {
 		const caps = this.session?.capabilities;
 		return caps ? caps.has(name) : false;
 	}
 
+	/** Session-path only (connect()); always null after connectLow(). */
 	public serverInfo(): Map<string, string> | null {
 		return this.session?.server ?? null;
 	}

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "vitest";
 
 import { ComplianceDriver } from "../driver";
 import { NotImplementedError } from "../errors";
-import { close, expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { command } from "../../harness/matchers";
 import { ScriptedServer } from "../../harness/scripted-server";
 
