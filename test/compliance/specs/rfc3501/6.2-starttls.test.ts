@@ -1,20 +1,12 @@
-import { afterEach, expect } from "vitest";
+import { expect } from "vitest";
 
-import { ComplianceDriver } from "../../driver/driver";
 import { command } from "../../harness/matchers";
 import { expectLine, reply, send, startTls } from "../../harness/script";
-import { ScriptedServer } from "../../harness/scripted-server";
 import { loadCertFixture } from "../../harness/tls";
 import { complianceTest } from "../../runner/compliance-test";
+import { useComplianceFixture } from "../../runner/fixture";
 
-let server: ScriptedServer | undefined;
-let driver: ComplianceDriver | undefined;
-afterEach(async () => {
-	await driver?.end();
-	await server?.close();
-	server = undefined;
-	driver = undefined;
-});
+const f = useComplianceFixture();
 
 const localhost = loadCertFixture("localhost");
 
@@ -24,9 +16,10 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"STARTTLS: no plaintext after OK; capabilities discarded and re-issued post-TLS",
+		expectFailure: "violation",
 	},
 	async () => {
-		server = await ScriptedServer.start({ tlsUpgrade: localhost });
+		const server = await f.startServer({ tlsUpgrade: localhost });
 		server.arm([
 			[
 				// Plain greeting — no capability code. The client will issue
@@ -45,7 +38,7 @@ complianceTest(
 				reply("OK done", ["* CAPABILITY IMAP4rev1 POST-TLS-ONLY"]),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,

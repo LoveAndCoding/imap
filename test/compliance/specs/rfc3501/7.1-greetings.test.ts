@@ -1,20 +1,12 @@
-import { afterEach, expect } from "vitest";
+import { expect } from "vitest";
 
-import { ComplianceDriver } from "../../driver/driver";
 import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
-import { ScriptedServer } from "../../harness/scripted-server";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
+import { useComplianceFixture } from "../../runner/fixture";
 
-let server: ScriptedServer | undefined;
-let driver: ComplianceDriver | undefined;
-afterEach(async () => {
-	await driver?.end();
-	await server?.close();
-	server = undefined;
-	driver = undefined;
-});
+const f = useComplianceFixture();
 
 // Acceptance table: all valid OK greeting forms must be accepted, after which
 // the client proceeds (observably: Session.start() completes its CAPABILITY
@@ -46,7 +38,7 @@ defineAcceptanceTable({
 		},
 	],
 	async execute(row) {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send(row.greeting, row.chunks ? { chunks: row.chunks } : {}),
@@ -54,7 +46,7 @@ defineAcceptanceTable({
 				reply("OK done", ["* CAPABILITY IMAP4rev1"]),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
@@ -70,9 +62,10 @@ complianceTest(
 		reqs: ["RFC3501-7.1.4-1"],
 		profiles: ["rev1"],
 		title: "PREAUTH greeting puts the session in authenticated state",
+		expectFailure: "violation",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send("* PREAUTH IMAP4rev1 server logged in as user\r\n"),
@@ -80,7 +73,7 @@ complianceTest(
 				reply("OK done", ["* CAPABILITY IMAP4rev1"]),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
@@ -99,9 +92,9 @@ complianceTest(
 		title: "BYE greeting is recognized as connection rejection",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([[send("* BYE server too busy, try later\r\n"), close()]]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
@@ -120,7 +113,7 @@ complianceTest(
 		title: "unsolicited untagged data mid-command is accepted",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send("* OK ready\r\n"),
@@ -133,7 +126,7 @@ complianceTest(
 				]),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,

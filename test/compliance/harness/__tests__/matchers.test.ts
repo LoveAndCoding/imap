@@ -48,6 +48,18 @@ describe("command matcher", () => {
 		expect(r.ok).toBe(true);
 	});
 
+	test("captures args on successful match", () => {
+		const r = command("ID").match('a3 ID ("name" "myClient")');
+		expect(r.ok).toBe(true);
+		expect(r.args).toBe('("name" "myClient")');
+	});
+
+	test("captures args on verb-matched but arg-constraint-failed result", () => {
+		const r = command("CAPABILITY", { args: null }).match("a1 CAPABILITY extraArg");
+		expect(r.ok).toBe(false);
+		expect(r.args).toBe("extraArg");
+	});
+
 	test("anyCommand-style matching via verb regex argument", () => {
 		const r = command(/^(CAPABILITY|NOOP)$/).match("x9 NOOP");
 		expect(r.ok).toBe(true);

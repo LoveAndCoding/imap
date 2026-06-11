@@ -2,6 +2,8 @@ export interface MatchResult {
 	ok: boolean;
 	reason?: string;
 	tag?: string;
+	/** The args portion of the command line (everything after `<tag> <verb>`). */
+	args?: string;
 }
 
 export interface LineMatcher {
@@ -60,15 +62,15 @@ export function command(
 				return { ok: false, reason: `expected ${verbDesc}, got ${gotVerb}`, tag };
 			}
 			if (opts.args === null && rest !== "") {
-				return { ok: false, reason: `expected no arguments, got '${rest}'`, tag };
+				return { ok: false, reason: `expected no arguments, got '${rest}'`, tag, args: rest };
 			}
 			if (typeof opts.args === "string" && rest !== opts.args) {
-				return { ok: false, reason: `args '${rest}' != '${opts.args}'`, tag };
+				return { ok: false, reason: `args '${rest}' != '${opts.args}'`, tag, args: rest };
 			}
 			if (opts.args instanceof RegExp && !opts.args.test(rest)) {
-				return { ok: false, reason: `args '${rest}' !~ ${opts.args}`, tag };
+				return { ok: false, reason: `args '${rest}' !~ ${opts.args}`, tag, args: rest };
 			}
-			return { ok: true, tag };
+			return { ok: true, tag, args: rest };
 		},
 	};
 }

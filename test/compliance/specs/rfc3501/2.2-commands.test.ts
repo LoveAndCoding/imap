@@ -1,19 +1,11 @@
-import { afterEach, expect } from "vitest";
+import { expect } from "vitest";
 
-import { ComplianceDriver } from "../../driver/driver";
 import { command, isValidTag } from "../../harness/matchers";
 import { expectLine, reply, send } from "../../harness/script";
-import { ScriptedServer } from "../../harness/scripted-server";
 import { complianceTest } from "../../runner/compliance-test";
+import { useComplianceFixture } from "../../runner/fixture";
 
-let server: ScriptedServer | undefined;
-let driver: ComplianceDriver | undefined;
-afterEach(async () => {
-	await driver?.end();
-	await server?.close();
-	server = undefined;
-	driver = undefined;
-});
+const f = useComplianceFixture();
 
 complianceTest(
 	{
@@ -22,7 +14,7 @@ complianceTest(
 		title: "every command carries a syntactically valid, distinct tag",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send("* OK ready\r\n"),
@@ -32,7 +24,7 @@ complianceTest(
 				reply("OK done", ['* ID ("name" "fake-server")']),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
@@ -57,7 +49,7 @@ complianceTest(
 		title: "CAPABILITY is sent with no extraneous arguments or spaces",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send("* OK ready\r\n"),
@@ -66,7 +58,7 @@ complianceTest(
 				reply("OK done", ["* CAPABILITY IMAP4rev1"]),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
@@ -82,9 +74,10 @@ complianceTest(
 		reqs: ["RFC3501-6.1.2-1"],
 		profiles: ["rev1"],
 		title: "client offers a way to issue NOOP",
+		expectFailure: "unimplemented",
 	},
 	async () => {
-		server = await ScriptedServer.start();
+		const server = await f.startServer();
 		server.arm([
 			[
 				send("* OK ready\r\n"),
@@ -94,7 +87,7 @@ complianceTest(
 				reply("OK NOOP completed"),
 			],
 		]);
-		driver = new ComplianceDriver();
+		const driver = f.newDriver();
 		await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
 		// Throws NotImplementedError today → annotated 'unimplemented'.
 		await driver.noop();

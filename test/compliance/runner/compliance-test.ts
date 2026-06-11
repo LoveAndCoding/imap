@@ -12,6 +12,8 @@ export interface ComplianceTestInfo {
 	 * fail for a stated reason today; it does not change behavior.
 	 */
 	expectFailure?: FailureKind;
+	/** Per-test timeout in milliseconds passed directly to vitest. */
+	timeout?: number;
 }
 
 export type ComplianceContext = TestContext & { profile: Profile };
@@ -21,7 +23,8 @@ export function complianceTest(
 	fn: (ctx: ComplianceContext) => Promise<void>,
 ): void {
 	for (const profile of info.profiles) {
-		test(`[${info.reqs.join(" ")}] [${profile}] ${info.title}`, async (tctx) => {
+		const title = `[${info.reqs.join(" ")}] [${profile}] ${info.title}`;
+		test(title, async (tctx) => {
 			tctx.task.meta.compliance = { reqs: [...info.reqs], profile };
 			try {
 				await fn(Object.assign(tctx, { profile }) as ComplianceContext);
@@ -29,6 +32,6 @@ export function complianceTest(
 				tctx.task.meta.compliance.failureKind = classifyFailure(err);
 				throw err;
 			}
-		});
+		}, info.timeout);
 	}
 }

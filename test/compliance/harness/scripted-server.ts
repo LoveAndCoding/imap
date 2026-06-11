@@ -153,6 +153,7 @@ class ConnectionRunner {
 		const result = step.matcher.match(line);
 		if (result.tag) {
 			this.server.commandTags.push(result.tag);
+			this.server.commandLines.push({ tag: result.tag, args: result.args ?? "" });
 			this.lastTag = result.tag;
 		}
 		if (!result.ok) {
@@ -222,6 +223,8 @@ export class ScriptedServer {
 	public readonly transcript = new Transcript();
 	/** Tags of every command line matched by an expect step, in order. */
 	public readonly commandTags: string[] = [];
+	/** Tag and args of every tagged command line matched by an expect step, in order. */
+	public readonly commandLines: Array<{ tag: string; args: string }> = [];
 
 	private netServer!: net.Server;
 	private scripts: ScriptStep[][] = [];
