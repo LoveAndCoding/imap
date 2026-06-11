@@ -609,6 +609,8 @@ One agent per section file scope (the table in Task 4). Each agent prompt MUST c
 4. Also return a `coverageNote`: every subsection in scope, listed, with "extracted N client requirements" or "no client-binding requirements (server-only/informational)".
 5. Constraints: do NOT write any files; do NOT renumber or restate existing entries (agent receives the existing entries for its sections to avoid duplicates — duplicates of existing ids' text must be flagged, not re-extracted).
 
+> **Note (post-execution deviation, recorded):** because each section group maps to exactly ONE disjoint catalog file and ordinals are per-section, the extraction agents write their own section files directly (id-assignment rules included in their instructions) instead of returning entries for controller merge — protects controller context at identical id-discipline guarantees. The catalog meta-test and the Task 6 independent audit verify the result.
+
 - [ ] **Step 2: Merge (controller)**
 
 For each section file: take the agent's entries in `rfcOrder`, assign ids `RFC3501-<section>-<ordinal>` where ordinal continues after any existing entries in that section; write the section file with existing entries first (unchanged), then new entries; set the file's `note` to the agent's coverageNote. Spot-fix obvious schema violations (missing rationale etc.) but do NOT edit quote text — quote problems go back to the extracting agent or to Task 6.

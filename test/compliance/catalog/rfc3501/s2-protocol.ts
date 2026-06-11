@@ -1,10 +1,42 @@
 import type { SpecRequirement } from "../types";
 
 export const note =
-	"§2: sections 2.2.1 and 2.2.2 partially extracted (Phase 0 seed). " +
-	"§3: no client-binding requirements. Full extraction in Phase 1.";
+	"§2.1: no client-binding requirements (TCP port 143 is a server-side binding). " +
+	"§2.2: extracted 1 client requirement (CRLF line framing). " +
+	"§2.2.1: extracted 3 client requirements (tag uniqueness, strict syntax, complete-command-before-new). " +
+	"§2.2.2: extracted 4 client requirements (response parsing by first token, accept-any-response, record server data, record certain server data). " +
+	"§2.3.1.1: no direct client-binding requirements (UID rules are server obligations). " +
+	"§2.3.1.2: no client-binding requirements (message sequence number semantics are server-defined). " +
+	"§2.3.2: extracted 2 client requirements (\\Recent cannot be used in STORE/APPEND, client cannot alter \\Recent). " +
+	"§2.3.3: no client-binding requirements (internal date is a server attribute). " +
+	"§2.3.4: no client-binding requirements (size attribute is server-defined). " +
+	"§2.3.5: no client-binding requirements (envelope is a server-provided parsed structure). " +
+	"§2.3.6: no client-binding requirements (body structure is a server-provided parsed structure). " +
+	"§2.4: no client-binding requirements (describes server capability to fetch message parts). " +
+	"§3.1: extracted 1 client requirement (must supply credentials in Not Authenticated state). " +
+	"§3.2: no direct client-binding requirements (describes server-side state entry conditions). " +
+	"§3.3: no client-binding requirements (describes state entry conditions). " +
+	"§3.4: extracted 2 client requirements (read OK after LOGOUT before closing, SHOULD NOT unilaterally close/SHOULD issue LOGOUT).";
 
 export const requirements: SpecRequirement[] = [
+	// §2.2 ─────────────────────────────────────────────────────────────────────
+	{
+		id: "RFC3501-2.2-1",
+		source: "RFC3501",
+		section: "2.2",
+		title: "Client sends CRLF-terminated lines; reads lines or octet-counted sequences",
+		text:
+			"All interactions transmitted by client and server are in the form of lines, that is, strings that end with a CRLF. The protocol receiver of an IMAP4rev1 client or server is either reading a line, or is reading a sequence of octets with a known count followed by a line.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"No 2119 keyword; imperative architectural definition binding both sides. " +
+			"Treated as MUST: a client that does not terminate commands with CRLF violates the protocol framing.",
+	},
+
+	// §2.2.1 ──────────────────────────────────────────────────────────────────
 	{
 		id: "RFC3501-2.2.1-1",
 		source: "RFC3501",
@@ -31,6 +63,51 @@ export const requirements: SpecRequirement[] = [
 		testability: "testable",
 	},
 	{
+		id: "RFC3501-2.2.1-3",
+		source: "RFC3501",
+		section: "2.2.1",
+		title: "Client completes a command (all continuations) before initiating a new one",
+		text:
+			"In all cases, the client MUST send a complete command (including receiving all command continuation request responses and command continuations for the command) before initiating a new command.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+	},
+
+	// §2.2.2 ──────────────────────────────────────────────────────────────────
+	//
+	// RFC text order within §2.2.2:
+	//   (A) "The protocol receiver … reads a response line … first token …"   ← new -2
+	//   (B) "A client MUST be prepared to accept any server response …"        ← existing -1 (kept)
+	//   (C) "Server data SHOULD be recorded …"                                 ← new -3
+	//   (D) "In the case of certain server data, the data MUST be recorded."   ← new -4
+	//
+	// Ordinals for new entries begin at -2 and follow RFC text order among the
+	// new entries; existing -1 is never renumbered.
+	{
+		id: "RFC3501-2.2.2-2",
+		source: "RFC3501",
+		section: "2.2.2",
+		title: "Client dispatches responses by first token (tag, *, or +)",
+		text:
+			"The protocol receiver of an IMAP4rev1 client reads a response line from the server. It then takes action on the response based upon the first token of the response, which can be a tag, a \"*\", or a \"+\".",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "untestable",
+		untestableRationale:
+			"This describes internal client dispatch logic. The correctness of how the client routes " +
+			"a response to the right handler is not directly observable at the protocol layer from a " +
+			"black-box perspective; only downstream effects (e.g., incorrect command completion " +
+			"handling) are observable.",
+		notes:
+			"Imperative prose without a 2119 keyword; treated as MUST because correct first-token " +
+			"dispatch is a structural prerequisite for all other client-side response processing. " +
+			"This entry appears before RFC3501-2.2.2-1 in the RFC text; ordinal assigned in " +
+			"RFC text order among new entries only, per catalog rules.",
+	},
+	{
 		id: "RFC3501-2.2.2-1",
 		source: "RFC3501",
 		section: "2.2.2",
@@ -41,5 +118,133 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
+	},
+	{
+		id: "RFC3501-2.2.2-3",
+		source: "RFC3501",
+		section: "2.2.2",
+		title: "Client SHOULD record server data to avoid redundant requests",
+		text:
+			"Server data SHOULD be recorded, so that the client can reference its recorded copy rather than sending a command to the server to request the data.",
+		level: "SHOULD",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "untestable",
+		untestableRationale:
+			"Whether the client caches server data internally and avoids redundant re-fetch commands " +
+			"is an implementation quality matter. A black-box test could observe whether the client " +
+			"issues unnecessary commands, but the RFC permits such commands and does not make their " +
+			"absence a MUST, so there is no definitive pass/fail boundary at the protocol layer.",
+	},
+	{
+		id: "RFC3501-2.2.2-4",
+		source: "RFC3501",
+		section: "2.2.2",
+		title: "Client MUST record certain categories of server data",
+		text:
+			"In the case of certain server data, the data MUST be recorded.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "untestable",
+		untestableRationale:
+			"The RFC does not enumerate in §2.2.2 which specific server data items are subject to " +
+			"this MUST; those are identified in the Server Responses section. This entry captures " +
+			"the general obligation. Whether the client has correctly recorded a specific data item " +
+			"can sometimes be inferred from subsequent client behavior (e.g., it does not re-fetch " +
+			"when it should not need to), but the general requirement is not directly verifiable at " +
+			"the black-box protocol layer without exercising every applicable data type.",
+	},
+
+	// §2.3.2 ──────────────────────────────────────────────────────────────────
+	//
+	// RFC text order within §2.3.2 for \Recent:
+	//   (A) "This flag can not be altered by the client."              ← -1 (broader prohibition)
+	//   (B) "\Recent can not be used as an argument in STORE/APPEND …" ← -2 (specific command context)
+	{
+		id: "RFC3501-2.3.2-1",
+		source: "RFC3501",
+		section: "2.3.2",
+		title: "Client cannot alter the \\Recent flag",
+		text:
+			"This flag can not be altered by the client.",
+		level: "MUST NOT",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"'This flag' refers to \\Recent as established by surrounding RFC text. " +
+			"Uses 'can not' rather than 'MUST NOT'; treated as MUST NOT. A compliant client must " +
+			"never attempt to set or clear \\Recent via any command. Testable by verifying no such " +
+			"attempt appears in the client's command stream.",
+	},
+	{
+		id: "RFC3501-2.3.2-2",
+		source: "RFC3501",
+		section: "2.3.2",
+		title: "Client cannot use \\Recent as argument in STORE or APPEND",
+		text:
+			"\\Recent can not be used as an argument in a STORE or APPEND command, and thus can not be changed at all.",
+		level: "MUST NOT",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Uses 'can not' (plain English prohibition) rather than 'MUST NOT'; the prohibition is " +
+			"absolute and is treated as MUST NOT. Observable by verifying the client never includes " +
+			"\\Recent in a STORE flags-list or an APPEND flags parameter.",
+	},
+
+	// §3.1 ────────────────────────────────────────────────────────────────────
+	{
+		id: "RFC3501-3.1-1",
+		source: "RFC3501",
+		section: "3.1",
+		title: "Client must supply authentication credentials in Not Authenticated state",
+		text:
+			"In the not authenticated state, the client MUST supply authentication credentials before most commands will be permitted.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+	},
+
+	// §3.4 ────────────────────────────────────────────────────────────────────
+	{
+		id: "RFC3501-3.4-1",
+		source: "RFC3501",
+		section: "3.4",
+		title: "Client reads tagged OK before closing after LOGOUT",
+		text:
+			"If the client requests the logout state, the server MUST send an untagged BYE response " +
+			"and a tagged OK response to the LOGOUT command before the server closes the connection; " +
+			"and the client MUST read the tagged OK response to the LOGOUT command before the client " +
+			"closes the connection.",
+		level: "MUST",
+		applicability: "conditional",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Applicability is 'conditional' because the obligation fires only when the client " +
+			"initiates the logout (i.e., sends LOGOUT). The first clause ('the server MUST send...') " +
+			"is a server obligation included here for verbatim completeness; the client-binding " +
+			"clause is 'the client MUST read the tagged OK response ... before the client closes " +
+			"the connection.'",
+	},
+	{
+		id: "RFC3501-3.4-2",
+		source: "RFC3501",
+		section: "3.4",
+		title: "Client SHOULD NOT unilaterally close the connection",
+		text:
+			"A client SHOULD NOT unilaterally close the connection, and instead SHOULD issue a LOGOUT command.",
+		level: "SHOULD NOT",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Contains both SHOULD NOT (do not close unilaterally) and SHOULD (issue LOGOUT instead). " +
+			"Level is set to SHOULD NOT as the stronger prohibition; the affirmative SHOULD is " +
+			"captured in the same entry because the two clauses are a single compound obligation.",
 	},
 ];
