@@ -177,6 +177,16 @@ class ConnectionRunner {
 			t.once("secure", () => resolve(t));
 			t.once("error", reject);
 		});
+		// The handshake error handler on `secured` is now stale (handshake done).
+		// Replace it with one that routes post-handshake errors into the failure path.
+		secured.removeAllListeners("error");
+		secured.on("error", (err) => {
+			this.server.scriptFailed(`TLS socket error after handshake: ${err.message}`);
+			secured.destroy();
+		});
+		// Register the secured socket so close() can destroy it directly.
+		this.server.sockets.add(secured);
+		secured.on("close", () => this.server.sockets.delete(secured));
 		this.buffer = Buffer.alloc(0);
 		this.attach(secured);
 	}
@@ -197,7 +207,8 @@ export class ScriptedServer {
 	private scriptsFinished = 0;
 	private failure?: string;
 	private outcomeResolvers: Array<(o: Outcome) => void> = [];
-	private sockets = new Set<net.Socket>();
+	/** @internal — used by ConnectionRunner to register/deregister sockets for close(). */
+	public readonly sockets = new Set<net.Socket>();
 
 	private constructor(private readonly opts: ServerOptions) {}
 
