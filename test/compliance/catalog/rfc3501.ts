@@ -90,16 +90,18 @@ const rfc3501: CatalogModule = {
 			id: "RFC3501-6.2.1-3",
 			source: "RFC3501",
 			section: "6.2.1",
-			title: "TLS negotiation begins immediately after the OK CRLF",
+			title: "Client MUST NOT send further commands until TLS negotiation is complete",
 			text:
-				"A [TLS] negotiation begins immediately after the CRLF at the end of the tagged OK response from the server.",
-			level: "MUST",
+				"A [TLS] negotiation begins immediately after the CRLF at the end of the tagged OK response from the server.  Once a client issues a STARTTLS command, it MUST NOT issue further commands until a server response is seen and the [TLS] negotiation is complete.",
+			level: "MUST NOT",
 			applicability: "conditional",
 			profiles: ["rev1"],
 			testability: "testable",
 			notes:
-				"Client-binding reading: no further plaintext octets may be sent after " +
-				"the STARTTLS command until the handshake completes.",
+				"Two contiguous sentences from §6.2.1. The first establishes when TLS " +
+				"begins; the second is the explicit MUST NOT keyword binding the client. " +
+				"Level updated from MUST to MUST NOT to reflect the actual 2119 keyword " +
+				"present in the text.",
 		},
 		{
 			id: "RFC3501-7.1.1-1",
@@ -135,7 +137,7 @@ const rfc3501: CatalogModule = {
 			section: "7.1.5",
 			title: "Client recognizes BYE greeting as connection rejection",
 			text:
-				"The BYE response is always untagged, and indicates that the server is about to close the connection. The BYE response is sent under one of four conditions: ... 4) as one of three possible greetings at connection startup, indicating that the server is not willing to accept a connection from this client. The server closes the connection immediately.",
+				"The BYE response is always untagged, and indicates that the server is about to close the connection. The human-readable text MAY be displayed to the user in a status report by the client. The BYE response is sent under one of four conditions: ... 4) as one of three possible greetings at connection startup, indicating that the server is not willing to accept a connection from this client. The server closes the connection immediately.",
 			level: "MUST",
 			applicability: "always",
 			profiles: ["rev1"],
@@ -143,7 +145,8 @@ const rfc3501: CatalogModule = {
 			notes:
 				"Elision ('...') covers conditions 1)-3) (logout, panic shutdown, " +
 				"autologout); condition 4) is the connection-greeting rejection case. " +
-				"All retained sentences are verbatim.",
+				"All retained sentences are verbatim; the previously omitted middle " +
+				"sentence ('The human-readable text MAY be displayed...') is now included.",
 		},
 	],
 };
