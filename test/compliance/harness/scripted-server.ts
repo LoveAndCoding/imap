@@ -24,6 +24,7 @@ class ConnectionRunner {
 	private stepIndex = 0;
 	private waiting?: {
 		resolveLine: (line: string) => void;
+		rejectLine: (err: Error) => void;
 		timer: NodeJS.Timeout;
 	};
 
@@ -38,21 +39,26 @@ class ConnectionRunner {
 	public async run(): Promise<void> {
 		this.attach(this.socket);
 		try {
-			for (this.stepIndex = 0; this.stepIndex < this.steps.length; this.stepIndex++) {
-				const step = this.steps[this.stepIndex];
-				switch (step.kind) {
-					case "send":
-						await this.doSend(step);
-						break;
-					case "expect":
-						await this.doExpect(step);
-						break;
-					case "startTls":
-						await this.doStartTls();
-						break;
-					case "close":
-						this.socket.end();
-						break;
+			for (let i = 0; i < this.steps.length; i++) {
+				const step = this.steps[i];
+				try {
+					switch (step.kind) {
+						case "send":
+							await this.doSend(step);
+							break;
+						case "expect":
+							await this.doExpect(step);
+							break;
+						case "startTls":
+							await this.doStartTls();
+							break;
+						case "close":
+							this.socket.end();
+							break;
+					}
+				} catch (stepErr) {
+					const msg = stepErr instanceof Error ? stepErr.message : String(stepErr);
+					throw new Error(`step #${i + 1} (${step.kind}): ${msg}`);
 				}
 			}
 			this.server.scriptFinished();
@@ -83,12 +89,13 @@ class ConnectionRunner {
 				const w = this.waiting;
 				this.waiting = undefined;
 				clearTimeout(w.timer);
-				this.server.scriptFailed(
-					`client sent a line terminated by bare LF (commands MUST end with CRLF): '${this.buffer
-						.toString("latin1")
-						.slice(0, lf)}'`,
+				w.rejectLine(
+					new Error(
+						`client sent a line terminated by bare LF (commands MUST end with CRLF): '${this.buffer
+							.toString("latin1")
+							.slice(0, lf)}'`,
+					),
 				);
-				this.socket.destroy();
 			}
 			return;
 		}
@@ -110,7 +117,7 @@ class ConnectionRunner {
 					),
 				);
 			}, this.opts.stepTimeoutMs);
-			this.waiting = { resolveLine: resolve, timer };
+			this.waiting = { resolveLine: resolve, rejectLine: reject, timer };
 			this.drainLines();
 		});
 	}
@@ -204,6 +211,15 @@ export class ScriptedServer {
 		return (this.netServer.address() as net.AddressInfo).port;
 	}
 
+	/**
+	 * Load a fresh set of connection scripts and reset the run counters.
+	 *
+	 * Must be called exactly once per server instance before any clients connect.
+	 * It does NOT reset the transcript or commandTags arrays — those accumulate
+	 * across the lifetime of the server. Re-arming mid-run (i.e., while a
+	 * ConnectionRunner is active) is unsupported and will produce undefined
+	 * behaviour.
+	 */
 	public arm(connectionScripts: ScriptStep[][]): void {
 		this.scripts = connectionScripts;
 		this.scriptsStarted = 0;

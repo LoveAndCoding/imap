@@ -44,7 +44,7 @@ test("sends greeting and matches an expected command line", async () => {
 	expect(rx.data()).toContain("a1 OK done\r\n");
 });
 
-test("chunked send splits bytes across writes", async () => {
+test("chunked send delivers bytes intact", async () => {
 	server = await ScriptedServer.start();
 	server.arm([[send("* OK split-greeting\r\n", { chunks: [4, 7] }), close()]]);
 	const sock = await rawConnect(server.port);
