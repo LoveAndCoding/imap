@@ -16,7 +16,7 @@ function walk(dir: string): string[] {
 	return out;
 }
 
-const IMPORT_RE = /(?:from\s+|require\(\s*|import\(\s*)["']([^"']+)["']/g;
+const IMPORT_RE = /(?:from\s+|require\(\s*|import\(\s*|^import\s+)["']([^"']+)["']/gm;
 
 test("compliance suite only touches the client via src/index", () => {
 	const offenders: string[] = [];

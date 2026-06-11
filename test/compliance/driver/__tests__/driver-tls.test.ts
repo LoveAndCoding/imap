@@ -1,9 +1,7 @@
 import { expect, test } from "vitest";
 
-import { ComplianceDriver } from "../driver";
 import { expectLine, reply, send } from "../../harness/script";
 import { command } from "../../harness/matchers";
-import { ScriptedServer } from "../../harness/scripted-server";
 import { loadCertFixture } from "../../harness/tls";
 import { useComplianceFixture } from "../../runner/fixture";
 

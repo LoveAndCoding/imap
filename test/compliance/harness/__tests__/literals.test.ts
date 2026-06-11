@@ -79,7 +79,7 @@ test("literal octet count is honored exactly (CRLF inside literal preserved)", a
 	sock.on("data", (d) => {
 		rx += d.toString("utf8");
 		if (rx.endsWith("+ Ready\r\n")) {
-			sock.write("line1\r\nline2\r\n"); // 14 octets literal, then CRLF ends command
+			sock.write("line1\r\nline2\r\n"); // 12-octet literal, then CRLF ends command
 		}
 	});
 	sock.write("a1 APPEND INBOX {12}\r\n");
@@ -108,7 +108,45 @@ test("destroy step abruptly terminates the connection", async () => {
 	// in paused mode and libuv does not monitor the fd for read-side events.
 	sock.resume();
 	const closed = new Promise<boolean>((r) => sock.once("close", (hadErr) => r(hadErr)));
-	await server.outcome();
+	const outcome = await server.outcome();
 	await closed; // abrupt close reaches the client
-	expect((await server.outcome()).ok).toBe(true);
+	expect(outcome.ok).toBe(true);
+});
+
+test("two literals in one command interleave correctly, even chunked", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("LOGIN")),
+			reply("OK done"),
+			close(),
+		],
+	]);
+	const sock = await rawConnect(server.port);
+	let rx = "";
+	let stage = 0;
+	sock.on("data", (d) => {
+		rx += d.toString("utf8");
+		if (rx.endsWith("+ Ready\r\n")) {
+			rx = "";
+			if (stage === 0) {
+				stage = 1;
+				// First literal payload split across two writes, then the
+				// second literal announcement.
+				sock.write("us");
+				setTimeout(() => sock.write("er {4}\r\n"), 5);
+			} else {
+				sock.write("pass\r\n");
+			}
+		}
+	});
+	sock.write("a1 LOGIN {4}\r\n");
+	await server.assertCompleted();
+	expect(server.commandLines[0].args).toBe("{4} {4}");
+	expect(server.commandLines[0].literals.map((b) => b.toString("utf8"))).toEqual([
+		"user",
+		"pass",
+	]);
+	expect(server.commandLines[0].nonSync).toEqual([false, false]);
 });

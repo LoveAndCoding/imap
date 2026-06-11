@@ -219,16 +219,20 @@ class ConnectionRunner {
 	): Promise<void> {
 		const line = await this.nextLine(step.matcher.description);
 		const result = step.matcher.match(line);
+		// Claim this line's literals unconditionally so a tagless match can
+		// never leak its payloads into the next tagged command's record.
+		const literals = this.lastLiterals;
+		const nonSync = this.lastNonSync;
+		this.lastLiterals = [];
+		this.lastNonSync = [];
 		if (result.tag) {
 			this.server.commandTags.push(result.tag);
 			this.server.commandLines.push({
 				tag: result.tag,
 				args: result.args ?? "",
-				literals: this.lastLiterals,
-				nonSync: this.lastNonSync,
+				literals,
+				nonSync,
 			});
-			this.lastLiterals = [];
-			this.lastNonSync = [];
 			this.lastTag = result.tag;
 		}
 		if (!result.ok) {
