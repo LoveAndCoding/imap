@@ -22,6 +22,7 @@ const DEFAULT_STEP_TIMEOUT = 2000;
 class ConnectionRunner {
 	private buffer = Buffer.alloc(0);
 	private stepIndex = 0;
+	private lastTag?: string;
 	private waiting?: {
 		resolveLine: (line: string) => void;
 		rejectLine: (err: Error) => void;
@@ -48,6 +49,9 @@ class ConnectionRunner {
 							break;
 						case "expect":
 							await this.doExpect(step);
+							break;
+						case "reply":
+							await this.doReply(step);
 							break;
 						case "startTls":
 							await this.doStartTls();
@@ -147,12 +151,25 @@ class ConnectionRunner {
 	): Promise<void> {
 		const line = await this.nextLine(step.matcher.description);
 		const result = step.matcher.match(line);
-		if (result.tag) this.server.commandTags.push(result.tag);
+		if (result.tag) {
+			this.server.commandTags.push(result.tag);
+			this.lastTag = result.tag;
+		}
 		if (!result.ok) {
 			throw new Error(
 				`expectation '${step.matcher.description}' failed: ${result.reason}`,
 			);
 		}
+	}
+
+	private async doReply(step: Extract<ScriptStep, { kind: "reply" }>): Promise<void> {
+		if (this.lastTag === undefined) {
+			throw new Error("reply step used before any command was matched");
+		}
+		const lines = [...(step.untagged ?? []), `${this.lastTag} ${step.suffix}`]
+			.map((l) => `${l}\r\n`)
+			.join("");
+		await this.doSend({ kind: "send", data: lines });
 	}
 
 	private async doStartTls(): Promise<void> {
