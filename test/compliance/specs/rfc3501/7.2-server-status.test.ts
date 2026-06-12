@@ -42,6 +42,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
+import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
 
 const f = useComplianceFixture();
@@ -119,23 +120,14 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// Wait briefly for the event pipeline to flush after server close.
-		await new Promise<void>((r) => setTimeout(r, 50));
 		// Recording the update requires processing it: the parsed FLAGS response
 		// must surface as an untaggedResponse event (not be silently dropped).
-		const flagsEvents = driver.events.filter(
-			(e) =>
-				e.type === "untaggedResponse" &&
-				(e.detail as { type?: string } | undefined)?.type === "FLAGS",
-		);
-		expect(
-			flagsEvents.length,
-			"client must surface the unsolicited FLAGS update as an untaggedResponse event",
-		).toBeGreaterThanOrEqual(1);
+		// waitForUntagged polls until the event pipeline flushes (or fails loud).
+		const flagsEvent = await waitForUntagged(driver, "FLAGS");
 		// Recording means PARSING: the event must carry the five announced flags,
 		// not just a FLAGS-typed shell around garbled content.
 		const content = (
-			flagsEvents[0].detail as { content?: { flags?: unknown[] } }
+			flagsEvent.detail as { content?: { flags?: unknown[] } }
 		).content;
 		expect(
 			content?.flags?.length,

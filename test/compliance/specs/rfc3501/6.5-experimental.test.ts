@@ -162,14 +162,14 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1 ID"], { login: false }),
-				// The client MAY send an ID command after capabilities.
-				// Accept it if sent; the script arm handles one connection script.
-				// Use a flexible approach: accept ID if it arrives.
+				// The connect options below pass `id`, deliberately provoking the
+				// client into sending an ID command after capabilities so the
+				// X-prefix check below covers more than CAPABILITY alone.
 				expectLine(command("ID")),
 				reply("OK ID completed", ['* ID ("name" "node-imap")']),
 			],
 		]);
-		const driver = await f.connectPlain(server, { id: { name: "node-imap", version: "0.0.0" } });
+		await f.connectPlain(server, { id: { name: "node-imap", version: "0.0.0" } });
 		await server.assertCompleted();
 
 		// Core assertion: every verb the harness recorded must be in the allowlist

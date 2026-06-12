@@ -92,6 +92,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
+import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
 import { selectExchange, sessionPrelude } from "../../runner/state";
 
@@ -413,15 +414,10 @@ complianceTest(
 		// Client must connect successfully.
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// Wait briefly for the event pipeline to flush after server close.
-		await new Promise<void>((r) => setTimeout(r, 50));
-		// The driver must have surfaced at least one untaggedResponse event,
+		// The driver must surface the parsed EXISTS untaggedResponse event,
 		// proving it processed (rather than silently dropped) the EXISTS line.
-		const untagged = driver.events.filter((e) => e.type === "untaggedResponse");
-		expect(
-			untagged.length,
-			"client must surface at least one untaggedResponse event for the EXISTS update",
-		).toBeGreaterThanOrEqual(1);
+		// waitForUntagged polls until the event pipeline flushes (or fails loud).
+		await waitForUntagged(driver, "EXISTS");
 	},
 );
 

@@ -45,22 +45,14 @@ import type { ObservedEvent } from "../../driver/driver";
 import { close, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
+import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
 
 const f = useComplianceFixture();
 
-/** untaggedResponse events whose parsed type matches (e.g. "EXISTS"). */
-function untaggedOfType(events: ObservedEvent[], type: string): ObservedEvent[] {
-	return events.filter(
-		(e) =>
-			e.type === "untaggedResponse" &&
-			(e.detail as { type?: string } | undefined)?.type === type,
-	);
-}
-
-/** The parsed content object of the first matching untaggedResponse event. */
-function contentOf(ev: ObservedEvent | undefined): Record<string, unknown> {
-	return ((ev?.detail as { content?: unknown } | undefined)?.content ?? {}) as Record<
+/** The parsed content object of an untaggedResponse event. */
+function contentOf(ev: ObservedEvent): Record<string, unknown> {
+	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as Record<
 		string,
 		unknown
 	>;
@@ -99,13 +91,10 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// Wait briefly for the event pipeline to flush after server close.
-		await new Promise<void>((r) => setTimeout(r, 50));
 		for (const type of ["FLAGS", "EXISTS", "RECENT", "EXPUNGE"]) {
-			expect(
-				untaggedOfType(driver.events, type).length,
-				`client must surface the unsolicited ${type} update as an untaggedResponse event`,
-			).toBeGreaterThanOrEqual(1);
+			// The client must surface each unsolicited update as an
+			// untaggedResponse event; waitForUntagged rejects loudly if not.
+			await waitForUntagged(driver, type);
 		}
 	},
 );
@@ -143,15 +132,12 @@ defineAcceptanceTable({
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		await new Promise<void>((r) => setTimeout(r, 50));
-		const existsEvents = untaggedOfType(driver.events, "EXISTS");
-		expect(
-			existsEvents.length,
-			"client must surface the unsolicited EXISTS update as an untaggedResponse event",
-		).toBeGreaterThanOrEqual(1);
+		// Client must surface the unsolicited EXISTS update as an
+		// untaggedResponse event (waitForUntagged rejects loudly if not).
+		const existsEvent = await waitForUntagged(driver, "EXISTS");
 		// Recording the update means recording the VALUE: the parsed count must
 		// be the announced 23 (e.g. so the client never FETCHes beyond it).
-		expect(contentOf(existsEvents[0]).count).toBe(23);
+		expect(contentOf(existsEvent).count).toBe(23);
 	},
 });
 
@@ -179,14 +165,11 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		await new Promise<void>((r) => setTimeout(r, 50));
-		const recentEvents = untaggedOfType(driver.events, "RECENT");
-		expect(
-			recentEvents.length,
-			"client must surface the unsolicited RECENT update as an untaggedResponse event",
-		).toBeGreaterThanOrEqual(1);
+		// Client must surface the unsolicited RECENT update as an
+		// untaggedResponse event (waitForUntagged rejects loudly if not).
+		const recentEvent = await waitForUntagged(driver, "RECENT");
 		// The recorded value must be the announced \Recent count.
-		expect(contentOf(recentEvents[0]).count).toBe(5);
+		expect(contentOf(recentEvent).count).toBe(5);
 	},
 );
 
@@ -216,15 +199,12 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		await new Promise<void>((r) => setTimeout(r, 50));
-		const expungeEvents = untaggedOfType(driver.events, "EXPUNGE");
-		expect(
-			expungeEvents.length,
-			"client must surface the unsolicited EXPUNGE update as an untaggedResponse event",
-		).toBeGreaterThanOrEqual(1);
+		// Client must surface the unsolicited EXPUNGE update as an
+		// untaggedResponse event (waitForUntagged rejects loudly if not).
+		const expungeEvent = await waitForUntagged(driver, "EXPUNGE");
 		// The recorded value must be the expunged message sequence number; the
 		// renumbering duty (all higher MSNs decrement) becomes black-box
 		// observable once driver.select()/fetch() exist.
-		expect(contentOf(expungeEvents[0]).sequenceNumber).toBe(3);
+		expect(contentOf(expungeEvent).sequenceNumber).toBe(3);
 	},
 );

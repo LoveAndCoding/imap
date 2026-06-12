@@ -72,8 +72,8 @@
  *   Acceptance duty: after a .SILENT STORE the server MAY send an unsolicited "* N FETCH
  *   (FLAGS (...))" for an externally observed change. The client must accept it.
  *   Script: select → store …SILENT… → OK + unsolicited "* 1 FETCH (FLAGS (\Seen))" → NOOP.
- *   The sequence after STORE uses a raw send() for the unsolicited FETCH so it is
- *   delivered before the subsequent NOOP expectation.
+ *   The unsolicited FETCH rides in the reply()'s untagged list, so it is delivered
+ *   with the tagged STORE OK, before the subsequent NOOP expectation.
  *   driver.store() and driver.noop() are unimplemented today → expectFailure: "unimplemented".
  *
  * RFC3501-6.4.8-5 (leading number in untagged FETCH is always a sequence number):
@@ -91,7 +91,7 @@
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { selectExchange, sessionPrelude } from "../../runner/state";
@@ -548,8 +548,9 @@ complianceTest(
 				// RFC store-att-flags allows flag-list OR bare flags, so accept both forms.
 				expectLine(command("STORE", { args: /^1\s+\+FLAGS\.SILENT\s+\(?\\Flagged\)?/i })),
 				// Server sends the tagged OK plus an unsolicited FETCH for an external change.
-				// The unsolicited FETCH is for a DIFFERENT message's flags (msg 1, from external
-				// source), which co-arrives with the STORE response.
+				// The unsolicited FETCH targets the SAME message 1: an externally
+				// observed flag change (\Seen, set elsewhere) that the server reports
+				// despite .SILENT, co-arriving with the STORE response.
 				reply("OK STORE completed", [
 					"* 1 FETCH (FLAGS (\\Seen \\Flagged))",
 				]),
