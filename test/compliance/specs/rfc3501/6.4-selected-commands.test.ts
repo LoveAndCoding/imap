@@ -333,7 +333,8 @@ complianceTest(
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// Expect FETCH using BODY[] (sets \Seen), not BODY.PEEK[].
 				// The args must reference BODY[] without the .PEEK form.
-				expectLine(command("FETCH", { args: /^1\s+BODY\[\]/i })),
+				// RFC 3501 §9 fetch ABNF allows both bare `fetch-att` and `"(" fetch-att *(SP fetch-att) ")"`, so accept either form.
+				expectLine(command("FETCH", { args: /^1\s+\(?BODY\[\]\)?$/i })),
 				// Server SHOULD include FLAGS in the response when \Seen is set.
 				reply("OK FETCH completed", [
 					"* 1 FETCH (BODY[] {5}\r\nhello FLAGS (\\Seen))",
@@ -352,7 +353,7 @@ complianceTest(
 		expect(
 			server.commandLines[3]?.args,
 			"FETCH args must use BODY[] (not BODY.PEEK) when intending to set \\Seen",
-		).toMatch(/^1\s+BODY\[\]/i);
+		).toMatch(/^1\s+\(?BODY\[\]\)?$/i);
 		// BODY.PEEK must NOT appear when the client intends the \Seen side-effect.
 		expect(
 			server.commandLines[3]?.args,
@@ -383,7 +384,7 @@ complianceTest(
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// Expect FETCH using BODY.PEEK[] (does NOT set \Seen).
-				expectLine(command("FETCH", { args: /^1\s+BODY\.PEEK\[\]/i })),
+				expectLine(command("FETCH", { args: /^1\s+\(?BODY\.PEEK\[\]\)?$/i })),
 				// No FLAGS update in response because \Seen was not changed.
 				reply("OK FETCH completed", ["* 1 FETCH (BODY[] {5}\r\nhello)"]),
 			],
@@ -400,7 +401,7 @@ complianceTest(
 		expect(
 			server.commandLines[3]?.args,
 			"FETCH args must use BODY.PEEK[] when \\Seen side-effect is NOT wanted",
-		).toMatch(/^1\s+BODY\.PEEK\[\]/i);
+		).toMatch(/^1\s+\(?BODY\.PEEK\[\]\)?$/i);
 	},
 );
 
@@ -433,6 +434,9 @@ complianceTest(
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// The macro must be a standalone bare word: "FETCH 1 ALL" (no parentheses).
 				// Any parenthesised or combined form (e.g. "(ALL FLAGS)") fails the match.
+				// NOTE: macros (ALL/FULL/FAST) legally CANNOT be parenthesized per the fetch ABNF
+				// (RFC 3501 §9): the grammar lists them as bare alternatives, not as fetch-att items.
+				// Do NOT widen this to /^1\s+\(?ALL\)?$/i — that would accept an invalid form.
 				expectLine(command("FETCH", { args: /^1\s+ALL$/i })),
 				reply("OK FETCH completed", [
 					"* 1 FETCH (FLAGS (\\Seen) INTERNALDATE \"11-Jun-2026 12:00:00 +0000\" RFC822.SIZE 42 ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL))",
@@ -486,7 +490,7 @@ complianceTest(
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// Expect BODY[<numeric>.MIME]: at least one numeric part specifier before MIME.
 				// BODY[MIME] (no numeric prefix) would fail this matcher.
-				expectLine(command("FETCH", { args: /^1\s+BODY\[\d+(?:\.\d+)*\.MIME\]/i })),
+				expectLine(command("FETCH", { args: /^1\s+\(?BODY\[\d+(?:\.\d+)*\.MIME\]\)?$/i })),
 				reply("OK FETCH completed", [
 					"* 1 FETCH (BODY[1.MIME] {42}\r\nContent-Type: text/plain; charset=us-ascii\r\n)",
 				]),
@@ -504,7 +508,7 @@ complianceTest(
 		expect(
 			server.commandLines[3]?.args,
 			"BODY[MIME] without numeric prefix must not appear — expected BODY[1.MIME] or similar",
-		).toMatch(/^1\s+BODY\[\d+(?:\.\d+)*\.MIME\]/i);
+		).toMatch(/^1\s+\(?BODY\[\d+(?:\.\d+)*\.MIME\]\)?$/i);
 		// Transcript guard: bare BODY[MIME] must never appear.
 		expect(
 			server.transcript.clientLines(),
@@ -541,7 +545,8 @@ complianceTest(
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// Expect a STORE command with .SILENT suffix.
-				expectLine(command("STORE", { args: /^1\s+\+FLAGS\.SILENT\s+\(\\Flagged\)$/i })),
+				// RFC store-att-flags allows flag-list OR bare flags, so accept both forms.
+				expectLine(command("STORE", { args: /^1\s+\+FLAGS\.SILENT\s+\(?\\Flagged\)?/i })),
 				// Server sends the tagged OK plus an unsolicited FETCH for an external change.
 				// The unsolicited FETCH is for a DIFFERENT message's flags (msg 1, from external
 				// source), which co-arrives with the STORE response.
@@ -582,14 +587,19 @@ complianceTest(
 // UID FETCH. The client must record data for sequence number 2, UID 47 — NOT for
 // UID 2. Misinterpreting the leading "2" as a UID would corrupt message-state mapping.
 //
-// The observable today is: the command was issued and the response was accepted
-// (no session error). Deeper state-mapping assertions require driver result accessors
-// that do not yet exist.
+// Design note (scope of today's assertions):
+//   The seq/uid mapping duty (confirming the driver stores data against seq# 2, not
+//   UID 2) is NOT yet verified here — verifying it requires driver result accessors
+//   that do not yet exist. Today's test only verifies:
+//     (1) the UID FETCH command was correctly issued, AND
+//     (2) the seq-numbered untagged FETCH response containing UID data was accepted
+//         without a session error (non-breaking acceptance).
+//   Seq/uid mapping correctness must be revisited once result accessors are available.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.4.8-5"],
 		profiles: ["rev1"],
-		title: "client maps leading number in '* 2 FETCH (UID 47 ...)' as sequence number 2, not UID 2",
+		title: "client issues UID FETCH and accepts a seq-numbered untagged FETCH with UID data (mapping assertion deferred)",
 		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
@@ -648,7 +658,7 @@ complianceTest(
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 10, recent: 0 }),
 				// UID FETCH requesting only FLAGS — NOT UID in the item list.
-				expectLine(command("UID FETCH", { args: /^1:\*\s+\(FLAGS\)$/i })),
+				expectLine(command("UID FETCH", { args: /^1:\*\s+\(?FLAGS\)?$/i })),
 				// Server MUST include the UID item even though the client did not request it.
 				// The client must parse this without error (it is implicit, not "unexpected data").
 				reply("OK UID FETCH completed", [
@@ -670,6 +680,6 @@ complianceTest(
 		expect(
 			server.commandLines[3]?.args,
 			"UID FETCH args must list only the requested item (FLAGS), not include UID",
-		).toMatch(/^1:\*\s+\(FLAGS\)$/i);
+		).toMatch(/^1:\*\s+\(?FLAGS\)?$/i);
 	},
 );

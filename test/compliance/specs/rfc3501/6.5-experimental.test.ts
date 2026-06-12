@@ -60,11 +60,12 @@ const f = useComplianceFixture();
  * Allowlist of standard and standards-track IMAP verbs the client is
  * permitted to send without the X prefix.
  *
- * Each verb is uppercase. Multi-token verbs (e.g. "UID FETCH") are recorded
- * by the harness as a single verb string; individual UID sub-commands are
- * listed here as "UID" (the harness canonicalises the full two-token form).
+ * Each verb is uppercase. commandLines[n].verb reflects whatever command()
+ * matcher was matched: "UID" when a test used command("UID"), "UID FETCH"
+ * when a test used the multi-token form command("UID FETCH"). There is no
+ * single canonical form — the harness records the matched verb string as-is.
  * Both "UID" and "UID FETCH" / "UID SEARCH" / "UID STORE" / "UID COPY" are
- * included defensively.
+ * included defensively to cover whichever form a given test uses.
  *
  * Sources:
  *   RFC 3501  : CAPABILITY, NOOP, LOGOUT, STARTTLS, AUTHENTICATE, LOGIN,
