@@ -191,7 +191,11 @@ export const requirements: SpecRequirement[] = [
 		notes:
 			"Unconditional applicability: whenever the server advertises LOGINDISABLED in its " +
 			"CAPABILITY response the client is absolutely prohibited from issuing LOGIN, regardless " +
-			"of any other state.",
+			"of any other state. Cross-reference: RFC 3501 states this same rule twice with different " +
+			"wording — here in §6.2.3 ('A client implementation MUST NOT send a LOGIN command if the " +
+			"LOGINDISABLED capability is advertised.') and in §7.2.1 ('An IMAP client MUST NOT issue " +
+			"the LOGIN command if the server advertises the LOGINDISABLED capability.'), catalogued " +
+			"as RFC3501-7.2.1-1.",
 	},
 	{
 		id: "RFC3501-6.2.3-2",
@@ -217,7 +221,7 @@ export const requirements: SpecRequirement[] = [
 		section: "6.2.3",
 		title: "Client implementations SHOULD have a means to disable automatic LOGIN",
 		text:
-			"it is recommended that client implementations have a means to disable any automatic use of the LOGIN command.",
+			"...it is recommended that client implementations have a means to disable any automatic use of the LOGIN command.",
 		level: "SHOULD",
 		applicability: "always",
 		profiles: ["rev1"],

@@ -6,6 +6,11 @@ export const note =
 	"§2.2.1: extracted 3 client requirements (tag uniqueness, strict syntax, complete-command-before-new). " +
 	"§2.2.2: extracted 4 client requirements (response parsing by first token, accept-any-response, record server data, record certain server data). " +
 	"§2.3.1.1: no direct client-binding requirements (UID rules are server obligations). " +
+	"The single client-touching sentence in §2.3.1.1 (the Note: 'A client can only assume, at the time " +
+	"that it obtains the next unique identifier value, that messages arriving after that time will have " +
+	"a UID greater than or equal to that value.') was considered and excluded as a keyword-less inference " +
+	"constraint — it limits what a client may infer rather than imposing a duty. RFC 3501 (unlike RFC 9051) " +
+	"contains no client UIDVALIDITY-cache duties in §2.3.1.1. " +
 	"§2.3.1.2: no client-binding requirements (message sequence number semantics are server-defined). " +
 	"§2.3.2: extracted 2 client requirements (\\Recent cannot be used in STORE/APPEND, client cannot alter \\Recent). " +
 	"§2.3.3: no client-binding requirements (internal date is a server attribute). " +
@@ -13,8 +18,9 @@ export const note =
 	"§2.3.5: no client-binding requirements (envelope is a server-provided parsed structure). " +
 	"§2.3.6: no client-binding requirements (body structure is a server-provided parsed structure). " +
 	"§2.4: no client-binding requirements (describes server capability to fetch message parts). " +
+	"§3 preamble: extracted 1 client requirement (protocol error to attempt a command in an inappropriate state — judgment MUST NOT). " +
 	"§3.1: extracted 1 client requirement (must supply credentials in Not Authenticated state). " +
-	"§3.2: no direct client-binding requirements (describes server-side state entry conditions). " +
+	"§3.2: extracted 1 client requirement (MUST select a mailbox before commands that affect messages will be permitted). " +
 	"§3.3: no client-binding requirements (describes state entry conditions). " +
 	"§3.4: extracted 2 client requirements (read OK after LOGOUT before closing, SHOULD NOT unilaterally close/SHOULD issue LOGOUT).";
 
@@ -195,6 +201,28 @@ export const requirements: SpecRequirement[] = [
 			"\\Recent in a STORE flags-list or an APPEND flags parameter.",
 	},
 
+	// §3 preamble ─────────────────────────────────────────────────────────────
+	{
+		id: "RFC3501-3-1",
+		source: "RFC3501",
+		section: "3",
+		title: "Client must not attempt a command while the connection is in an inappropriate state",
+		text:
+			"It is a protocol error for the client to attempt a command while the connection is in an inappropriate state, and the server will respond with a BAD or NO (depending upon server implementation) command completion result.",
+		level: "MUST NOT",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"§3 preamble (before §3.1). No RFC 2119 keyword; 'It is a protocol error' is a plain-English " +
+			"prohibition on the client. Level assigned as MUST NOT by judgment: attempting a command in an " +
+			"inappropriate state is declared a protocol error, which a conforming client must never commit. " +
+			"The second clause ('the server will respond with a BAD or NO...') describes the server's " +
+			"reaction and is retained for verbatim completeness. Testable: verify the client never issues " +
+			"state-restricted commands (e.g., SELECT before authentication, FETCH with no mailbox selected) " +
+			"in an inappropriate state.",
+	},
+
 	// §3.1 ────────────────────────────────────────────────────────────────────
 	{
 		id: "RFC3501-3.1-1",
@@ -207,6 +235,25 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
+	},
+
+	// §3.2 ────────────────────────────────────────────────────────────────────
+	{
+		id: "RFC3501-3.2-1",
+		source: "RFC3501",
+		section: "3.2",
+		title: "Client must select a mailbox before commands that affect messages will be permitted",
+		text:
+			"In the authenticated state, the client is authenticated and MUST select a mailbox to access before commands that affect messages will be permitted.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Explicit MUST in §3.2. The client-binding duty is to enter the Selected state (via SELECT or " +
+			"EXAMINE) before issuing message-affecting commands (FETCH, STORE, SEARCH, COPY, etc.). " +
+			"Testable: verify the client never issues Selected-state commands while in the Authenticated " +
+			"state without a successfully selected mailbox.",
 	},
 
 	// §3.4 ────────────────────────────────────────────────────────────────────

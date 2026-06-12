@@ -14,7 +14,11 @@ export const note =
 	"CAPABILITY, UIDNEXT, UIDVALIDITY, UNSEEN, READ-ONLY, READ-WRITE contain " +
 	"no explicit client MUST/SHOULD obligations in their §7.1 definitions " +
 	"(informational; UIDNEXT/UIDVALIDITY client duties derive from §2.3.1.1, " +
-	"not §7 text).";
+	"not §7 text). Cross-reference: the §7.2.1 sentence 'client and server " +
+	"implementations MUST implement the STARTTLS, LOGINDISABLED, and " +
+	"AUTH=PLAIN (described in [IMAP-TLS]) capabilities' restates the §6.1.1 " +
+	"requirement and is covered by RFC3501-6.1.1-1; no separate §7.2.1 entry " +
+	"is created for it.";
 
 export const requirements: SpecRequirement[] = [
 	// ── §7 preamble ────────────────────────────────────────────────────────────
@@ -175,14 +179,17 @@ export const requirements: SpecRequirement[] = [
 		section: "7.1.1",
 		title: "Client accepts the untagged OK greeting",
 		text:
-			"The untagged form indicates an information-only message; the nature of the information MAY be indicated by a response code. The untagged form is also used as one of three possible greetings at connection startup.",
+			"The untagged form indicates an information-only message; the nature of the information MAY be indicated by a response code. The untagged form is also used as one of three possible greetings at connection startup. It indicates that the connection is not yet authenticated and that a LOGIN command is needed.",
 		level: "MUST",
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
 			"Implicit client obligation: accept all valid forms of the OK greeting " +
-			"(with or without response codes) and proceed.",
+			"(with or without response codes) and proceed. Three contiguous " +
+			"sentences quoted verbatim; the third clarifies that the OK greeting " +
+			"places the connection in the Not Authenticated state, so the client " +
+			"must authenticate before most commands are permitted.",
 	},
 	{
 		id: "RFC3501-7.1.1-2",
@@ -235,7 +242,13 @@ export const requirements: SpecRequirement[] = [
 			"Elision ('...') covers conditions 1)-3) (logout, panic shutdown, " +
 			"autologout); condition 4) is the connection-greeting rejection case. " +
 			"All retained sentences are verbatim; the previously omitted middle " +
-			"sentence ('The human-readable text MAY be displayed...') is now included.",
+			"sentence ('The human-readable text MAY be displayed...') is now included. " +
+			"Level judgment: MUST is assigned over the MAY that appears in the " +
+			"quoted descriptive text — the MAY governs only the optional display of " +
+			"human-readable text, while the binding client duty is to treat a BYE " +
+			"greeting as the server rejecting the connection (the server closes the " +
+			"connection immediately), which a conforming client must recognise and " +
+			"handle rather than proceeding as if a session were established.",
 	},
 	{
 		id: "RFC3501-7.1.5-2",
@@ -268,12 +281,18 @@ export const requirements: SpecRequirement[] = [
 			"An IMAP client MUST NOT issue the LOGIN command if the server " +
 			"advertises the LOGINDISABLED capability.",
 		level: "MUST NOT",
-		applicability: "conditional",
+		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"§7.2.1 CAPABILITY response. Verbatim. Conditional: only applies " +
-			"when server has advertised LOGINDISABLED in its capability list.",
+			"§7.2.1 CAPABILITY response. Verbatim. Applicability is 'always': the " +
+			"prohibition stands ready in every session — whenever LOGINDISABLED is " +
+			"advertised the client is absolutely barred from LOGIN, and the client " +
+			"must always check for it before issuing LOGIN. Cross-reference: RFC " +
+			"3501 states this same rule twice with different wording — in §6.2.3 " +
+			"('A client implementation MUST NOT send a LOGIN command if the " +
+			"LOGINDISABLED capability is advertised.'), catalogued as " +
+			"RFC3501-6.2.3-1, and here in §7.2.1.",
 	},
 	{
 		id: "RFC3501-7.2.1-2",

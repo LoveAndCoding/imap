@@ -5,7 +5,7 @@ export const note =
 	"§4.1 Atom — extracted 1 (keyword-less definitional prose, judgment call: client must form atoms with ≥1 non-special character); " +
 	"§4.2 Number — extracted 1 (keyword-less definitional prose, judgment call: client must form numbers with ≥1 digit character); " +
 	"§4.3 String — extracted 3 (1 explicit MUST for client literal send-wait, 1 explicit MUST in Note for zero-octet literal, 1 keyword-less prose for quoted-string character constraints); " +
-	"§4.3.1 8-bit and Binary Strings — extracted 2 (1 MAY+SHOULD on 8-bit/multi-octet in literals, 1 explicit MUST to encode binary data before transmitting); " +
+	"§4.3.1 8-bit and Binary Strings — extracted 3 (1 MAY+SHOULD on 8-bit/multi-octet in literals, 1 explicit MUST to encode binary data before transmitting, 1 explicit MAY to treat strings with excessive CTL characters as binary); " +
 	"§4.4 Parenthesized List — no distinct client-binding requirements beyond format adherence (all sentences are structural/definitional with no keyword; format conformance is covered implicitly by command-level tests); " +
 	"§4.5 NIL — no client-binding requirements (entire section is definitional/explanatory with no normative keyword and no separately testable client obligation). " +
 	"Total entries: 8. Untestable: 0.";
@@ -18,11 +18,11 @@ export const requirements: SpecRequirement[] = [
 		title: "Atom must consist of one or more non-special characters",
 		text: "An atom consists of one or more non-special characters.",
 		level: "MUST",
-		applicability: "conditional",
+		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"No explicit RFC 2119 keyword; this is a definitional sentence that plainly obliges the client whenever it sends an atom. Level assigned as MUST by judgment: violating the definition (sending an empty atom or one containing special characters) would be a protocol error. Applicability is 'conditional' because it binds only when the client sends data in atom syntax.",
+			"No explicit RFC 2119 keyword; this is a definitional sentence that plainly obliges the client whenever it sends an atom. Level assigned as MUST by judgment: violating the definition (sending an empty atom or one containing special characters) would be a protocol error. Applicability is 'always': atoms are unavoidable in IMAP usage — command names, flags, and many arguments are atoms, so every client emits atom syntax in normal operation.",
 	},
 	{
 		id: "RFC3501-4.2-1",
@@ -31,11 +31,11 @@ export const requirements: SpecRequirement[] = [
 		title: "Number must consist of one or more digit characters",
 		text: "A number consists of one or more digit characters, and represents a numeric value.",
 		level: "MUST",
-		applicability: "conditional",
+		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"No explicit RFC 2119 keyword; definitional prose that plainly obliges the client whenever it sends a number literal. Level assigned as MUST by judgment: sending a zero-length or non-digit token where a number is required would be a protocol error. Applicability is 'conditional' because it binds only when the client sends data in number syntax.",
+			"No explicit RFC 2119 keyword; definitional prose that plainly obliges the client whenever it sends a number literal. Level assigned as MUST by judgment: sending a zero-length or non-digit token where a number is required would be a protocol error. Applicability is 'always': numbers are unavoidable in IMAP usage — sequence numbers, literal octet counts, and UIDs all use number syntax in normal client operation.",
 	},
 	{
 		id: "RFC3501-4.3-1",

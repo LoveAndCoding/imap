@@ -2,9 +2,16 @@ import type { SpecRequirement } from "../types";
 
 export const note =
 	"§9: Prose rules extracted (priority rule, case-insensitivity, SP strictness, NUL prohibition). " +
-	"ABNF productions are intentionally not itemized here — they are covered via per-command syntax entries elsewhere. " +
+	"ABNF productions are not itemized wholesale — they are covered via per-command syntax entries elsewhere — with " +
+	"three exceptions for client-binding ABNF comments: the flag-extension comment (client MUST accept " +
+	"flag-extension flags) is itemized as RFC3501-9-5; the mailbox production's INBOX comment (all case variants " +
+	"of INBOX MUST be interpreted as INBOX) is itemized as RFC3501-9-6; and the body-extension comment's client " +
+	"MUST ('Client implementations MUST accept body-extension fields.') is already covered by RFC3501-7.4.2-3 " +
+	"(BODYSTRUCTURE extension data) and is cross-referenced rather than duplicated. " +
 	"§10 (Author's Note): contains no client-binding normative text; it is a purely editorial statement that this document supersedes RFC 2060, RFC 1730, IMAP2bis.TXT, RFC 1176, and RFC 1064. " +
 	"§11.1: All client-binding TLS/STARTTLS obligations extracted (cipher suite MUST/SHOULD, hostname verification MUST/SHOULD/MUST NOT, subjectAltName SHOULD, post-STARTTLS check MUST). " +
+	"The §11.1 certificate-matching prose (case-insensitive matching, the '*' wildcard MAY, and the " +
+	"multiple-names acceptance rule) is consolidated into a single entry, RFC3501-11.1-9. " +
 	"§11.2: All normative (MUST/SHOULD) sentences in §11.2 bind the SERVER only (error message disclosure, plaintext-password configuration, login-failure brute-force limiting). " +
 	"No client-binding requirements found in §11.2; informational guidance about LOGIN plaintext risk carries no RFC 2119 keyword directed at the client.";
 
@@ -19,7 +26,7 @@ export const requirements: SpecRequirement[] = [
 		text:
 			"In the case of alternative or optional rules in which a later rule overlaps an earlier rule, " +
 			"the rule which is listed earlier MUST take priority. ... " +
-			"Note: [ABNF] rules MUST be followed strictly",
+			"Note: [ABNF] rules MUST be followed strictly...",
 		level: "MUST",
 		applicability: "always",
 		profiles: ["rev1"],
@@ -27,7 +34,9 @@ export const requirements: SpecRequirement[] = [
 		notes:
 			'The "MUST take priority" sentence establishes a parsing obligation on any sender or receiver. ' +
 			'The "[ABNF] rules MUST be followed strictly" note reinforces this as a blanket sender obligation. ' +
-			'Elision ("...") covers the inline example \\Seen/flag-extension; the normative content is unchanged.',
+			'The first elision ("...") covers the inline example \\Seen/flag-extension; the trailing "..." marks ' +
+			'that the Note continues mid-sentence ("; in particular:") into the three enumerated rules captured ' +
+			"as RFC3501-9-2, RFC3501-9-3, and RFC3501-9-4. The normative content is unchanged.",
 	},
 	{
 		id: "RFC3501-9-2",
@@ -75,6 +84,55 @@ export const requirements: SpecRequirement[] = [
 		profiles: ["rev1"],
 		testability: "testable",
 	},
+	{
+		id: "RFC3501-9-5",
+		source: "RFC3501",
+		section: "9",
+		title: "Client MUST accept flag-extension flags",
+		text:
+			"Future expansion. Client implementations ; MUST accept flag-extension flags. Server ; " +
+			"implementations MUST NOT generate ; flag-extension flags except as defined by ; " +
+			"future standard or standards-track ; revisions of this specification.",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"ABNF comment on the flag-extension production ('\\' atom) in §9. The interior ';' tokens " +
+			"are the comment-leader characters that begin each continuation line of the ABNF comment in " +
+			"the RFC's formatting; reading past them, the comment says: 'Future expansion. Client " +
+			"implementations MUST accept flag-extension flags. Server implementations MUST NOT generate " +
+			"flag-extension flags except as defined by future standard or standards-track revisions of " +
+			"this specification.' The client-binding keyword is the first MUST (accept flag-extension " +
+			"flags); the MUST NOT sentence binds the server and is retained for completeness. " +
+			"Testable: send a FETCH FLAGS response containing an unknown '\\' atom flag (e.g., " +
+			"'\\Unknown') and verify the client parses it without error.",
+	},
+	{
+		id: "RFC3501-9-6",
+		source: "RFC3501",
+		section: "9",
+		title: "All case variants of INBOX MUST be interpreted as INBOX",
+		text:
+			"INBOX is case-insensitive. All case variants of ; INBOX (e.g., \"iNbOx\") MUST be " +
+			"interpreted as INBOX ; not as an astring. An astring which consists of ; the " +
+			"case-insensitive sequence \"I\" \"N\" \"B\" \"O\" \"X\" ; is considered to be INBOX and " +
+			"not an astring. ...",
+		level: "MUST",
+		applicability: "always",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"ABNF comment on the mailbox production ('INBOX' / astring) in §9. The interior ';' tokens " +
+			"are the comment-leader characters that begin each continuation line of the ABNF comment in " +
+			"the RFC's formatting. The trailing '...' elides the comment's final cross-reference " +
+			"sentence ('Refer to section 5.1 for further semantic details of mailbox names.'). This " +
+			"comment binds the client's interpretation of mailbox names: any case variant of INBOX " +
+			"(e.g., received in a LIST response or typed by a user) MUST be treated as the special " +
+			"INBOX mailbox, not as a distinct astring name. Testable: verify the client treats " +
+			"'inbox'/'iNbOx' and 'INBOX' as the same mailbox (e.g., does not present them as distinct " +
+			"mailboxes or issue commands treating them as different names).",
+	},
 
 	// ── §11.1 STARTTLS Security Considerations ───────────────────────────────
 
@@ -90,11 +148,13 @@ export const requirements: SpecRequirement[] = [
 			"This is important as it assures that any two compliant implementations can be configured to interoperate. " +
 			"All other cipher suites are OPTIONAL.",
 		level: "MUST",
-		applicability: "conditional",
+		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"Conditional: binds only when the client negotiates TLS via STARTTLS. " +
+			"Applicability is 'always': this is an implementation requirement ('implementations MUST " +
+			"implement'), binding the client implementation itself rather than any particular session " +
+			"or feature use. " +
 			"Both TLS_RSA_WITH_RC4_128_MD5 and TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA are now considered obsolete " +
 			"(RC4 and 3DES deprecated by later RFCs and RFCs 7465/8996), but the text is recorded verbatim " +
 			"as written in RFC 3501. The SHOULD clause for TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA is captured " +
@@ -110,11 +170,13 @@ export const requirements: SpecRequirement[] = [
 			"TLS_RSA_WITH_RC4_128_MD5 [TLS] cipher suite, and SHOULD implement the " +
 			"TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA [TLS] cipher suite.",
 		level: "SHOULD",
-		applicability: "conditional",
+		applicability: "always",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"Conditional: binds only when the client negotiates TLS via STARTTLS. " +
+			"Applicability is 'always': this is an implementation requirement ('implementations ... " +
+			"SHOULD implement'), binding the client implementation itself rather than any particular " +
+			"session or feature use. " +
 			"Cipher suite is now obsolete (3DES deprecated); recorded verbatim as written in RFC 3501. " +
 			"The MUST clause for TLS_RSA_WITH_RC4_128_MD5 is captured separately in RFC3501-11.1-1.",
 	},
@@ -203,10 +265,14 @@ export const requirements: SpecRequirement[] = [
 		level: "SHOULD",
 		applicability: "conditional",
 		profiles: ["rev1"],
-		testability: "untestable",
-		untestableRationale:
-			"Which certificate field the client uses for identity comparison is internal TLS state " +
-			"not observable via black-box IMAP protocol testing.",
+		testability: "testable",
+		notes:
+			"Conditional: applies only during STARTTLS TLS certificate verification when the " +
+			"certificate carries a subjectAltName dNSName. Testable: SAN precedence is observable " +
+			"from connection outcomes — present a certificate whose CN mismatches the hostname but " +
+			"whose SAN dNSName matches (a conforming client proceeds), and one whose CN matches but " +
+			"whose SAN dNSName mismatches (a conforming client treats the identity check as failed " +
+			"and rejects or seeks user confirmation per RFC3501-11.1-4).",
 	},
 	{
 		id: "RFC3501-11.1-8",
@@ -224,5 +290,33 @@ export const requirements: SpecRequirement[] = [
 			"Conditional: applies only when STARTTLS is used. " +
 			"Testable by observing whether the client aborts the session when TLS negotiation fails " +
 			"to achieve the expected security level.",
+	},
+	{
+		id: "RFC3501-11.1-9",
+		source: "RFC3501",
+		section: "11.1",
+		title: "Certificate matching: case-insensitive, wildcard MAY, any-of-multiple-names acceptable",
+		text:
+			"Matching is case-insensitive. A \"*\" wildcard character MAY be used as the left-most " +
+			"name component in the certificate. ... If the certificate contains multiple names " +
+			"(e.g., more than one dNSName field), then a match with any one of the fields is " +
+			"considered acceptable.",
+		level: "MAY",
+		applicability: "conditional",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Consolidated entry: three sentences from the §11.1 certificate-matching rules are " +
+			"recorded together because they jointly define how the hostname comparison of " +
+			"RFC3501-11.1-3 is performed (case-insensitivity, wildcard acceptance, multiple-names " +
+			"acceptance) and none is independently meaningful outside that comparison. The elision " +
+			"('...') covers the illustrative example sentence ('For example, *.example.com would " +
+			"match a.example.com, foo.example.com, etc. but would not match example.com.'). Level is " +
+			"MAY, the strongest (and only) RFC 2119 keyword binding the client here — the wildcard " +
+			"permission; the case-insensitivity and multiple-names sentences are keyword-less matching " +
+			"semantics the client follows when performing the MUST-level check of RFC3501-11.1-3. " +
+			"Conditional: applies only during STARTTLS TLS certificate verification. Testable via " +
+			"connection outcomes against certificates varying name case, wildcard use, and multiple " +
+			"dNSName fields.",
 	},
 ];

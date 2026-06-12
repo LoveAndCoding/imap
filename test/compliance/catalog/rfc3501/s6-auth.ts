@@ -20,8 +20,10 @@ export const note =
 	"browser MUST NOT assume server interpretation of reference). " +
 	"§6.3.9 LSUB: 1 entry extracted (when LSUB flags differ from LIST flags, client MUST treat LIST flags as " +
 	"more authoritative — the MAY-differ sentence imposes an interpretation rule on the client). " +
-	"§6.3.10 STATUS: 2 entries extracted (SHOULD NOT on currently selected mailbox; MUST NOT as new-message check). " +
-	"§6.3.11 APPEND: 1 entry extracted (literal argument SHOULD be in RFC-2822 format).";
+	"§6.3.10 STATUS: 3 entries extracted (SHOULD NOT on currently selected mailbox; MUST NOT as new-message check; " +
+	"SHOULD NOT expect reasonable performance from many consecutive STATUS commands). " +
+	"§6.3.11 APPEND: 2 entries extracted (literal argument SHOULD be in RFC-2822 format; MAY issue NOOP/CHECK after " +
+	"APPEND when the server sends no untagged EXISTS).";
 
 export const requirements: SpecRequirement[] = [
 
@@ -211,16 +213,41 @@ export const requirements: SpecRequirement[] = [
 		title: "Client MUST NOT use STATUS as a check for new messages in the selected mailbox",
 		text:
 			"The STATUS command MUST NOT be used as a \"check for new messages in the selected " +
-			"mailbox\" operation.",
+			"mailbox\" operation (refer to sections 7, 7.3.1, and 7.3.2 for more information about " +
+			"the proper method for new message checking).",
 		level: "MUST NOT",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
 			"A stronger prohibition than RFC3501-6.3.10-1 targeting the specific anti-pattern of " +
-			"polling the selected mailbox via STATUS. The correct mechanism for detecting new messages " +
+			"polling the selected mailbox via STATUS. The full sentence is quoted, including the " +
+			"trailing parenthetical cross-reference. The correct mechanism for detecting new messages " +
 			"in the selected mailbox is the unsolicited EXISTS/RECENT untagged response or the NOOP " +
 			"command. Applies whenever a mailbox is in the Selected state.",
+	},
+	{
+		id: "RFC3501-6.3.10-3",
+		source: "RFC3501",
+		section: "6.3.10",
+		title: "Client SHOULD NOT expect reasonable performance from many consecutive STATUS commands",
+		text:
+			"Because the STATUS command is not guaranteed to be fast in its results, clients SHOULD " +
+			"NOT expect to be able to issue many consecutive STATUS commands and obtain reasonable " +
+			"performance.",
+		level: "SHOULD NOT",
+		applicability: "conditional",
+		profiles: ["rev1"],
+		testability: "untestable",
+		untestableRationale:
+			"This binds the client's performance expectations, not its wire behavior. A client that " +
+			"issues many consecutive STATUS commands is not violating the sentence — only a client " +
+			"that *expects* reasonable performance from doing so is, and an expectation is an internal " +
+			"design assumption that is not observable at the protocol layer.",
+		notes:
+			"Explicit SHOULD NOT in the §6.3.10 Note. Applies when the client uses the STATUS command. " +
+			"Practical guidance: clients should avoid architectures that depend on bulk STATUS polling " +
+			"(e.g., issuing STATUS for every mailbox at startup) for acceptable responsiveness.",
 	},
 
 	// ── §6.3.11 APPEND ────────────────────────────────────────────────────────
@@ -232,7 +259,8 @@ export const requirements: SpecRequirement[] = [
 		title: "APPEND literal argument SHOULD be in RFC-2822 message format",
 		text:
 			"The APPEND command appends the literal argument as a new message to the end of the " +
-			"specified mailbox. This argument SHOULD be in the form of an [RFC-2822] message.",
+			"specified destination mailbox. This argument SHOULD be in the format of an [RFC-2822] " +
+			"message.",
 		level: "SHOULD",
 		applicability: "conditional",
 		profiles: ["rev1"],
@@ -243,5 +271,26 @@ export const requirements: SpecRequirement[] = [
 			"the literal body sent by the client should conform to RFC 2822 message format (headers " +
 			"followed by body). Note: the spec permits 8-bit characters in the message literal, and " +
 			"a server that does not support 8-bit text MUST encode it before storing (server obligation).",
+	},
+	{
+		id: "RFC3501-6.3.11-2",
+		source: "RFC3501",
+		section: "6.3.11",
+		title: "Client MAY issue NOOP (or CHECK) after APPEND if server sends no untagged EXISTS",
+		text:
+			"Specifically, the server SHOULD notify the client immediately via an untagged EXISTS " +
+			"response. If the server does not do so, the client MAY issue a NOOP command (or failing " +
+			"that, a CHECK command) after one or more APPEND commands.",
+		level: "MAY",
+		applicability: "conditional",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"Explicit MAY in the second sentence; the preceding sentence (a server SHOULD) is included " +
+			"verbatim because 'does not do so' refers to it. The client-binding permission is the MAY: " +
+			"after APPENDing to the currently selected mailbox, if no untagged EXISTS arrives, the " +
+			"client may solicit it with NOOP (or, failing that, CHECK). Applies only when the client " +
+			"APPENDs to the currently selected mailbox and the server omits the EXISTS notification. " +
+			"Observable: a client issuing NOOP/CHECK after APPEND is exercising this permission.",
 	},
 ];

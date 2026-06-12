@@ -1,18 +1,23 @@
 import type { SpecRequirement } from "../types";
 
 export const note =
-	"§6.4.1 CHECK: extracted 1 client requirement (MAY issue CHECK as keep-alive / to flush pending expunges). " +
-	"§6.4.2 CLOSE: no client-binding normative requirements (CLOSE semantics bind the server; client just issues the command). " +
-	"§6.4.3 EXPUNGE: extracted 1 client requirement (MUST be prepared to receive untagged EXISTS after EXPUNGE). " +
-	"§6.4.4 SEARCH: extracted 2 client requirements (CHARSET argument must precede search keys; client must treat tagged NO as 'charset unsupported' rather than protocol error). " +
-	"§6.4.5 FETCH: extracted 5 client requirements (BODY[<section>] sets \\Seen; BODY.PEEK does not; ALL/FAST/FULL macros must be used standalone, not inside parenthesized item lists; client MUST be prepared to receive unsolicited FETCH). " +
-	"§6.4.6 STORE: extracted 1 client requirement (MUST expect FETCH response even for SILENT STORE when message flags change as a side-effect). " +
-	"§6.4.7 COPY: no client-binding normative requirements (all obligations in this section are server-side: SHOULD refuse if destination absent, MUST NOT auto-create mailbox, MUST return OK on success). " +
-	"§6.4.8 UID: extracted 4 client requirements (MUST use UID for cross-session message identity; SHOULD NOT assume sequence-number persistence; MUST NOT use UID value 0; UID prefix is limited to COPY/FETCH/STORE/SEARCH sub-commands). " +
-	"§6.5 Experimental/Expansion: no client-binding requirements (framing description only). " +
-	"§6.5.1 X<atom>: extracted 1 client requirement (client MUST NOT use X<atom> commands not defined or agreed; must handle tagged BAD from unsupported experimental commands).";
+	"Re-extracted 2026-06-11 against the verbatim text of RFC 3501 (rfc-editor.org/rfc/rfc3501.txt) after an audit found the prior extraction fabricated. " +
+	"§6.4.1 CHECK: 1 entry (NOOP, not CHECK, SHOULD be used for new message polling). " +
+	"§6.4.2 CLOSE: 1 entry (SELECT/EXAMINE/LOGOUT MAY be issued without a prior CLOSE). " +
+	"§6.4.3 EXPUNGE: no client-binding statements; the section's only normative content (untagged EXPUNGE sent before tagged OK) binds the server. " +
+	"§6.4.4 SEARCH: 2 entries (CHARSET specification syntax/placement; server MUST answer unsupported CHARSET with tagged NO, not BAD — derived client duty to treat NO as charset-unsupported). " +
+	"§6.4.5 FETCH: 3 entries (BODY[<section>] implicitly sets \\Seen with BODY.PEEK as the non-setting alternative; macros must be used by themselves; MIME part specifier MUST be prefixed by numeric part specifiers). " +
+	"§6.4.6 STORE: 1 entry (server SHOULD send untagged FETCH for externally observed flag changes regardless of .SILENT — derived client duty to accept it). " +
+	"§6.4.7 COPY: no client-binding entries. Server duties for reference: if the destination mailbox does not exist the server SHOULD return an error and SHOULD NOT automatically create the mailbox (not MUST NOT); unless certain the mailbox can not be created it MUST send the [TRYCREATE] response code in the tagged NO; on any failure it MUST restore the destination mailbox to its state before the COPY attempt. " +
+	"§6.4.8 UID: 2 entries (number after '*' in untagged FETCH is always a message sequence number even for UID commands; server MUST implicitly include the UID data item in FETCH responses caused by a UID command — derived client duty to parse it). " +
+	"§6.5: framing prose only, no normative statements. " +
+	"§6.5.1 X<atom>: 1 entry (non-standard commands MUST use the X prefix).";
 
 export const requirements: SpecRequirement[] = [
+
+	// RETIRED IDS (fabricated quotes removed 2026-06-11, never reuse):
+	// RFC3501-6.4.3-1, RFC3501-6.4.5-3, RFC3501-6.4.5-4, RFC3501-6.4.5-5,
+	// RFC3501-6.4.8-1, RFC3501-6.4.8-2, RFC3501-6.4.8-3, RFC3501-6.4.8-4
 
 	// §6.4.1 CHECK ──────────────────────────────────────────────────────────────
 
@@ -20,199 +25,161 @@ export const requirements: SpecRequirement[] = [
 		id: "RFC3501-6.4.1-1",
 		source: "RFC3501",
 		section: "6.4.1",
-		title: "Client MAY issue CHECK periodically as keep-alive and to flush pending expunges",
+		title: "Client SHOULD use NOOP, not CHECK, for new message polling",
 		text:
-			"The client MAY issue a CHECK command at periodic intervals as a \"keep alive\" mechanism, " +
-			"in addition to using it to flush on demand any pending server expunges that the server is caching.",
+			"There is no guarantee that an EXISTS untagged response will happen as a result of " +
+			"CHECK. NOOP, not CHECK, SHOULD be used for new message polling.",
+		level: "SHOULD",
+		applicability: "conditional",
+		profiles: ["rev1"],
+		testability: "testable",
+		notes:
+			"The SHOULD binds the client's choice of polling command: a client that polls for new " +
+			"messages SHOULD issue NOOP rather than CHECK, because CHECK carries no guarantee of an " +
+			"EXISTS untagged response. Applicability is 'conditional' because it fires only when the " +
+			"client polls for new messages. Testable: observe which command the client issues when " +
+			"polling. (This text replaces a previously fabricated quote under the same id; the old " +
+			"text was never cited by tests.)",
+	},
+
+	// §6.4.2 CLOSE ─────────────────────────────────────────────────────────────
+
+	{
+		id: "RFC3501-6.4.2-1",
+		source: "RFC3501",
+		section: "6.4.2",
+		title: "Client MAY issue SELECT, EXAMINE, or LOGOUT without a prior CLOSE",
+		text:
+			"Even if a mailbox is selected, a SELECT, EXAMINE, or LOGOUT command MAY be issued " +
+			"without previously issuing a CLOSE command.",
 		level: "MAY",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"Applicability is 'conditional' because this is an optional client strategy; the client is " +
-			"not required to send CHECK at all. Testable in the sense that a client that does send CHECK " +
-			"for keep-alive/flush purposes is conforming.",
+			"Grants the client explicit permission to switch mailboxes or log out while a mailbox is " +
+			"selected; SELECT/EXAMINE/LOGOUT implicitly close the selected mailbox without expunging. " +
+			"Applicability is 'conditional' because it applies only when a mailbox is selected and the " +
+			"client chooses to skip CLOSE. Testable: a client that issues SELECT while another mailbox " +
+			"is selected, without CLOSE, is conforming.",
 	},
-
-	// §6.4.2 CLOSE ─────────────────────────────────────────────────────────────
-	// No client-binding normative statements in this section. CLOSE semantics
-	// (permanent removal of \Deleted messages, return to authenticated state, no
-	// untagged EXPUNGE) are all server obligations. The section contains no
-	// MUST/SHOULD/MAY that binds the client.
 
 	// §6.4.3 EXPUNGE ────────────────────────────────────────────────────────────
-
-	{
-		id: "RFC3501-6.4.3-1",
-		source: "RFC3501",
-		section: "6.4.3",
-		title: "Client MUST be prepared to receive untagged EXISTS after EXPUNGE",
-		text:
-			"After an EXPUNGE command has been issued, the client MUST be prepared to receive an " +
-			"untagged EXISTS response for the new number of messages in the mailbox before the tagged " +
-			"response to the EXPUNGE command.",
-		level: "MUST",
-		applicability: "conditional",
-		profiles: ["rev1"],
-		testability: "testable",
-		notes:
-			"Applicability is 'conditional' because the obligation fires only when the client has " +
-			"issued an EXPUNGE command. The server may or may not send the untagged EXISTS; the client " +
-			"must be prepared to handle it if it arrives.",
-	},
+	// No client-binding normative statements. The section's only normative content
+	// ("Before returning an OK to the client, an untagged EXPUNGE response is sent
+	// for each message that is removed") binds the server. The previous entry
+	// RFC3501-6.4.3-1 quoted text that does not exist in RFC 3501 and is retired.
 
 	// §6.4.4 SEARCH ─────────────────────────────────────────────────────────────
-	//
-	// The SEARCH section's client-binding normative content is sparse. The MUST
-	// about returning a tagged NO for unsupported CHARSET is a server obligation.
-	// However, the wording creates an implicit client expectation: when the client
-	// specifies CHARSET, it must interpret a tagged NO (not BAD) as "charset
-	// unsupported". There is also a prose rule that the OPTIONAL [CHARSET]
-	// specification must be placed before the search criteria.
 
 	{
 		id: "RFC3501-6.4.4-1",
 		source: "RFC3501",
 		section: "6.4.4",
-		title: "Client MUST place optional CHARSET specification before search criteria",
+		title: "CHARSET specification is the word CHARSET followed by a registered charset",
 		text:
-			"The OPTIONAL [CHARSET] specification indicates the [CHARSET] of the strings used in the " +
-			"search criteria. US-ASCII [CHARSET] is assumed if the [CHARSET] specification is omitted.",
+			"The OPTIONAL [CHARSET] specification consists of the word \"CHARSET\" followed by a " +
+			"registered [CHARSET]. It indicates the [CHARSET] of the strings that appear in the " +
+			"search criteria.",
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"No explicit 2119 keyword for the client; the grammar rule is imperative ('specification " +
-			"indicates... is assumed if omitted'). If the client sends CHARSET it MUST place it " +
-			"immediately after SEARCH (before any search key); omitting it defaults to US-ASCII. " +
-			"Treated as MUST for argument-syntax compliance. Applicability is 'conditional' because " +
-			"it applies only when the client chooses to include a CHARSET argument.",
+			"Judgment call: no 2119 keyword binds the client in this sentence; it is a definitional " +
+			"syntax rule, treated as MUST for argument-syntax compliance. The §6.4.4 Arguments list " +
+			"('OPTIONAL [CHARSET] specification' before 'searching criteria') and the §9 formal syntax " +
+			"(search = \"SEARCH\" [SP \"CHARSET\" SP astring] 1*(SP search-key)) place the CHARSET " +
+			"specification immediately after SEARCH, before any search key — that ordering duty is the " +
+			"derived client obligation. Applicability is 'conditional' because it applies only when the " +
+			"client includes a CHARSET argument.",
 	},
 	{
 		id: "RFC3501-6.4.4-2",
 		source: "RFC3501",
 		section: "6.4.4",
-		title: "Client MUST interpret tagged NO (not BAD) as unsupported-CHARSET response",
+		title: "Client must treat tagged NO (not BAD) as the unsupported-CHARSET outcome",
 		text:
-			"If the server does not support the specified [CHARSET], it MUST return a tagged NO response (not a BAD).",
+			"If the server does not support the specified [CHARSET], it MUST return a tagged NO " +
+			"response (not a BAD).",
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"This is primarily a server obligation but creates a corresponding client-binding: the " +
-			"client MUST NOT treat a tagged NO to a CHARSET SEARCH as a protocol error or as a BAD; " +
-			"it must handle NO as a clean 'charset not supported' signal. Testable: a client that " +
-			"retries with BAD handling or crashes on NO from a CHARSET SEARCH violates this. " +
-			"Applicability is 'conditional' — only when CHARSET argument is used.",
+			"The quoted MUST binds the server. The derived client duty is to treat a tagged NO to a " +
+			"CHARSET SEARCH as 'charset unsupported' (a clean, recoverable failure — e.g., retry " +
+			"without CHARSET or with US-ASCII) rather than as a protocol error, and not to expect BAD " +
+			"for this case. Applicability is 'conditional' — only when the client uses a CHARSET " +
+			"argument. Testable: drive a NO response to a CHARSET SEARCH and verify the client handles " +
+			"it as an unsupported-charset result, not a parser/protocol failure.",
 	},
 
 	// §6.4.5 FETCH ──────────────────────────────────────────────────────────────
-	//
-	// RFC 3501 §6.4.5 client-binding normative statements:
-	//
-	// 1. BODY[<section>] sets \Seen; BODY.PEEK does not.
-	// 2. The macro items ALL, FAST, FULL are exclusive: they may not be mixed
-	//    with explicit data-item names in the same parenthesized list (the RFC
-	//    states that a macro may not be used in a list — each macro is "an
-	//    alternate form … which … is equivalent to"; they are defined to stand
-	//    alone as the second argument).
-	// 3. Client MUST be prepared to receive unsolicited FETCH responses (per
-	//    §2.2.2 and the note in §6.4.5 about implicit flag changes setting \Seen).
-	// 4. Partial fetch notation <<partial>> — client uses this in requests; the
-	//    server returns the specified octet range.
-	// 5. BODY.PEEK is the alternate form that does not implicitly set \Seen.
 
 	{
 		id: "RFC3501-6.4.5-1",
 		source: "RFC3501",
 		section: "6.4.5",
-		title: "BODY[<section>] sets \\Seen flag; client must expect this side-effect",
+		title: "BODY[<section>] implicitly sets \\Seen; BODY.PEEK is the non-setting alternative",
 		text:
-			"BODY.PEEK[<section>] An alternate form of BODY[<section>] that does not implicitly set " +
-			"the \\Seen flag.",
+			"The \\Seen flag is implicitly set; if this causes the flags to change, they SHOULD be " +
+			"included as part of the FETCH responses. ... An alternate form of BODY[<section>] that " +
+			"does not implicitly set the \\Seen flag.",
 		level: "MUST",
-		applicability: "always",
+		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"The converse (i.e., BODY[<section>] DOES implicitly set \\Seen) is the client-binding " +
-			"stated by contrast. A client that uses BODY[<section>] must expect \\Seen to be set; " +
-			"a client that wishes to avoid setting \\Seen MUST use BODY.PEEK[<section>]. " +
-			"No explicit 2119 keyword; the 'does not implicitly set' formulation is definitional and " +
-			"treated as MUST (it is an architectural invariant). Testable: verify \\Seen is set after " +
-			"a non-PEEK BODY fetch and NOT set after a PEEK fetch.",
+			"The ellipsis elides the intervening data-item heading 'BODY.PEEK[<section>]<<partial>>' " +
+			"between the two sentences; the second sentence is the definition of BODY.PEEK. Judgment " +
+			"call on level: the quoted SHOULD binds the server's flag reporting, not the client. The " +
+			"client-binding half is definitional — BODY[<section>] implicitly sets \\Seen, and " +
+			"BODY.PEEK[<section>] is the only defined form that does not, so a client that needs to " +
+			"fetch body content without setting \\Seen MUST use BODY.PEEK; a client using BODY[...] " +
+			"must expect the \\Seen side-effect (and possibly updated FLAGS in the FETCH response). " +
+			"Treated as MUST as an architectural invariant. Applicability is 'conditional' — fires " +
+			"when the client fetches body sections. Testable: verify the client uses BODY.PEEK when " +
+			"it intends not to mark messages seen, and tolerates FLAGS data in BODY fetch responses.",
 	},
 	{
 		id: "RFC3501-6.4.5-2",
 		source: "RFC3501",
 		section: "6.4.5",
-		title: "FETCH macro ALL must be used alone (not mixed with explicit item names)",
+		title: "FETCH macros (ALL/FAST/FULL) must be used by themselves",
 		text:
-			"ALL             Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)",
+			"A macro must be used by itself, and not in conjunction with other macros or data items.",
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"RFC 3501 §6.4.5 defines ALL, FAST, and FULL as macros; the ABNF grammar for the FETCH " +
-			"command (§9) permits either 'macro' or '(' fetch-att ')' as the second argument, " +
-			"not a mixture. A client MUST NOT include ALL (or FAST or FULL) inside a parenthesized " +
-			"list of items. Applicability is 'conditional' — only when client chooses to use ALL. " +
-			"Treated as MUST (syntax compliance).",
+			"Judgment call: lowercase 'must' (RFC 3501 predates RFC 8174 case-sensitivity), treated " +
+			"as a binding MUST — the §9 formal syntax also permits only 'macro' or a fetch-att list " +
+			"as the FETCH second argument, never a mixture. This single entry replaces the previous " +
+			"three per-macro entries (RFC3501-6.4.5-3 and RFC3501-6.4.5-4 are retired); it covers " +
+			"ALL, FAST, and FULL alike. Applicability is 'conditional' — only when the client uses a " +
+			"macro. Testable: verify the client never emits a macro inside or alongside a " +
+			"parenthesized item list.",
 	},
 	{
-		id: "RFC3501-6.4.5-3",
+		id: "RFC3501-6.4.5-6",
 		source: "RFC3501",
 		section: "6.4.5",
-		title: "FETCH macro FAST must be used alone",
+		title: "MIME part specifier MUST be prefixed by numeric part specifiers",
 		text:
-			"FAST            Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE)",
+			"The MIME part specifier MUST be prefixed by one or more numeric part specifiers.",
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"Same structural rule as RFC3501-6.4.5-2. A client MUST NOT embed FAST inside a " +
-			"parenthesized item list. Applicability is 'conditional'.",
-	},
-	{
-		id: "RFC3501-6.4.5-4",
-		source: "RFC3501",
-		section: "6.4.5",
-		title: "FETCH macro FULL must be used alone",
-		text:
-			"FULL            Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)",
-		level: "MUST",
-		applicability: "conditional",
-		profiles: ["rev1"],
-		testability: "testable",
-		notes:
-			"Same structural rule as RFC3501-6.4.5-2 and RFC3501-6.4.5-3. A client MUST NOT embed " +
-			"FULL inside a parenthesized item list. Applicability is 'conditional'.",
-	},
-	{
-		id: "RFC3501-6.4.5-5",
-		source: "RFC3501",
-		section: "6.4.5",
-		title: "Client MUST be prepared to receive unsolicited FETCH responses at any time",
-		text:
-			"A FETCH response MUST be returned to the client if a STORE command modifies the message " +
-			"(e.g., the \\Seen flag is set by a STORE command), even for a SILENT STORE command. " +
-			"[Combined with §2.2.2: A client MUST be prepared to accept any server response at all times.]",
-		level: "MUST",
-		applicability: "always",
-		profiles: ["rev1"],
-		testability: "testable",
-		notes:
-			"RFC 3501 §6.4.5 does not spell out 'client MUST be prepared for unsolicited FETCH' " +
-			"independently; however the combined §2.2.2 obligation ('accept any server response at " +
-			"all times') and the well-known cause (implicit flag changes, \\Seen set on BODY[] fetch, " +
-			"concurrent client actions) make this always-applicable. The STORE MUST statement " +
-			"(quoted verbatim from §6.4.6 for text accuracy) is the strongest textual anchor. " +
-			"Testable: send a BODY[TEXT] fetch; verify client accepts an unsolicited * N FETCH " +
-			"(FLAGS (\\Seen)) without error.",
+			"Binds the client's construction of BODY[<section>] section specifications: MIME may not " +
+			"be the sole part specifier (unlike HEADER, HEADER.FIELDS, HEADER.FIELDS.NOT, and TEXT, " +
+			"which can stand alone). Applicability is 'conditional' — only when the client fetches a " +
+			"MIME section. Testable: verify any emitted BODY[...MIME] section is prefixed by a " +
+			"numeric part specifier (e.g., BODY[4.1.MIME], never BODY[MIME]). Id ordinal 6 because " +
+			"ordinals 3-5 are retired and never reused.",
 	},
 
 	// §6.4.6 STORE ──────────────────────────────────────────────────────────────
@@ -221,109 +188,87 @@ export const requirements: SpecRequirement[] = [
 		id: "RFC3501-6.4.6-1",
 		source: "RFC3501",
 		section: "6.4.6",
-		title: "Client MUST expect FETCH response even for a SILENT STORE when flags change",
+		title: "Untagged FETCH may arrive for external flag changes even with .SILENT",
 		text:
-			"A FETCH response MUST be returned to the client if a STORE command modifies the message " +
-			"(e.g., the \\Seen flag is set by a STORE command), even for a SILENT STORE command.",
-		level: "MUST",
+			"Regardless of whether or not the \".SILENT\" suffix was used, the server SHOULD send an " +
+			"untagged FETCH response if a change to a message's flags from an external source is " +
+			"observed.",
+		level: "SHOULD",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"This is a server obligation ('MUST be returned'), but it creates a symmetric client " +
-			"obligation: a client using SILENT STORE MUST NOT suppress or discard FETCH responses " +
-			"because it expects none. The SILENT modifier means no FETCH is returned for the " +
-			"requested flag change, but an implicit change (e.g., \\Seen set as a side-effect) still " +
-			"triggers one. Applicability is 'conditional' — fires when SILENT modifier is used. " +
-			"Testable: issue SILENT STORE that causes \\Seen side-effect; verify client handles " +
-			"the resulting FETCH response.",
+			"The quoted SHOULD binds the server (this is the Note in §6.4.6; the leading 'Note:' " +
+			"label is omitted, the sentence is otherwise verbatim). The derived client duty: a client " +
+			"using .SILENT STORE variants must still be prepared to receive and process unsolicited " +
+			"untagged FETCH responses for externally observed flag changes — .SILENT suppresses only " +
+			"the echo of the client's own change. Applicability is 'conditional' — relevant when the " +
+			"client uses .SILENT. Testable: deliver an unsolicited FETCH after a .SILENT STORE and " +
+			"verify the client accepts it without error.",
 	},
 
 	// §6.4.7 COPY ───────────────────────────────────────────────────────────────
-	// §6.4.7 contains no normative client-binding statements. The server obligations
-	// are: SHOULD return error if destination does not exist; MUST NOT auto-create
-	// the mailbox; MUST return OK on success. None of these bind the client's
-	// behavior or impose obligations on how the client constructs or processes the
-	// COPY command beyond the standard argument syntax (message set + mailbox name).
+	// No client-binding normative statements. Server duties (verified verbatim
+	// against RFC 3501): "If the destination mailbox does not exist, a server
+	// SHOULD return an error.  It SHOULD NOT automatically create the mailbox."
+	// — note SHOULD NOT, not MUST NOT; "the server MUST send the response code
+	// "[TRYCREATE]" as the prefix of the text of the tagged NO response" unless
+	// it is certain the destination can not be created; and "If the COPY command
+	// is unsuccessful for any reason, server implementations MUST restore the
+	// destination mailbox to its state before the COPY attempt." The [TRYCREATE]
+	// hint is advisory for the client ("it can attempt a CREATE command and
+	// retry the COPY") but carries no client-binding 2119 keyword.
 
 	// §6.4.8 UID ────────────────────────────────────────────────────────────────
+	// RFC3501-6.4.8-1 through RFC3501-6.4.8-4 are retired (fabricated quotes;
+	// no such sentences exist in §6.4.8). New entries start at ordinal 5.
 
 	{
-		id: "RFC3501-6.4.8-1",
+		id: "RFC3501-6.4.8-5",
 		source: "RFC3501",
 		section: "6.4.8",
-		title: "Client MUST use UID to persist message identity across sessions",
+		title: "Number after '*' in untagged FETCH is a sequence number, even for UID commands",
 		text:
-			"Clients MUST use the UID of the message to refer to the message if the client wishes " +
-			"the message number to persist across sessions.",
+			"The number after the \"*\" in an untagged FETCH response is always a message sequence " +
+			"number, not a unique identifier, even for a UID command response.",
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
-		testability: "untestable",
-		untestableRationale:
-			"Whether the client correctly uses UIDs for cross-session identity is a design/architectural " +
-			"quality decision. In a single protocol exchange a test can verify the client uses UID " +
-			"variants, but whether it uses UIDs (vs. sequence numbers) for persistence across sessions " +
-			"requires observing multi-session behavior over time — not directly observable in a " +
-			"single black-box protocol test.",
-		notes:
-			"Applicability is 'conditional' because the obligation fires only 'if the client wishes " +
-			"the message number to persist across sessions' — a design-time choice.",
-	},
-	{
-		id: "RFC3501-6.4.8-2",
-		source: "RFC3501",
-		section: "6.4.8",
-		title: "Client SHOULD NOT assume message sequence numbers persist across sessions",
-		text:
-			"Clients SHOULD NOT assume that message numbers are persistent, and SHOULD use the UID " +
-			"if they wish to refer to the same message in a future session.",
-		level: "SHOULD NOT",
-		applicability: "always",
-		profiles: ["rev1"],
-		testability: "untestable",
-		untestableRationale:
-			"Whether the client assumes sequence-number persistence across sessions is an internal " +
-			"design property, not directly observable at the protocol layer in a single session.",
-	},
-	{
-		id: "RFC3501-6.4.8-3",
-		source: "RFC3501",
-		section: "6.4.8",
-		title: "Client MUST NOT use UID value 0 in any context",
-		text:
-			"The unique identifier value of 0 is reserved and MUST NOT be used.",
-		level: "MUST NOT",
-		applicability: "always",
-		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"Although 'MUST NOT be used' appears in the UID command section (§6.4.8), it applies " +
-			"globally — any use of UID 0 as an argument in UID FETCH/SEARCH/STORE/COPY is a " +
-			"protocol violation. Testable by verifying the client never emits a UID argument of 0.",
+			"Judgment call: no 2119 keyword; this is a declarative interpretation rule, treated as " +
+			"MUST because a client that interprets the leading number of an untagged FETCH as a UID " +
+			"will corrupt its message-state mapping. The UID itself is delivered via the UID data " +
+			"item inside the response (see RFC3501-6.4.8-6). Applicability is 'conditional' — most " +
+			"relevant when the client issues UID commands. Testable: respond to UID FETCH with " +
+			"'* 23 FETCH (... UID 4827313)' and verify the client maps the data to sequence number " +
+			"23 / UID 4827313, not to UID 23.",
 	},
 	{
-		id: "RFC3501-6.4.8-4",
+		id: "RFC3501-6.4.8-6",
 		source: "RFC3501",
 		section: "6.4.8",
-		title: "UID command is limited to COPY, FETCH, STORE, and SEARCH sub-commands",
+		title: "FETCH responses caused by UID commands implicitly include the UID data item",
 		text:
-			"Redefinition of the message numbering scheme is limited to the following commands: " +
-			"COPY, FETCH, STORE, and SEARCH. Attempting to use the UID command with any other command " +
-			"will return BAD.",
-		level: "MUST NOT",
+			"server implementations MUST implicitly include the UID message data item as part of any " +
+			"FETCH response caused by a UID command, regardless of whether a UID was specified as a " +
+			"message data item to the FETCH.",
+		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"No explicit client-binding 2119 keyword; the statement 'Attempting to use ... will return " +
-			"BAD' is a server guarantee that defines the client's permissible argument set. A client " +
-			"MUST NOT issue UID with any command other than COPY, FETCH, STORE, or SEARCH. Treated " +
-			"as MUST NOT. Applicability is 'conditional' — only when using the UID prefix.",
+			"Verbatim mid-sentence quote (the elided leading word is 'However,'). The MUST binds the " +
+			"server; the derived client duty is to parse and accept a UID data item in FETCH " +
+			"responses to UID FETCH/UID STORE even when the client did not request UID, rather than " +
+			"rejecting it as unexpected data. Applicability is 'conditional' — fires when the client " +
+			"uses UID commands. Testable: issue UID FETCH without UID in the item list and verify " +
+			"the client accepts the implicit UID item in the response.",
 	},
 
 	// §6.5 Client Commands - Experimental/Expansion ─────────────────────────────
-	// No client-binding normative statements in the §6.5 header section itself.
+	// The §6.5 heading has no body text of its own (it proceeds directly to
+	// §6.5.1); no normative statements.
 
 	// §6.5.1 X<atom> ─────────────────────────────────────────────────────────────
 
@@ -331,23 +276,21 @@ export const requirements: SpecRequirement[] = [
 		id: "RFC3501-6.5.1-1",
 		source: "RFC3501",
 		section: "6.5.1",
-		title: "Client MUST NOT use experimental commands in a way not defined or agreed",
+		title: "Non-standard commands MUST use the X prefix",
 		text:
-			"Experimental or private extensions to this protocol are submitted by publishing a " +
-			"document describing the syntax, arguments, data, and semantics of the extension. ... " +
-			"Any server receiving an experimental command that it does not support MUST respond " +
-			"with a tagged BAD response.",
-		level: "MUST NOT",
+			"Commands which are not part of this specification, a standard or standards-track " +
+			"revision of this specification, or an IESG-approved experimental protocol, MUST use " +
+			"the X prefix.",
+		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "testable",
 		notes:
-			"The verbatim text is from §6.5.1. The ellipsis elides the preceding command-tag " +
-			"definition sentence. The primary client-binding obligation derived from this section is: " +
-			"a client MUST NOT use X<atom> commands unless it has published or agreed on their " +
-			"semantics; and it must be prepared to receive a tagged BAD response if the server " +
-			"does not support the experimental command. The 'server MUST respond with BAD' clause " +
-			"is included verbatim because it directly constrains what the client must handle. " +
-			"Applicability is 'conditional' — only when the client uses experimental commands.",
+			"Binds any party emitting non-standard commands — for a client library this means any " +
+			"private/experimental command it sends MUST be X-prefixed. Applicability is " +
+			"'conditional' — only when the client sends commands outside the specification (e.g., " +
+			"vendor extensions not sanctioned by a standards-track document). Testable: verify the " +
+			"client never emits a non-standard, non-extension command without the X prefix. (This " +
+			"text replaces a previously fabricated quote under the same id.)",
 	},
 ];
