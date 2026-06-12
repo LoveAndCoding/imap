@@ -171,6 +171,15 @@ export class ComplianceDriver {
 	public async uidFetch(_seq: string, _items: string[]): Promise<never> {
 		throw new NotImplementedError("UID FETCH");
 	}
+	public async uidSearch(_criteria: unknown): Promise<never> {
+		throw new NotImplementedError("UID SEARCH");
+	}
+	public async uidStore(_seq: string, _action: string, _flags: string[]): Promise<never> {
+		throw new NotImplementedError("UID STORE");
+	}
+	public async uidCopy(_seq: string, _mailbox: string): Promise<never> {
+		throw new NotImplementedError("UID COPY");
+	}
 	public async idle(): Promise<never> {
 		throw new NotImplementedError("IDLE");
 	}
