@@ -150,7 +150,12 @@ export const requirements: SpecRequirement[] = [
 		level: "MUST",
 		applicability: "always",
 		profiles: ["rev1"],
-		testability: "testable",
+		testability: "untestable",
+		untestableRationale:
+			"RC4 suites are removed from Node's OpenSSL (and prohibited by RFC 7465); " +
+			"3DES suites are disabled at OpenSSL security level 2 in Node 20 (RFC 8996); " +
+			"the mandated suites cannot be negotiated by any modern stack, so the requirement " +
+			"is unverifiable black-box (and obsolete in practice).",
 		notes:
 			"Applicability is 'always': this is an implementation requirement ('implementations MUST " +
 			"implement'), binding the client implementation itself rather than any particular session " +
@@ -172,7 +177,12 @@ export const requirements: SpecRequirement[] = [
 		level: "SHOULD",
 		applicability: "always",
 		profiles: ["rev1"],
-		testability: "testable",
+		testability: "untestable",
+		untestableRationale:
+			"RC4 suites are removed from Node's OpenSSL (and prohibited by RFC 7465); " +
+			"3DES suites are disabled at OpenSSL security level 2 in Node 20 (RFC 8996); " +
+			"the mandated suites cannot be negotiated by any modern stack, so the requirement " +
+			"is unverifiable black-box (and obsolete in practice).",
 		notes:
 			"Applicability is 'always': this is an implementation requirement ('implementations ... " +
 			"SHOULD implement'), binding the client implementation itself rather than any particular " +
@@ -315,8 +325,13 @@ export const requirements: SpecRequirement[] = [
 			"MAY, the strongest (and only) RFC 2119 keyword binding the client here — the wildcard " +
 			"permission; the case-insensitivity and multiple-names sentences are keyword-less matching " +
 			"semantics the client follows when performing the MUST-level check of RFC3501-11.1-3. " +
-			"Conditional: applies only during STARTTLS TLS certificate verification. Testable via " +
-			"connection outcomes against certificates varying name case, wildcard use, and multiple " +
-			"dNSName fields.",
+			"Conditional: applies only during STARTTLS TLS certificate verification. " +
+			"Sub-clause testability: the wildcard sub-clause is untestable with this harness — the " +
+			"driver connects by IP address (127.0.0.1) and wildcard patterns (*.example.test) match " +
+			"DNS names only; IP addresses are never matched against wildcard patterns. Testing wildcard " +
+			"matching would require connecting by DNS hostname, which is unavailable in this loopback " +
+			"harness without a local DNS resolver fixture. The case-insensitivity and multiple-names " +
+			"sub-clauses remain testable and are implicitly verified by the SAN tests (RFC3501-11.1-7 " +
+			"scenarios) where the TLS stack applies these rules when matching SAN fields.",
 	},
 ];

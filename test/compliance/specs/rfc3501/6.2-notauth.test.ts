@@ -127,8 +127,9 @@ complianceTest(
 					}),
 					description: "AUTHENTICATE cancellation line '*'",
 				}),
-				// Server sends BAD (or NO) to confirm the cancellation.
-				send("* BAD AUTHENTICATE cancelled\r\n"),
+				// Server sends tagged BAD to confirm the cancellation (tagged response is
+				// the valid termination of a cancelled AUTHENTICATE exchange).
+				reply("BAD AUTHENTICATE cancelled"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -254,6 +255,9 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		// Verify: only CAPABILITY was sent (commandLines[0] = CAPABILITY command).
 		// After calling login(), no additional command must reach the server.
+		// NotImplementedError today = client cannot send LOGIN at all (vacuously
+		// compliant). When login() is implemented, a compliant client must refuse
+		// locally (non-NotImplementedError). Either way the error must be defined.
 		let loginError: unknown;
 		try {
 			await driver.login("user", "pass");
@@ -275,5 +279,12 @@ complianceTest(
 			server.commandLines.length,
 			"only CAPABILITY must have been sent — no LOGIN command when LOGINDISABLED",
 		).toBe(1);
+		// Future-proof guard: even if a post-script LOGIN slipped through the
+		// commandLines check (e.g., async race after script completion), the
+		// transcript must contain no bare LOGIN command.
+		// Note: LOGINDISABLED in the capability list does NOT match \bLOGIN\b because
+		// \b requires a non-word character after N — "D" is a word character, so the
+		// boundary is absent and LOGINDISABLED is not matched.
+		expect(server.transcript.format(), "no LOGIN command must have reached the server").not.toMatch(/\bLOGIN\b/);
 	},
 );

@@ -73,7 +73,7 @@
  *   verified by the SAN tests (11.1-7 scenarios) — the TLS stack's certificate
  *   matching logic handles these when matching the SAN IP entry.
  */
-import { expect } from "vitest";
+import { expect, test } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { expectLine, reply, send } from "../../harness/script";
@@ -100,14 +100,9 @@ const sanMismatch = loadCertFixture("san-mismatch");
 // 'untestable' — the cipher suites named (TLS_RSA_WITH_RC4_128_MD5 and
 // TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA) are disabled in Node.js's bundled
 // OpenSSL; the requirement is now superseded by RFCs 7465 and 8996.
-complianceTest(
-	{
-		reqs: ["RFC3501-11.1-1", "RFC3501-11.1-2"],
-		profiles: ["rev1"],
-		title:
-			"client completes TLS handshake (baseline interop — specific obsolete cipher suites not verifiable in Node.js)",
-		timeout: 5000,
-	},
+test(
+	"TLS baseline: client completes a modern handshake with a trusted cert (infrastructure check)",
+	{ timeout: 5000 },
 	async () => {
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
@@ -307,6 +302,7 @@ complianceTest(
 		// unacceptable (identity mismatch after STARTTLS).
 		expect(ok).toBe(false);
 		expect(driver.active).toBe(false);
+		await server.assertCompleted();
 	},
 );
 
