@@ -35,4 +35,12 @@ export class Transcript {
 			.map((e) => `[+${e.at}ms] ${e.dir}: ${printable(e.data)}`)
 			.join("\n");
 	}
+
+	/** Returns only the client-direction (`C:`) entries, formatted the same way as format(). */
+	public clientLines(): string {
+		const lines = this.entries
+			.filter((e) => e.dir === "C")
+			.map((e) => `[+${e.at}ms] C: ${printable(e.data)}`);
+		return lines.join("\n");
+	}
 }

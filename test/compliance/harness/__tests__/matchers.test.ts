@@ -64,4 +64,63 @@ describe("command matcher", () => {
 		const r = command(/^(CAPABILITY|NOOP)$/).match("x9 NOOP");
 		expect(r.ok).toBe(true);
 	});
+
+	test("populates verb field on single-token match", () => {
+		const r = command("CAPABILITY", { args: null }).match("a1 capability");
+		expect(r.ok).toBe(true);
+		expect(r.verb).toBe("CAPABILITY");
+	});
+
+	test("populates verb field on single-token regex match", () => {
+		const r = command(/^NOOP$/).match("a1 NOOP");
+		expect(r.ok).toBe(true);
+		expect(r.verb).toBe("NOOP");
+	});
+
+	test("populates verb on verb-matched but arg-constraint-failed single-token result", () => {
+		const r = command("CAPABILITY", { args: null }).match("a1 CAPABILITY extraArg");
+		expect(r.ok).toBe(false);
+		expect(r.verb).toBe("CAPABILITY");
+	});
+});
+
+describe("multi-token verb matching", () => {
+	test("matches multi-token verb and captures args", () => {
+		const r = command("UID FETCH").match("a1 UID FETCH 1:* (FLAGS)");
+		expect(r.ok).toBe(true);
+		expect(r.verb).toBe("UID FETCH");
+		expect(r.args).toBe("1:* (FLAGS)");
+		expect(r.tag).toBe("a1");
+	});
+
+	test("multi-token verb match is case-insensitive", () => {
+		const r = command("UID FETCH").match("a1 uid fetch 1:*");
+		expect(r.ok).toBe(true);
+		expect(r.verb).toBe("UID FETCH");
+		expect(r.args).toBe("1:*");
+	});
+
+	test("rejects mismatched second token", () => {
+		const r = command("UID FETCH").match("a1 UID STORE 1:* +FLAGS (\\Seen)");
+		expect(r.ok).toBe(false);
+		expect(r.reason).toContain("UID FETCH");
+	});
+
+	test("rejects extra args when args: null for multi-token verb", () => {
+		const r = command("UID EXPUNGE", { args: null }).match("a1 UID EXPUNGE 1:3");
+		expect(r.ok).toBe(false);
+		expect(r.verb).toBe("UID EXPUNGE");
+	});
+
+	test("matches multi-token verb with no args when args: null", () => {
+		const r = command("UID EXPUNGE", { args: null }).match("a1 UID EXPUNGE");
+		expect(r.ok).toBe(true);
+		expect(r.verb).toBe("UID EXPUNGE");
+		expect(r.args).toBe("");
+	});
+
+	test("rejects trailing whitespace on multi-token verb line", () => {
+		const r = command("UID FETCH").match("a1 UID FETCH ");
+		expect(r.ok).toBe(false);
+	});
 });

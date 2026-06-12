@@ -12,8 +12,9 @@
  * RFC3501-11.1-9: Certificate matching rules (case-insensitive, wildcard MAY,
  *   any-of-multiple-names acceptable).
  *
- * Catalog testability corrections recommended for 11.1-1/-2 and 11.1-9
- * (see bottom of file).
+ * Catalog testability: 11.1-1 and 11.1-2 are marked untestable (cipher suites
+ * disabled by Node.js OpenSSL); 11.1-9's wildcard sub-clause is untestable via
+ * IP-address connection (documented in the design notes below).
  *
  * Design notes per requirement:
  *
@@ -26,10 +27,10 @@
  *   documents this as a baseline TLS interop check (client successfully completes
  *   a TLS handshake with a standard modern cipher) — it verifies the TLS path
  *   works but cannot verify the specific obsolete cipher suites.
- *   CATALOG CORRECTION RECOMMENDED: mark 11.1-1 and 11.1-2 as untestable with
- *   rationale: cipher suites named (RC4, 3DES) are disabled in Node.js's OpenSSL
- *   and cannot be exercised by the test harness; the requirement is now obsolete
- *   per RFCs 7465 and 8996.
+ *   11.1-1 and 11.1-2 are marked untestable in the catalog: the cipher suites
+ *   named (RC4, 3DES) are disabled in Node.js's bundled OpenSSL and cannot be
+ *   exercised by the test harness; the requirements are obsolete per RFCs 7465
+ *   and 8996.
  *
  * RFC3501-11.1-3/-4 (hostname verification — implicit TLS): The client MUST
  *   check its understanding of the server hostname against the server's identity
@@ -64,11 +65,10 @@
  *   matching (*.example.test) operates on DNS names; connecting by IP cannot
  *   exercise wildcard DNS matching because IP addresses are not matched against
  *   wildcard patterns.
- *   CATALOG CORRECTION RECOMMENDED: mark 11.1-9's wildcard sub-clause as
- *   untestable with current harness, rationale: the driver/harness connect by
- *   IP address (127.0.0.1); wildcard DNS patterns (*.example.test) require
- *   connection by DNS hostname which the loopback test environment cannot
- *   provide without a local DNS resolver fixture.
+ *   11.1-9's wildcard sub-clause is marked untestable in the catalog: the
+ *   driver connects by IP address (127.0.0.1); wildcard DNS patterns
+ *   (*.example.test) require connection by DNS hostname, which the loopback
+ *   test environment cannot provide without a local DNS resolver fixture.
  *   The case-insensitivity and multiple-names sub-clauses are implicitly
  *   verified by the SAN tests (11.1-7 scenarios) — the TLS stack's certificate
  *   matching logic handles these when matching the SAN IP entry.
@@ -96,10 +96,10 @@ const sanMismatch = loadCertFixture("san-mismatch");
 // TLS. This confirms the TLS machinery is functional, but CANNOT verify the
 // specific obsolete cipher suites named in the RFC.
 //
-// CATALOG CORRECTION RECOMMENDED: mark RFC3501-11.1-1 and RFC3501-11.1-2 as
-// 'untestable' — the cipher suites named (TLS_RSA_WITH_RC4_128_MD5 and
+// RFC3501-11.1-1 and RFC3501-11.1-2 are marked untestable in the catalog:
+// the cipher suites named (TLS_RSA_WITH_RC4_128_MD5 and
 // TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA) are disabled in Node.js's bundled
-// OpenSSL; the requirement is now superseded by RFCs 7465 and 8996.
+// OpenSSL; both requirements are superseded by RFCs 7465 and 8996.
 test(
 	"TLS baseline: client completes a modern handshake with a trusted cert (infrastructure check)",
 	{ timeout: 5000 },
@@ -306,33 +306,3 @@ complianceTest(
 	},
 );
 
-/**
- * ── Catalog testability corrections recommended ──────────────────────────
- *
- * RFC3501-11.1-1 (TLS_RSA_WITH_RC4_128_MD5, MUST):
- *   RECOMMEND CORRECTION to 'untestable'.
- *   Rationale: RC4 is disabled in Node.js's bundled OpenSSL (removed since
- *   Node.js 6+). It is impossible to create a test server that offers only
- *   RC4 — the TLS library refuses to negotiate it. The cipher suite is now
- *   obsolete per RFC 7465 ("Prohibiting RC4 Cipher Suites"). A meaningful
- *   test cannot be written with this harness.
- *
- * RFC3501-11.1-2 (TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA, SHOULD):
- *   RECOMMEND CORRECTION to 'untestable'.
- *   Rationale: 3DES is deprecated/disabled in modern Node.js/OpenSSL builds.
- *   RFC 8996 prohibits TLS 1.0/1.1 and their associated cipher suites;
- *   Node.js 20 enforces this. Same untestability as 11.1-1.
- *
- * RFC3501-11.1-9 (wildcard MAY, case-insensitive, multiple-names):
- *   The wildcard sub-clause RECOMMEND CORRECTION to 'untestable' for this
- *   harness.
- *   Rationale: the driver connects to 127.0.0.1 (IP address). Wildcard
- *   certificate patterns like *.example.test are matched against DNS names
- *   only; an IP address is never matched against a wildcard pattern. To
- *   test wildcard matching, the client would need to connect by DNS hostname
- *   (e.g., foo.example.test → 127.0.0.1), which requires a local DNS
- *   resolver fixture not present in this harness.
- *   The case-insensitivity and multiple-names sub-clauses are implicitly
- *   verified by the SAN tests above (the TLS stack applies these rules when
- *   matching SAN fields against the IP address in the certificate).
- */

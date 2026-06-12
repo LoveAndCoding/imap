@@ -229,6 +229,7 @@ class ConnectionRunner {
 			this.server.commandTags.push(result.tag);
 			this.server.commandLines.push({
 				tag: result.tag,
+				verb: result.verb ?? "",
 				args: result.args ?? "",
 				literals,
 				nonSync,
@@ -305,6 +306,7 @@ export class ScriptedServer {
 	/** Tag and args of every tagged command line matched by an expect step, in order. */
 	public readonly commandLines: Array<{
 		tag: string;
+		verb: string;
 		args: string;
 		literals: Buffer[];
 		nonSync: boolean[];

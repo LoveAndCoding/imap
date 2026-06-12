@@ -26,12 +26,9 @@
  *
  * RFC3501-6.1.2-1 (NOOP): covered in 2.2-commands.test.ts. No test here.
  */
-import { expect } from "vitest";
-
-import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
+import { authPlainExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -68,27 +65,12 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* OK ready\r\n"),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
-				// Client must send: AUTHENTICATE PLAIN
-				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
-				// Server sends a base64 challenge (empty challenge is valid for PLAIN).
-				send("+ \r\n"),
-				// Client must send the base64-encoded SASL PLAIN credentials.
-				// Format: <base64("\0<user>\0<pass>")>
-				// We accept any non-empty base64 line here (driver fills in its own creds).
-				expectLine({ match: (line) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: `expected base64 PLAIN credentials, got: '${line}'` }), description: "base64 PLAIN credentials" }),
-				reply("OK [CAPABILITY IMAP4rev1] AUTHENTICATE completed"),
+				...sessionPrelude(["IMAP4rev1", "AUTH=PLAIN"]),
+				// Complete SASL PLAIN exchange: AUTHENTICATE PLAIN → challenge → credentials → OK.
+				...authPlainExchange(),
 			],
 		]);
-		const driver = f.newDriver();
-		const ok = await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
-		expect(ok).toBe(true);
+		const driver = await f.connectPlain(server);
 		// driver.authenticate() is not yet implemented — NotImplementedError expected.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();

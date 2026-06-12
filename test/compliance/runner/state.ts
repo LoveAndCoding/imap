@@ -1,6 +1,32 @@
 import { command } from "../harness/matchers";
 import { expectLine, reply, send, type ScriptStep } from "../harness/script";
 
+/**
+ * Script a complete SASL PLAIN AUTHENTICATE exchange:
+ *   C: <tag> AUTHENTICATE PLAIN
+ *   S: + \r\n  (empty challenge)
+ *   C: <base64 SASL response>
+ *   S: <tag> OK/NO AUTHENTICATE completed/failed
+ *
+ * opts.result defaults to "OK".
+ */
+export function authPlainExchange(opts: { result?: "OK" | "NO" } = {}): ScriptStep[] {
+	const result = opts.result ?? "OK";
+	const suffix = result === "OK" ? "OK AUTHENTICATE completed" : "NO AUTHENTICATE failed";
+	return [
+		expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+		send("+ \r\n"),
+		expectLine({
+			match: (line) => ({
+				ok: /^[A-Za-z0-9+/=]+$/.test(line),
+				reason: `expected base64 SASL response, got: '${line}'`,
+			}),
+			description: "base64 SASL response",
+		}),
+		reply(suffix),
+	];
+}
+
 /** Untagged greeting. */
 export function greet(opts: { kind?: "ok" | "preauth"; text?: string } = {}): ScriptStep[] {
 	const kind = opts.kind === "preauth" ? "PREAUTH" : "OK";

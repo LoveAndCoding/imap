@@ -55,8 +55,9 @@ import { expect } from "vitest";
 import { command } from "../../harness/matchers";
 import { expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
+import { NotImplementedError } from "../../driver/errors";
 import { useComplianceFixture } from "../../runner/fixture";
-import { capabilityExchange, greet } from "../../runner/state";
+import { authPlainExchange, capabilityExchange, greet } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -79,13 +80,8 @@ complianceTest(
 			[
 				...greet(),
 				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
-				// Client must send: AUTHENTICATE PLAIN
-				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
-				// Server sends empty challenge (valid for PLAIN per RFC 4616).
-				send("+ \r\n"),
-				// Client sends base64-encoded SASL PLAIN credentials.
-				expectLine({ match: (line) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: `expected base64 credentials, got: '${line}'` }), description: "base64 PLAIN credentials" }),
-				reply("OK [CAPABILITY IMAP4rev1] AUTHENTICATE completed"),
+				// Complete SASL PLAIN exchange: AUTHENTICATE PLAIN → challenge → credentials → OK.
+				...authPlainExchange(),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -160,12 +156,9 @@ complianceTest(
 			[
 				...greet(),
 				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
-				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
-				send("+ \r\n"),
-				expectLine({ match: (line) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: `expected base64 credentials, got: '${line}'` }), description: "base64 PLAIN credentials" }),
-				// OK with no CAPABILITY code — client must not rely on a code that is absent.
-				// A security layer was notionally negotiated; SASL requires re-issuing CAPABILITY.
-				reply("OK AUTHENTICATE completed"),
+				// Complete SASL PLAIN exchange with plain OK (no CAPABILITY code) —
+				// client must not rely on a code that is absent; SASL requires re-issuing CAPABILITY.
+				...authPlainExchange(),
 				// Client MUST re-issue CAPABILITY after the security-layer exchange.
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1"]),
@@ -200,22 +193,26 @@ complianceTest(
 				...greet(),
 				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
 				// First AUTHENTICATE attempt — server rejects with NO.
-				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
-				send("+ \r\n"),
-				expectLine({ match: (line) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: `expected base64 credentials, got: '${line}'` }), description: "base64 PLAIN credentials (attempt 1)" }),
-				// NO response — authentication failed, session remains active.
-				reply("NO [AUTHENTICATIONFAILED] invalid credentials"),
-				// Client MAY retry with a second AUTHENTICATE. Script the correct behavior:
-				// the client issues AUTHENTICATE again after the NO.
-				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
-				send("+ \r\n"),
-				expectLine({ match: (line) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: `expected base64 credentials, got: '${line}'` }), description: "base64 PLAIN credentials (attempt 2)" }),
-				reply("OK [CAPABILITY IMAP4rev1] AUTHENTICATE completed"),
+				// Session remains active after NO; client MAY retry.
+				...authPlainExchange({ result: "NO" }),
+				// Second AUTHENTICATE attempt — server accepts with OK.
+				...authPlainExchange({ result: "OK" }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: first call gets NO; second call should succeed.
-		// Today both throw NotImplementedError.
+		// First attempt: expected to fail with NO once implemented (today: NotImplementedError).
+		// Rethrow NotImplementedError so the test stays annotated unimplemented until
+		// authenticate() is implemented; swallow any other error (the NO rejection).
+		let firstError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			firstError = err;
+			if (err instanceof NotImplementedError) throw err;
+		}
+		// The first attempt must have thrown (NO rejection once implemented).
+		expect(firstError).toBeDefined();
+		// Second attempt — client retries after the NO response.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},
@@ -281,10 +278,10 @@ complianceTest(
 		).toBe(1);
 		// Future-proof guard: even if a post-script LOGIN slipped through the
 		// commandLines check (e.g., async race after script completion), the
-		// transcript must contain no bare LOGIN command.
+		// client-sent lines must contain no bare LOGIN command.
 		// Note: LOGINDISABLED in the capability list does NOT match \bLOGIN\b because
 		// \b requires a non-word character after N — "D" is a word character, so the
 		// boundary is absent and LOGINDISABLED is not matched.
-		expect(server.transcript.format(), "no LOGIN command must have reached the server").not.toMatch(/\bLOGIN\b/);
+		expect(server.transcript.clientLines(), "no LOGIN command must have reached the server").not.toMatch(/\bLOGIN\b/);
 	},
 );

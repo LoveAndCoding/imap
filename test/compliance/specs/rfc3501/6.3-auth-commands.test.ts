@@ -66,7 +66,7 @@
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { selectExchange, sessionPrelude } from "../../runner/state";
@@ -115,7 +115,8 @@ complianceTest(
 		// Self-actualizing: SELECT command was actually sent (commandLines order:
 		// CAPABILITY=0, LOGIN=1, SELECT=2).
 		const selectLine = server.commandLines[2];
-		expect(selectLine).toBeDefined();
+		expect(selectLine, "commandLines[2] must be the SELECT command").toBeDefined();
+		expect(selectLine?.verb).toBe("SELECT");
 	},
 );
 
@@ -167,7 +168,9 @@ complianceTest(
 		// sent here would be unscripted and fail this assertion.
 		await server.assertCompleted();
 		// commandLines order once implemented: CAPABILITY=0, LOGIN=1, SELECT=2, NOOP=3.
-		expect(server.commandLines[2]).toBeDefined();
+		const failedSelectLine = server.commandLines[2];
+		expect(failedSelectLine, "commandLines[2] must be the failed SELECT command").toBeDefined();
+		expect(failedSelectLine?.verb).toBe("SELECT");
 	},
 );
 
@@ -202,7 +205,8 @@ complianceTest(
 		// Self-actualizing: the EXAMINE command reached the server.
 		// commandLines: CAPABILITY=0, LOGIN=1, EXAMINE=2.
 		const examineLine = server.commandLines[2];
-		expect(examineLine).toBeDefined();
+		expect(examineLine, "commandLines[2] must be the EXAMINE command").toBeDefined();
+		expect(examineLine?.verb).toBe("EXAMINE");
 	},
 );
 
@@ -249,8 +253,10 @@ complianceTest(
 		// commandLines: CAPABILITY=0, LOGIN=1, LIST=2, LSUB=3.
 		const listLine = server.commandLines[2];
 		const lsubLine = server.commandLines[3];
-		expect(listLine).toBeDefined();
-		expect(lsubLine).toBeDefined();
+		expect(listLine, "commandLines[2] must be the LIST command").toBeDefined();
+		expect(listLine?.verb).toBe("LIST");
+		expect(lsubLine, "commandLines[3] must be the LSUB command").toBeDefined();
+		expect(lsubLine?.verb).toBe("LSUB");
 	},
 );
 
@@ -299,16 +305,8 @@ complianceTest(
 		expect(statusError).toBeDefined();
 		await server.assertCompleted();
 		// Transcript guard: no STATUS command must appear in client-sent lines.
-		// Transcript entries with direction "C:" prefix a client-originated line.
-		// We scope the regex to lines starting with "C:" to avoid false matches
-		// on "STATUS" appearing in server greeting or capability text.
-		const transcript = server.transcript.format();
-		const clientLines = transcript
-			.split("\n")
-			.filter((line) => /\] C:/.test(line))
-			.join("\n");
 		expect(
-			clientLines,
+			server.transcript.clientLines(),
 			"no STATUS command must appear in client-sent transcript lines",
 		).not.toMatch(/\bSTATUS\b/);
 	},
@@ -355,13 +353,8 @@ complianceTest(
 		await driver.noop();
 		await server.assertCompleted();
 		// Transcript guard: no STATUS command in client-sent lines.
-		const transcript = server.transcript.format();
-		const clientLines = transcript
-			.split("\n")
-			.filter((line) => /\] C:/.test(line))
-			.join("\n");
 		expect(
-			clientLines,
+			server.transcript.clientLines(),
 			"no STATUS command must appear in client-sent transcript lines when checking for new messages",
 		).not.toMatch(/\bSTATUS\b/);
 	},
@@ -413,18 +406,18 @@ complianceTest(
 		// Self-actualizing: the APPEND command was sent and the literal was recorded.
 		// commandLines: CAPABILITY=0, LOGIN=1, APPEND=2.
 		const appendLine = server.commandLines[2];
-		expect(appendLine).toBeDefined();
-		// The literal payload (if present) must contain RFC-2822 header lines.
+		expect(appendLine, "commandLines[2] must be the APPEND command").toBeDefined();
+		expect(appendLine?.verb).toBe("APPEND");
+		// The literal payload must contain RFC-2822 header lines.
 		// A "Header: value\r\n" pattern is the minimum RFC-2822 structure.
-		if (appendLine && appendLine.literals.length > 0) {
-			const payload = appendLine.literals[0].toString("utf8");
-			// Must contain at least one header line of the form "Name: value".
-			expect(payload, "APPEND literal must contain RFC-2822 header lines").toMatch(
-				/^[A-Za-z][A-Za-z0-9-]*:\s*.+/m,
-			);
-			// Must contain the blank-line separator between headers and body.
-			expect(payload, "APPEND literal must contain blank-line separator").toContain("\r\n\r\n");
-		}
+		expect(appendLine?.literals.length, "APPEND command must carry a literal payload").toBeGreaterThan(0);
+		const payload = appendLine?.literals[0]?.toString("utf8") ?? "";
+		// Must contain at least one header line of the form "Name: value".
+		expect(payload, "APPEND literal must contain RFC-2822 header lines").toMatch(
+			/^[A-Za-z][A-Za-z0-9-]*:\s*.+/m,
+		);
+		// Must contain the blank-line separator between headers and body.
+		expect(payload, "APPEND literal must contain blank-line separator").toContain("\r\n\r\n");
 	},
 );
 
@@ -478,11 +471,11 @@ complianceTest(
 		await server.assertCompleted();
 		// Self-actualizing: APPEND and NOOP commands were sent in order.
 		// commandLines: CAPABILITY=0, LOGIN=1, SELECT=2, APPEND=3, NOOP=4.
-		if (server.commandLines.length >= 5) {
-			const appendLine = server.commandLines[3];
-			const noopLine = server.commandLines[4];
-			expect(appendLine).toBeDefined();
-			expect(noopLine).toBeDefined();
-		}
+		const appendLine = server.commandLines[3];
+		const noopLine = server.commandLines[4];
+		expect(appendLine, "commandLines[3] must be the APPEND command").toBeDefined();
+		expect(appendLine?.verb).toBe("APPEND");
+		expect(noopLine, "commandLines[4] must be the NOOP command").toBeDefined();
+		expect(noopLine?.verb).toBe("NOOP");
 	},
 );
