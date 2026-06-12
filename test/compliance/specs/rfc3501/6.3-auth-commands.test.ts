@@ -162,22 +162,12 @@ complianceTest(
 		// NOOP is also unimplemented today; when both are implemented, verify
 		// the session is still active (not terminated by the failed SELECT).
 		await driver.noop();
+		// The script expects ONLY NOOP after the failed SELECT — any
+		// selected-state command (FETCH/STORE/...) a future implementation
+		// sent here would be unscripted and fail this assertion.
 		await server.assertCompleted();
-		// Once select() + noop() are implemented: commandLines contains SELECT
-		// followed by NOOP. No FETCH, STORE, or other selected-state commands appear.
-		// commandLines order: CAPABILITY=0, LOGIN=1, SELECT=2, NOOP=3.
-		if (server.commandLines.length >= 3) {
-			expect(server.commandLines[2]).toBeDefined();
-			// Verify no selected-state command appeared after the failed SELECT.
-			const postSelect = server.commandLines.slice(3);
-			for (const line of postSelect) {
-				const verb = line.args.split(" ")[0] ?? line.args;
-				// FETCH, STORE, SEARCH, COPY, EXPUNGE, CLOSE are selected-state only.
-				expect(verb, "selected-state command must not follow a failed SELECT").not.toMatch(
-					/^(?:FETCH|STORE|SEARCH|COPY|EXPUNGE|CLOSE)$/i,
-				);
-			}
-		}
+		// commandLines order once implemented: CAPABILITY=0, LOGIN=1, SELECT=2, NOOP=3.
+		expect(server.commandLines[2]).toBeDefined();
 	},
 );
 
