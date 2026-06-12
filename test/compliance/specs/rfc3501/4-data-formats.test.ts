@@ -43,12 +43,10 @@
  *   sends binary data; driver.append() is the natural target. Annotated
  *   unimplemented.
  */
-import * as net from "node:net";
-
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { close, expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -181,53 +179,39 @@ complianceTest(
 
 // ── RFC3501-4.3-2: even zero-octet literals require continuation ──────────
 // The Note in §4.3 says even {0} must wait for "+". This is symmetric to
-// RFC3501-4.3-1. At the driver level, driver.append() would be the surface;
-// the raw-socket mechanics test covers the wait obligation directly.
+// RFC3501-4.3-1. The driver.append() with an empty (zero-octet) buffer is
+// the natural surface. Annotated unimplemented since driver.append() is not
+// yet present. The raw-socket harness mechanics verification for {0} lives in
+// harness/__tests__/literals.test.ts.
 complianceTest(
 	{
 		reqs: ["RFC3501-4.3-2"],
 		profiles: ["rev1"],
 		title: "zero-octet literal {0} still requires a continuation wait",
+		expectFailure: "unimplemented",
+		timeout: 5000,
 	},
 	async () => {
-		// Raw-socket harness mechanics test: {0} literal, verify continuation is sent.
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* OK ready\r\n"),
-				expectLine(command("LOGIN")),
-				reply("OK LOGIN completed"),
-				close(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
+				// APPEND with a zero-octet literal; harness sends + continuation automatically.
+				expectLine(command("APPEND")),
+				reply("OK APPEND completed"),
 			],
 		]);
-
-		let continuationSent = false;
-
-		await new Promise<void>((resolve, reject) => {
-			const sock = net.connect({ host: "127.0.0.1", port: server.port }, () => {
-				sock.write("a1 LOGIN user {0}\r\n");
-			});
-			sock.on("data", (d: Buffer) => {
-				const text = d.toString("utf8");
-				if (text.includes("+ Ready")) {
-					continuationSent = true;
-					// Zero-octet literal: send no payload, just complete the command.
-					sock.write(" passwd\r\n");
-				}
-			});
-			sock.on("error", reject);
-			server
-				.outcome()
-				.then((o) => {
-					sock.destroy();
-					if (o.ok) resolve();
-					else reject(new Error(o.reason));
-				})
-				.catch(reject);
-		});
-
-		// The harness must have emitted "+" even for a zero-size literal.
-		expect(continuationSent).toBe(true);
+		const driver = await f.connectPlain(server);
+		// driver.append() is not implemented; when it is, it MUST use a
+		// synchronizing literal {0} and wait for the continuation even for
+		// empty messages.
+		await driver.append("INBOX", Buffer.alloc(0));
+		await server.assertCompleted();
+		// When implemented: the literal size must be {0} and it must be synchronizing.
+		const appendLine = server.commandLines.find((l) => l.args.includes("{"));
+		if (appendLine) {
+			expect(appendLine.nonSync).toContain(false);
+		}
 	},
 );
 

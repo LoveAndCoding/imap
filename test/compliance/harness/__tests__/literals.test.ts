@@ -160,6 +160,49 @@ test("synchronizing literal: harness sends continuation before payload is read",
 	expect(payloadSent).toBe(true);
 });
 
+// Harness mechanics test: even a zero-octet literal {0} triggers a continuation
+// response before the remainder of the command line is delivered.
+// This documents ScriptedServer behaviour (RFC3501 §4.3 Note).
+test("zero-octet literal {0} still receives a continuation before the command completes", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			close(),
+		],
+	]);
+
+	let continuationSent = false;
+
+	await new Promise<void>((resolve, reject) => {
+		const sock = net.connect({ host: "127.0.0.1", port: (server as ScriptedServer).port }, () => {
+			sock.write("a1 LOGIN user {0}\r\n");
+		});
+		sock.on("data", (d: Buffer) => {
+			const text = d.toString("utf8");
+			if (text.includes("+ Ready")) {
+				continuationSent = true;
+				// Zero-octet literal: send no payload, just complete the command.
+				sock.write(" passwd\r\n");
+			}
+		});
+		sock.on("error", reject);
+		(server as ScriptedServer)
+			.outcome()
+			.then((o) => {
+				sock.destroy();
+				if (o.ok) resolve();
+				else reject(new Error(o.reason));
+			})
+			.catch(reject);
+	});
+
+	// The harness must have emitted "+" even for a zero-size literal.
+	expect(continuationSent).toBe(true);
+});
+
 test("two literals in one command interleave correctly, even chunked", async () => {
 	server = await ScriptedServer.start();
 	server.arm([

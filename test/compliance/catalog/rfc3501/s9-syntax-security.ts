@@ -13,7 +13,8 @@ export const note =
 	"The §11.1 certificate-matching prose (case-insensitive matching, the '*' wildcard MAY, and the " +
 	"multiple-names acceptance rule) is consolidated into a single entry, RFC3501-11.1-9. " +
 	"§11.2: All normative (MUST/SHOULD) sentences in §11.2 bind the SERVER only (error message disclosure, plaintext-password configuration, login-failure brute-force limiting). " +
-	"No client-binding requirements found in §11.2; informational guidance about LOGIN plaintext risk carries no RFC 2119 keyword directed at the client.";
+	"No client-binding requirements found in §11.2; informational guidance about LOGIN plaintext risk carries no RFC 2119 keyword directed at the client. " +
+	"§8 (Sample IMAP4rev1 connection) is purely informational example transcript — reviewed, no client-binding requirements.";
 
 export const requirements: SpecRequirement[] = [
 	// ── §9 Formal Syntax – prose rules ──────────────────────────────────────
