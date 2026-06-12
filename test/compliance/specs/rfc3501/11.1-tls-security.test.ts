@@ -87,6 +87,7 @@ const localhost = loadCertFixture("localhost");
 const wrongHost = loadCertFixture("wrong-host");
 const sanOnlyMatch = loadCertFixture("san-only-match");
 const sanMismatch = loadCertFixture("san-mismatch");
+const multiSan = loadCertFixture("multi-san");
 
 // ── RFC3501-11.1-1/-2: cipher suite baseline (TLS interop) ───────────────
 // RC4 (11.1-1) and 3DES (11.1-2) are both removed/disabled in Node.js
@@ -302,6 +303,57 @@ complianceTest(
 		// unacceptable (identity mismatch after STARTTLS).
 		expect(ok).toBe(false);
 		expect(driver.active).toBe(false);
+		await server.assertCompleted();
+	},
+);
+
+// ── RFC3501-11.1-9: multiple names — any-of matching ─────────────────────
+// "If the certificate contains multiple names (e.g., more than one dNSName
+// field), then a match with any one of the fields is considered acceptable."
+// (RFC3501 §11.1 certificate-matching rules)
+//
+// Fixture multi-san: CN=unrelated.example.test; SAN contains three names:
+//   DNS:other.example.test  — mismatches 127.0.0.1
+//   DNS:localhost            — mismatches IP 127.0.0.1 (name ≠ IP)
+//   IP:127.0.0.1             — matches the connection target
+//
+// A conformant client MUST accept the connection because at least ONE of the
+// SAN names (IP:127.0.0.1) matches. Node's TLS verifier implements any-of
+// semantics, so this test is expected to PASS.
+//
+// Note: the wildcard sub-clause of RFC3501-11.1-9 remains untestable via IP
+// connection (see design notes at the top of this file); only the
+// any-of-multiple-names sub-clause is exercised here. The case-insensitivity
+// sub-clause is inherently exercised by the TLS stack on every SAN comparison.
+complianceTest(
+	{
+		reqs: ["RFC3501-11.1-9"],
+		profiles: ["rev1"],
+		title:
+			"multiple-SAN cert: client accepts connection when any one of multiple SAN names matches",
+		timeout: 5000,
+	},
+	async () => {
+		const server = await f.startServer({ tlsImplicit: multiSan });
+		server.arm([
+			[
+				send("* OK secure ready\r\n"),
+				expectLine(command("CAPABILITY", { args: null })),
+				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1"]),
+			],
+		]);
+		const driver = f.newDriver();
+		// Cert has three SAN entries; only IP:127.0.0.1 matches this connection.
+		// A conformant TLS verifier applies any-of matching: one match suffices.
+		const ok = await driver.connect({
+			host: "127.0.0.1",
+			port: server.port,
+			security: "implicit",
+			ca: multiSan.cert,
+			timeoutMs: 3000,
+		});
+		// Conformant: IP:127.0.0.1 among the SANs → connection succeeds.
+		expect(ok).toBe(true);
 		await server.assertCompleted();
 	},
 );

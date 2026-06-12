@@ -15,9 +15,11 @@ const CERT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "certs"
  *   'wrong-host'      — SAN=wrong.example.test, CN=wrong.example.test (identity mismatch)
  *   'san-only-match'  — SAN=localhost+127.0.0.1, CN=wrong.example.test (SAN matches, CN mismatches)
  *   'san-mismatch'    — SAN=wrong.example.test, CN=localhost (SAN mismatches, CN matches)
+ *   'multi-san'       — SAN=other.example.test+localhost+127.0.0.1, CN=unrelated.example.test
+ *                       (multiple names; only some match 127.0.0.1 — any-of-multiple rule)
  *   (expired-cert lands in Phase 3)
  */
-export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch"): CertFixture {
+export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san"): CertFixture {
 	return {
 		key: fs.readFileSync(path.join(CERT_DIR, `${name}-key.pem`)),
 		cert: fs.readFileSync(path.join(CERT_DIR, `${name}-cert.pem`)),

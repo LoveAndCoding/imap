@@ -32,4 +32,15 @@ MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500
   -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:wrong.example.test"
 
+# §11.1-9 fixture: multi-SAN test (RFC3501-11.1-9 multiple-names sub-clause).
+#
+# multi-san: CN=unrelated.example.test; SAN: DNS:other.example.test,
+#   DNS:localhost, IP:127.0.0.1 — multiple names where only some match
+#   the connection target (127.0.0.1). A conformant client MUST accept because
+#   one of the SAN names (IP:127.0.0.1) matches the connection target.
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500 \
+  -keyout multi-san-key.pem -out multi-san-cert.pem \
+  -subj "/CN=unrelated.example.test" \
+  -addext "subjectAltName=DNS:other.example.test,DNS:localhost,IP:127.0.0.1"
+
 echo "Done. Commit the regenerated PEM files."
