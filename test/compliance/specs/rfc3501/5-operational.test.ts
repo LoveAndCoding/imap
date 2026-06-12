@@ -93,7 +93,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { capabilityExchange, greet, loginExchange, selectExchange } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -115,31 +115,27 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// The client must send an ASCII mailbox name only.
 				expectLine(command("CREATE", { args: "NewFolder" })),
 				reply("OK CREATE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// Conformant: create a pure-ASCII mailbox name.
 		await driver.create("NewFolder");
 		await server.assertCompleted();
 		// When implemented: script completion is the primary assertion — the
 		// expectLine(command("CREATE", { args: "NewFolder" })) step enforces
-		// the correct wire form. Belt-and-suspenders: verify no octet > 0x7F.
+		// the correct wire form. The following assertion is unreachable today
+		// (driver.create() throws before server.assertCompleted()), but becomes
+		// active once create() is implemented — no octet > 0x7F is permitted.
 		// commandLines order: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "";
-		for (let i = 0; i < createArgs.length; i++) {
-			expect(createArgs.charCodeAt(i)).toBeLessThanOrEqual(0x7f);
+		const createLine = server.commandLines[2];
+		expect(createLine).toBeDefined();
+		for (let i = 0; i < createLine!.args.length; i++) {
+			expect(createLine!.args.charCodeAt(i)).toBeLessThanOrEqual(0x7f);
 		}
 	},
 );
@@ -214,28 +210,23 @@ complianceTest(
 		// encoding of the literal '&' character (U+0026).
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("CREATE", { args: "Drafts&-More" })),
 				reply("OK CREATE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// Client must encode 'Drafts&More' as 'Drafts&-More' on the wire.
 		await driver.create("Drafts&More");
 		await server.assertCompleted();
 		// When implemented: the expectLine above enforces the exact wire form.
-		// Belt-and-suspenders: verify no bare '&' not followed by '-' or Base64.
+		// The following assertion is unreachable today (driver.create() throws
+		// before reaching here), but becomes active once create() is implemented.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "Drafts&-More"; // default satisfies constraint
-		expect(createArgs).not.toMatch(/&(?![-A-Za-z0-9+/])/); // no bare '&'
+		const createLine = server.commandLines[2];
+		expect(createLine).toBeDefined();
+		expect(createLine!.args).not.toMatch(/&(?![-A-Za-z0-9+/])/); // no bare '&'
 	},
 );
 
@@ -268,31 +259,26 @@ complianceTest(
 		// the non-ASCII U+00E9 part.
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// Only the non-ASCII U+00E9 part goes into modified Base64.
 				// 'R' is printable ASCII and must appear literally.
 				expectLine(command("CREATE", { args: "R&AOk-" })),
 				reply("OK CREATE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// Logical name "Ré" — client must produce "R&AOk-" on the wire.
 		await driver.create("Ré");
 		await server.assertCompleted();
 		// When implemented: the expectLine above enforces the exact wire form.
-		// Belt-and-suspenders: "R" must appear literally (not inside &...—).
+		// The following assertions are unreachable today (driver.create() throws
+		// before reaching here), but become active once create() is implemented.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "R&AOk-"; // default satisfies constraint
-		expect(createArgs).not.toMatch(/^&/); // must not start with a modified-Base64 shift
-		expect(createArgs.charAt(0)).toBe("R"); // ASCII 'R' is literal
+		const createLine = server.commandLines[2];
+		expect(createLine).toBeDefined();
+		expect(createLine!.args).not.toMatch(/^&/); // must not start with a modified-Base64 shift
+		expect(createLine!.args.charAt(0)).toBe("R"); // ASCII 'R' is literal
 	},
 );
 
@@ -320,28 +306,23 @@ complianceTest(
 		// The name MUST end with '-' (US-ASCII).
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("CREATE", { args: "&Ti1lhw-" })),
 				reply("OK CREATE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// Logical name "中文" — client must produce "&Ti1lhw-" on the wire.
 		await driver.create("中文");
 		await server.assertCompleted();
 		// When implemented: the expectLine above enforces the exact wire form.
-		// Belt-and-suspenders: the name must end with a US-ASCII character.
+		// The following assertions are unreachable today (driver.create() throws
+		// before reaching here), but become active once create() is implemented.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "&Ti1lhw-"; // default satisfies constraint
-		const name = createArgs.replace(/^"?|"?$/g, "");
+		const createLine = server.commandLines[2];
+		expect(createLine).toBeDefined();
+		const name = createLine!.args.replace(/^"?|"?$/g, "");
 		const lastCharCode = name.charCodeAt(name.length - 1);
 		expect(lastCharCode).toBeLessThanOrEqual(0x7f); // must end in US-ASCII
 	},
@@ -373,29 +354,25 @@ complianceTest(
 		// Base64 and '-' immediately terminates it, representing '&' itself.)
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("CREATE", { args: "A&-B" })),
 				reply("OK CREATE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// Logical name "A&B"; client must encode '&' as '&-' (not use a null shift).
 		await driver.create("A&B");
 		await server.assertCompleted();
 		// When implemented: the expectLine above enforces the exact wire form "A&-B".
-		// Belt-and-suspenders: verify no '-&' sequence (null shift: Base64 close
-		// immediately followed by another shift open — forbidden by §5.1.3).
+		// The following assertion is unreachable today (driver.create() throws
+		// before reaching here), but becomes active once create() is implemented.
+		// No '-&' sequence (null shift: Base64 close immediately followed by another
+		// shift open) is forbidden by §5.1.3.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "A&-B"; // default satisfies constraint
-		expect(createArgs).not.toContain("-&");
+		const createLine = server.commandLines[2];
+		expect(createLine).toBeDefined();
+		expect(createLine!.args).not.toContain("-&");
 	},
 );
 
@@ -466,20 +443,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("NOOP", { args: null })),
 				// Server replies to NOOP with NO EXISTS response — client must not expect one.
 				reply("OK NOOP completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// When noop() is implemented, the client must complete normally even
 		// though the server did not include a mailbox size (EXISTS) update.
@@ -560,9 +530,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// APPEND uses a synchronizing literal {N}. Harness sends "+" automatically.
 				// The client MUST NOT send any subsequent command until the literal is
 				// fully transmitted and the APPEND tagged OK is received.
@@ -573,12 +541,7 @@ complianceTest(
 				reply("OK NOOP completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		// When implemented: APPEND must fully complete its literal sequence
 		// before NOOP is sent.
@@ -622,9 +585,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 5, recent: 0 }),
 				// NOOP first — must complete before FETCH is sent.
 				expectLine(command("NOOP", { args: null })),
@@ -634,12 +595,7 @@ complianceTest(
 				reply("OK FETCH completed", ["* 1 FETCH (FLAGS (\\Seen))"]),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		// NOOP must complete before FETCH is issued.
@@ -681,9 +637,7 @@ defineAcceptanceTable({
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 3, recent: 0 }),
 				// Wait-cmd arrives first.
 				expectLine(command(row.waitCmd)),
@@ -693,12 +647,7 @@ defineAcceptanceTable({
 				reply(`OK ${row.seqCmd} completed`),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		// Wait for the non-FETCH/STORE/SEARCH command to complete before
@@ -727,9 +676,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX", { exists: 5, recent: 0 }),
 				// UID FETCH arrives first.
 				expectLine(command("UID")),
@@ -739,17 +686,14 @@ complianceTest(
 				reply("OK FETCH completed", ["* 2 FETCH (FLAGS (\\Seen))"]),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
-		// UID FETCH is a different command; must wait for its completion.
+		// UID FETCH is a different command from plain FETCH; must wait for its
+		// tagged OK before issuing the sequence-number FETCH below.
 		// Neither is implemented yet — this documents the correct wait order.
-		await driver.fetch("1", ["FLAGS"]); // placeholder — uid fetch not yet a separate verb
+		await driver.uidFetch("1", ["FLAGS"]);
+		await driver.fetch("2", ["FLAGS"]);
 		await server.assertCompleted();
 	},
 );

@@ -40,7 +40,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { capabilityExchange, greet, loginExchange } from "../../runner/state";
+import { sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -63,9 +63,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 			],
 		]);
 		const driver = f.newDriver();
@@ -101,29 +99,18 @@ complianceTest(
 		// If SELECT were sent, the script would fail (no expect step for it).
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"]),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// Attempt select() while unauthenticated (Not Authenticated state).
 		// Today: NotImplementedError fires before any wire bytes are sent (correct).
 		// Once implemented: a conformant client must refuse locally or the script
 		// will fail because SELECT would be an unexpected command.
-		try {
-			await driver.select("INBOX");
-		} catch (err: unknown) {
-			// Re-throw NotImplementedError so the test fails with an honest
-			// "unimplemented" result rather than silently passing.
-			throw err;
-		}
-		// Regardless of which path we took, only the CAPABILITY command
-		// should have been sent (index 0). A SELECT would have been index 1+.
+		await driver.select("INBOX");
+		// The assertions below are unreachable today (select() throws above),
+		// but become active once select() is implemented. Only the CAPABILITY
+		// command should have been sent (index 0); a SELECT would be index 1+.
 		// This assertion enforces the spec: only the scripted CAPABILITY exchange
 		// may have produced a command line.
 		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
@@ -147,8 +134,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"]),
 				// The correct sequence: SELECT before FETCH.
 				// When both verbs are implemented, the driver must issue SELECT first.
 				expectLine(command("SELECT")),
@@ -161,12 +147,7 @@ complianceTest(
 				reply("OK FETCH completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// When implemented: driver must SELECT before FETCH is allowed.
 		// fetch() throws NotImplementedError; select() does too.
 		await driver.fetch("1:*", ["FLAGS"]);
@@ -192,20 +173,14 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"]),
 				expectLine(command("LOGOUT", { args: null })),
 				// Server sends BYE then tagged OK; client MUST read the OK before closing.
 				reply("OK LOGOUT completed", ["* BYE IMAP4rev1 Server logging out"]),
 				close(),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// When implemented, this sends LOGOUT and waits for the tagged OK.
 		await driver.logout();
 		await server.assertCompleted();
@@ -226,19 +201,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"]),
 				expectLine(command("LOGOUT", { args: null })),
 				reply("OK LOGOUT completed", ["* BYE IMAP4rev1 Server logging out"]),
 				close(),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// Orderly teardown SHOULD send LOGOUT.
 		// driver.logout() is not yet implemented.
 		await driver.logout();

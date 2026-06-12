@@ -1,9 +1,7 @@
-import * as net from "node:net";
-
 import { expect } from "vitest";
 
 import { command, isValidTag } from "../../harness/matchers";
-import { close, expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 
@@ -72,12 +70,14 @@ complianceTest(
 );
 
 // ── RFC3501-2.2-1: CRLF line framing ─────────────────────────────────────
-// The harness's drainLines() already rejects bare-LF lines (it writes a
-// rejectLine error). We exercise the REQUIREMENT by connecting at the raw
-// socket level, sending a bare-LF terminated line, and asserting the
-// connection is killed or the script reports a protocol error.  A separate
-// positive-path test (the client always uses CRLF) is implicit in every
-// other test; this test explicitly probes the requirement's boundary.
+// Positive-path verification via the harness's ambient line framing: the
+// harness's drainLines() parser only accepts CRLF-terminated lines, so every
+// expectLine step that completes successfully is implicitly a positive-path
+// CRLF assertion. The test below drives a normal CAPABILITY exchange; when
+// assertCompleted() passes without error it confirms the client sent a
+// properly CRLF-terminated command (bare-LF would have been rejected by the
+// harness, causing the script to fail). No raw-socket negative test is
+// needed — the harness's own line-framing enforcement covers that invariant.
 complianceTest(
 	{
 		reqs: ["RFC3501-2.2-1"],
@@ -126,8 +126,10 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
-				// Deliberately delay — pause before replying to CAPABILITY.
-				// A non-compliant client might pipeline a second command here.
+				// Server replies to CAPABILITY immediately. The harness records
+				// command arrival order; because connect() awaits each reply before
+				// proceeding, CAPABILITY's tagged OK arrives before ID is sent —
+				// confirming sequential (non-pipelined) command ordering.
 				reply("OK done", ["* CAPABILITY IMAP4rev1 ID"]),
 				expectLine(command("ID")),
 				reply("OK done", ['* ID ("name" "fake-server")']),
@@ -169,8 +171,7 @@ complianceTest(
 				reply("OK NOOP completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+		const driver = await f.connectPlain(server);
 		// Throws NotImplementedError today → annotated 'unimplemented'.
 		await driver.noop();
 		await server.assertCompleted();

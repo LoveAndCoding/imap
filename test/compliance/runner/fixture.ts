@@ -1,6 +1,6 @@
 import { afterEach } from "vitest";
 
-import { ComplianceDriver } from "../driver/driver";
+import { ComplianceDriver, type DriverConnectOptions } from "../driver/driver";
 import { ScriptedServer, type ServerOptions } from "../harness/scripted-server";
 
 /**
@@ -27,6 +27,11 @@ export function useComplianceFixture() {
 		},
 		newDriver(): ComplianceDriver {
 			driver = new ComplianceDriver();
+			return driver;
+		},
+		async connectPlain(srv: ScriptedServer, extra: Partial<DriverConnectOptions> = {}): Promise<ComplianceDriver> {
+			driver = new ComplianceDriver();
+			await driver.connect({ host: "127.0.0.1", port: srv.port, security: "none", ...extra });
 			return driver;
 		},
 	};

@@ -129,8 +129,10 @@ test("synchronizing literal: harness sends continuation before payload is read",
 	let continuationReceived = false;
 	let payloadSent = false;
 
+	expect(server).toBeDefined();
+	const s = server as ScriptedServer;
 	await new Promise<void>((resolve, reject) => {
-		const sock = net.connect({ host: "127.0.0.1", port: server!.port }, () => {
+		const sock = net.connect({ host: "127.0.0.1", port: s.port }, () => {
 			// Send LOGIN with a synchronizing literal for the password.
 			sock.write("a1 LOGIN user {6}\r\n");
 		});
@@ -144,7 +146,7 @@ test("synchronizing literal: harness sends continuation before payload is read",
 			}
 		});
 		sock.on("error", reject);
-		server!
+		s
 			.outcome()
 			.then((o) => {
 				sock.destroy();

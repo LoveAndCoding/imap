@@ -45,7 +45,7 @@
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { close, expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
@@ -188,7 +188,7 @@ complianceTest(
 		// No command line should contain consecutive spaces or a TAB.
 		for (const { args } of server.commandLines) {
 			// No double-space in args (each token separated by exactly one SP)
-			expect(args, "args must not contain consecutive spaces").not.toMatch(/  /);
+			expect(args, "args must not contain consecutive spaces").not.toMatch(/ {2}/);
 			// No TAB character
 			expect(args, "args must not contain TAB").not.toMatch(/\t/);
 		}

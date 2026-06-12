@@ -17,14 +17,12 @@
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import {
-	capabilityExchange,
-	greet,
-	loginExchange,
 	selectExchange,
+	sessionPrelude,
 } from "../../runner/state";
 
 const f = useComplianceFixture();
@@ -47,20 +45,13 @@ complianceTest(
 		// Full state walk: not-authenticated → authenticated → selected → STORE
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				...selectExchange("INBOX"),
 				expectLine(command("STORE")),
 				reply("OK STORE completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// driver.store() is not yet implemented; when it is, passing \Recent
 		// must be rejected by the client before it reaches the wire.
 		await driver.store("1", "+FLAGS", ["\\Recent"]);
@@ -86,20 +77,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// APPEND is allowed in Authenticated state (§3.2)
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// driver.append() is not yet implemented.
 		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nBody\r\n"));
 		await server.assertCompleted();

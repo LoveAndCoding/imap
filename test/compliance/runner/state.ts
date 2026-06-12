@@ -20,6 +20,15 @@ export function loginExchange(): ScriptStep[] {
 	return [expectLine(command("LOGIN")), reply("OK LOGIN completed")];
 }
 
+/** greet + capabilityExchange (+ optional loginExchange) — the standard session-establishment prelude. */
+export function sessionPrelude(caps: string[] = ["IMAP4rev1"], opts: { login?: boolean } = {}): ScriptStep[] {
+	return [
+		...greet(),
+		...capabilityExchange(caps),
+		...(opts.login ? loginExchange() : []),
+	];
+}
+
 export interface SelectOptions {
 	exists?: number;
 	recent?: number;

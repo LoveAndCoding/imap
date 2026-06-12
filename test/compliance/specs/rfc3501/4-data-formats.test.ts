@@ -51,8 +51,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { capabilityExchange, greet, loginExchange } from "../../runner/state";
-import { ScriptedServer } from "../../harness/scripted-server";
+import { sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -69,8 +68,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -119,20 +117,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// APPEND carries a literal size number {N}
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// driver.append() not implemented yet.
 		await driver.append("INBOX", Buffer.from("Subject: t\r\n\r\n"));
 		await server.assertCompleted();
@@ -167,20 +158,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// Expect APPEND with a literal; harness sends + continuation automatically
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// driver.append() is not implemented; when it is, it MUST use a
 		// synchronizing literal and wait for the continuation.
 		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nbody\r\n"));
@@ -207,47 +191,43 @@ complianceTest(
 	},
 	async () => {
 		// Raw-socket harness mechanics test: {0} literal, verify continuation is sent.
-		const standalone = await ScriptedServer.start();
-		try {
-			standalone.arm([
-				[
-					send("* OK ready\r\n"),
-					expectLine(command("LOGIN")),
-					reply("OK LOGIN completed"),
-					close(),
-				],
-			]);
+		const server = await f.startServer();
+		server.arm([
+			[
+				send("* OK ready\r\n"),
+				expectLine(command("LOGIN")),
+				reply("OK LOGIN completed"),
+				close(),
+			],
+		]);
 
-			let continuationSent = false;
+		let continuationSent = false;
 
-			await new Promise<void>((resolve, reject) => {
-				const sock = net.connect({ host: "127.0.0.1", port: standalone.port }, () => {
-					sock.write("a1 LOGIN user {0}\r\n");
-				});
-				sock.on("data", (d: Buffer) => {
-					const text = d.toString("utf8");
-					if (text.includes("+ Ready")) {
-						continuationSent = true;
-						// Zero-octet literal: send no payload, just complete the command.
-						sock.write(" passwd\r\n");
-					}
-				});
-				sock.on("error", reject);
-				standalone
-					.outcome()
-					.then((o) => {
-						sock.destroy();
-						if (o.ok) resolve();
-						else reject(new Error(o.reason));
-					})
-					.catch(reject);
+		await new Promise<void>((resolve, reject) => {
+			const sock = net.connect({ host: "127.0.0.1", port: server.port }, () => {
+				sock.write("a1 LOGIN user {0}\r\n");
 			});
+			sock.on("data", (d: Buffer) => {
+				const text = d.toString("utf8");
+				if (text.includes("+ Ready")) {
+					continuationSent = true;
+					// Zero-octet literal: send no payload, just complete the command.
+					sock.write(" passwd\r\n");
+				}
+			});
+			sock.on("error", reject);
+			server
+				.outcome()
+				.then((o) => {
+					sock.destroy();
+					if (o.ok) resolve();
+					else reject(new Error(o.reason));
+				})
+				.catch(reject);
+		});
 
-			// The harness must have emitted "+" even for a zero-size literal.
-			expect(continuationSent).toBe(true);
-		} finally {
-			await standalone.close();
-		}
+		// The harness must have emitted "+" even for a zero-size literal.
+		expect(continuationSent).toBe(true);
 	},
 );
 
@@ -323,19 +303,12 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// 8-bit content in the message body; driver should handle CHARSET identification.
 		const body = Buffer.from("Subject: café\r\n\r\nBody with 8-bit: é\r\n", "utf8");
 		await driver.append("INBOX", body);
@@ -359,19 +332,12 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// Buffer with a NUL byte — client MUST encode this (e.g., BASE64).
 		const binaryBody = Buffer.from([
 			0x53, 0x75, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x3a,
@@ -410,19 +376,12 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet(),
-				...capabilityExchange(["IMAP4rev1"]),
-				...loginExchange(),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				expectLine(command("APPEND")),
 				reply("OK APPEND completed"),
 			],
 		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "none",
-		});
+		const driver = await f.connectPlain(server);
 		// String with many CTL characters — client MAY treat as binary.
 		const ctlBody = Buffer.concat([
 			Buffer.from("Subject: test\r\n\r\n"),

@@ -168,6 +168,9 @@ export class ComplianceDriver {
 	public async move(_seq: string, _mailbox: string): Promise<never> {
 		throw new NotImplementedError("MOVE");
 	}
+	public async uidFetch(_seq: string, _items: string[]): Promise<never> {
+		throw new NotImplementedError("UID FETCH");
+	}
 	public async idle(): Promise<never> {
 		throw new NotImplementedError("IDLE");
 	}
