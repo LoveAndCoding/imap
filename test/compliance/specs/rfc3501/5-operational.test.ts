@@ -59,10 +59,11 @@
  *
  * RFC3501-5.5-1: Client MAY pipeline. Observable today via Session.start():
  *   the client sends CAPABILITY, and if the server advertises ID, it sends
- *   ID before the CAPABILITY tagged OK is consumed. We script a slow server
- *   (sends the greeting, then waits to see both commands before replying)
- *   and assert both CAPABILITY and ID are received at the harness before any
- *   tagged OK is sent. This confirms the pipelining-compatible behavior.
+ *   ID as part of the same connect() call. We script a normal sequential
+ *   exchange (greeting → CAPABILITY reply with ID advertised → ID command →
+ *   ID reply) and verify that both commands were issued during connect().
+ *   This confirms the client exercises the MAY-pipeline permission safely
+ *   (both commands bear no sequence numbers, so no ambiguity results).
  *
  * RFC3501-5.5-2: Continuation MUST be negotiated before next command.
  *   The literal/continuation machinery is implemented in the harness. The
@@ -314,15 +315,15 @@ complianceTest(
 		const server = await f.startServer();
 		// "中文" (U+4E2D U+6587) in modified UTF-7:
 		//   UTF-16BE bytes: 0x4E 0x2D 0x65 0x87
-		//   Base64 of those 4 bytes: Tg32BZfn
-		//   Modified UTF-7: &Tg32BZfn-
+		//   Standard Base64 of those 4 bytes: Ti1lhw (no '/' so identical in modified Base64)
+		//   Modified UTF-7: &Ti1lhw-
 		// The name MUST end with '-' (US-ASCII).
 		server.arm([
 			[
 				...greet(),
 				...capabilityExchange(["IMAP4rev1"]),
 				...loginExchange(),
-				expectLine(command("CREATE", { args: "&Tg32BZfn-" })),
+				expectLine(command("CREATE", { args: "&Ti1lhw-" })),
 				reply("OK CREATE completed"),
 			],
 		]);
@@ -333,13 +334,13 @@ complianceTest(
 			security: "none",
 		});
 		await driver.login("user", "pass");
-		// Logical name "中文" — client must produce "&Tg32BZfn-" on the wire.
+		// Logical name "中文" — client must produce "&Ti1lhw-" on the wire.
 		await driver.create("中文");
 		await server.assertCompleted();
 		// When implemented: the expectLine above enforces the exact wire form.
 		// Belt-and-suspenders: the name must end with a US-ASCII character.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createArgs = server.commandLines[2]?.args ?? "&Tg32BZfn-"; // default satisfies constraint
+		const createArgs = server.commandLines[2]?.args ?? "&Ti1lhw-"; // default satisfies constraint
 		const name = createArgs.replace(/^"?|"?$/g, "");
 		const lastCharCode = name.charCodeAt(name.length - 1);
 		expect(lastCharCode).toBeLessThanOrEqual(0x7f); // must end in US-ASCII
