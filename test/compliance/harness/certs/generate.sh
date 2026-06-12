@@ -15,4 +15,21 @@ MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500
   -subj "/CN=wrong.example.test" \
   -addext "subjectAltName=DNS:wrong.example.test"
 
+# §11.1-7 fixtures: SAN-precedence tests (RFC3501-11.1-7).
+#
+# san-only-match: SAN dNSName=localhost + IP=127.0.0.1 matches 127.0.0.1/localhost;
+#   CN=wrong.example.test mismatches. A conformant client should connect because SAN wins.
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500 \
+  -keyout san-only-match-key.pem -out san-only-match-cert.pem \
+  -subj "/CN=wrong.example.test" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+# san-mismatch: SAN dNSName=wrong.example.test mismatches 127.0.0.1/localhost;
+#   CN=localhost matches. A conformant client should REJECT because SAN is present
+#   but mismatches (SAN takes precedence over CN per §11.1).
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500 \
+  -keyout san-mismatch-key.pem -out san-mismatch-cert.pem \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:wrong.example.test"
+
 echo "Done. Commit the regenerated PEM files."
