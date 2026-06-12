@@ -195,65 +195,6 @@ complianceTest(
 	},
 );
 
-// Raw-socket mechanics test: literal continuation is NOT a driver test —
-// it verifies the harness delivers "+" before the payload arrives.
-// This test intentionally exercises the harness; the client behavior side
-// is encoded in the driver-level test above.
-complianceTest(
-	{
-		reqs: ["RFC3501-4.3-1"],
-		profiles: ["rev1"],
-		title: "synchronizing literal: harness sends continuation before payload is read",
-	},
-	async () => {
-		// We use a standalone server (not the fixture) for this raw-socket test.
-		const standalone = await ScriptedServer.start();
-		try {
-			standalone.arm([
-				[
-					send("* OK ready\r\n"),
-					expectLine(command("LOGIN")),
-					reply("OK LOGIN completed"),
-					close(),
-				],
-			]);
-
-			let continuationReceived = false;
-			let payloadSent = false;
-
-			await new Promise<void>((resolve, reject) => {
-				const sock = net.connect({ host: "127.0.0.1", port: standalone.port }, () => {
-					// Send LOGIN with a synchronizing literal for the password.
-					sock.write("a1 LOGIN user {6}\r\n");
-				});
-				sock.on("data", (d: Buffer) => {
-					const text = d.toString("utf8");
-					if (text.includes("+ Ready")) {
-						// Continuation received BEFORE payload
-						continuationReceived = true;
-						payloadSent = true;
-						sock.write("passwd\r\n");
-					}
-				});
-				sock.on("error", reject);
-				standalone
-					.outcome()
-					.then((o) => {
-						sock.destroy();
-						if (o.ok) resolve();
-						else reject(new Error(o.reason));
-					})
-					.catch(reject);
-			});
-
-			expect(continuationReceived).toBe(true);
-			expect(payloadSent).toBe(true);
-		} finally {
-			await standalone.close();
-		}
-	},
-);
-
 // ── RFC3501-4.3-2: even zero-octet literals require continuation ──────────
 // The Note in §4.3 says even {0} must wait for "+". This is symmetric to
 // RFC3501-4.3-1. At the driver level, driver.append() would be the surface;

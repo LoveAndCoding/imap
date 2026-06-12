@@ -66,13 +66,10 @@ complianceTest(
 		await driver.store("1", "+FLAGS", ["\\Recent"]);
 		await server.assertCompleted();
 
-		// When implemented: \Recent must NOT appear in the STORE args
-		const storeLine = server.commandLines.find((l) =>
-			/^STORE\b/i.test(l.args),
-		);
-		if (storeLine) {
-			expect(storeLine.args).not.toMatch(/\\Recent/i);
-		}
+		// When implemented: no client-sent command may include \Recent in its args —
+		// the client cannot set or clear \Recent via STORE (or any command).
+		// Note: args excludes the verb, so we assert across all command lines.
+		for (const l of server.commandLines) expect(l.args).not.toMatch(/\\Recent\b/i);
 	},
 );
 
@@ -107,12 +104,9 @@ complianceTest(
 		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nBody\r\n"));
 		await server.assertCompleted();
 
-		// When implemented: \Recent must NOT appear in the APPEND flags list
-		const appendLine = server.commandLines.find((l) =>
-			/^APPEND\b/i.test(l.args),
-		);
-		if (appendLine) {
-			expect(appendLine.args).not.toMatch(/\\Recent/i);
-		}
+		// When implemented: no client-sent command may include \Recent in its args —
+		// the client cannot include \Recent in the APPEND flags parameter (or any command).
+		// Note: args excludes the verb, so we assert across all command lines.
+		for (const l of server.commandLines) expect(l.args).not.toMatch(/\\Recent\b/i);
 	},
 );

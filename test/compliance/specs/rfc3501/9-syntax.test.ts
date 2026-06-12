@@ -32,14 +32,14 @@
  *   does not insert NUL. We verify all recorded command lines are NUL-free.
  *
  * RFC3501-9-5: flag-extension acceptance. The best reachable surface is via
- *   connectLow + unsolicited FLAGS response containing an unknown \FlagAtom
- *   mid-greeting. The test uses connectLow() to observe events and confirms
- *   the connection remains active after receiving an unknown \Unknown flag.
+ *   connect() (Session path) + unsolicited FLAGS response containing an unknown
+ *   \FlagAtom mid-greeting. The test uses connect() to observe driver.active and
+ *   confirms the connection remains active after receiving an unknown \Unknown flag.
  *
  * RFC3501-9-6: INBOX case-insensitivity. Observable when the client receives
  *   a LIST response with "inbox" or "iNbOx" and must treat it the same as
- *   "INBOX". The driver.list() is unimplemented, but we can use connectLow +
- *   inject an unsolicited LIST response and check events.
+ *   "INBOX". The driver.list() is unimplemented, but we can use connect() +
+ *   inject an unsolicited LIST response and check driver.active.
  *   Acceptance table for INBOX / inbox / iNbOx variants.
  */
 import { expect } from "vitest";
@@ -231,9 +231,9 @@ complianceTest(
 );
 
 // ── RFC3501-9-5: client MUST accept flag-extension flags ──────────────────
-// Design: connectLow() gives us access to raw events. We send an unsolicited
-// FLAGS response containing unknown \Unknown flag atoms and verify the client
-// does not disconnect or error.
+// Design: connect() (Session path) gives us access to the connection result.
+// We send an unsolicited FLAGS response containing unknown \Unknown flag atoms
+// and verify the client does not disconnect or error.
 //
 // The most reachable surface without SELECT (unimplemented): inject the FLAGS
 // response as part of the CAPABILITY reply sequence, then verify driver.active.
@@ -288,13 +288,13 @@ defineAcceptanceTable({
 // Design: the client itself sends mailbox names (in SELECT, etc.) which are
 // unimplemented. The acceptance obligation is: when the SERVER sends a mailbox
 // name in any case-variant of INBOX, the client must recognize them as the
-// same INBOX mailbox.  We test this via connectLow() + unsolicited LIST
-// response containing lowercase/mixed-case INBOX variants, verifying that
+// same INBOX mailbox.  We test this via connect() (Session path) + unsolicited
+// LIST response containing lowercase/mixed-case INBOX variants, verifying that
 // the client does not disconnect or throw, and that if it surfaces the event,
 // the mailbox name is normalized or treated consistently.
 //
-// Since connectLow() captures all events, we verify: connection stays active,
-// no error events fire for the INBOX-variant lines.
+// Since connect() returns after the CAPABILITY exchange, we verify: connection
+// stays active, no error events fire for the INBOX-variant lines.
 defineAcceptanceTable({
 	name: "accepts INBOX in any case variant as the INBOX mailbox",
 	profiles: ["rev1"],

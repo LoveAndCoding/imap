@@ -74,12 +74,9 @@ complianceTest(
 		// When login() is implemented, the test verifies it sends credentials.
 		await driver.login("user@example.com", "s3cret");
 		await server.assertCompleted();
-		// When implemented: the LOGIN command must carry username + password args.
-		expect(server.commandLines.length).toBeGreaterThanOrEqual(1);
-		const loginLine = server.commandLines.find((l) => l.tag && l.args.length > 0);
-		if (loginLine) {
-			expect(loginLine.args).not.toBe("");
-		}
+		// The script's expectLine(command("LOGIN")) + loginExchange() steps already
+		// verify that a well-formed LOGIN was sent once implemented.
+		// No additional assertions needed here — script completion is the assertion.
 	},
 );
 
@@ -99,22 +96,13 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
-		// Script: greeting + CAPABILITY only. If SELECT were sent here (before
-		// the client is authenticated), that would be a protocol error.
-		// The test encodes the correct exchange: SELECT must NOT appear until
-		// the client is in the Authenticated state (post-LOGIN).
+		// Script: greeting + CAPABILITY exchange ONLY.
+		// A conformant client must NOT send SELECT while in Not Authenticated state.
+		// If SELECT were sent, the script would fail (no expect step for it).
 		server.arm([
 			[
 				...greet(),
 				...capabilityExchange(["IMAP4rev1"]),
-				// No loginExchange: we are testing the Not Authenticated → wrong command path.
-				// When select() is implemented, it should refuse to send SELECT before auth.
-				expectLine(command("SELECT")),
-				reply("OK [READ-WRITE] SELECT completed", [
-					"* 0 EXISTS",
-					"* 0 RECENT",
-					"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)",
-				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -123,9 +111,22 @@ complianceTest(
 			port: server.port,
 			security: "none",
 		});
-		// When select() is implemented, it MUST only be sent after LOGIN/auth.
-		// For now, NotImplementedError fires here.
-		await driver.select("INBOX");
+		// Attempt select() while unauthenticated (Not Authenticated state).
+		// Today: NotImplementedError fires before any wire bytes are sent (correct).
+		// Once implemented: a conformant client must refuse locally or the script
+		// will fail because SELECT would be an unexpected command.
+		try {
+			await driver.select("INBOX");
+		} catch (err: unknown) {
+			// Re-throw NotImplementedError so the test fails with an honest
+			// "unimplemented" result rather than silently passing.
+			throw err;
+		}
+		// Regardless of which path we took, only the CAPABILITY command
+		// should have been sent (index 0). A SELECT would have been index 1+.
+		// This assertion enforces the spec: only the scripted CAPABILITY exchange
+		// may have produced a command line.
+		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
 		await server.assertCompleted();
 	},
 );

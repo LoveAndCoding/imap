@@ -113,6 +113,51 @@ test("destroy step abruptly terminates the connection", async () => {
 	expect(outcome.ok).toBe(true);
 });
 
+// Harness mechanics test: the server sends "+" before any payload bytes arrive,
+// confirming the ScriptedServer continuation behaviour (not a driver/RFC test).
+test("synchronizing literal: harness sends continuation before payload is read", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("LOGIN")),
+			reply("OK done"),
+			close(),
+		],
+	]);
+
+	let continuationReceived = false;
+	let payloadSent = false;
+
+	await new Promise<void>((resolve, reject) => {
+		const sock = net.connect({ host: "127.0.0.1", port: server!.port }, () => {
+			// Send LOGIN with a synchronizing literal for the password.
+			sock.write("a1 LOGIN user {6}\r\n");
+		});
+		sock.on("data", (d: Buffer) => {
+			const text = d.toString("utf8");
+			if (text.includes("+ Ready")) {
+				// Continuation received BEFORE payload
+				continuationReceived = true;
+				payloadSent = true;
+				sock.write("passwd\r\n");
+			}
+		});
+		sock.on("error", reject);
+		server!
+			.outcome()
+			.then((o) => {
+				sock.destroy();
+				if (o.ok) resolve();
+				else reject(new Error(o.reason));
+			})
+			.catch(reject);
+	});
+
+	expect(continuationReceived).toBe(true);
+	expect(payloadSent).toBe(true);
+});
+
 test("two literals in one command interleave correctly, even chunked", async () => {
 	server = await ScriptedServer.start();
 	server.arm([
