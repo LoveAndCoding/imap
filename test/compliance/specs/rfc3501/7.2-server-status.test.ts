@@ -132,5 +132,14 @@ complianceTest(
 			flagsEvents.length,
 			"client must surface the unsolicited FLAGS update as an untaggedResponse event",
 		).toBeGreaterThanOrEqual(1);
+		// Recording means PARSING: the event must carry the five announced flags,
+		// not just a FLAGS-typed shell around garbled content.
+		const content = (
+			flagsEvents[0].detail as { content?: { flags?: unknown[] } }
+		).content;
+		expect(
+			content?.flags?.length,
+			"parsed FLAGS content must contain the five announced flags",
+		).toBe(5);
 	},
 );
