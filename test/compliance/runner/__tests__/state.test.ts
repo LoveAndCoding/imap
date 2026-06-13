@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { capabilityExchange, greet, loginExchange, selectExchange } from "../state";
+import { capabilityExchange, greet, loginExchange, selectExchange, sessionPrelude } from "../state";
 
 describe("state script prefixes", () => {
 	test("greet defaults to plain OK", () => {
@@ -39,5 +39,27 @@ describe("state script prefixes", () => {
 			"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited",
 		]);
 		expect(replyStep.suffix).toBe("OK [READ-WRITE] SELECT completed");
+	});
+});
+
+describe("rev2 profile presets", () => {
+	test("greet rev2 advertises IMAP4rev2 capability inline", () => {
+		const [step] = greet({ profile: "rev2" });
+		expect((step as { data: string }).data).toBe(
+			"* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n",
+		);
+	});
+
+	test("sessionPrelude rev2 defaults to IMAP4rev2 caps", () => {
+		const steps = sessionPrelude(undefined, { profile: "rev2" });
+		const replyStep = steps[2] as { untagged: string[] };
+		expect(replyStep.untagged[0]).toContain("IMAP4rev2");
+	});
+
+	test("selectExchange rev2 omits RECENT and uses rev2 data set", () => {
+		const steps = selectExchange("INBOX", { profile: "rev2", exists: 3 });
+		const replyStep = steps[1] as { untagged: string[] };
+		expect(replyStep.untagged.join("\n")).not.toContain("RECENT");
+		expect(replyStep.untagged.join("\n")).toContain("UIDVALIDITY");
 	});
 });
