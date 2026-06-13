@@ -10,5 +10,5 @@ test("catalog modules are schema-valid with unique, stable ids", () => {
 
 test("catalog contains the Phase 0 seed modules", () => {
 	const sources = allCatalogModules.map((m) => m.source);
-	expect(sources).toEqual(expect.arrayContaining(["RFC3501", "RFC2971", "RFC9525"]));
+	expect(sources).toEqual(expect.arrayContaining(["RFC3501", "RFC2971", "RFC9525", "RFC9051"]));
 });
