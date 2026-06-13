@@ -15,6 +15,11 @@ export interface ComplianceMeta {
 	reqs: string[];
 	profile: Profile;
 	failureKind?: FailureKind;
+	/**
+	 * Propagated from ComplianceTestInfo.expectFailure (or acceptance-table
+	 * expectFailure) so the reporter can detect stale hints on passing tests.
+	 */
+	expectFailure?: FailureKind;
 }
 
 declare module "vitest" {

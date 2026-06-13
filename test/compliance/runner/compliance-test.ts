@@ -25,7 +25,11 @@ export function complianceTest(
 	for (const profile of info.profiles) {
 		const title = `[${info.reqs.join(" ")}] [${profile}] ${info.title}`;
 		test(title, async (tctx) => {
-			tctx.task.meta.compliance = { reqs: [...info.reqs], profile };
+			tctx.task.meta.compliance = {
+				reqs: [...info.reqs],
+				profile,
+				...(info.expectFailure !== undefined ? { expectFailure: info.expectFailure } : {}),
+			};
 			try {
 				await fn(Object.assign(tctx, { profile }) as ComplianceContext);
 			} catch (err) {

@@ -197,4 +197,15 @@ describe("aggregate", () => {
 			p.includes("RFCTEST-1.1-1") && p.includes("rev2") && p.includes("rev1"),
 		)).toBe(true);
 	});
+
+	test("flags a passing test that declared expectFailure (stale hint)", () => {
+		const result = aggregate(catalog, [
+			{
+				name: "tStale",
+				state: "passed",
+				meta: { reqs: ["RFCTEST-1.1-1"], profile: "rev1", expectFailure: "unimplemented" },
+			},
+		]);
+		expect(result.problems.some((p) => p.includes("stale expectFailure"))).toBe(true);
+	});
 });

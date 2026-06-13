@@ -79,6 +79,13 @@ export function aggregate(
 	const byReqProfile = new Map<string, TestRecord[]>();
 	for (const t of tests) {
 		if (!t.meta) continue; // machinery self-test — not a compliance test
+		// Stale-hint detection: a passing test that declared expectFailure means the
+		// hint is no longer accurate and should be removed from the spec.
+		if (t.state === "passed" && t.meta.expectFailure) {
+			problems.push(
+				`stale expectFailure hint on passing test '${t.name}' (declared ${t.meta.expectFailure})`,
+			);
+		}
 		for (const reqId of t.meta.reqs) {
 			if (reqId.startsWith(SELF_TEST_ID_PREFIX)) continue;
 			if (!knownIds.has(reqId)) {
