@@ -73,6 +73,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-state",
 		untestableRationale:
 			"Whether a client retains or discards server data for later reference " +
 			"is an internal state-management decision not directly observable via " +
@@ -95,10 +96,16 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "ui-presentation",
 		untestableRationale:
 			"Whether the alert text is 'presented to the user in a fashion that " +
 			"calls the user's attention' is a UI/UX behavior that cannot be " +
-			"verified through the network protocol alone in a black-box test.",
+			"verified through the network protocol alone in a black-box test. " +
+			"INSTRUMENTAL GAP: the client is a headless library whose only " +
+			"built-in user-facing notification channel is the public " +
+			"IMAPConfiguration.logger callback; the harness does not yet capture " +
+			"it. Flagged for flip once logger capture lands (see " +
+			"docs/superpowers/specs/2026-06-12-untestability-themes.md).",
 		notes:
 			"ALERT response code definition in §7.1 (before 7.1.1). Verbatim. " +
 			"The obligation is on the client; the text of the ALERT response code.",
@@ -202,10 +209,14 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "ui-presentation",
 		untestableRationale:
 			"Whether a client surfaces OK human-readable text to the user is " +
 			"an internal UI decision not observable via the wire protocol in a " +
-			"black-box test.",
+			"black-box test. Unlike the ALERT duty (RFC3501-7.1-1), this stays " +
+			"untestable even with logger-capture observability: the level is MAY " +
+			"with no constraining envelope, so surfacing and not surfacing are " +
+			"both compliant — no observation can distinguish a violation.",
 		notes: "§7.1.1 OK response. Verbatim single sentence.",
 	},
 
@@ -408,10 +419,16 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "content-processing",
 		untestableRationale:
 			"How a client internally interprets a BODY section string " +
 			"(decoding, content-type handling) is not directly observable " +
-			"through the IMAP wire protocol in a black-box test.",
+			"through the IMAP wire protocol in a black-box test. Nor does the " +
+			"library's public API boundary help: interpretation per content " +
+			"transfer encoding/type/subtype is a rendering-layer duty that the " +
+			"library legitimately delegates to the consuming application by " +
+			"handing over the section data as received, so no API-output " +
+			"observation has a mandated pass/fail boundary at this layer.",
 		notes:
 			"§7.4.2 FETCH response, BODY[<section>] data item description. " +
 			"Verbatim. Conditional: only applies when client fetches BODY sections.",
@@ -430,10 +447,16 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "content-processing",
 		untestableRationale:
 			"Whether the client correctly decodes transfer-encoded binary " +
 			"data internally is not directly observable via the IMAP protocol " +
-			"in a black-box test; it is a processing obligation on received data.",
+			"in a black-box test; it is a processing obligation on received data. " +
+			"The duty binds whichever component derives the original binary; a " +
+			"protocol library that hands the raw transfer-encoded string to the " +
+			"consuming application (which then decodes) is compliant, so an " +
+			"API-output assertion (decoded vs raw) would encode an API design " +
+			"choice rather than the RFC duty.",
 		notes:
 			"§7.4.2 FETCH response, BODY[<section>] data item. Both sentences " +
 			"verbatim. The first sentence describes the server obligation; the " +

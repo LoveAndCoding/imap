@@ -102,6 +102,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"This describes internal client dispatch logic. The correctness of how the client routes " +
 			"a response to the right handler is not directly observable at the protocol layer from a " +
@@ -136,6 +137,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-state",
 		untestableRationale:
 			"Whether the client caches server data internally and avoids redundant re-fetch commands " +
 			"is an implementation quality matter. A black-box test could observe whether the client " +
@@ -153,6 +155,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-state",
 		untestableRationale:
 			"The RFC does not enumerate in §2.2.2 which specific server data items are subject to " +
 			"this MUST; those are identified in the Server Responses section. This entry captures " +

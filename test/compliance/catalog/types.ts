@@ -20,6 +20,13 @@ export interface SpecRequirement {
 	testability: "testable" | "untestable";
 	/** Required when testability === 'untestable'. */
 	untestableRationale?: string;
+	/**
+	 * Shared-theme tag for untestable entries (e.g. 'ui-presentation',
+	 * 'internal-decision', 'cross-session', 'environment-limit',
+	 * 'performance-expectation', 'out-of-band'). Drives the untestability
+	 * opportunity analysis; required whenever testability === 'untestable'.
+	 */
+	untestableTheme?: string;
 	/** e.g. judgment call on a lowercase-keyword pre-8174 sentence. */
 	notes?: string;
 }
@@ -74,6 +81,12 @@ export function validateCatalog(modules: CatalogModule[]): string[] {
 			}
 			if (req.testability === "untestable" && !req.untestableRationale?.trim()) {
 				problems.push(`${where}: untestable without rationale`);
+			}
+			if (req.testability === "untestable" && !req.untestableTheme?.trim()) {
+				problems.push(`${where}: untestable without untestableTheme`);
+			}
+			if (req.testability === "testable" && req.untestableTheme) {
+				problems.push(`${where}: untestableTheme on a testable entry`);
 			}
 			if (req.testability !== "testable" && req.testability !== "untestable") {
 				problems.push(`${where}: bad testability`);

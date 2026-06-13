@@ -51,6 +51,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"The sentence is a blanket obligation to interoperate with all three server case-sensitivity models (fully case-sensitive, case-insensitive with case-preservation, case-insensitive with case-coercion). There is no single observable protocol interaction that proves general compliance; a client can pass any particular test case yet still fail with an untested server variant. Full coverage would require testing against all three server behaviours, which is an integration property rather than a single black-box observable.",
 		notes:
@@ -68,6 +69,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"'Depending on the server' is an internal client design choice not directly observable at the protocol boundary. A client that silently relies on the server to reject invalid modified UTF-7 names is indistinguishable (at the wire level) from one that validates locally, unless the client sends an invalid name — at which point RFC3501-5.1.3-2 would be violated instead.",
 		notes:

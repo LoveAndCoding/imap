@@ -57,6 +57,7 @@ const rfc2971: CatalogModule = {
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "untestable",
+			untestableTheme: "out-of-band",
 			untestableRationale:
 				"This requirement constrains out-of-band client behavior (whether the " +
 				"client software silently submits bug reports using contact details from " +

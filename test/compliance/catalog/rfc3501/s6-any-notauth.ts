@@ -136,6 +136,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "capability-inventory",
 		untestableRationale:
 			"Which specific SASL mechanisms are supported is a deployment/configuration choice; " +
 			"black-box testing cannot determine whether the client has implemented 'additional' non-plaintext " +
@@ -208,6 +209,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "user-intent-policy",
 		untestableRationale:
 			"'Last resort' is a policy judgment about the client's authentication preference ordering " +
 			"which cannot be observed in a single black-box exchange — a client that always offers " +
@@ -226,10 +228,13 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "capability-inventory",
 		untestableRationale:
 			"This is a requirement about the client's configuration/UI surface ('have a means to " +
-			"disable'), not about observable wire behavior. Black-box protocol testing cannot verify " +
-			"whether such a configuration option exists in the implementation.",
+			"disable'), not about observable wire behavior. A behavioral test could only exercise a " +
+			"public configuration affordance that actually exists (set the disable option, observe no " +
+			"LOGIN on the wire); the requirement instead asserts the EXISTENCE of such an affordance, " +
+			"which is an API-inventory fact a black-box protocol exchange cannot establish.",
 		notes:
 			"'It is recommended' is lowercase prose equivalent to SHOULD per RFC 2119 §6. " +
 			"This sentence appears in the same clause as the SHOULD NOT in RFC3501-6.2.3-2 but " +

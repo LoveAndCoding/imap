@@ -152,6 +152,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "environment-limit",
 		untestableRationale:
 			"RC4 suites are removed from Node's OpenSSL (and prohibited by RFC 7465); " +
 			"3DES suites are disabled at OpenSSL security level 2 in Node 20 (RFC 8996); " +
@@ -179,6 +180,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "environment-limit",
 		untestableRationale:
 			"RC4 suites are removed from Node's OpenSSL (and prohibited by RFC 7465); " +
 			"3DES suites are disabled at OpenSSL security level 2 in Node 20 (RFC 8996); " +
@@ -241,6 +243,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"Whether the client internally uses an insecure DNS-derived hostname for comparison " +
 			"cannot be observed from the outside via black-box testing of the IMAP protocol exchange; " +
@@ -261,6 +264,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"The source of the hostname used internally by the client for certificate verification " +
 			"is not observable via black-box IMAP protocol testing.",

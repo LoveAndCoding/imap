@@ -128,6 +128,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "user-intent-policy",
 		untestableRationale:
 			"'At the explicit request of the user' is a behavioral/UI policy that cannot be observed " +
 			"over the wire. A black-box test cannot determine whether a reference argument was sent " +
@@ -150,6 +151,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "internal-decision",
 		untestableRationale:
 			"'Making assumptions' is an internal client implementation decision that is not directly " +
 			"observable on the wire. A test can verify that the client sends syntactically correct " +
@@ -239,6 +241,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev1"],
 		testability: "untestable",
+		untestableTheme: "performance-expectation",
 		untestableRationale:
 			"This binds the client's performance expectations, not its wire behavior. A client that " +
 			"issues many consecutive STATUS commands is not violating the sentence — only a client " +
