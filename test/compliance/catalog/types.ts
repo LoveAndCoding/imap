@@ -21,10 +21,10 @@ export interface SpecRequirement {
 	/** Required when testability === 'untestable'. */
 	untestableRationale?: string;
 	/**
-	 * Shared-theme tag for untestable entries (e.g. 'ui-presentation',
-	 * 'internal-decision', 'cross-session', 'environment-limit',
-	 * 'performance-expectation', 'out-of-band'). Drives the untestability
-	 * opportunity analysis; required whenever testability === 'untestable'.
+	 * Shared-theme tag for untestable entries. The canonical, append-only
+	 * taxonomy lives in docs/superpowers/specs/2026-06-12-untestability-themes.md
+	 * — consult it before tagging; propose new themes there, not ad hoc.
+	 * Required whenever testability === 'untestable'.
 	 */
 	untestableTheme?: string;
 	/** e.g. judgment call on a lowercase-keyword pre-8174 sentence. */

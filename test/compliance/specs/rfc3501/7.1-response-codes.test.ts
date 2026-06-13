@@ -335,9 +335,13 @@ complianceTest(
 		// The exchange itself must complete: the CAPABILITY round-trip succeeds.
 		expect(ok, "the CAPABILITY exchange must complete despite the ALERT").toBe(true);
 		await server.assertCompleted();
-		// The ALERT text must have been emitted through the logger (at any level).
-		const alertLogged = driver.logs.some((entry) =>
-			entry.message.includes(alertText),
+		// The ALERT text must have been emitted through the logger at an
+		// attention-grade level (warn/error) — per the catalog entry's binding
+		// interpretation, a debug-level emission does not satisfy "presented".
+		const alertLogged = driver.logs.some(
+			(entry) =>
+				(entry.level === "warn" || entry.level === "error") &&
+				entry.message.includes(alertText),
 		);
 		expect(
 			alertLogged,
