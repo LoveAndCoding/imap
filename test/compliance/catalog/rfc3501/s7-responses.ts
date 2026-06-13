@@ -95,20 +95,19 @@ export const requirements: SpecRequirement[] = [
 		level: "MUST",
 		applicability: "always",
 		profiles: ["rev1"],
-		testability: "untestable",
-		untestableTheme: "ui-presentation",
-		untestableRationale:
-			"Whether the alert text is 'presented to the user in a fashion that " +
-			"calls the user's attention' is a UI/UX behavior that cannot be " +
-			"verified through the network protocol alone in a black-box test. " +
-			"INSTRUMENTAL GAP: the client is a headless library whose only " +
-			"built-in user-facing notification channel is the public " +
-			"IMAPConfiguration.logger callback; the harness does not yet capture " +
-			"it. Flagged for flip once logger capture lands (see " +
-			"docs/superpowers/specs/2026-06-12-untestability-themes.md).",
+		testability: "testable",
 		notes:
 			"ALERT response code definition in §7.1 (before 7.1.1). Verbatim. " +
-			"The obligation is on the client; the text of the ALERT response code.",
+			"The obligation is on the client; the text of the ALERT response code. " +
+			"Honest interpretation: the client is a headless protocol library with " +
+			"no UI; its built-in user-facing notification channel is the public " +
+			"IMAPConfiguration.logger callback. 'Presented to the user in a " +
+			"fashion that calls the user's attention' is interpreted as: the ALERT " +
+			"text is emitted through that channel at an attention-grade level " +
+			"(warn or error), so the consuming application can fulfil the " +
+			"presentation duty. A logger message is a notification channel, not " +
+			"literal UI — this is the strongest observation available at the " +
+			"library boundary. See docs/superpowers/specs/2026-06-12-untestability-themes.md.",
 	},
 	{
 		id: "RFC3501-7.1-2",

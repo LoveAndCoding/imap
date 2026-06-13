@@ -29,6 +29,9 @@ export interface ObservedEvent {
 export class ComplianceDriver {
 	public readonly events: ObservedEvent[] = [];
 
+	/** Messages the client emitted through its public logger config. */
+	public readonly logs: Array<{ level: string; message: string; detail?: unknown }> = [];
+
 	private session?: Session;
 	private connection?: Connection;
 
@@ -208,6 +211,9 @@ export class ComplianceDriver {
 			tlsOptions,
 			timeout: opts.timeoutMs ?? 3000,
 			id: opts.id,
+			logger: (info: { level: string; message: string }) => {
+				this.logs.push(info);
+			},
 		};
 	}
 }

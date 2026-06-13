@@ -288,6 +288,64 @@ complianceTest(
 	},
 );
 
+// ── RFC3501-7.1-1: client MUST surface ALERT text through its notification channel ──
+// The server sends "* OK [ALERT] System maintenance at midnight" as an untagged
+// line in the CAPABILITY reply (a valid unsolicited status response mid-exchange).
+// Per §7.1, the ALERT text MUST be presented to the user in a fashion that calls
+// attention to it. Honest interpretation: the headless library's only built-in
+// user-facing notification channel is IMAPConfiguration.logger; compliance is
+// satisfied when the alert text is emitted through that channel.
+//
+// Expected honest outcome today: FAIL (violation). src/ contains no ALERT
+// handling; the only logger call is the connect-failure message. The exchange
+// itself completes (the CAPABILITY round-trip succeeds), but driver.logs will
+// not contain the alert text.  expectFailure: "violation" records that measurement.
+complianceTest(
+	{
+		reqs: ["RFC3501-7.1-1"],
+		profiles: ["rev1"],
+		title:
+			"client surfaces ALERT response-code text through its logger notification channel",
+		expectFailure: "violation",
+		timeout: 5000,
+	},
+	async () => {
+		const server = await f.startServer();
+		const alertText = "System maintenance at midnight";
+		server.arm([
+			[
+				send("* OK ready\r\n"),
+				expectLine(command("CAPABILITY", { args: null })),
+				// The ALERT arrives as an untagged OK inside the CAPABILITY reply —
+				// a perfectly legal unsolicited status response in the middle of an
+				// exchange (§7 preamble: client MUST be prepared to accept any response
+				// at all times).
+				reply("OK CAPABILITY completed", [
+					`* OK [ALERT] ${alertText}`,
+					"* CAPABILITY IMAP4rev1",
+				]),
+			],
+		]);
+		const driver = f.newDriver();
+		const ok = await driver.connect({
+			host: "127.0.0.1",
+			port: server.port,
+			security: "none",
+		});
+		// The exchange itself must complete: the CAPABILITY round-trip succeeds.
+		expect(ok, "the CAPABILITY exchange must complete despite the ALERT").toBe(true);
+		await server.assertCompleted();
+		// The ALERT text must have been emitted through the logger (at any level).
+		const alertLogged = driver.logs.some((entry) =>
+			entry.message.includes(alertText),
+		);
+		expect(
+			alertLogged,
+			`driver.logs must contain an entry with the ALERT text "${alertText}"`,
+		).toBe(true);
+	},
+);
+
 // ── RFC3501-7.1.5-2: client SHOULD continue reading after BYE ────────────────
 // Stronger variant (Phase 0 carry-forward): BYE arrives mid-exchange WITHOUT
 // the server closing the connection. The client must recognize the BYE on its
