@@ -10,7 +10,7 @@ export const note =
 	"interpreted as INBOX) is itemized as RFC9051-9-6; the body-extension comment's client MUST " +
 	"('Client implementations MUST accept body-extension fields.') is itemized separately as " +
 	"RFC9051-9-7 for traceability, cross-referenced to this RFC's BODYSTRUCTURE extension-data " +
-	"entry (§7.4.2 module) rather than treated as an independent test target — mirroring how " +
+	"entry (RFC9051-7.5.2-3, §7.5.2 module) rather than treated as an independent test target — mirroring how " +
 	"RFC3501-9-5's sibling comment is handled for RFC 3501; and a fourth comment, on the " +
 	"search-program production ('; CHARSET argument to SEARCH MUST be registered with IANA.'), " +
 	"is not itemized as a standalone §9 entry — it is cross-referenced instead to the CHARSET " +
@@ -223,7 +223,7 @@ export const requirements: SpecRequirement[] = [
 			"— recorded verbatim as written). Structurally identical in force to " +
 			"the flag-extension comment (RFC9051-9-5): client MUST accept unrecognized body-extension " +
 			"fields returned within BODYSTRUCTURE. This duty is already covered by this RFC's " +
-			"BODYSTRUCTURE extension-data entry in the §7.4.2 module and is cross-referenced rather " +
+			"BODYSTRUCTURE extension-data entry (RFC9051-7.5.2-3) in the §7.5.2 module and is cross-referenced rather " +
 			"than duplicated as a separately-tested entry, mirroring how RFC3501-9-5's sibling comment " +
 			"is handled for RFC 3501 (see RFC3501-9-5's module note referencing RFC3501-7.4.2-3). " +
 			"Recorded here for completeness of the §9 ABNF-comment sweep. Cross-reference: RFC3501 has " +
