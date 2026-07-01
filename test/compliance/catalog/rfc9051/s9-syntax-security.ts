@@ -3,15 +3,19 @@ import type { SpecRequirement } from "../types";
 export const note =
 	"§9: Prose rules extracted (priority rule, case-insensitivity, SP strictness, NUL prohibition). " +
 	"ABNF productions are not itemized wholesale — they are covered via per-command syntax entries " +
-	"elsewhere — with three exceptions for client-binding ABNF comments, mirroring the RFC 3501 " +
+	"elsewhere — with four client-relevant ABNF comments identified, mirroring the RFC 3501 " +
 	"approach (this RFC's ABNF comments use the same ';'-per-line comment-leader convention as " +
 	"RFC 3501's): the flag-extension comment (client MUST accept flag-extension flags) is itemized " +
 	"as RFC9051-9-5; the mailbox production's INBOX comment (all case variants of INBOX MUST be " +
-	"interpreted as INBOX) is itemized as RFC9051-9-6; and the body-extension comment's client MUST " +
+	"interpreted as INBOX) is itemized as RFC9051-9-6; the body-extension comment's client MUST " +
 	"('Client implementations MUST accept body-extension fields.') is itemized separately as " +
 	"RFC9051-9-7 for traceability, cross-referenced to this RFC's BODYSTRUCTURE extension-data " +
 	"entry (§7.4.2 module) rather than treated as an independent test target — mirroring how " +
-	"RFC3501-9-5's sibling comment is handled for RFC 3501. " +
+	"RFC3501-9-5's sibling comment is handled for RFC 3501; and a fourth comment, on the " +
+	"search-program production ('; CHARSET argument to SEARCH MUST be registered with IANA.'), " +
+	"is not itemized as a standalone §9 entry — it is cross-referenced instead to the CHARSET " +
+	"entries already extracted from §6.4.4 SEARCH in s6-selected.ts (RFC9051-6.4.4-5, RFC9051-6.4.4-6), " +
+	"which cover the same CHARSET-specification/registration duty from the SEARCH-command angle. " +
 	"§10 (Author's Note): contains no client-binding normative text; it is a purely editorial " +
 	"statement that this document supersedes RFC 3501, RFC 2060, RFC 1730, IMAP2bis.TXT, IMAP2, " +
 	"and RFC 1064. " +
@@ -252,7 +256,14 @@ export const requirements: SpecRequirement[] = [
 		notes:
 			"New in RFC 9051 (no RFC 3501 counterpart — RFC 8314 postdates RFC 3501). This is a pointer " +
 			"requirement; its operative content is realized through the specific, testable sub-duties " +
-			"itemized separately in this module.",
+			"itemized separately in this module. Adjacent qualifying sentence (same paragraph, " +
+			"immediately following the quoted MUST): 'If recommendations/requirements in this document " +
+			"conflict with recommendations from [RFC8314], for example in regards to TLS ciphersuites, " +
+			"recommendations from this document take precedence.' This precedence rule qualifies the " +
+			"quoted MUST: RFC 9051's own TLS 1.2+/cipher-suite/hostname-check sub-duties (RFC9051-11.1-2 " +
+			"through RFC9051-11.1-6) govern over any conflicting RFC 8314 recommendation, so compliance " +
+			"with relevant recommendations from RFC 8314 is bounded by, and does not override, this " +
+			"document's own text where the two diverge.",
 	},
 	{
 		id: "RFC9051-11.1-2",
@@ -331,7 +342,14 @@ export const requirements: SpecRequirement[] = [
 			"using TLS 1.2. Cross-reference: successor to RFC3501-11.1-2's SHOULD-implement clause, " +
 			"but with an entirely different (modern, AEAD) cipher-suite list — TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA " +
 			"is not carried forward. Unlike RFC3501-11.1-2, these suites remain negotiable on modern " +
-			"OpenSSL/Node stacks and so are testable rather than environment-limited.",
+			"OpenSSL/Node stacks and so are testable rather than environment-limited. Test-harness note: " +
+			"two of the three listed suites (TLS_DHE_RSA_WITH_AES_128_GCM_SHA256, " +
+			"TLS_DHE_RSA_WITH_AES_256_GCM_SHA384) are finite-field Diffie-Hellman (DHE) variants, which " +
+			"require the test server to be configured with explicit DH parameters (e.g. a dhparam file/" +
+			"tls.createSecureContext dhparam option) before OpenSSL will offer or negotiate them — unlike " +
+			"the ECDHE suites elsewhere in this module, which use a built-in curve and need no equivalent " +
+			"setup. A harness testing these two suites specifically must supply DH parameters or the " +
+			"negotiation will fail for reasons unrelated to client compliance.",
 	},
 	{
 		id: "RFC9051-11.1-6",
@@ -398,20 +416,20 @@ export const requirements: SpecRequirement[] = [
 		level: "MUST",
 		applicability: "always",
 		profiles: ["rev2"],
-		testability: "untestable",
-		untestableTheme: "capability-inventory",
-		untestableRationale:
-			"A black-box test can only exercise the TLS-negotiation affordance actually configured for " +
-			"a given connection attempt; it cannot establish that the client's implementation as a " +
-			"whole possesses both code paths (Implicit TLS and STARTTLS) across its full configuration " +
-			"space. Observing one connection using STARTTLS successfully does not prove the client " +
-			"also implements Implicit TLS negotiation, and vice versa — this is an inventory-of-" +
-			"capability duty, not a per-connection wire behavior. New in RFC 9051 (RFC 3501 predates " +
-			"the standardized Implicit TLS port [RFC8314] and only specified STARTTLS).",
+		testability: "testable",
 		notes:
 			"No RFC 3501 counterpart — RFC 3501 §11.1 only covered the STARTTLS command; the Implicit " +
 			"TLS port (port 993 usage standardized) was formalized later by RFC 8314 and folded into " +
-			"RFC 9051.",
+			"RFC 9051. Testability flip (mandated by audit under taxonomy rule 2): unlike the generic " +
+			"capability-inventory duties in the untestability-themes taxonomy (which quantify over an " +
+			"open-ended or unobservable affordance set), this duty quantifies over a CLOSED two-element " +
+			"set (Implicit TLS, STARTTLS) and the client exposes a public knob selecting between them: " +
+			"the TLSSetting enum (src/connection/types.ts), whose 'DEFAULT'/'on' value negotiates " +
+			"Implicit TLS and whose 'STARTTLS' value negotiates STARTTLS on a cleartext port. A " +
+			"two-session test pair — one connection configured for Implicit TLS, one configured for " +
+			"STARTTLS, both observed to complete a successful TLS handshake — jointly establishes that " +
+			"both code paths are implemented, closing the inventory gap the untestable rationale " +
+			"previously relied on.",
 	},
 	{
 		id: "RFC9051-11.2-2",
@@ -426,16 +444,20 @@ export const requirements: SpecRequirement[] = [
 		applicability: "always",
 		profiles: ["rev2"],
 		testability: "untestable",
-		untestableTheme: "internal-decision",
+		untestableTheme: "user-intent-policy",
 		untestableRationale:
-			"The scripted-server compliance harness controls a single listening endpoint/port per test " +
-			"session; it cannot observe whether the client concurrently attempts multiple ports/address " +
-			"families as an internal connection-racing strategy, since only the port(s) the harness " +
-			"actually listens on can register an attempt, and a client that only tries the harness's " +
-			"single configured port is behaviorally indistinguishable — from this driver — from one " +
-			"that races multiple ports and picks the winner. Verifying this would require a harness " +
-			"that binds sockets on both 993 and 143 (and both address families) and inspects which " +
-			"were dialed, which is outside the current scripted single-port driver design.",
+			"This client is a headless protocol library, not an end-user mail application: every " +
+			"connection it makes is initiated with a host/port explicitly supplied by the consuming " +
+			"application's configuration (there is no 'no configuration provided' state in which the " +
+			"library autonomously decides which port(s) to dial). The duty's own text carries an escape " +
+			"hatch — 'unless overridden by ... user configuration' — and for a library-shaped client " +
+			"that escape hatch is unconditionally in effect on every connection: the port is always " +
+			"user-supplied, so the SHOULD to concurrently race ports 'by default' never actually " +
+			"applies. Whether a given connection reflects 'the user configured a specific port' versus " +
+			"'the client defaulted and should have raced' is a question about user intent invisible on " +
+			"the wire (and invisible in the API call) — indistinguishable from any other user-intent-" +
+			"policy duty in the taxonomy. No pass/fail boundary exists: a client that always uses the " +
+			"configured port is compliant precisely because the escape hatch always applies.",
 		notes:
 			"No RFC 3501 counterpart — dual-port racing guidance is new in RFC 9051, following the " +
 			"Implicit TLS port's standardization.",
@@ -490,7 +512,11 @@ export const requirements: SpecRequirement[] = [
 			"server that sends an ALERT response code and verify the client does not present it to the " +
 			"user via its notification channel (logger/events) at that point in the session, in " +
 			"contrast to a post-TLS ALERT which RFC9051's cross-referenced §7.1 ALERT-presentation duty " +
-			"(out of this module's scope) requires surfacing.",
+			"(out of this module's scope) requires surfacing. Cross-reference (bidirectional): this " +
+			"duty near-duplicates RFC9051-7.1-1 in s7-responses-a.ts, which states the same " +
+			"SHOULD-ignore-unprotected-ALERT guidance from the §7.1 ALERT response-code definition " +
+			"angle; see that entry's notes for the reciprocal cross-reference back to this one and for " +
+			"the absence-assertion/vacuous-pass-pairing caveat that applies equally here.",
 	},
 	{
 		id: "RFC9051-11.3-3",

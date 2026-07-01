@@ -52,7 +52,12 @@ export const note =
 	"itemized. The interoperability-issue paragraph (IMAP4rev1 clients unable to retrieve >4Gb " +
 	"messages; servers needing to replace/hide oversized messages) is entirely server-facing " +
 	"guidance/description with no RFC 2119 keyword and 'This document doesn't prescribe any " +
-	"implementation strategy' is explicitly non-normative; no entries extracted from that paragraph.";
+	"implementation strategy' is explicitly non-normative; no entries extracted from that paragraph. " +
+	"Appendix F (Other Recommended IMAP Extensions): reviewed — a two-item list (QRESYNC/CONDSTORE " +
+	"[RFC7162], OBJECTID [RFC8474]) introduced by 'Support for the following extensions is " +
+	"recommended for all IMAP clients and servers' (lowercase 'recommended', non-normative per RFC " +
+	"8174 — a plain description of which extensions exist and are encouraged, not an RFC 2119 duty); " +
+	"zero entries extracted.";
 
 export const requirements: SpecRequirement[] = [
 	// ── Appendix A: Backward Compatibility with IMAP4rev1 ───────────────────
@@ -125,7 +130,7 @@ export const requirements: SpecRequirement[] = [
 		applicability: "conditional",
 		profiles: ["rev2"],
 		testability: "untestable",
-		untestableTheme: "capability-inventory",
+		untestableTheme: "user-intent-policy",
 		untestableRationale:
 			"This sentence carries no RFC 2119 keyword; it states a scoping fact ('not required') " +
 			"rather than a prohibition or mandate. Framed here as the MAY-equivalent baseline that " +
@@ -133,7 +138,13 @@ export const requirements: SpecRequirement[] = [
 			"duty at all, so there is no pass/fail wire behavior to test — non-observance and observance " +
 			"of the convention are both compliant for such a client. A black-box test cannot distinguish " +
 			"'IMAP4rev2-only, convention not needed' from 'intends IMAP4rev1 compatibility but " +
-			"non-compliant', since both look identical unless the convention is actually triggered.",
+			"non-compliant', since both look identical unless the convention is actually triggered. " +
+			"Retagged from capability-inventory to user-intent-policy: the defining obstacle here is " +
+			"not an unobservable inventory of affordances but intent-invisibility — whether a given " +
+			"client 'intends to be compatible with IMAP4rev1 servers' (RFC9051-A-2's trigger " +
+			"condition) is exactly the kind of user/deployment intent the taxonomy's " +
+			"user-intent-policy theme describes: the wire shows what the client sent, never why it " +
+			"chose to (or not to) apply the convention.",
 		notes:
 			"Included for completeness/context of the conditional scope on RFC9051-A-2 and the " +
 			"following entries; establishes that the entire Appendix A.1 sub-cluster binds only " +
@@ -243,6 +254,39 @@ export const requirements: SpecRequirement[] = [
 			'\'&U,BTFw-&ZeVnLIqe-\') and verify the client does not send it as-is — e.g., it rejects, ' +
 			"corrects, or refuses to issue the CREATE rather than transmitting the non-conformant name " +
 			"verbatim.",
+	},
+	{
+		id: "RFC9051-A-8",
+		source: "RFC9051",
+		section: "A",
+		title: "No implicit shift back to US-ASCII; null shifts in modified UTF-7 are not permitted",
+		text:
+			'There is no implicit shift from base64 to US-ASCII, and null shifts ' +
+			'("-&" while in base64; note that "&-" while in US-ASCII means "&") ' +
+			"are not permitted.",
+		level: "MUST NOT",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "testable",
+		notes:
+			"Appendix A.1 (Mailbox International Naming Convention), modified UTF-7 encoding rules. " +
+			"Verbatim, including the parenthetical clarifying that '&-' while already in US-ASCII means " +
+			"a literal '&' (not a shift). No explicit RFC 2119 keyword ('are not permitted'); level " +
+			"assigned MUST NOT by judgment per this catalog's established convention for 'not " +
+			"permitted' phrasing carrying MUST NOT-equivalent normative force (cf. RFC9051-9-3's SP/LWSP " +
+			"prohibition and RFC9051-7.6-1's synchronizing-literal handling, both judgment-called the " +
+			"same way). Conditional: binds whichever party constructs a modified-UTF-7 mailbox name — " +
+			"including a client issuing CREATE/RENAME/SUBSCRIBE etc. with a non-ASCII mailbox name while " +
+			"intending IMAP4rev1-server compatibility (RFC9051-A-2's scope), matching the client-binding " +
+			"framing already applied to RFC9051-A-4/A-5. Partially subsumed by RFC9051-A-7: a name ending " +
+			"in a superfluous null shift (e.g. an unnecessary '-&' pair) is one concrete way a client " +
+			"could produce a non-conformant embedded encoding, which RFC9051-A-7's SHOULD NOT already " +
+			"discourages for the embedded-'&' case; this entry is retained separately because the null- " +
+			"shift prohibition is general (applies to any use of modified base64, not only embedded-'&' " +
+			"names) and is independently testable. Testable, A-4 style: instruct the client to " +
+			"create/reference a mailbox name and inspect the wire-level encoded name for an explicit, " +
+			"superfluous '-&' null-shift sequence; verify none is present (shifts back to US-ASCII only " +
+			"occur where semantically required, not redundantly).",
 	},
 
 	// ── Appendix B: Backward Compatibility with BINARY Extension ───────────

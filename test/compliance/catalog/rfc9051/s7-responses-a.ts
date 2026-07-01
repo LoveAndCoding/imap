@@ -19,18 +19,24 @@ export const note =
 	"EXISTS) begins immediately after §7.3.5 and is out of scope for this file " +
 	"(part B). Response codes with no client-binding normative content in their " +
 	"§7.1 definitions: APPENDUID, AUTHENTICATIONFAILED, AUTHORIZATIONFAILED, " +
-	"BADCHARSET, CANNOT, CLIENTBUG, CLOSED, CONTACTADMIN, CONTACTADMIN, COPYUID, " +
+	"BADCHARSET, CANNOT, CLIENTBUG, CONTACTADMIN, COPYUID, " +
 	"CORRUPTION, EXPIRED, HASCHILDREN, INUSE, LIMIT, NONEXISTENT, NOPERM, " +
 	"OVERQUOTA, PARSE, READ-ONLY, READ-WRITE, SERVERBUG, UIDNEXT, UIDVALIDITY, " +
 	"UNAVAILABLE, UNKNOWN-CTE (all describe server-side conditions/behavior or " +
-	"data format only; several are purely illustrative example exchanges). " +
-	"ALREADYEXISTS, EXPUNGEISSUED, UIDNOTSTICKY carry a soft client-facing hint " +
-	"('may want to issue NOOP soon') or SHOULD NOT be produced by servers " +
-	"(UIDNOTSTICKY) but impose no MUST/SHOULD duty ON the client, so are not " +
-	"catalogued as separate client-binding entries; EXPUNGEISSUED's 'client may " +
-	"want to issue NOOP soon' is MAY-level and covered narratively in the coverage " +
-	"note below rather than a dedicated entry (no distinguishable pass/fail: issuing " +
-	"or not issuing NOOP is equally compliant). §7.1.2 NO and §7.1.3 BAD contain no " +
+	"data format only; several are purely illustrative example exchanges). CLOSED " +
+	"is no longer in this zero-entries list: it now has a client-binding entry, " +
+	"RFC9051-7.1-9, covering the boundary-semantics sentence that governs how the " +
+	"client attributes unilateral responses across an implicit mailbox switch. " +
+	"ALREADYEXISTS, EXPUNGEISSUED, UIDNOTSTICKY carry no MUST/SHOULD duty ON the " +
+	"client and are not catalogued as separate client-binding entries. Of these, " +
+	"only EXPUNGEISSUED carries the soft client-facing hint ('client may want to " +
+	"issue NOOP soon'); ALREADYEXISTS carries no such hint (it is a plain error " +
+	"indication) and UIDNOTSTICKY instead states servers SHOULD NOT produce such " +
+	"mail stores (a server-implementer duty, see RFC9051-7.1-7's untestable-" +
+	"rationale). EXPUNGEISSUED's 'client may want to issue NOOP soon' is MAY-level " +
+	"and covered narratively in the coverage note below rather than a dedicated " +
+	"entry (no distinguishable pass/fail: issuing or not issuing NOOP is equally " +
+	"compliant). §7.1.2 NO and §7.1.3 BAD contain no " +
 	"client MUST/SHOULD (pure server-behavior description), matching RFC3501's " +
 	"finding for the same sections. §7.3.1 LIST, §7.3.2 NAMESPACE, §7.3.3 STATUS, " +
 	"§7.3.4 ESEARCH largely describe server-generated data format; client-binding " +
@@ -52,7 +58,9 @@ export const note =
 	"response (§7.2.2) gains new MUST-conform-to-RFC3501-until-ENABLE and rev1/rev2 " +
 	"coexistence rules not present in RFC3501's §7.2.1. FLAGS response duty " +
 	"('remembered' vs RFC3501 'recorded') is unchanged in substance from " +
-	"RFC3501-7.2.6-1.";
+	"RFC3501-7.2.6-1. Cross-reference: §7.2.2's sentence 'Client and server " +
+	"implementations MUST implement the capabilities 'AUTH=PLAIN'...' is covered " +
+	"by the RFC9051-6.1.1-* entries in s6-any-notauth.ts, not re-itemized here.";
 
 export const requirements: SpecRequirement[] = [
 	// ── §7 preamble ──────────────────────────────────────────────────────────
@@ -146,7 +154,20 @@ export const requirements: SpecRequirement[] = [
 			"connection. Testable via the driver logger-capture mechanism established " +
 			"for RFC3501-7.1-1: arm an ALERT on a plaintext (non-TLS, non-SASL-layer) " +
 			"connection and verify the client does not surface it at an attention-grade " +
-			"log level (or verify it is suppressed/downgraded).",
+			"log level (or verify it is suppressed/downgraded). Cross-reference " +
+			"(bidirectional): this duty near-duplicates RFC9051-11.3-2 in s9-syntax-" +
+			"security.ts, which states the same SHOULD-ignore-ALERT-until-TLS/SASL " +
+			"guidance from the §11.3 pre-authentication security-considerations angle; " +
+			"see that entry's notes for the reciprocal cross-reference back to this one. " +
+			"Absence-assertion caveat: 'ignored' means the ALERT content is absent from " +
+			"ALL logger/event output at ANY level (not merely suppressed at attention-" +
+			"grade while leaking through at a lower level such as debug/silly) — the " +
+			"test asserting this entry must scan the full captured log/event stream, not " +
+			"just attention-grade entries. This test must be paired with RFC9051-7.1-3's " +
+			"positive presentation test (post-TLS/SASL ALERT is surfaced) to avoid a " +
+			"vacuous pass: a client that never surfaces ALERT text under ANY connection " +
+			"condition would trivially satisfy this entry's absence assertion without " +
+			"actually implementing the graded ALERT-handling behavior the RFC specifies.",
 	},
 	{
 		id: "RFC9051-7.1-2",
@@ -169,10 +190,18 @@ export const requirements: SpecRequirement[] = [
 			"log/event payload must carry a marker (e.g. a distinct field, prefix, or " +
 			"the literal source tag 'ALERT') distinguishing it as server-supplied, " +
 			"unverified text — not merged indistinguishably into trusted client-generated " +
-			"log messages. Conditional: only applies when the client displays (i.e., " +
-			"surfaces via its logger channel) ALERT text at all; a client that never " +
-			"surfaces ALERT text trivially satisfies this (nothing is displayed to " +
-			"mismark).",
+			"log messages. Conditional on a DOUBLE condition, not display alone: 'such " +
+			"alerts' back-refers to ALERT content received WITHOUT TLS/SASL-layer " +
+			"confidentiality (RFC9051-7.1-1's SHOULD-ignore scope) AND the client " +
+			"nonetheless displays it; the two conditions are conjunctive. Post-TLS/SASL " +
+			"alerts (RFC9051-7.1-3's scope) carry no mark-suspicious duty under this " +
+			"sentence — they are presented as trusted, not marked as potentially " +
+			"suspicious. A client that never surfaces unprotected-connection ALERT text " +
+			"trivially satisfies this (nothing is displayed to mismark). The eventual " +
+			"test must assert an explicit structural marker (a distinct field or a " +
+			"literal source tag such as 'ALERT' attached to the log/event payload) — " +
+			"not mere substring coincidence (e.g. the word 'alert' happening to appear " +
+			"in the server-supplied text itself does not satisfy this duty).",
 	},
 	{
 		id: "RFC9051-7.1-3",
@@ -240,20 +269,27 @@ export const requirements: SpecRequirement[] = [
 		level: "MUST",
 		applicability: "conditional",
 		profiles: ["rev2"],
-		testability: "testable",
+		testability: "untestable",
+		untestableTheme: "internal-decision",
+		untestableRationale:
+			"This sentence is a server-side MUST binding the server's re-send duty " +
+			"when its keyword limit is reached, not a client action. The client-side " +
+			"residue — treating a re-sent PERMANENTFLAGS (now lacking \\*) as " +
+			"authoritative and no longer assuming arbitrary-keyword creation is " +
+			"possible — is already covered by the general PERMANENTFLAGS-tracking " +
+			"duty in RFC9051-7.1-4; there is no additional, separately observable " +
+			"client behavior distinguishing 'client correctly reacted to the " +
+			"keyword-limit re-send' from 'client just applies its ordinary " +
+			"PERMANENTFLAGS-tracking logic to whatever list arrives'.",
 		notes:
 			"PERMANENTFLAGS response code definition in §7.1. Verbatim. This sentence " +
 			"is a server-side MUST, not a client duty in itself, but it defines new " +
 			"protocol behavior absent from RFC3501 (RFC3501 has no equivalent " +
-			"keyword-limit clause). Catalogued because compliant client behavior " +
-			"depends on it: the client must treat a re-sent PERMANENTFLAGS (now " +
-			"lacking \\*) as authoritative and stop assuming arbitrary-keyword " +
-			"creation is possible, per the general PERMANENTFLAGS-tracking duty in " +
-			"RFC9051-7.1-4. Conditional: only applies when the server previously " +
-			"advertised \\* and then reaches its keyword limit. Testable: script a " +
-			"session that sends PERMANENTFLAGS with \\*, then a later PERMANENTFLAGS " +
-			"without \\*, and verify client-visible flag-capability state updates " +
-			"accordingly (no longer treats arbitrary keyword STORE as safe).",
+			"keyword-limit clause). Kept as a coverage record — like RFC9051-7.3.4-2 " +
+			"— documenting the server-side trigger condition even though the " +
+			"resulting client behavior is not independently testable. Conditional: " +
+			"only applies when the server previously advertised \\* and then reaches " +
+			"its keyword limit.",
 	},
 	{
 		id: "RFC9051-7.1-6",
@@ -330,6 +366,44 @@ export const requirements: SpecRequirement[] = [
 			"SHOULD to MUST. Verbatim. Testable: send an unrecognized response code " +
 			"in an OK response and verify the client does not abort the connection " +
 			"or command.",
+	},
+	{
+		id: "RFC9051-7.1-9",
+		source: "RFC9051",
+		section: "7.1",
+		title: "CLOSED response code marks the response boundary between the previously and newly selected mailboxes",
+		text:
+			"The CLOSED response code serves as a boundary between responses for " +
+			"the previously opened mailbox (which was closed) and the newly selected " +
+			"mailbox; all responses before the CLOSED response code relate to the " +
+			"mailbox that was closed, and all subsequent responses relate to the " +
+			"newly opened mailbox.",
+		level: "MUST",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "testable",
+		notes:
+			"CLOSED response code definition in §7.1. Verbatim, including the " +
+			"contiguous lead-in clause ('serves as a boundary...') needed for sense: " +
+			"the boundary-semantics sentence alone ('all responses before...') reads " +
+			"as a dangling anaphor without the preceding clause identifying what " +
+			"the boundary separates. No explicit RFC 2119 keyword in the quoted " +
+			"sentence itself; level assigned MUST by judgment — this is authoritative, " +
+			"keyword-less protocol semantics the client must respect to correctly " +
+			"attribute unilateral responses to the correct mailbox across an implicit " +
+			"mailbox switch (SELECT/EXAMINE issued while another mailbox is already " +
+			"selected), matching the precedent set by RFC9051-7.1-4 (PERMANENTFLAGS, " +
+			"also keyword-less authoritative semantics assigned MUST by judgment). New " +
+			"in rev2; CLOSED itself has no RFC3501 counterpart (RFC3501 has no " +
+			"boundary-marking response code for implicit mailbox switches — SELECT/" +
+			"EXAMINE while already selected was undefined/ambiguous territory there). " +
+			"Conditional: only applies when the client issues SELECT or EXAMINE while " +
+			"a different mailbox is already selected (an implicit mailbox switch), " +
+			"triggering the server to emit CLOSED. Testable: script a session with " +
+			"mailbox A selected, issue SELECT B, and verify the client attributes any " +
+			"untagged responses sent before CLOSED to mailbox A's now-superseded state " +
+			"and responses after CLOSED to mailbox B (e.g. does not carry over A's " +
+			"EXISTS/flags state into B's session state).",
 	},
 
 	// ── §7.1.1 OK ───────────────────────────────────────────────────────────
@@ -590,7 +664,11 @@ export const requirements: SpecRequirement[] = [
 			"exist in RFC3501. Conditional: only applies when both IMAP4rev1 and " +
 			"IMAP4rev2 (or neither... i.e. only IMAP4rev2) are advertised together, " +
 			"and before the client has issued a capability-specific command such as " +
-			"ENABLE IMAP4rev2.",
+			"ENABLE IMAP4rev2. Cross-reference: RFC9051-A-1 (sA-appendices.ts) is the " +
+			"testable, wire-observable counterpart to this internal-decision entry — it " +
+			"catalogues the client's affirmative MUST to issue 'ENABLE IMAP4rev2' when " +
+			"both revisions are advertised, which is precisely the observable trigger " +
+			"action this entry's untestable server-conformance duty depends on.",
 	},
 	{
 		id: "RFC9051-7.2.2-4",
