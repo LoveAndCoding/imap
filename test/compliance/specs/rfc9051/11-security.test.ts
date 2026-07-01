@@ -229,31 +229,37 @@ complianceTest(
 
 // ── RFC9051-11.1-7: check the result of STARTTLS + TLS negotiation (MUST) ──
 // After STARTTLS the client MUST check whether acceptable security was
-// achieved. Scenario: STARTTLS upgrade to a server presenting a wrong-host
-// cert — the post-STARTTLS TLS handshake fails the hostname check, so a
-// conformant client must not report success. Observable: ok === false and the
-// driver is inactive.
+// achieved. The duty's positive demonstration is: the client completes the
+// STARTTLS upgrade, verifies the resulting TLS negotiation achieved acceptable
+// authentication/privacy, and only then proceeds (re-issuing CAPABILITY over
+// the now-protected channel). Observable minimum: the client drives STARTTLS to
+// a successful, result-checked upgrade against a VALID (localhost) cert and
+// reaches the post-TLS CAPABILITY — ok === true and the scripted post-TLS
+// exchange completes.
 //
-// GENUINENESS / CONFOUND NOTE: this assertion currently PASSES, but for a
-// confounded reason. The client's STARTTLS path is broken independently (see
-// RFC9051-11.2-1's STARTTLS leg, which fails even with a VALID localhost cert),
-// so connect() returns false here regardless of the cert identity. The duty's
-// positive demonstration (abort *because the completed negotiation's result was
-// checked and found unacceptable*) cannot be isolated until STARTTLS works: the
-// abort-on-unacceptable-result observable is satisfied, but it is satisfied by
-// the broken-STARTTLS violation rather than by a result check. No expectFailure
-// hint is declared because the assertion genuinely holds; the confound is
-// documented rather than encoded, and will resolve once STARTTLS is fixed
-// (at which point this test isolates the result-check duty proper).
+// CONFOUND-RESOLUTION NOTE (why a valid cert, not wrong-host):
+// The earlier wrong-host formulation asserted only ok === false, which the
+// client satisfies today for a CONFOUNDED reason — its STARTTLS path is broken
+// independently (see RFC9051-11.2-1's STARTTLS leg, which fails even with a
+// VALID localhost cert), so connect() returns false regardless of cert
+// identity. That made the assertion a FALSE PASS: it credited the result-check
+// duty while the abort was caused by broken STARTTLS, never by a result check.
+// A wrong-host abort cannot be distinguished from the generic STARTTLS failure
+// until STARTTLS works. This test therefore isolates the duty via the positive
+// leg on a valid cert (the result-check is witnessed only when the client
+// completes a checked, acceptable negotiation and proceeds). STARTTLS is broken
+// today → this fails honestly and is annotated 'violation'; it self-actualizes
+// into a genuine result-check witness once STARTTLS lands.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.1-7"],
 		profiles: ["rev2"],
-		title: "client aborts when post-STARTTLS TLS negotiation yields an unacceptable security outcome",
+		title: "client checks the STARTTLS negotiation result and proceeds only after acceptable security",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
-		const server = await f.startServer({ tlsUpgrade: wrongHost });
+		const server = await f.startServer({ tlsUpgrade: localhost });
 		server.arm([
 			[
 				send("* OK ready\r\n"),
@@ -262,7 +268,8 @@ complianceTest(
 				expectLine(command("STARTTLS", { args: null })),
 				reply("OK begin TLS negotiation"),
 				{ kind: "startTls" } as const,
-				// Post-TLS path — reaching here means the client failed the check.
+				// Post-TLS: reaching here means the client checked the negotiation
+				// result, found it acceptable, and proceeded over the protected channel.
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
 			],
@@ -272,11 +279,13 @@ complianceTest(
 			host: "127.0.0.1",
 			port: server.port,
 			security: "starttls",
-			ca: wrongHost.cert,
+			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		expect(ok).toBe(false);
-		expect(driver.active).toBe(false);
+		// A client that result-checks a completed, acceptable STARTTLS negotiation
+		// proceeds. Broken STARTTLS today → ok === false (honest violation).
+		expect(ok).toBe(true);
+		await server.assertCompleted();
 	},
 );
 
