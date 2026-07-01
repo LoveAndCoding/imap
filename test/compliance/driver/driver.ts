@@ -135,6 +135,13 @@ export class ComplianceDriver {
 	public async unsubscribe(_mailbox: string): Promise<never> {
 		throw new NotImplementedError("UNSUBSCRIBE");
 	}
+	// NOTE: this signature exposes only reference + pattern — there is no surface
+	// for extended LIST selection/return options (RETURN (...), SPECIAL-USE, etc.).
+	// Consequently the option-prohibition tests RFC9051-6.3.9-5 (unadvertised
+	// option) and RFC9051-6.3.9-6 (duplicate option) can only ever pass VACUOUSLY
+	// when driven through this verb: a client with no options API cannot emit an
+	// option to be rejected. Making those two prohibitions genuinely falsifiable
+	// requires adding an options parameter here (e.g. list(ref, pattern, options)).
 	public async list(_ref: string, _pattern: string): Promise<never> {
 		throw new NotImplementedError("LIST");
 	}
