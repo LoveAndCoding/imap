@@ -332,6 +332,7 @@ complianceTest(
 		for (const qs of qstrings) {
 			const inner = qs.slice(1, -1);
 			// Excluding CR and LF (and NUL per RFC9051-9-4).
+			// eslint-disable-next-line no-control-regex
 			expect(inner).not.toMatch(/[\r\n\x00]/);
 			// The byte sequence must be valid UTF-8 (rev2's quoted-string rule).
 			expect(

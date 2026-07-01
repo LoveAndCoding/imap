@@ -14,7 +14,9 @@
  *                  with a single separator character.
  * RFC9051-5.2-1:   Client MUST remember mailbox size updates (untagged EXISTS).
  * RFC9051-5.2-2:   Client MUST NOT assume subsequent commands return size.
- * RFC9051-5.5-1:   Client MAY pipeline commands without waiting.
+ * RFC9051-5.5-1:   Client MAY pipeline commands (tested as: multi-command
+ *                  session compatibility; the client dispatches sequentially,
+ *                  which is fully compliant with a MAY — see the test's note).
  * RFC9051-5.5-2:   Continuation MUST be negotiated before the next command.
  * RFC9051-5.5-3:   Client MUST wait for completion before a seq-number
  *                  command after any non-FETCH/STORE/SEARCH command.
@@ -130,8 +132,7 @@ complianceTest(
 		// Consumer-supplied lowercase name — same reserved mailbox.
 		await driver.select("inbox");
 		await server.assertCompleted();
-		// commandLines order: CAPABILITY(0), LOGIN(1), SELECT(2).
-		const selectLine = server.commandLines[2];
+		const selectLine = server.commandLines.find((l) => l.verb === "SELECT");
 		expect(selectLine).toBeDefined();
 		expect(selectLine!.verb).toBe("SELECT");
 		// Any case variant of INBOX (quoted or not) is the same special name.
@@ -169,8 +170,7 @@ complianceTest(
 		await server.assertCompleted();
 		// When implemented: the expectLine above is the primary assertion; the
 		// checks below re-verify whichever RFC-valid alternative was chosen.
-		// commandLines order: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createLine = server.commandLines[2];
+		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		if (createLine!.literals.length > 0) {
 			// Literal form: the announcement stays in args; payload is recorded
@@ -217,8 +217,8 @@ complianceTest(
 		await server.assertCompleted();
 		// When implemented: no client-introduced '#' or '&' may appear in the
 		// transmitted name — neither on the command line nor in a literal
-		// payload. commandLines order: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createLine = server.commandLines[2];
+		// payload.
+		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		expect(createLine!.args, "no '&' may be introduced (e.g., mod-UTF-7)").not.toContain("&");
 		expect(createLine!.args, "no conventional '#' may be introduced").not.toContain("#");
@@ -259,8 +259,7 @@ complianceTest(
 		await driver.create("Parent/Child");
 		await server.assertCompleted();
 		// When implemented: re-verify the single-distinct-separator property.
-		// commandLines order: CAPABILITY(0), LOGIN(1), CREATE(2).
-		const createLine = server.commandLines[2];
+		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
 		// Exactly the parent-then-child order with the one '/' separator; no
@@ -335,15 +334,18 @@ complianceTest(
 );
 
 // ── RFC9051-5.5-1: client MAY pipeline commands ───────────────────────────
-// Observable NOW: Session.start() sends CAPABILITY and, with ID advertised,
-// ID within the same connect() call — the client sends multiple commands in
-// one session, exercising the MAY-pipeline permission safely (neither
-// command carries message sequence numbers, so no ambiguity can result).
+// HONESTY NOTE: this client dispatches sequentially (Session.start awaits
+// CAPABILITY's tagged OK before sending ID), so this test does NOT exercise
+// actual non-waiting pipelining — and the harness cannot discriminate send
+// timing either. A MAY grants permission: not pipelining is fully compliant.
+// What this test honestly verifies: multi-command operation within one
+// session works, and no command carries sequence numbers (the ambiguity
+// precondition), i.e., the client's behavior is compatible with the MAY.
 complianceTest(
 	{
 		reqs: ["RFC9051-5.5-1"],
 		profiles: ["rev2"],
-		title: "client sends multiple commands in a connect session (pipelining is permitted)",
+		title: "client issues multiple commands in one session (MAY-pipeline compatible)",
 	},
 	async () => {
 		const server = await f.startServer();
