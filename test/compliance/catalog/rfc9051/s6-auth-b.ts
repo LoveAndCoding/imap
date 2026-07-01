@@ -12,12 +12,17 @@ export const note =
 	"RFC3501-6.3.6's pattern exactly (unchanged prose). " +
 	"§6.3.8 UNSUBSCRIBE: 0 client-binding entries — no RFC 2119 keyword appears anywhere in this " +
 	"subsection (matches RFC3501-6.3.7's UNSUBSCRIBE, also keyword-free). " +
-	"§6.3.9 LIST: 8 entries extracted. This is the largest rev2 delta in scope: the extended LIST " +
+	"§6.3.9 LIST (including subsections §6.3.9.1-§6.3.9.7): 9 entries extracted — 6 under §6.3.9 proper " +
+	"plus 3 in subsections: RFC9051-6.3.9.1-1 (CHILDINFO/no-matching-submailbox race, §6.3.9.1 " +
+	"RECURSIVEMATCH; re-homed from the retired id RFC9051-6.3.9-7), RFC9051-6.3.9.4-1 (stronger LIST " +
+	"attribute implies weaker inferable ones, §6.3.9.4, entirely new in rev2; re-homed from the retired " +
+	"id RFC9051-6.3.9-8), and RFC9051-6.3.9.5-1 (\\HasChildren-with-no-listed-child race Note, §6.3.9.5 " +
+	"CHILDREN return option — lowercase-'must' judgment MUST, untestable internal-decision like the " +
+	"CHILDINFO entry). This is the largest rev2 delta in scope: the extended LIST " +
 	"syntax (selection/return options, RECURSIVEMATCH, CHILDREN, CHILDINFO, OLDNAME) is new relative to " +
 	"RFC3501's basic-syntax-only LIST, and carries several new client duties (MUST NOT send " +
-	"unadvertised options; SHOULD NOT repeat an option; MUST handle a CHILDINFO/no-matching-submailbox " +
-	"race; MUST treat a stronger LIST attribute as implying weaker ones it subsumes — §6.3.9.4, entirely " +
-	"new). Two entries carry over the RFC3501-6.3.8-1/-2 non-standard-reference-argument duties " +
+	"unadvertised options; SHOULD NOT repeat an option; the subsection duties above). " +
+	"Two entries carry over the RFC3501-6.3.8-1/-2 non-standard-reference-argument duties " +
 	"verbatim (same untestable themes: user-intent-policy, internal-decision). LSUB (RFC3501-6.3.9, its " +
 	"authoritative-flags rule) has no RFC 9051 counterpart: LSUB is not defined in this document (it is " +
 	"listed as obsolete/replaced by 'LIST (SUBSCRIBED)' per §6.3.9.1's SUBSCRIBED selection option), so " +
@@ -38,14 +43,16 @@ export const note =
 	"(1) the literal-format SHOULD now cites [RFC5322] or [I18N-HDRS] instead of RFC3501's [RFC-2822]; " +
 	"(2) the client's fallback permission on missing untagged EXISTS drops RFC3501's '(or failing that, " +
 	"a CHECK command)' — rev2 grants only NOOP, not the CHECK fallback. " +
-	"§6.3.13 IDLE: 2 entries extracted. IDLE has no RFC3501 §6.3.x counterpart (RFC 2177 extension, not " +
-	"part of the RFC3501 base command set); both entries are new to this cross-reference. Captures the " +
-	"two client duties called out by the extraction brief: MUST NOT send any other command while the " +
-	"server awaits DONE (hard protocol-framing requirement, testable), and the 29-minute " +
-	"terminate-and-reissue guidance (lowercase 'advised', judgment-call SHOULD, untestable — timing " +
-	"expectation, not a wire-observable pass/fail boundary within a reasonable test window). DONE " +
-	"termination itself and the UID-FETCH-during-IDLE requirement are definitional/server-binding " +
-	"respectively and are noted, not double-counted as separate client entries.";
+	"§6.3.13 IDLE: 3 entries extracted. IDLE has no RFC3501 §6.3.x counterpart (RFC 2177 extension, not " +
+	"part of the RFC3501 base command set); all entries are new to this cross-reference. Captures: MUST " +
+	"NOT send any other command while the " +
+	"server awaits DONE (hard protocol-framing requirement, testable), the 29-minute " +
+	"terminate-and-reissue guidance (lowercase 'advised', judgment-call SHOULD, untestable — the duty " +
+	"is wire behavior in principle but the timescale defeats any test window; see the entry rationale), " +
+	"and the DONE termination mechanism itself (RFC9051-6.3.13-3, implicit MUST as the sole defined " +
+	"termination mechanism, adjudicated for consistency with RFC9051-6.2.2-2's AUTHENTICATE '*' " +
+	"cancellation precedent, testable). The UID-FETCH-during-IDLE requirement is server-binding and is " +
+	"noted, not catalogued as a client entry.";
 
 export const requirements: SpecRequirement[] = [
 
@@ -176,10 +183,16 @@ export const requirements: SpecRequirement[] = [
 			"bind the client. Testable: inspect the client's LIST selection/return option lists for " +
 			"duplicate option names.",
 	},
+	// RETIRED IDS (never reuse): RFC9051-6.3.9-7 and RFC9051-6.3.9-8 — fabrication-free retirement
+	// 2026-07-01 (independent audit): the quoted texts are unchanged but live in subsections, not in
+	// §6.3.9 proper, so both entries were re-homed to section-accurate ids: RFC9051-6.3.9-7 (the
+	// CHILDINFO race Note, §6.3.9.1 RECURSIVEMATCH) is now RFC9051-6.3.9.1-1, and RFC9051-6.3.9-8
+	// (the attribute-inference rule, §6.3.9.4 Additional LIST-Related Requirements on Clients) is now
+	// RFC9051-6.3.9.4-1.
 	{
-		id: "RFC9051-6.3.9-7",
+		id: "RFC9051-6.3.9.1-1",
 		source: "RFC9051",
-		section: "6.3.9",
+		section: "6.3.9.1",
 		title: "Client MUST handle a CHILDINFO response with no matching submailboxes",
 		text:
 			"Note that even if the RECURSIVEMATCH option is specified, the client MUST still be able to " +
@@ -201,12 +214,13 @@ export const requirements: SpecRequirement[] = [
 			"otherwise encodes.",
 		notes:
 			"New in rev2 (§6.3.9.1 RECURSIVEMATCH selection option). Applies only when the client uses " +
-			"the RECURSIVEMATCH selection option.",
+			"the RECURSIVEMATCH selection option. Re-homed from the retired id RFC9051-6.3.9-7 (see the " +
+			"RETIRED IDS comment above); text unchanged.",
 	},
 	{
-		id: "RFC9051-6.3.9-8",
+		id: "RFC9051-6.3.9.4-1",
 		source: "RFC9051",
-		section: "6.3.9",
+		section: "6.3.9.4",
 		title: "All clients MUST treat a stronger LIST attribute as implying weaker inferable attributes",
 		text:
 			"All clients MUST treat a LIST attribute with a stronger meaning as implying any attribute " +
@@ -225,7 +239,44 @@ export const requirements: SpecRequirement[] = [
 			"\\HasNoChildren; \\NonExistent implies \\NoSelect. Testable: script a LIST response carrying " +
 			"\\NoInferiors (or \\NonExistent) without the implied attribute and confirm the client " +
 			"behaves as though the implied attribute were also present (e.g. does not attempt to expand " +
-			"children of a \\NoInferiors mailbox, does not attempt to SELECT a \\NonExistent one).",
+			"children of a \\NoInferiors mailbox, does not attempt to SELECT a \\NonExistent one). " +
+			"Re-homed from the retired id RFC9051-6.3.9-8 (see the RETIRED IDS comment above); text " +
+			"unchanged.",
+	},
+	{
+		id: "RFC9051-6.3.9.5-1",
+		source: "RFC9051",
+		section: "6.3.9.5",
+		title: "Client must be prepared for \\HasChildren with no child mailbox listed",
+		text:
+			"Note that even though the \\HasChildren attribute for a mailbox must be correct at the time " +
+			"of processing the mailbox, a client must be prepared to deal with a situation when a mailbox " +
+			"is marked with the \\HasChildren attribute, but no child mailbox appears in the response to " +
+			"the LIST command.",
+		level: "MUST",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "untestable",
+		untestableTheme: "internal-decision",
+		untestableRationale:
+			"Same reasoning as the CHILDINFO entry (RFC9051-6.3.9.1-1): 'being prepared to deal with' a " +
+			"race-condition edge case (a \\HasChildren-marked mailbox whose children were deleted or made " +
+			"inaccessible before the client could list them) is a robustness property of client-side " +
+			"logic, not a wire action the harness can assert on directly — any wire behavior after " +
+			"receiving \\HasChildren followed by an empty/failed child LIST is compliant provided the " +
+			"client doesn't crash, and 'doesn't crash' is not a protocol-level pass/fail boundary this " +
+			"catalog otherwise encodes.",
+		notes:
+			"§6.3.9.5 (the CHILDREN return option), the Note following the \\HasChildren attribute " +
+			"definition; new in rev2. Judgment call, disclosed: lowercase 'must' (both instances in the " +
+			"sentence), read as MUST — the same lowercase-'must'-in-a-race-Note construction as the " +
+			"CHILDINFO entry, and the duty is materially identical in kind. The leading clause ('even " +
+			"though the \\HasChildren attribute ... must be correct at the time of processing') is " +
+			"contiguous in the same sentence and quoted for context; its own 'must' binds the server's " +
+			"attribute accuracy, not the client. Applies only when the client uses/interprets the " +
+			"CHILDREN return option's \\HasChildren attribute. The same Note text also appears verbatim " +
+			"under §7.3.1's LIST response attribute definitions; it is catalogued once, here, at its " +
+			"command-side home.",
 	},
 
 	// ── §6.3.10 NAMESPACE ─────────────────────────────────────────────────────
@@ -429,14 +480,16 @@ export const requirements: SpecRequirement[] = [
 		testability: "untestable",
 		untestableTheme: "performance-expectation",
 		untestableRationale:
-			"This is a timing/liveness recommendation whose compliance window (server-side inactivity " +
-			"timeouts vary and are not standardized; 29 minutes is a safety margin under a hypothetical " +
-			"30-minute timeout, not a hard protocol deadline) cannot be asserted as a pass/fail boundary " +
-			"by a black-box test running on realistic timescales. A test harness would need to hold a " +
-			"connection idling for tens of minutes per assertion, and even then a client that never " +
-			"reissues IDLE is not violating any wire-level rule the server enforces — only risking an " +
-			"implementation-specific server-side logoff the RFC itself declines to standardize the " +
-			"timing of ('if such a server has an inactivity timeout').",
+			"The 29-minute terminate-and-reissue duty IS wire behavior in principle — a DONE followed by " +
+			"a fresh IDLE inside the window would be directly observable on the wire. The untestability " +
+			"is the combination of (a) the test-window timescale: no harness can realistically hold a " +
+			"connection idling for the tens of minutes per assertion needed to observe the 29-minute " +
+			"boundary, and (b) the absence of any enforced wire rule at shorter timescales that could " +
+			"proxy for it — server-side inactivity timeouts vary and are not standardized (29 minutes is " +
+			"a safety margin under a hypothetical 30-minute timeout, not a hard protocol deadline), so a " +
+			"client that never reissues IDLE within any shorter, testable window violates no wire-level " +
+			"rule; it only risks an implementation-specific server-side logoff whose timing the RFC " +
+			"itself declines to standardize ('if such a server has an inactivity timeout').",
 		notes:
 			"'Advised' (lowercase, no RFC 2119 keyword) — judgment call: read as the SHOULD-equivalent " +
 			"the extraction brief calls out by name ('SHOULD terminate within 29 minutes'), since it is " +
@@ -445,5 +498,30 @@ export const requirements: SpecRequirement[] = [
 			"(IDLE has no RFC3501 §6.3.x counterpart). The preceding sentence ('The server MAY consider a " +
 			"client inactive if it has an IDLE command running... it MAY log the client off implicitly') " +
 			"is server-side permission, not client-binding, and is not separately catalogued as an entry.",
+	},
+	{
+		id: "RFC9051-6.3.13-3",
+		source: "RFC9051",
+		section: "6.3.13",
+		title: "Client terminates IDLE by sending the DONE continuation",
+		text:
+			"The IDLE command is terminated by the receipt of a \"DONE\" continuation from the client; " +
+			"such response satisfies the server's continuation request.",
+		level: "MUST",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "testable",
+		notes:
+			"No RFC 2119 keyword; the sentence is definitional but specifies the sole defined mechanism " +
+			"for terminating an IDLE command. Judgment: implicit MUST — consistency adjudication with " +
+			"RFC9051-6.2.2-2 recorded: that entry treats AUTHENTICATE's keyword-less single-'*' " +
+			"cancellation line as an implicit MUST because it is the exclusive protocol mechanism for the " +
+			"action, and the DONE continuation stands in exactly the same relation to IDLE termination — " +
+			"a client that ends IDLE any other way (e.g. by sending a new command, prohibited by " +
+			"RFC9051-6.3.13-1, or by tearing down the connection mid-IDLE) violates the exchange " +
+			"protocol. Applicability is 'conditional': binds only when the client uses IDLE. Testable: " +
+			"the DONE line is wire-observable — drive the client to end an idle period and assert the " +
+			"literal 'DONE' continuation line is emitted (and nothing else) before the tagged IDLE " +
+			"completion.",
 	},
 ];

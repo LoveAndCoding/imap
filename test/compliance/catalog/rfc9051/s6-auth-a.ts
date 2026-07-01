@@ -5,15 +5,16 @@ export const note =
 	"through RENAME; confirmed boundaries by locating both the ToC and body headings — §6.3.1 " +
 	"ENABLE, §6.3.2 SELECT, §6.3.3 EXAMINE, §6.3.4 CREATE, §6.3.5 DELETE, §6.3.6 RENAME, ending " +
 	"immediately before §6.3.7 SUBSCRIBE). " +
-	"§6.3.1 ENABLE — NEW client command in rev2 (RFC3501 has no counterpart). 3 client-binding " +
+	"§6.3.1 ENABLE — NEW client command in rev2 (RFC3501 has no counterpart). 2 client-binding " +
 	"entries extracted: (1) SHOULD only include extensions that need to be enabled, judged " +
 	"untestable (internal-decision: 'needs to be enabled' is the client's own technical judgment, " +
 	"not wire-observable — a client that always includes an extension it happens to support is " +
 	"behaviorally indistinguishable from one that filters by need); (2) MUST NOT issue ENABLE " +
-	"after SELECT/EXAMINE, testable; (3) implicit MUST (judgment call, no RFC 2119 keyword) that " +
-	"pipelining ENABLE with a following command is permitted / not an error condition, derived " +
-	"from the explicit 'no limitations on pipelining ENABLE' statement plus the worked LOGIN-then-" +
-	"ENABLE / ENABLE-then-SELECT examples. Server-only obligations excluded: per-argument ignore/" +
+	"after SELECT/EXAMINE, testable. The 'no limitations on pipelining ENABLE' statement (with its " +
+	"worked LOGIN-then-ENABLE / ENABLE-then-SELECT examples) was considered and excluded as " +
+	"keyword-less permission-lifting prose imposing no duty — a client that serializes ENABLE is " +
+	"fully compliant; it was previously catalogued as RFC9051-6.3.1-3 and has been retired (see the " +
+	"RETIRED IDS comment in this file). Server-only obligations excluded: per-argument ignore/" +
 	"enable rules (MUST, bind the server's ENABLE processing), the MUST to send untagged ENABLED, " +
 	"the SHOULD scoping each ENABLED response to its triggering ENABLE, and the MUST NOT change " +
 	"CAPABILITY as a result of ENABLE (all describe server response-generation duties with no " +
@@ -56,7 +57,7 @@ export const note =
 	"MUST, INBOX-rename special behavior, OLDNAME SHOULD on normalization, \\Subscribed-attribute " +
 	"MUST on auto-subscribe (all server-side, same shape as RFC3501-6.3.5 plus rev2's OLDNAME/" +
 	"Net-Unicode additions). " +
-	"Total: 8 client-binding entries (RFC9051-6.3.1-1..3, RFC9051-6.3.2-1..3, RFC9051-6.3.3-1, " +
+	"Total: 7 client-binding entries (RFC9051-6.3.1-1..2, RFC9051-6.3.2-1..3, RFC9051-6.3.3-1, " +
 	"RFC9051-6.3.6-1). Untestable: 1 (RFC9051-6.3.1-1, theme internal-decision).";
 
 export const requirements: SpecRequirement[] = [
@@ -110,30 +111,11 @@ export const requirements: SpecRequirement[] = [
 			"never sends ENABLE after a successful (or even attempted) SELECT/EXAMINE in the same " +
 			"connection.",
 	},
-	{
-		id: "RFC9051-6.3.1-3",
-		source: "RFC9051",
-		section: "6.3.1",
-		title: "Client may pipeline ENABLE with an immediately following command",
-		text:
-			"There are no limitations on pipelining ENABLE. For example, it is possible to send " +
-			"ENABLE and then immediately SELECT, or a LOGIN immediately followed by ENABLE.",
-		level: "MAY",
-		applicability: "conditional",
-		profiles: ["rev2"],
-		testability: "testable",
-		notes:
-			"No RFC 2119 keyword; judgment call reading this as an explicit MAY-level permission " +
-			"(the sentence exists specifically to lift any implicit pipelining restriction a client " +
-			"might otherwise assume applies to ENABLE, mirroring the general pipelining permissions " +
-			"of §5.5). Distinguished from RFC9051-6.3.1-2: that entry prohibits ENABLE strictly " +
-			"after a mailbox is selected; this entry affirms that ENABLE may be pipelined with an " +
-			"adjacent command (LOGIN, SELECT) without waiting for the prior command's completion " +
-			"response. Testable: a client exercising pipelining may send 'LOGIN ...' immediately " +
-			"followed by 'ENABLE ...' (or 'ENABLE ...' immediately followed by 'SELECT ...') on the " +
-			"wire without waiting for the intervening tagged response; a test can observe that the " +
-			"client does not artificially serialize these when it otherwise pipelines.",
-	},
+	// RETIRED IDS (never reuse): RFC9051-6.3.1-3 — formerly catalogued "There are no limitations on
+	// pipelining ENABLE. For example, it is possible to send ENABLE and then immediately SELECT, or a
+	// LOGIN immediately followed by ENABLE." Retired 2026-07-01 (independent audit): keyword-less
+	// permission-lifting prose — it imposes no duty on the client (a client that serializes ENABLE with
+	// its neighbors is fully compliant), so no RFC 2119 level is assignable.
 
 	// ── §6.3.2 SELECT ─────────────────────────────────────────────────────────
 

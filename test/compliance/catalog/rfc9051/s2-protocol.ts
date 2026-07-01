@@ -12,9 +12,15 @@ export const note =
 	"no direct client-binding requirements per its own extractionNote). The inference-only Note sentence ('A client " +
 	"can only assume...') was again considered and excluded as a non-duty, consistent with the RFC3501 treatment. " +
 	"§2.3.1.2: no client-binding requirements (message sequence number semantics are server-defined). " +
-	"§2.3.2: extracted 1 client requirement ($Junk/$NotJunk mutual-exclusivity handling — new in rev2 with the " +
-	"$-keyword registry; \\Recent is deprecated in rev2 so the RFC3501 \\Recent client prohibitions have no rev2 " +
-	"counterpart and are not carried forward). " +
+	"§2.3.2: extracted 2 client requirements ($Junk/$NotJunk mutual-exclusivity handling and the $Forwarded " +
+	"SHOULD-NOT-clear-once-set duty — both new in rev2 with the $-keyword registry; \\Recent is deprecated in " +
+	"rev2 so the RFC3501 \\Recent client prohibitions have no rev2 counterpart and are not carried forward). " +
+	"The $Phishing display-warning sentence ('If both the $Phishing flag and the $Junk flag are set, the user " +
+	"agent should display an additional warning message to the user', lowercase 'should') was considered and " +
+	"excluded: it directs the user agent's UI, not the protocol library. The logger notification mechanism " +
+	"(taxonomy mechanism (a)) was considered for it, but unlike ALERT's unconditional present-to-user MUST " +
+	"(RFC3501-7.1-1's flip precedent), this duty is explicitly display-conditional guidance addressed to user " +
+	"agents, so no catalog entry is extracted. " +
 	"§2.3.3: no client-binding requirements (internal date is a server attribute). " +
 	"§2.3.4: no client-binding requirements (RFC822.SIZE is server-defined). " +
 	"§2.3.5: no client-binding requirements (envelope is a server-provided parsed structure). " +
@@ -201,11 +207,11 @@ export const requirements: SpecRequirement[] = [
 		title: "Client relies on UIDVALIDITY to detect UID discontinuity and invalidate its UID cache",
 		text:
 			"Any change of unique identifiers between sessions MUST be detectable using the UIDVALIDITY mechanism discussed below. ... Note that this situation can be very disruptive to client message caching.",
-		level: "MUST",
+		level: "SHOULD",
 		applicability: "conditional",
 		profiles: ["rev2"],
 		testability: "untestable",
-		untestableTheme: "internal-state",
+		untestableTheme: "cross-session",
 		untestableRationale:
 			"The RFC does not phrase this as a direct client imperative ('the client MUST discard its UID " +
 			"cache'); it states that a UID discontinuity 'MUST be detectable' (a server-side guarantee about " +
@@ -213,12 +219,17 @@ export const requirements: SpecRequirement[] = [
 			"very disruptive to client message caching'. The client-facing duty here is only inferable: a " +
 			"client that caches messages by UID is expected to key that cache on (mailbox name, UIDVALIDITY, " +
 			"UID) and to invalidate/discard cached UID-keyed state when it observes a new UIDVALIDITY value at " +
-			"SELECT/EXAMINE time. This is an internal cache-management decision with no required wire behavior: " +
+			"SELECT/EXAMINE time. This is a cross-session cache-management duty with no required wire behavior: " +
 			"a client that (incorrectly) keeps stale UID-keyed data after a UIDVALIDITY change produces no " +
 			"distinguishing protocol trace by itself — only if it then issues commands against UIDs that no " +
 			"longer denote the same message would a divergence become observable, and that divergence is " +
 			"already covered by testable, command-specific catalog entries (e.g., UID-based FETCH/STORE " +
-			"argument validity) rather than by this general caching duty.",
+			"argument validity) rather than by this general caching duty. Mechanism (b) of the untestability " +
+			"taxonomy (sequential multi-connection arm()) was evaluated explicitly and rebutted: two scripted " +
+			"sessions can present a changed UIDVALIDITY value across sessions, but the harness can only show " +
+			"the value changing — it cannot observe whether the client discarded its cache, because UID " +
+			"caching is consumer-delegated in this headless library (the library itself keeps no cross-session " +
+			"UID cache), so no wire trace in the second session distinguishes compliance from violation.",
 		notes:
 			"Extracted per the mandatory instruction to carefully extract the RFC 9051 addition to §2.3.1.1 " +
 			"that RFC 3501 lacked (see RFC3501-2.3.1.1's extractionNote, which records that RFC 3501 contains " +
@@ -227,14 +238,18 @@ export const requirements: SpecRequirement[] = [
 			"the sentence 'Note that this situation can be very disruptive to client message caching.' " +
 			"(entirely new in rev2), and (b) item 4 gains a trailing sentence, 'When a message is expunged, " +
 			"its UID MUST NOT be reused under the same UIDVALIDITY value.' (also new in rev2; a server-side " +
-			"non-reuse guarantee, tracked separately below and not repeated here since it binds the server, " +
-			"not the client). The first MUST clause quoted here ('MUST be detectable using the UIDVALIDITY " +
+			"non-reuse guarantee that binds the server, not the client, and is therefore not catalogued as a " +
+			"client entry anywhere in this module). The first MUST clause quoted here ('MUST be detectable " +
+			"using the UIDVALIDITY " +
 			"mechanism') is present verbatim in both RFC 3501 and RFC 9051 and is not itself new; it is " +
 			"included in this entry because it is the textual anchor that, combined with the new rev2 " +
 			"caching-disruption note, most directly supports a client-facing cache-invalidation reading. " +
-			"No 2119 keyword binds the client by name in this sentence pair; level assigned as MUST by " +
-			"judgment because a client that ignores UIDVALIDITY changes and continues to trust stale " +
-			"UID-keyed cache entries defeats the mechanism's entire purpose. Applicability is 'conditional' " +
+			"No 2119 keyword binds the client by name in this sentence pair; level assigned as SHOULD by " +
+			"judgment — the inferred cache-invalidation duty has no client-facing MUST anywhere in RFC 9051, " +
+			"and SHOULD matches the strength of the surrounding UID-persistence guidance in the same paragraph " +
+			"('The unique identifier of a message ... SHOULD NOT change between sessions'); a client that " +
+			"ignores UIDVALIDITY changes and continues to trust stale UID-keyed cache entries defeats the " +
+			"mechanism's purpose, but the RFC never states that duty as a client MUST. Applicability is 'conditional' " +
 			"because the duty only fires for a client that maintains a persistent, UID-keyed local cache " +
 			"across sessions (e.g., disconnected/offline clients per [IMAP-DISC]); a client with no such " +
 			"cache has nothing to invalidate. This is the RFC 9051 addition referenced by the mandatory " +
@@ -264,6 +279,30 @@ export const requirements: SpecRequirement[] = [
 			"supports/uses the $Junk and $NotJunk keywords at all. Testable: script a FETCH response exposing " +
 			"both keywords set simultaneously and verify the client's exposed flag state treats the message as " +
 			"having neither set (and, for the SHOULD half, that it issues a STORE removing both).",
+	},
+	{
+		id: "RFC9051-2.3.2-2",
+		source: "RFC9051",
+		section: "2.3.2",
+		title: "Client SHOULD NOT clear the $Forwarded keyword once set",
+		text:
+			"$Forwarded Message has been forwarded to another email address by being embedded within, or " +
+			"attached to a new message. An email client sets this keyword when it successfully forwards the " +
+			"message to another email address. ... Once set, the flag SHOULD NOT be cleared.",
+		level: "SHOULD NOT",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "testable",
+		notes:
+			"From the $Forwarded keyword definition block in §2.3.2 (new in rev2; RFC 3501 predates the " +
+			"$-keyword conventions — see RFC9051-2.3.2-1's notes for the registry background). The operative " +
+			"sentence is the bare 'Once set, the flag SHOULD NOT be cleared.'; because that sentence names no " +
+			"keyword, the two preceding contiguous sentences of the same definition block are quoted (with the " +
+			"intervening 'Typical usage ... icon' sentence honestly elided as '...') so the quote itself " +
+			"identifies $Forwarded as the flag in question. Applicability is 'conditional': the duty binds " +
+			"only a client that supports/uses the $Forwarded keyword. Testable: after the client sets (or " +
+			"observes) $Forwarded on a message, assert it never emits a STORE removing $Forwarded (e.g., " +
+			"'-FLAGS ($Forwarded)' or a replacement 'FLAGS (...)' list omitting it).",
 	},
 
 	// §3 preamble ─────────────────────────────────────────────────────────────
@@ -356,9 +395,9 @@ export const requirements: SpecRequirement[] = [
 			"Contains both SHOULD NOT (do not close unilaterally) and SHOULD (issue LOGOUT instead). " +
 			"Level is set to SHOULD NOT as the stronger prohibition; the affirmative SHOULD is " +
 			"captured in the same entry because the two clauses are a single compound obligation. " +
-			"rev2 counterpart of RFC3501-3.4-2; RFC 3501 phrased the two clauses as separate sentences " +
-			"('A client SHOULD NOT unilaterally close the connection, and instead SHOULD issue a LOGOUT " +
-			"command.') whereas RFC 9051 joins them with a semicolon in the same sentence — a punctuation-only " +
-			"change with no normative difference.",
+			"rev2 counterpart of RFC3501-3.4-2. The RFC 3501 counterpart is likewise ONE sentence — 'A client " +
+			"SHOULD NOT unilaterally close the connection, and instead SHOULD issue a LOGOUT command.' — joining " +
+			"the clauses with ', and instead SHOULD', whereas RFC 9051 joins them with '; instead, it SHOULD'; " +
+			"a punctuation/phrasing-only change with no normative difference.",
 	},
 ];

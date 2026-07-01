@@ -11,7 +11,7 @@ export const note =
 	"§6.4.4.2: 1 entry (client MAY pipeline SEARCH RETURN (SAVE) with '$'-using commands absent ambiguity). " +
 	"§6.4.4.3: 1 entry (tagged NO with NOTSAVED and search-result reset — derived client duty). " +
 	"§6.4.4.4: examples only ('explanatory comments in examples that start with // are not part of the protocol'); no normative statements. " +
-	"§6.4.5 FETCH: 3 entries (macro used by itself — lowercase 'must', judgment call backed by the §9 formal syntax; BINARY data items requestable only for leaf body parts; BODY[<section>] implicitly sets \\Seen with BODY.PEEK as the non-setting alternative — BINARY/BINARY.PEEK behave alike). 'msg-att-static ... MUST NOT change' binds the server. " +
+	"§6.4.5 FETCH: 4 entries (macro used by itself — lowercase 'must', judgment call backed by the §9 formal syntax; BINARY data items requestable only for leaf body parts; BODY[<section>] implicitly sets \\Seen with BODY.PEEK as the non-setting alternative — BINARY/BINARY.PEEK behave alike; BINARY.SIZE expense caution — 'are cautioned', judgment SHOULD, untestable performance-expectation mirroring RFC9051-6.3.11-3's STATUS SIZE treatment). 'msg-att-static ... MUST NOT change' binds the server. " +
 	"§6.4.5.1: 2 entries (nested parts MUST be indicated by dotted part numbers; HEADER/HEADER.FIELDS/HEADER.FIELDS.NOT/TEXT prefix constraint and MIME MUST be prefixed by numeric part specifiers). " +
 	"§6.4.6 STORE: 1 entry (untagged FETCH may arrive despite .SILENT for externally observed flag changes — derived duty to accept it). " +
 	"§6.4.7 COPY: no client-binding entries. Server duties for reference (deltas from RFC 3501 noted): nonexistent destination MUST yield an error and the server MUST NOT automatically create the mailbox (strengthened from 3501's SHOULD / SHOULD NOT); [TRYCREATE] MUST prefix the tagged NO unless creation is impossible (the retry-after-CREATE hint remains advisory for the client); a failed COPY MUST restore the destination 'other than possibly incrementing UIDNEXT'; COPYUID is returned on success (client-side COPYUID handling is a §7.1 response-codes concern, left to the §7 extractor). " +
@@ -362,6 +362,40 @@ export const requirements: SpecRequirement[] = [
 			"Applicability is 'conditional' — fires when the client fetches body/binary sections. " +
 			"Testable: verify the client uses the .PEEK form when it intends not to mark messages " +
 			"seen and tolerates FLAGS data in BODY fetch responses.",
+	},
+	{
+		id: "RFC9051-6.4.5-4",
+		source: "RFC9051",
+		section: "6.4.5",
+		title: "Clients are cautioned that BINARY.SIZE can be expensive; avoid needless requests",
+		text:
+			"BINARY.SIZE[<section-binary>] Requests the decoded size of the section (i.e., the size " +
+			"to expect in response to the corresponding FETCH BINARY request). Note: client authors " +
+			"are cautioned that this might be an expensive operation for some server implementations. " +
+			"Needlessly issuing this request could result in degraded performance due to servers " +
+			"having to calculate the value every time the request is issued.",
+		level: "SHOULD",
+		applicability: "conditional",
+		profiles: ["rev2"],
+		testability: "untestable",
+		untestableTheme: "performance-expectation",
+		untestableRationale:
+			"'Needlessly issuing this request' binds the client's operational judgment about when the " +
+			"decoded size is actually needed, not a discrete wire action: any individual BINARY.SIZE " +
+			"request is syntactically legal and RFC-permitted, so a client that issues them freely " +
+			"produces the same compliant wire trace as one that issues them sparingly out of genuine " +
+			"need — whether a given request was 'needless' has no wire signature. Same reasoning as " +
+			"RFC9051-6.3.11-3 (the STATUS SIZE caution).",
+		notes:
+			"Judgment call, disclosed: no RFC 2119 keyword — 'client authors are cautioned' plus " +
+			"'Needlessly issuing ... could result in degraded performance' is read as a SHOULD-level " +
+			"avoid-needless-use recommendation, mirroring the treatment of RFC9051-6.3.11-3's " +
+			"lowercase-'should' STATUS SIZE caution (a caution against the same expense, for the same " +
+			"new-in-rev2 SIZE computation, in keyword-disciplined surrounding prose). The leading " +
+			"BINARY.SIZE[<section-binary>] definition sentence is quoted contiguously to anchor which " +
+			"data item the Note governs; BINARY data items are new in the rev2 base spec (absorbed from " +
+			"RFC 3516), so this caution has no RFC3501 counterpart. Applicability is 'conditional' — " +
+			"only when the client uses the BINARY.SIZE data item.",
 	},
 
 	// §6.4.5.1 FETCH Section Specification ──────────────────────────────────────

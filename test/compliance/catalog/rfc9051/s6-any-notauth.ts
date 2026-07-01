@@ -308,7 +308,18 @@ export const requirements: SpecRequirement[] = [
 		level: "MUST NOT",
 		applicability: "conditional",
 		profiles: ["rev2"],
-		testability: "testable",
+		testability: "untestable",
+		untestableTheme: "internal-decision",
+		untestableRationale:
+			"'Unsecure network' is a deployment-environment property with no wire signature: " +
+			"plaintext-at-the-socket does not imply an unsecure network (localhost connections, trusted " +
+			"LANs, VPN tunnels, and TLS-terminating proxies all present a plaintext socket over a secure " +
+			"path). A plaintext LOGIN on a trusted network is fully compliant and produces a wire trace " +
+			"indistinguishable from a violating plaintext LOGIN on the open Internet, so a black-box " +
+			"harness that withholds STARTTLS/Implicit TLS cannot construct 'an unsecure network' — it can " +
+			"only construct a plaintext socket, whose security is the deployment's fact, not the wire's. " +
+			"The enforceable half of this concern is the LOGINDISABLED prohibition (RFC9051-6.2.3-4), " +
+			"which is wire-observable and separately catalogued.",
 		notes:
 			"New explicit MUST NOT in rev2. RFC3501's equivalent text was an unqualified Note ('Use of " +
 			"the LOGIN command over an insecure network (such as the Internet) is a security risk...') with " +
@@ -317,10 +328,8 @@ export const requirements: SpecRequirement[] = [
 			"promotes this to a binding MUST NOT: 'For that reason' refers back to the preceding sentence " +
 			"identifying that anyone monitoring network traffic can obtain plaintext passwords sent via " +
 			"LOGIN. Applicability judged 'conditional' (binds only when the client is on, or cannot confirm " +
-			"it is not on, an unsecure network) and testable: a test harness can withhold STARTTLS/Implicit " +
-			"TLS negotiation (an unsecure network by the RFC's own framing) and assert the client does not " +
-			"send LOGIN in that state — directly observable on the wire, distinct from the unobservable " +
-			"'last resort' preference-ordering judgment in RFC9051-6.2.3-1.",
+			"it is not on, an unsecure network). Distinct from the unobservable 'last resort' " +
+			"preference-ordering judgment in RFC9051-6.2.3-1, but likewise untestable — see the rationale.",
 	},
 	{
 		id: "RFC9051-6.2.3-4",
