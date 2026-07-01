@@ -10,6 +10,18 @@ export interface ServerOptions {
 	/** Cert used when a script performs a startTls upgrade step. */
 	tlsUpgrade?: { key: Buffer; cert: Buffer };
 	stepTimeoutMs?: number;
+	/**
+	 * Optional TLS negotiation constraints for the implicit-TLS listener.
+	 * Passed straight through to tls.createServer so a test can restrict the
+	 * server to a single cipher suite and/or protocol version — used to verify
+	 * a client can complete a handshake under those constraints (e.g. the
+	 * mandated-cipher duty RFC9051-11.1-4). Only affects the tlsImplicit path.
+	 */
+	tlsConstraints?: {
+		ciphers?: string;
+		minVersion?: tls.SecureVersion;
+		maxVersion?: tls.SecureVersion;
+	};
 }
 
 export interface Outcome {
@@ -411,7 +423,11 @@ export class ScriptedServer {
 
 		if (this.opts.tlsImplicit) {
 			this.netServer = tls.createServer(
-				{ key: this.opts.tlsImplicit.key, cert: this.opts.tlsImplicit.cert },
+				{
+					key: this.opts.tlsImplicit.key,
+					cert: this.opts.tlsImplicit.cert,
+					...(this.opts.tlsConstraints ?? {}),
+				},
 				onConnection,
 			);
 		} else {
