@@ -86,4 +86,16 @@ openssl x509 -in expired-work/expired-cert.raw.pem -out expired-cert.pem
 cp expired-work/expired-key.pem expired-key.pem
 rm -rf expired-work
 
+# Phase 3 (S1): uri-id fixture (RFC 7817 §3 rule 3 — URI-ID MUST NOT be used).
+#
+# uri-id: SAN carries ONLY a uniformResourceIdentifier entry and NO dNSName/iPAddress.
+#   CN=uri-id.example.test. A conformant client MUST NOT consult the URI-ID for server
+#   identity (RFC7817-3-7), so it finds no usable presented identifier matching the
+#   connection target (localhost/127.0.0.1) and rejects. Node's TLS verifier already
+#   ignores URI SANs for hostname matching, so this reproduces the mismatch-rejection.
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500 \
+  -keyout uri-id-key.pem -out uri-id-cert.pem \
+  -subj "/CN=uri-id.example.test" \
+  -addext "subjectAltName=URI:imap://localhost/"
+
 echo "Done. Commit the regenerated PEM files."

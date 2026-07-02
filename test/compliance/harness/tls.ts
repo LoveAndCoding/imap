@@ -20,8 +20,14 @@ const CERT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "certs"
  *   'expired'         — self-signed CA:TRUE, SAN=localhost+127.0.0.1, CN=localhost, but its
  *                       validity window is Jan 1–2 2020 (already expired). Identity matches;
  *                       a conformant client MUST still reject on expiry even when trusting it.
+ *   'uri-id'          — SAN contains ONLY a uniformResourceIdentifier entry
+ *                       (URI:imap://localhost/); CN=uri-id.example.test. There is NO dNSName
+ *                       or iPAddress SAN. Per RFC 7817 §3 rule 3 (RFC7817-3-7), a URI-ID MUST
+ *                       NOT be used by clients for server verification, so a conformant client
+ *                       finds no usable presented identifier matching the connection target and
+ *                       MUST reject (the URI-ID is not consulted for identity).
  */
-export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san" | "expired"): CertFixture {
+export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san" | "expired" | "uri-id"): CertFixture {
 	return {
 		key: fs.readFileSync(path.join(CERT_DIR, `${name}-key.pem`)),
 		cert: fs.readFileSync(path.join(CERT_DIR, `${name}-cert.pem`)),
