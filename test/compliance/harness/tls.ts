@@ -17,9 +17,11 @@ const CERT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "certs"
  *   'san-mismatch'    — SAN=wrong.example.test, CN=localhost (SAN mismatches, CN matches)
  *   'multi-san'       — SAN=other.example.test+localhost+127.0.0.1, CN=unrelated.example.test
  *                       (multiple names; only some match 127.0.0.1 — any-of-multiple rule)
- *   (expired-cert lands in Phase 3)
+ *   'expired'         — self-signed CA:TRUE, SAN=localhost+127.0.0.1, CN=localhost, but its
+ *                       validity window is Jan 1–2 2020 (already expired). Identity matches;
+ *                       a conformant client MUST still reject on expiry even when trusting it.
  */
-export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san"): CertFixture {
+export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san" | "expired"): CertFixture {
 	return {
 		key: fs.readFileSync(path.join(CERT_DIR, `${name}-key.pem`)),
 		cert: fs.readFileSync(path.join(CERT_DIR, `${name}-cert.pem`)),

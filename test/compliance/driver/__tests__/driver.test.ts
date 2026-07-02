@@ -42,6 +42,20 @@ test("unimplemented verbs throw NotImplementedError", async () => {
 	await expect(driver.select("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
 });
 
+test("Phase 3 verbs (unauthenticate, compress) throw NotImplementedError", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.unauthenticate()).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.compress()).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+test("widened authenticate(mechanism, initialResponse?) still throws NotImplementedError", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.authenticate("PLAIN")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.authenticate("PLAIN", "AGZvbwBiYXI=")).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+});
+
 test("driver.logs captures client logger output (BYE/failed-connect path)", async () => {
 	// The client emits level:"error" / message:"Unable to connect to the server"
 	// when Session.start() fails. A BYE greeting is the cheapest way to provoke

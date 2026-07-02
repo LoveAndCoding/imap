@@ -108,8 +108,14 @@ export class ComplianceDriver {
 	public async login(_user: string, _pass: string): Promise<never> {
 		throw new NotImplementedError("LOGIN");
 	}
-	public async authenticate(_mechanism: string): Promise<never> {
+	public async authenticate(_mechanism: string, _initialResponse?: string): Promise<never> {
 		throw new NotImplementedError("AUTHENTICATE");
+	}
+	public async unauthenticate(): Promise<never> {
+		throw new NotImplementedError("UNAUTHENTICATE");
+	}
+	public async compress(): Promise<never> {
+		throw new NotImplementedError("COMPRESS");
 	}
 	public async logout(): Promise<never> {
 		throw new NotImplementedError("LOGOUT");
