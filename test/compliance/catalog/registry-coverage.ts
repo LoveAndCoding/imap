@@ -167,12 +167,41 @@ export const registryCoverage: RegistryEntry[] = [
 	},
 	{ capability: "REPLACE", status: "cataloged", source: "RFC8508", note: "REPLACE, UID REPLACE." },
 
-	// ---- PENDING — Phase 5 (search/sort/thread + change tracking) ----------
-	// CONDSTORE (RFC 7162), QRESYNC (RFC 7162), SORT / SORT=DISPLAY (RFC 5256/5957),
-	// THREAD (RFC 5256), ESEARCH (RFC 4731), ESORT (RFC 5267),
-	// SEARCHRES (RFC 5182), CONTEXT=SEARCH / CONTEXT=SORT (RFC 5267),
-	// FUZZY (RFC 6203), PARTIAL (RFC 9394), IDLE (RFC 2177),
-	// NOTIFY (RFC 5465), FILTERS (RFC 5466), WITHIN (RFC 5032).
+	// ---- PENDING — Phase 5 (search/sort/sync/events) ------------------------
+	// Itemized capability → source → surface map (17 tokens, 12 sources).
+	// COMMENTS until the Phase 5 wrap promotes them to live `cataloged` entries
+	// (promotion requires each module to carry requirements and at least one
+	// spec file to cite its testable ids — same pattern as the Phase 4 wrap).
+	//
+	// CONDSTORE             → RFC7162 — SELECT/EXAMINE ... (CONDSTORE); FETCH ... (CHANGEDSINCE n);
+	//                                   STORE ... (UNCHANGEDSINCE n); SEARCH MODSEQ; MODSEQ fetch item;
+	//                                   HIGHESTMODSEQ/NOMODSEQ/MODIFIED resp-codes; STATUS HIGHESTMODSEQ.
+	//                                   (RFC 7162 obsoletes RFC 4551.)
+	// QRESYNC               → RFC7162 — SELECT ... (QRESYNC (uidvalidity modseq [known-uids]));
+	//                                   VANISHED / VANISHED (EARLIER) responses; UID FETCH ... (VANISHED).
+	//                                   (RFC 7162 obsoletes RFC 5162.)
+	// SORT                  → RFC5256 — SORT (crit...) charset keys; UID SORT; * SORT response.
+	// SORT=DISPLAY          → RFC5957 — DISPLAYFROM/DISPLAYTO sort criteria.
+	// THREAD=ORDEREDSUBJECT → RFC5256 — THREAD ORDEREDSUBJECT charset keys; * THREAD response.
+	// THREAD=REFERENCES     → RFC5256 — THREAD REFERENCES charset keys; * THREAD response.
+	// ESEARCH               → RFC4731 — SEARCH RETURN (MIN MAX ALL COUNT); * ESEARCH response
+	//                                   (rev2-core overlap: RFC 9051 uses the ESEARCH result format
+	//                                   for core SEARCH — extraction adjudicates rev1-only tags).
+	// ESORT                 → RFC5267 — SORT RETURN (...).
+	// CONTEXT=SEARCH        → RFC5267 — SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM.
+	// CONTEXT=SORT          → RFC5267 — SORT RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM.
+	// SEARCHRES             → RFC5182 — SEARCH RETURN (SAVE); '$' marker in seq-set args
+	//                                   (rev2-core overlap: RFC 9051 core has SAVE + '$').
+	// SEARCH=FUZZY          → RFC6203 — SEARCH FUZZY <key>; RELEVANCY sort/return.
+	// PARTIAL               → RFC9394 — SEARCH RETURN (PARTIAL m:n); FETCH ... (PARTIAL m:n) context;
+	//                                   * ESEARCH ... PARTIAL acceptance.
+	// IDLE                  → RFC2177 — IDLE → + → bare DONE flow
+	//                                   (rev2-core overlap: RFC 9051 §6.3.13 folds IDLE into core).
+	// NOTIFY                → RFC5465 — NOTIFY SET/NONE (events); unsolicited event streams;
+	//                                   * OK [NOTIFICATIONOVERFLOW].
+	// FILTERS               → RFC5466 — filter definitions used within NOTIFY/SEARCH.
+	// WITHIN                → RFC5032 — SEARCH OLDER n / YOUNGER n
+	//                                   (rev2-core overlap: RFC 9051 core has OLDER/YOUNGER).
 	//
 	// ---- PENDING — Phase 6 (i18n + misc + vendor + registry completion) ----
 	// UTF8=ONLY (RFC 6855), LANGUAGE (RFC 5255), I18NLEVEL=1 / I18NLEVEL=2 (RFC 5255),
