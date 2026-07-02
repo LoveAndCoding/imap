@@ -38,6 +38,46 @@ export interface AppendOptions {
 }
 
 /**
+ * Options carried by SEARCH-family commands (SEARCH, UID SEARCH). Defined once
+ * so the scripted wire form stays meaningful once these verbs are implemented.
+ *  - `return`: RETURN result options — ESEARCH MIN/MAX/ALL/COUNT (RFC 4731),
+ *    SAVE (RFC 5182 SEARCHRES), PARTIAL m:n (RFC 9394), UPDATE/CONTEXT (RFC 5267).
+ *  - `charset`: the optional CHARSET specification.
+ */
+export interface SearchOptions {
+	return?: string[];
+	charset?: string;
+}
+
+/**
+ * Options carried by SELECT/EXAMINE (RFC 7162 CONDSTORE/QRESYNC parameters).
+ *  - `condstore`: append the `(CONDSTORE)` select parameter.
+ *  - `qresync`: append `(QRESYNC (uidvalidity modseq [known-uids]))`.
+ */
+export interface SelectOptions {
+	condstore?: boolean;
+	qresync?: { uidvalidity: number; modseq: bigint; knownUids?: string };
+}
+
+/**
+ * Options carried by FETCH/UID FETCH (RFC 7162 modifiers).
+ *  - `changedSince`: append the `(CHANGEDSINCE n)` modifier.
+ *  - `vanished`: append the `VANISHED` modifier (UID FETCH under QRESYNC).
+ */
+export interface FetchOptions {
+	changedSince?: bigint;
+	vanished?: boolean;
+}
+
+/**
+ * Options carried by STORE/UID STORE (RFC 7162 CONDSTORE modifier).
+ *  - `unchangedSince`: append the `(UNCHANGEDSINCE n)` modifier.
+ */
+export interface StoreOptions {
+	unchangedSince?: bigint;
+}
+
+/**
  * Thin adapter between compliance tests and the client's public API.
  * RULE: zero protocol logic — translate calls and observations only.
  */
@@ -135,10 +175,10 @@ export class ComplianceDriver {
 	public async logout(): Promise<never> {
 		throw new NotImplementedError("LOGOUT");
 	}
-	public async select(_mailbox: string): Promise<never> {
+	public async select(_mailbox: string, _opts?: SelectOptions): Promise<never> {
 		throw new NotImplementedError("SELECT");
 	}
-	public async examine(_mailbox: string): Promise<never> {
+	public async examine(_mailbox: string, _opts?: SelectOptions): Promise<never> {
 		throw new NotImplementedError("EXAMINE");
 	}
 	public async create(
@@ -196,13 +236,18 @@ export class ComplianceDriver {
 	public async expunge(): Promise<never> {
 		throw new NotImplementedError("EXPUNGE");
 	}
-	public async search(_criteria: unknown): Promise<never> {
+	public async search(_criteria: unknown, _opts?: SearchOptions): Promise<never> {
 		throw new NotImplementedError("SEARCH");
 	}
-	public async fetch(_seq: string, _items: string[]): Promise<never> {
+	public async fetch(_seq: string, _items: string[], _opts?: FetchOptions): Promise<never> {
 		throw new NotImplementedError("FETCH");
 	}
-	public async store(_seq: string, _action: string, _flags: string[]): Promise<never> {
+	public async store(
+		_seq: string,
+		_action: string,
+		_flags: string[],
+		_opts?: StoreOptions,
+	): Promise<never> {
 		throw new NotImplementedError("STORE");
 	}
 	public async copy(_seq: string, _mailbox: string): Promise<never> {
@@ -211,13 +256,22 @@ export class ComplianceDriver {
 	public async move(_seq: string, _mailbox: string): Promise<never> {
 		throw new NotImplementedError("MOVE");
 	}
-	public async uidFetch(_seq: string, _items: string[]): Promise<never> {
+	public async uidFetch(
+		_seq: string,
+		_items: string[],
+		_opts?: FetchOptions,
+	): Promise<never> {
 		throw new NotImplementedError("UID FETCH");
 	}
-	public async uidSearch(_criteria: unknown): Promise<never> {
+	public async uidSearch(_criteria: unknown, _opts?: SearchOptions): Promise<never> {
 		throw new NotImplementedError("UID SEARCH");
 	}
-	public async uidStore(_seq: string, _action: string, _flags: string[]): Promise<never> {
+	public async uidStore(
+		_seq: string,
+		_action: string,
+		_flags: string[],
+		_opts?: StoreOptions,
+	): Promise<never> {
 		throw new NotImplementedError("UID STORE");
 	}
 	public async uidCopy(_seq: string, _mailbox: string): Promise<never> {
@@ -317,6 +371,42 @@ export class ComplianceDriver {
 		_messages: Array<{ message: Buffer; flags?: string[]; date?: string }>,
 	): Promise<never> {
 		throw new NotImplementedError("MULTIAPPEND");
+	}
+
+	// ---- Phase 5: search/sort/sync/events ----------------------------------
+	// SORT/THREAD (RFC 5256, +DISPLAY RFC 5957, +ESORT/CONTEXT RFC 5267)
+	public async sort(
+		_criteria: string[],
+		_searchKeys: unknown,
+		_charset?: string,
+	): Promise<never> {
+		throw new NotImplementedError("SORT");
+	}
+	public async uidSort(
+		_criteria: string[],
+		_searchKeys: unknown,
+		_charset?: string,
+	): Promise<never> {
+		throw new NotImplementedError("UID SORT");
+	}
+	public async thread(
+		_algorithm: string,
+		_searchKeys: unknown,
+		_charset?: string,
+	): Promise<never> {
+		throw new NotImplementedError("THREAD");
+	}
+	public async uidThread(
+		_algorithm: string,
+		_searchKeys: unknown,
+		_charset?: string,
+	): Promise<never> {
+		throw new NotImplementedError("UID THREAD");
+	}
+
+	// NOTIFY (RFC 5465)
+	public async notify(_spec: unknown): Promise<never> {
+		throw new NotImplementedError("NOTIFY");
 	}
 
 	// ------------------------------------------------------------------------

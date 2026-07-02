@@ -102,6 +102,26 @@ test("Phase 4 widened signatures still throw NotImplementedError", async () => {
 	);
 });
 
+test("Phase 5 verbs throw NotImplementedError", async () => {
+	const driver = new ComplianceDriver();
+	await expect(driver.sort(["DATE"], ["ALL"])).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidSort(["DATE"], ["ALL"], "UTF-8")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.thread("REFERENCES", ["ALL"])).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidThread("ORDEREDSUBJECT", ["ALL"], "US-ASCII")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.notify({ set: "NONE" })).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+test("Phase 5 widened signatures still throw NotImplementedError", async () => {
+	const driver = new ComplianceDriver();
+	await expect(driver.search(["ALL"], { return: ["MIN", "MAX"] })).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.select("INBOX", { condstore: true })).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(
+		driver.select("INBOX", { qresync: { uidvalidity: 67890007, modseq: 90060115194045000n } }),
+	).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n })).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.store("1", "+FLAGS", ["\\Seen"], { unchangedSince: 320162338n })).rejects.toBeInstanceOf(NotImplementedError);
+});
+
 test("driver.logs captures client logger output (BYE/failed-connect path)", async () => {
 	// The client emits level:"error" / message:"Unable to connect to the server"
 	// when Session.start() fails. A BYE greeting is the cheapest way to provoke

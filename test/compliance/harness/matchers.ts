@@ -27,6 +27,28 @@ export function isValidTag(tag: string): boolean {
 }
 
 /**
+ * Matches a BARE (tagless) line exactly — e.g. the IDLE terminator `DONE`
+ * (RFC 2177 / RFC 9051 §6.3.13), whose continuation-ending line carries no
+ * tag. Comparison is case-insensitive (ABNF string literals, RFC 5234 §2.3)
+ * but otherwise exact: a tagged line ('a1 DONE'), trailing whitespace, or any
+ * other content fails.
+ *
+ * A bare-line match returns no `tag`, so the harness records nothing in
+ * commandTags/commandLines and a subsequent reply() step still answers with
+ * the tag of the last TAGGED command (the IDLE itself) — exactly the framing
+ * IDLE requires.
+ */
+export function bareLine(text: string): LineMatcher {
+	return {
+		description: `bare line '${text}'`,
+		match(line: string): MatchResult {
+			if (line.toUpperCase() === text.toUpperCase()) return { ok: true };
+			return { ok: false, reason: `expected bare line '${text}', got '${line}'` };
+		},
+	};
+}
+
+/**
  * Matches `<tag> SP <verb>[ SP <args>]`. Verb is case-insensitive; pass a
  * RegExp verb to match alternatives. Tag syntax is always validated.
  *

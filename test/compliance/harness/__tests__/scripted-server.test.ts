@@ -1,8 +1,8 @@
 import * as net from "node:net";
 import { afterEach, expect, test } from "vitest";
 
-import { command } from "../matchers";
-import { close, expectLine, send } from "../script";
+import { bareLine, command } from "../matchers";
+import { close, expectLine, reply, send } from "../script";
 import { ScriptedServer } from "../scripted-server";
 
 let server: ScriptedServer | undefined;
@@ -137,6 +137,63 @@ test("records an ordinary literal ({n}) flagged non-binary", async () => {
 	expect(server.commandLines).toHaveLength(1);
 	expect(server.commandLines[0].binary).toEqual([false]);
 	sock.destroy();
+});
+
+test("matches a bare (tagless) DONE line in an IDLE continuation flow", async () => {
+	// IDLE (RFC 2177 / RFC 9051 §6.3.13) ends its continuation with a BARE line:
+	// `C: a1 IDLE` → `S: + idling` → `C: DONE` (no tag). This self-test pins the
+	// harness capability the Phase 5 IDLE spec batch relies on:
+	//  (1) expectLine() accepts any LineMatcher, so bareLine("DONE") matches a
+	//      tagless line with no harness change;
+	//  (2) a tagless match records NOTHING in commandTags/commandLines (doExpect
+	//      only pushes when result.tag is set) — asserted below so a behavior
+	//      change is caught;
+	//  (3) lastTag survives the tagless match, so reply("OK done") answers with
+	//      the IDLE command's own tag — exactly the framing IDLE requires.
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("IDLE", { args: null })),
+			send("+ idling\r\n"),
+			expectLine(bareLine("DONE")),
+			reply("OK done"),
+			close(),
+		],
+	]);
+	const sock = await rawConnect(server.port);
+	const rx = collect(sock);
+	sock.write("a1 IDLE\r\n");
+	// Wait for the continuation request before terminating the idle, as a real
+	// client would (no fixed sleeps — resolve on the actual data event).
+	await new Promise<void>((resolve) => {
+		const check = () => {
+			if (rx.data().includes("+ idling\r\n")) resolve();
+			else sock.once("data", check);
+		};
+		check();
+	});
+	sock.write("DONE\r\n");
+	const outcome = await server.outcome();
+	expect(outcome.ok).toBe(true);
+	await new Promise((r) => sock.once("close", r));
+	// The reply used the IDLE command's tag even though DONE carried none.
+	expect(rx.data()).toContain("a1 OK done\r\n");
+	// The tagless DONE line is NOT recorded: only the tagged IDLE command is.
+	expect(server.commandTags).toEqual(["a1"]);
+	expect(server.commandLines).toHaveLength(1);
+	expect(server.commandLines[0].verb).toBe("IDLE");
+});
+
+test("bare-line matcher rejects a tagged line and a wrong bare line", async () => {
+	// Guard against a loose self-actualizing matcher: bareLine("DONE") must NOT
+	// match a plausible wrong wire form (a TAGGED DONE, or some other bare line).
+	const m = bareLine("DONE");
+	expect(m.match("DONE").ok).toBe(true);
+	expect(m.match("done").ok).toBe(true); // ABNF string literals are case-insensitive (RFC 5234)
+	expect(m.match("a1 DONE").ok).toBe(false);
+	expect(m.match("DONE ").ok).toBe(false);
+	expect(m.match("NOOP").ok).toBe(false);
 });
 
 test("runs multiple sequential connection scripts", async () => {
