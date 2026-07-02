@@ -247,7 +247,15 @@ const rfc7817: CatalogModule = {
 				"partial-label wildcard SAN (e.g. 'f*o.example.test') MUST NOT be accepted as a " +
 				"match for a hostname it would only fuzzily resemble; this sub-clause has no " +
 				"RFC3501-11.1-9 counterpart (that entry only recorded the whole-label wildcard " +
-				"MAY) and is the reason this entry is not marked as a pure duplicate.",
+				"MAY) and is the reason this entry is not marked as a pure duplicate. " +
+				"Coverage caveat (verified against test/compliance/specs/ext/identity-7817.test.ts): " +
+				"only the DNS-ID-support-REQUIRED leg (rule 1) is exercised today, via the positive " +
+				"witness that the client accepts a matching dNSName SAN. The independently-testable " +
+				"wildcard-fragment prohibition (rule 5) is NOT exercised — it needs a partial-label " +
+				"wildcard DNS-hostname fixture this loopback harness does not carry (same environment " +
+				"limit as RFC9525-6.3-3/-4/-5), so the 'independently testable' wildcard-fragment " +
+				"framing above is aspirational, not currently realized. The URI-ID prohibition " +
+				"sub-clause is covered separately by RFC7817-3-7.",
 		},
 		{
 			id: "RFC7817-3-7",
@@ -269,7 +277,20 @@ const rfc7817: CatalogModule = {
 				"uniformResourceIdentifier entry matching the connection target MUST NOT be " +
 				"accepted as a name match by a conforming client. No RFC 3501/RFC 9525 " +
 				"counterpart exists — URI-ID is new terminology from RFC 6125 with no prior IMAP " +
-				"treatment, so this entry has no primary/duplicate elsewhere in the catalog.",
+				"treatment, so this entry has no primary/duplicate elsewhere in the catalog. " +
+				"Falsifiability caveat (verified against test/compliance/specs/ext/identity-7817.test.ts " +
+				"and Node's TLS verifier behaviour): the URI-ID-only fixture is rejected because Node's " +
+				"identity check ignores uniformResourceIdentifier SANs and finds NO usable dNSName/" +
+				"iPAddress, so the connection fails on 'no matching identity' regardless of whether the " +
+				"client deliberately declines to consult the URI-ID. A client that never inspects " +
+				"URI-IDs and a client that inspects-then-correctly-rejects them are wire-" +
+				"indistinguishable here; the test witnesses the REQUIRED outcome (URI-ID not accepted " +
+				"as identity) but is only weakly falsifiable for the specific prohibition — it would " +
+				"catch a client that WRONGLY treated the URI-ID as a match, but cannot distinguish the " +
+				"two compliant paths. A strong-falsifiability variant would need a fixture whose URI-ID " +
+				"names the connection target while a competing (mismatching) dNSName is also present, " +
+				"proving the client ignored the URI-ID rather than the dNSName; that fixture does not " +
+				"exist in this harness.",
 		},
 		// ── Appendix A: Changes to RFC 3501 §11.1 ────────────────────────────────
 		{

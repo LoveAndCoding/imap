@@ -36,10 +36,19 @@
  *   certification-path validation includes the validity window. The expired
  *   fixture presents a cert whose identity matches (SAN=localhost/127.0.0.1)
  *   but whose validity window is Jan 2020 (expired). Even with the CA trusted,
- *   a conformant client MUST reject it. Node's default TLS chain validation
- *   catches expiry (CERT_HAS_EXPIRED) at the handshake, before any hostname
- *   check, so the client — which delegates chain validation to Node — rejects.
- *   Genuine PASS: the client correctly refuses an expired certificate.
+ *   a conformant client MUST reject it — and, being an automated client, MUST
+ *   do so gracefully (surface the rejection as a failed connect), not hang.
+ *   OBSERVED: the client does not gracefully reject an expired certificate; the
+ *   connect neither returns false within its timeout nor surfaces the TLS error,
+ *   so the test hangs until the vitest test-timeout fires (an unannotated
+ *   failure the reporter classifies as a violation via Fix 3). Annotated
+ *   'violation'. This is the SAME underlying defect as the hostname-mismatch
+ *   (RFC8314-3.2-1) and URI-ID (RFC7817-3-7) hangs — the client cannot surface
+ *   ANY TLS rejection as a graceful connect-failure — but is cited under its
+ *   distinct PKIX/expiry duty because the expired fixture isolates a distinct
+ *   rejection cause (a past validity window, identity otherwise matching); when
+ *   the client is fixed to surface rejections these tests diverge on their
+ *   distinct triggers.
  *
  * RFC8314-5.2-4 / RFC8314-5.1-7 (no non-discovery / no-credentials before TLS):
  *   observable prohibition. A client configured for STARTTLS MUST NOT issue any
@@ -141,14 +150,17 @@ complianceTest(
 // ── RFC8314-5.3-1: MUST validate TLS server certificates per RFC 7817 + PKIX
 // PKIX (RFC 5280) certification-path validation includes the validity window.
 // The expired fixture has a MATCHING identity but an expired validity window;
-// even with the CA trusted, a conformant client MUST reject it. Node's default
-// chain validation catches CERT_HAS_EXPIRED at the handshake → the client
-// (delegating chain validation to Node) rejects. Genuine PASS.
+// even with the CA trusted, a conformant client MUST reject it — gracefully,
+// as a failed connect. OBSERVED: the client does not surface the rejection; it
+// hangs until the test-timeout fires (reporter counts this as a violation via
+// Fix 3). Annotated 'violation' — same shared TLS-rejection defect as the
+// hostname-mismatch/URI-ID hangs, isolated here to the expiry cause.
 complianceTest(
 	{
 		reqs: ["RFC8314-5.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client rejects an expired server certificate (PKIX certification-path validation)",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
