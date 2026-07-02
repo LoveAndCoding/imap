@@ -382,3 +382,75 @@ extraction demonstrably followed it: the rev2 ALERT trio was extracted `testable
 logger mechanism rather than tagged `ui-presentation`, and RFC9051-2.3.1.1-1 was tagged
 `cross-session` only after the multi-connection mechanism was evaluated and rebutted in its
 own rationale. No taxonomy additions are needed — all 56 entries fit the existing ten themes.
+
+---
+
+# Phase 3 Addition — `compressed-framing-opacity` (P3-E)
+
+**Date:** 2026-07-01 (Phase 3, Task 10 / P3-E)
+**Trigger:** the RFC 4978 (COMPRESS=DEFLATE) extraction surfaced three untestable
+entries — RFC4978-3-2 (MUST compress the first command after a COMPRESS OK), RFC4978-3-4
+(send-side COMPRESS→SASL→TLS layering order), and RFC4978-3-5 (receive-side reverse order)
+— whose reason-for-untestability none of the existing ten themes captured. They were
+extracted under an explicit `environment-limit` **placeholder** with each rationale stating
+so, pending this registration.
+
+## The eleventh theme
+
+`compressed-framing-opacity` — **INSTRUMENTAL.** *The duty's observable core is wire
+content that only exists once a required codec (here, DEFLATE) is applied, and the harness
+lacks that codec, so the bytes that carry the pass/fail signal cannot be produced or
+decoded.*
+
+## Why a new theme rather than an existing one
+
+The Phase 1/Phase 2 analyses are careful to distinguish **intrinsic** untestability (no
+black-box observation can exist at any harness sophistication) from **instrumental** (an
+observable core exists but our machinery lacks a capture mechanism that could legitimately
+exist). Mislabeling an instrumental gap as intrinsic is the exact error the taxonomy guards
+against. The three COMPRESS entries are instrumental, and none of the pre-existing themes
+fits:
+
+- **NOT `environment-limit`** — that theme is intrinsic *under environment*: the runtime/OS
+  genuinely cannot perform the mechanism (RC4/3DES removed from OpenSSL, RFC 7465/8996). Here
+  a DEFLATE codec is readily available (Node's built-in `zlib.inflateRaw`) and could be wired
+  into the driver's server-scripting side. The gap is a **driver capability gap**, not an
+  environment ceiling. This is the placeholder that was used purely to satisfy the schema at
+  extraction time; the S4 spec review (P3-D) independently confirmed the retag is correct.
+- **NOT `internal-decision`** — that theme is about implementation choices with **no wire
+  signature at all**. Compressed framing *has* a wire signature; the driver simply cannot
+  decode it today.
+- **NOT `out-of-band`** — that theme is about conduct outside the protocol. Compression
+  framing is squarely in-protocol.
+
+## Members (3) and their dependency structure
+
+| Entry | Level | Unblocked by |
+|---|---|---|
+| RFC4978-3-2 (compress first command after OK) | MUST | a DEFLATE codec alone |
+| RFC4978-3-4 (send-side layering order) | MUST | DEFLATE codec **and** a negotiated SASL security layer |
+| RFC4978-3-5 (receive-side reverse order) | MUST | DEFLATE codec **and** a negotiated SASL security layer |
+
+**Compound dependency (3-4 / 3-5).** Verifying layering *order* requires peeling the
+outer TLS/SASL wrapper and then inflating the DEFLATE payload beneath it. Neither the client
+library nor the harness implements a SASL **security layer** (only the SASL auth exchange is
+in scope), so adding a codec alone makes 3-2 testable but leaves 3-4/3-5 blocked on
+SASL-layer machinery as well. Both gaps remain instrumental — the layered bytes exist on the
+wire and are decodable in principle with the right layer secrets; there is **no deeper
+black-box barrier**. Recorded per-entry so a future re-evaluation does not assume a codec
+alone suffices.
+
+## Effect on counts
+
+The combined untestable population becomes **59** entries across **11** themes (56 from
+Phases 1–2 + 3 from RFC 4978). The three entries move **out of** `environment-limit`
+(which returns to its 2 rev1-only members, RFC3501-11.1-1/-2) and **into**
+`compressed-framing-opacity` (3 members, dual-profile rev1+rev2). No Phase 1/Phase 2 verdict
+changes; this is a pure re-home of placeholder-tagged entries onto their honest theme plus
+the schema registration in `test/compliance/catalog/types.ts` (`UNTESTABLE_THEMES`).
+
+## Forward-looking
+
+First re-evaluation candidate for the whole theme: wiring `zlib` into the ScriptedServer's
+scripting side (unblocks 3-2). A SASL-security-layer capability in both the client and the
+harness would additionally unblock 3-4/3-5.

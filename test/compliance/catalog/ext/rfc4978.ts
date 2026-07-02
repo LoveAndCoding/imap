@@ -44,8 +44,7 @@ const rfc4978: CatalogModule = {
 		"because the duty lacks a wire signature in principle (a real DEFLATE-aware driver " +
 		"could inflate the stream and assert on the plaintext it recovers), but because this " +
 		"harness's instrumentation stops at the codec boundary. This is an instrumental gap, " +
-		"not an intrinsic one. NEW THEME PROPOSED (not yet registered — schema is out of " +
-		"scope for this extraction): 'compressed-framing-opacity', for 'the duty's observable " +
+		"not an intrinsic one. This is the theme 'compressed-framing-opacity', for 'the duty's observable " +
 		"core is wire content that only exists once a required codec is applied, and the " +
 		"harness lacks that codec.' No existing theme in " +
 		"docs/superpowers/specs/2026-06-12-untestability-themes.md captures this precisely — " +
@@ -59,12 +58,14 @@ const rfc4978: CatalogModule = {
 		"rejected: that theme is about implementation choices with NO wire signature at all, " +
 		"whereas compressed framing has a wire signature, just one the current driver cannot " +
 		"decode. 'out-of-band' was rejected: that theme is about conduct outside the protocol " +
-		"entirely, whereas this is squarely in-protocol. Pending the taxonomy update, entries " +
-		"3-2, 3-4, and 3-5 below are tagged with the closest VALID existing theme, " +
-		"'environment-limit', purely so the catalog schema validates today; each entry's own " +
-		"untestableRationale states plainly that this is a placeholder and that the entry is " +
-		"the first re-evaluation candidate once 'compressed-framing-opacity' (or an equivalent) " +
-		"is added to the taxonomy.",
+		"entirely, whereas this is squarely in-protocol. THEME REGISTERED at Phase 3 (P3-E): " +
+		"entries 3-2, 3-4, and 3-5 below are tagged 'compressed-framing-opacity' in the " +
+		"taxonomy and in the schema's UNTESTABLE_THEMES set. Per-entry: 3-2 is unblocked by " +
+		"adding a DEFLATE codec (Node zlib) to the driver's server-scripting side; 3-4 and " +
+		"3-5 carry a compound dependency, additionally needing a negotiated SASL security " +
+		"layer that neither the client nor the harness implements, so a codec alone does not " +
+		"unblock them. Each entry's untestableRationale records its specific dependency and " +
+		"names it as the first re-evaluation candidate for the theme.",
 	requirements: [
 		{
 			id: "RFC4978-1-1",
@@ -129,23 +130,21 @@ const rfc4978: CatalogModule = {
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "untestable",
-			untestableTheme: "environment-limit",
+			untestableTheme: "compressed-framing-opacity",
 			untestableRationale:
-				"PLACEHOLDER THEME (see module extractionNote): the honest theme for this " +
-				"entry is a proposed-but-unregistered 'compressed-framing-opacity' (harness " +
-				"lacks a required wire-format codec); 'environment-limit' is used only " +
-				"because it is the closest theme that validates against today's schema. The " +
-				"observable core of this duty is the byte-level content of the client's " +
+				"The observable core of this duty is the byte-level content of the client's " +
 				"first command after the tagged COMPRESS OK: a compliant client's bytes are " +
 				"DEFLATE-compressed octets, a non-compliant client's bytes are plaintext IMAP. " +
 				"The compliance driver has no DEFLATE/zlib codec on its server-scripting side, " +
 				"so it cannot inflate what it receives to verify a compressed frame arrived, " +
 				"nor can it distinguish a compressed frame from noise. This is an instrumental " +
-				"gap (a DEFLATE-aware driver could observe this directly, unlike a genuine " +
-				"'environment-limit' entry) documented as a harness limitation, not an " +
-				"intrinsic property of the duty or the environment. First re-evaluation " +
-				"candidate once the driver gains a DEFLATE codec or the taxonomy gains the " +
-				"proposed theme.",
+				"gap, not intrinsic: a DEFLATE-aware driver (Node's built-in zlib is readily " +
+				"available) could inflateRaw the stream and assert on the recovered plaintext, " +
+				"which is exactly why the theme is 'compressed-framing-opacity' and not " +
+				"'environment-limit' (the latter is reserved for mechanisms the runtime " +
+				"genuinely cannot perform, e.g. RC4/3DES removed from OpenSSL). A single added " +
+				"codec on the driver's server-scripting side unblocks this entry; it is the " +
+				"first re-evaluation candidate for the theme.",
 		},
 		{
 			id: "RFC4978-3-3",
@@ -182,20 +181,24 @@ const rfc4978: CatalogModule = {
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "untestable",
-			untestableTheme: "environment-limit",
+			untestableTheme: "compressed-framing-opacity",
 			untestableRationale:
-				"PLACEHOLDER THEME (see module extractionNote): the honest theme is the " +
-				"proposed 'compressed-framing-opacity'; 'environment-limit' stands in only " +
-				"because it validates against today's schema. Verifying this layering order " +
-				"requires decoding the outermost (TLS and/or SASL security layer) wrapper and " +
-				"then inflating the DEFLATE payload beneath it to confirm compression happened " +
-				"before signing/encryption rather than after. The harness has no DEFLATE " +
-				"codec, so even where it can terminate TLS or a SASL security layer it cannot " +
-				"verify what lies beneath is a compressed stream in the mandated position. " +
-				"Instrumental gap, not intrinsic — a DEFLATE-aware driver with access to the " +
-				"negotiated layer secrets could peel each layer in order and assert on the " +
-				"recovered plaintext. First re-evaluation candidate once the driver gains a " +
-				"DEFLATE codec or the taxonomy gains the proposed theme.",
+				"Verifying this layering order requires decoding the outermost (TLS and/or " +
+				"SASL security layer) wrapper and then inflating the DEFLATE payload beneath " +
+				"it to confirm compression happened before signing/encryption rather than " +
+				"after. The harness has no DEFLATE codec, so even where it can terminate TLS " +
+				"or a SASL security layer it cannot verify what lies beneath is a compressed " +
+				"stream in the mandated position. Instrumental gap, not intrinsic — a " +
+				"DEFLATE-aware driver with access to the negotiated layer secrets could peel " +
+				"each layer in order and assert on the recovered plaintext. COMPOUND " +
+				"DEPENDENCY (distinguishing this entry from 3-2): unblocking it requires not " +
+				"only the DEFLATE codec but ALSO a negotiated SASL security layer, which " +
+				"neither the client library nor the harness implements — so adding a codec " +
+				"alone makes 3-2 testable but leaves 3-4/3-5 still blocked on SASL-layer " +
+				"machinery. Both gaps are instrumental (the layered bytes exist on the wire " +
+				"and are decodable in principle with the right layer secrets); there is no " +
+				"deeper black-box barrier. First re-evaluation candidate for the theme once " +
+				"both the codec and a SASL security layer exist.",
 		},
 		{
 			id: "RFC4978-3-5",
@@ -207,18 +210,18 @@ const rfc4978: CatalogModule = {
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "untestable",
-			untestableTheme: "environment-limit",
+			untestableTheme: "compressed-framing-opacity",
 			untestableRationale:
-				"PLACEHOLDER THEME (see module extractionNote): the honest theme is the " +
-				"proposed 'compressed-framing-opacity'; 'environment-limit' stands in only " +
-				"because it validates against today's schema. The receive-side counterpart of " +
-				"3-4: the client must undo TLS, then SASL, then DEFLATE, in that order, when " +
-				"processing server data. Confirming this requires the harness to construct a " +
-				"correctly-layered compressed-then-signed-then-encrypted server response and " +
-				"observe that the client successfully decodes it, which in turn requires a " +
-				"DEFLATE codec the harness does not have. Instrumental gap, same as 3-4. " +
-				"First re-evaluation candidate once the driver gains a DEFLATE codec or the " +
-				"taxonomy gains the proposed theme.",
+				"The receive-side counterpart of 3-4: the client must undo TLS, then SASL, " +
+				"then DEFLATE, in that order, when processing server data. Confirming this " +
+				"requires the harness to construct a correctly-layered " +
+				"compressed-then-signed-then-encrypted server response and observe that the " +
+				"client successfully decodes it, which in turn requires a DEFLATE codec the " +
+				"harness does not have. Instrumental gap, same as 3-4 — and carrying the same " +
+				"COMPOUND DEPENDENCY: it needs both the DEFLATE codec and a negotiated SASL " +
+				"security layer, so a codec alone does not unblock it. No deeper black-box " +
+				"barrier. First re-evaluation candidate for the theme once both the codec and " +
+				"a SASL security layer exist.",
 		},
 		{
 			id: "RFC4978-5-1",

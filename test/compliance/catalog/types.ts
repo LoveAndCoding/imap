@@ -63,6 +63,7 @@ const UNTESTABLE_THEMES: ReadonlySet<string> = new Set([
 	"out-of-band",
 	"environment-limit",
 	"cross-session",
+	"compressed-framing-opacity",
 ]);
 
 export function validateCatalog(modules: CatalogModule[]): string[] {
