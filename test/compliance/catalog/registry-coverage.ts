@@ -64,12 +64,35 @@ export const registryCoverage: RegistryEntry[] = [
 	{ capability: "UTF8=ACCEPT", status: "cataloged", source: "RFC6855" },
 
 	// ---- PENDING — Phase 4 (mailbox/listing/metadata + message ops) --------
-	// UIDPLUS (RFC 4315), MOVE (RFC 6851), NAMESPACE (RFC 2342),
-	// LIST-EXTENDED (RFC 5258), LIST-STATUS (RFC 5819), SPECIAL-USE (RFC 6154),
-	// CREATE-SPECIAL-USE (RFC 6154), ACL (RFC 4314), QUOTA / QUOTA=* (RFC 9208/2087),
-	// METADATA / METADATA-SERVER (RFC 5464), SAVEDATE (RFC 8514),
-	// OBJECTID (RFC 8474), MULTIAPPEND (RFC 3502), CATENATE (RFC 4469),
-	// BINARY (RFC 3516), REPLACE (RFC 8508).
+	// The Phase 4 catalog modules now exist (catalog/ext/rfc*.ts, registered in
+	// index.ts) but are still empty skeletons — so these tokens remain COMMENTS,
+	// not live `cataloged` entries. "cataloged" means "has requirements"; the
+	// Phase 4 wrap (Task 10 Step 2) promotes each token below to a live
+	// `{ capability, status: "cataloged", source }` entry once its module carries
+	// requirements. The itemized capability → source → command/response surface
+	// map makes that promotion mechanical:
+	//
+	//   UIDPLUS            → RFC4315  UID EXPUNGE; APPENDUID/COPYUID/UIDNOTSTICKY resp-codes
+	//   MOVE               → RFC6851  MOVE, UID MOVE
+	//   NAMESPACE          → RFC2342  NAMESPACE cmd + * NAMESPACE response
+	//   LIST-EXTENDED      → RFC5258  LIST selection opts, RETURN (...) opts, multiple patterns
+	//   LIST-STATUS        → RFC5819  LIST ... RETURN (STATUS (...))
+	//   SPECIAL-USE        → RFC6154  \Sent \Drafts \Junk \Trash \Archive \Flagged \All;
+	//                                 LIST ... RETURN (SPECIAL-USE)
+	//   CREATE-SPECIAL-USE → RFC6154  CREATE ... (USE (...))
+	//   ACL                → RFC4314  SETACL/DELETEACL/GETACL/LISTRIGHTS/MYRIGHTS;
+	//                                 ACL/MYRIGHTS/LISTRIGHTS responses
+	//   QUOTA              → RFC9208  GETQUOTA/GETQUOTAROOT/SETQUOTA; QUOTA/QUOTAROOT responses
+	//   QUOTA=RES-*        → RFC9208  per-resource capability tokens (STORAGE, MESSAGE, ...)
+	//   METADATA           → RFC5464  GETMETADATA/SETMETADATA (mailbox); METADATA response
+	//   METADATA-SERVER    → RFC5464  GETMETADATA/SETMETADATA "" (server-entry variant)
+	//   SAVEDATE           → RFC8514  FETCH SAVEDATE; SAVEDATE fetch item
+	//   OBJECTID           → RFC8474  FETCH EMAILID/THREADID; MAILBOXID resp-code
+	//   MULTIAPPEND        → RFC3502  APPEND with multiple message literals
+	//   CATENATE           → RFC4469  APPEND ... CATENATE (TEXT {n} URL "...")
+	//   BINARY             → RFC3516  FETCH BINARY[]/BINARY.SIZE[]; APPEND ~{n} literal8;
+	//                                 BINARY/UNKNOWN-CTE resp-codes
+	//   REPLACE            → RFC8508  REPLACE, UID REPLACE
 	//
 	// ---- PENDING — Phase 5 (search/sort/thread + change tracking) ----------
 	// CONDSTORE (RFC 7162), QRESYNC (RFC 7162), SORT / SORT=DISPLAY (RFC 5256/5957),
