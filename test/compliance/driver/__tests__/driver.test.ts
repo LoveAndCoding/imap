@@ -56,6 +56,52 @@ test("widened authenticate(mechanism, initialResponse?) still throws NotImplemen
 	);
 });
 
+test("Phase 4 verbs throw NotImplementedError", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.uidExpunge("1:*")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidMove("1", "Dest")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.replace("1", "Dest", Buffer.from("x"))).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.uidReplace("1", "Dest", Buffer.from("x"))).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.setacl("INBOX", "alice", "lrs")).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.deleteacl("INBOX", "alice")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.getacl("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.listrights("INBOX", "alice")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.myrights("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.getquota("")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.getquotaroot("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.setquota("", [{ resource: "STORAGE", limit: 512 }])).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.getmetadata("INBOX", ["/private/comment"])).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(
+		driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "hi" }]),
+	).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.multiAppend("INBOX", [{ message: Buffer.from("a") }])).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+});
+
+test("Phase 4 widened signatures still throw NotImplementedError", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.list("", "*", { returnOptions: ["SPECIAL-USE"] })).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.create("Archive", { useAttributes: ["\\Archive"] })).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.append("INBOX", Buffer.from("x"), { binary: true })).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+});
+
 test("driver.logs captures client logger output (BYE/failed-connect path)", async () => {
 	// The client emits level:"error" / message:"Unable to connect to the server"
 	// when Session.start() fails. A BYE greeting is the cheapest way to provoke

@@ -87,6 +87,58 @@ test("records a transcript of both directions", async () => {
 	sock.destroy();
 });
 
+test("records a literal8 (~{n}) marker, flagged binary, in commandLines[].literals", async () => {
+	// BINARY (RFC 3516) APPENDs carry a literal8: `~{n}` (or non-sync `~{n+}`)
+	// instead of `{n}`. The harness must record the payload octets in
+	// commandLines[i].literals just like an ordinary literal, and distinguish
+	// the literal8 form via a per-literal `binary` flag so the BINARY spec batch
+	// (Task 9 / M4) can assert the client emitted the `~`-prefixed form.
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("APPEND")),
+			send("a1 OK APPEND completed\r\n"),
+			close(),
+		],
+	]);
+	const sock = await rawConnect(server.port);
+	// A synchronizing literal8: the harness auto-sends "+ Ready" then consumes
+	// the 3 payload octets, and the trailing segment completes the logical line.
+	sock.write("a1 APPEND INBOX ~{3}\r\n");
+	sock.write("abc\r\n");
+	const outcome = await server.outcome();
+	expect(outcome.ok).toBe(true);
+	expect(server.commandLines).toHaveLength(1);
+	const rec = server.commandLines[0];
+	expect(rec.literals).toHaveLength(1);
+	expect(rec.literals[0].toString("latin1")).toBe("abc");
+	expect(rec.binary).toEqual([true]);
+	sock.destroy();
+});
+
+test("records an ordinary literal ({n}) flagged non-binary", async () => {
+	// Contrast test: a plain `{n}` literal must record binary:false for that
+	// literal, so the binary flag actually discriminates literal8 from literal.
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("APPEND")),
+			send("a1 OK APPEND completed\r\n"),
+			close(),
+		],
+	]);
+	const sock = await rawConnect(server.port);
+	sock.write("a1 APPEND INBOX {3}\r\n");
+	sock.write("abc\r\n");
+	const outcome = await server.outcome();
+	expect(outcome.ok).toBe(true);
+	expect(server.commandLines).toHaveLength(1);
+	expect(server.commandLines[0].binary).toEqual([false]);
+	sock.destroy();
+});
+
 test("runs multiple sequential connection scripts", async () => {
 	server = await ScriptedServer.start();
 	server.arm([

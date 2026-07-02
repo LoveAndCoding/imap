@@ -45,12 +45,17 @@ class ConnectionRunner {
 	private segments: string[] = [];
 	private literalsBuf: Buffer[] = [];
 	private literalNonSync: boolean[] = [];
+	private literalBinary: boolean[] = [];
 	private literalRemaining = 0; // >0 while consuming literal octets
 	// Stash the completed literals until the expect step claims them
 	private lastLiterals: Buffer[] = [];
 	private lastNonSync: boolean[] = [];
+	private lastBinary: boolean[] = [];
 
-	private static readonly LITERAL_RE = /\{(\d+)(\+)?\}$/;
+	// Matches a trailing literal announcement: `{n}` / `{n+}` (ordinary literal)
+	// or `~{n}` / `~{n+}` (RFC 3516 literal8, carrying BINARY octets). The
+	// optional leading `~` is captured so the harness can flag the literal8 form.
+	private static readonly LITERAL_RE = /(~)?\{(\d+)(\+)?\}$/;
 	private static readonly MAX_LITERAL = 1024 * 1024;
 
 	constructor(
@@ -150,7 +155,8 @@ class ConnectionRunner {
 
 		const lit = ConnectionRunner.LITERAL_RE.exec(segment);
 		if (lit) {
-			const size = Number(lit[1]);
+			const binary = lit[1] === "~";
+			const size = Number(lit[2]);
 			if (size > ConnectionRunner.MAX_LITERAL) {
 				const w = this.waiting;
 				this.waiting = undefined;
@@ -160,9 +166,10 @@ class ConnectionRunner {
 			}
 			this.segments.push(segment);
 			this.literalsBuf.push(Buffer.alloc(0));
-			this.literalNonSync.push(lit[2] === "+");
+			this.literalNonSync.push(lit[3] === "+");
+			this.literalBinary.push(binary);
 			this.literalRemaining = size;
-			if (lit[2] !== "+") {
+			if (lit[3] !== "+") {
 				// Synchronizing literal: harness sends continuation automatically.
 				const cont = "+ Ready\r\n";
 				this.server.transcript.record("S", cont);
@@ -181,9 +188,11 @@ class ConnectionRunner {
 		const flat = this.segments.join("");
 		this.lastLiterals = this.literalsBuf;
 		this.lastNonSync = this.literalNonSync;
+		this.lastBinary = this.literalBinary;
 		this.segments = [];
 		this.literalsBuf = [];
 		this.literalNonSync = [];
+		this.literalBinary = [];
 
 		const w = this.waiting;
 		this.waiting = undefined;
@@ -235,8 +244,10 @@ class ConnectionRunner {
 		// never leak its payloads into the next tagged command's record.
 		const literals = this.lastLiterals;
 		const nonSync = this.lastNonSync;
+		const binary = this.lastBinary;
 		this.lastLiterals = [];
 		this.lastNonSync = [];
+		this.lastBinary = [];
 		if (result.tag) {
 			this.server.commandTags.push(result.tag);
 			this.server.commandLines.push({
@@ -245,6 +256,7 @@ class ConnectionRunner {
 				args: result.args ?? "",
 				literals,
 				nonSync,
+				binary,
 			});
 			this.lastTag = result.tag;
 		}
@@ -322,6 +334,12 @@ export class ScriptedServer {
 		args: string;
 		literals: Buffer[];
 		nonSync: boolean[];
+		/**
+		 * Per-literal flag: `true` when the literal was announced as an RFC 3516
+		 * literal8 (`~{n}` / `~{n+}`, carrying BINARY octets), `false` for an
+		 * ordinary `{n}` / `{n+}` literal. Parallel to `literals` / `nonSync`.
+		 */
+		binary: boolean[];
 	}> = [];
 
 	private netServer!: net.Server;

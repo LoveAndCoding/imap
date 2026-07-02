@@ -23,6 +23,21 @@ export interface ObservedEvent {
 }
 
 /**
+ * Options carried by APPEND-family commands (APPEND, REPLACE, UID REPLACE, and
+ * the per-message payload of MULTIAPPEND). Defined once and reused so the
+ * scripted wire form stays meaningful once these verbs are implemented.
+ *  - `flags` / `date`: the optional `(flags)` list and date-time (RFC 3501 §6.3.11).
+ *  - `binary`: emit the message as a literal8 `~{n}` (RFC 3516 BINARY APPEND).
+ *  - `catenate`: build the message from TEXT literals and IMAP URLs (RFC 4469).
+ */
+export interface AppendOptions {
+	flags?: string[];
+	date?: string;
+	binary?: boolean;
+	catenate?: Array<{ type: "TEXT"; message: Buffer } | { type: "URL"; url: string }>;
+}
+
+/**
  * Thin adapter between compliance tests and the client's public API.
  * RULE: zero protocol logic — translate calls and observations only.
  */
@@ -126,7 +141,10 @@ export class ComplianceDriver {
 	public async examine(_mailbox: string): Promise<never> {
 		throw new NotImplementedError("EXAMINE");
 	}
-	public async create(_mailbox: string): Promise<never> {
+	public async create(
+		_mailbox: string,
+		_opts?: { useAttributes?: string[] },
+	): Promise<never> {
 		throw new NotImplementedError("CREATE");
 	}
 	public async delete(_mailbox: string): Promise<never> {
@@ -141,14 +159,19 @@ export class ComplianceDriver {
 	public async unsubscribe(_mailbox: string): Promise<never> {
 		throw new NotImplementedError("UNSUBSCRIBE");
 	}
-	// NOTE: this signature exposes only reference + pattern — there is no surface
-	// for extended LIST selection/return options (RETURN (...), SPECIAL-USE, etc.).
-	// Consequently the option-prohibition tests RFC9051-6.3.9-5 (unadvertised
-	// option) and RFC9051-6.3.9-6 (duplicate option) can only ever pass VACUOUSLY
-	// when driven through this verb: a client with no options API cannot emit an
-	// option to be rejected. Making those two prohibitions genuinely falsifiable
-	// requires adding an options parameter here (e.g. list(ref, pattern, options)).
-	public async list(_ref: string, _pattern: string): Promise<never> {
+	// NOTE: the options surface for extended LIST now EXISTS on this signature —
+	// `selectOptions` (e.g. SUBSCRIBED, RECURSIVEMATCH), `returnOptions` (e.g.
+	// RETURN (STATUS (...) SPECIAL-USE CHILDREN)), and multiple `patterns` — so
+	// the option-prohibition tests RFC9051-6.3.9-5 (unadvertised option) and
+	// RFC9051-6.3.9-6 (duplicate option) are no longer vacuous by construction:
+	// a test CAN drive an option to be emitted. The verb itself remains
+	// unimplemented (throws NotImplementedError), so those tests currently
+	// self-actualize as unimplemented rather than passing vacuously.
+	public async list(
+		_ref: string,
+		_pattern: string,
+		_opts?: { selectOptions?: string[]; returnOptions?: string[]; patterns?: string[] },
+	): Promise<never> {
 		throw new NotImplementedError("LIST");
 	}
 	public async lsub(_ref: string, _pattern: string): Promise<never> {
@@ -157,7 +180,11 @@ export class ComplianceDriver {
 	public async status(_mailbox: string, _items: string[]): Promise<never> {
 		throw new NotImplementedError("STATUS");
 	}
-	public async append(_mailbox: string, _message: Buffer): Promise<never> {
+	public async append(
+		_mailbox: string,
+		_message: Buffer,
+		_opts?: AppendOptions,
+	): Promise<never> {
 		throw new NotImplementedError("APPEND");
 	}
 	public async check(): Promise<never> {
@@ -207,6 +234,89 @@ export class ComplianceDriver {
 	}
 	public async namespace(): Promise<never> {
 		throw new NotImplementedError("NAMESPACE");
+	}
+
+	// ---- Phase 4: mailbox/listing/metadata + message operations ------------
+	// UIDPLUS (RFC 4315) / MOVE (RFC 6851) / REPLACE (RFC 8508)
+	public async uidExpunge(_seq: string): Promise<never> {
+		throw new NotImplementedError("UID EXPUNGE");
+	}
+	public async uidMove(_seq: string, _mailbox: string): Promise<never> {
+		throw new NotImplementedError("UID MOVE");
+	}
+	public async replace(
+		_seq: string,
+		_mailbox: string,
+		_message: Buffer,
+		_opts?: AppendOptions,
+	): Promise<never> {
+		throw new NotImplementedError("REPLACE");
+	}
+	public async uidReplace(
+		_seq: string,
+		_mailbox: string,
+		_message: Buffer,
+		_opts?: AppendOptions,
+	): Promise<never> {
+		throw new NotImplementedError("UID REPLACE");
+	}
+
+	// ACL (RFC 4314)
+	public async setacl(
+		_mailbox: string,
+		_identifier: string,
+		_rights: string,
+	): Promise<never> {
+		throw new NotImplementedError("SETACL");
+	}
+	public async deleteacl(_mailbox: string, _identifier: string): Promise<never> {
+		throw new NotImplementedError("DELETEACL");
+	}
+	public async getacl(_mailbox: string): Promise<never> {
+		throw new NotImplementedError("GETACL");
+	}
+	public async listrights(_mailbox: string, _identifier: string): Promise<never> {
+		throw new NotImplementedError("LISTRIGHTS");
+	}
+	public async myrights(_mailbox: string): Promise<never> {
+		throw new NotImplementedError("MYRIGHTS");
+	}
+
+	// QUOTA (RFC 9208, obsoletes RFC 2087)
+	public async getquota(_root: string): Promise<never> {
+		throw new NotImplementedError("GETQUOTA");
+	}
+	public async getquotaroot(_mailbox: string): Promise<never> {
+		throw new NotImplementedError("GETQUOTAROOT");
+	}
+	public async setquota(
+		_root: string,
+		_limits: Array<{ resource: string; limit: number }>,
+	): Promise<never> {
+		throw new NotImplementedError("SETQUOTA");
+	}
+
+	// METADATA (RFC 5464)
+	public async getmetadata(
+		_mailbox: string,
+		_entries: string[],
+		_opts?: { maxsize?: number; depth?: "0" | "1" | "infinity" },
+	): Promise<never> {
+		throw new NotImplementedError("GETMETADATA");
+	}
+	public async setmetadata(
+		_mailbox: string,
+		_entries: Array<{ entry: string; value: string | null }>,
+	): Promise<never> {
+		throw new NotImplementedError("SETMETADATA");
+	}
+
+	// MULTIAPPEND (RFC 3502)
+	public async multiAppend(
+		_mailbox: string,
+		_messages: Array<{ message: Buffer; flags?: string[]; date?: string }>,
+	): Promise<never> {
+		throw new NotImplementedError("MULTIAPPEND");
 	}
 
 	// ------------------------------------------------------------------------
