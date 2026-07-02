@@ -12,7 +12,7 @@ const rfc8474: CatalogModule = {
 		"Considerations [§8.1 Assigning Object Identifiers, §8.2 Interaction with Special Cases, §8.3 " +
 		"Client Usage, §8.4 Advice to Client Implementers], §9 Future Considerations, §10 IANA " +
 		"Considerations, §11 Security Considerations, §12 References, Appendix A, Acknowledgments, " +
-		"Author's Address). 18 client-binding entries extracted. " +
+		"Author's Address). 20 client-binding entries extracted. " +
 		"CLIENT/SERVER SPLIT: RFC 8474 is overwhelmingly a server-behavior specification — nearly " +
 		"every RFC 2119 keyword sentence binds the SERVER (allocation, immutability, and uniqueness " +
 		"invariants of the identifiers), and those are excluded here. What binds the CLIENT is (a) " +
@@ -35,10 +35,15 @@ const rfc8474: CatalogModule = {
 		"EXCLUDED AS SERVER-ONLY: §3 (server MUST include \"OBJECTID\" in CAPABILITY); §4 core " +
 		"MAILBOXID invariants (server MUST return the same MAILBOXID for same name+UIDVALIDITY; MUST " +
 		"NOT report the same MAILBOXID for two mailboxes; MUST NOT reuse; MUST keep the same MAILBOXID " +
-		"across a message-preserving RENAME); §4.3 STATUS MAILBOXID attribute (server MUST support — " +
-		"the client-facing STATUS/LIST-STATUS parse surface for MAILBOXID is a STATUS-response concern " +
-		"already governed by the base STATUS grammar, and this document adds only a server support " +
-		"duty, so no distinct client entry is drawn from §4.3); §5.1 EMAILID immutability/COPYUID " +
+		"across a message-preserving RENAME); §4.3 STATUS MAILBOXID — the SERVER duty 'A server that " +
+		"advertises the OBJECTID capability MUST support the MAILBOXID status attribute' stays " +
+		"excluded as server-only. §4.3's CLIENT surface, however, IS now cataloged (correcting an " +
+		"earlier over-broad exclusion): the client-emittable MAILBOXID STATUS attribute is " +
+		"RFC8474-4.3-1 (MAY) and the client-parseable `MAILBOXID (objectid)` STATUS response item is " +
+		"RFC8474-4.3-2 (MUST, judgment — no client 2119 keyword, leveled like the §4.1/§4.2 parse " +
+		"duties RFC8474-4.1-1/-4.2-1); these mirror the KEPT CREATE and SELECT/EXAMINE MAILBOXID " +
+		"parse entries rather than being folded into the base STATUS grammar. §5.1 EMAILID " +
+		"immutability/COPYUID " +
 		"pairing MUSTs and the APPEND-dedup MAY (all server generation duties); §5.2 server SHOULD " +
 		"return same THREADID for related messages / MUST return same THREADID for same EMAILID / MUST " +
 		"NOT change THREADID once reported / MUST NOT reuse an ObjectID value across the EMAILID and " +
@@ -58,8 +63,9 @@ const rfc8474: CatalogModule = {
 		"rev1-only tagging, no double-scoring risk). applicability is 'conditional' throughout: these " +
 		"duties bind only a client that uses the OBJECTID extension (advertised via the OBJECTID " +
 		"capability); an unimplemented conditional duty still counts against RFC 8474's score. " +
-		"Total: 18 client-binding entries. Untestable: 5 (RFC8474-7-1, RFC8474-7-2, RFC8474-8.1-1, " +
-		"RFC8474-8.3-1, RFC8474-8.3-2; all theme internal-decision).",
+		"Total: 20 client-binding entries. Untestable: 5 (RFC8474-7-1, RFC8474-7-2, RFC8474-8.1-1, " +
+		"RFC8474-8.3-1, RFC8474-8.3-2; all theme internal-decision). The two §4.3 STATUS MAILBOXID " +
+		"entries (RFC8474-4.3-1/-4.3-2) are both testable.",
 	requirements: [
 		// ── §1 Introduction ──────────────────────────────────────────────────────
 
@@ -132,6 +138,54 @@ const rfc8474: CatalogModule = {
 				"text — and complete the SELECT/EXAMINE normally. Testable: scripted mailbox open " +
 				"emitting the untagged OK MAILBOXID line must not break selection. Server-side " +
 				"emission duty is out of scope. No RFC 9051 counterpart.",
+		},
+
+		// ── §4.3 New Attribute for STATUS ─────────────────────────────────────────
+
+		{
+			id: "RFC8474-4.3-1",
+			source: "RFC8474",
+			section: "4.3",
+			title: "Client MAY emit the MAILBOXID attribute in a STATUS command",
+			text:
+				'Syntax: "MAILBOXID"\n\nThe attribute in the STATUS command.',
+			level: "MAY",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"§4.3 adds the MAILBOXID attribute to the STATUS command via the RFC 4466 extended " +
+				"syntax. Client-binding: a client using OBJECTID MAY request a mailbox's ObjectID by " +
+				"emitting `MAILBOXID` inside a STATUS attribute list (e.g. `STATUS <mbox> " +
+				"(MAILBOXID)`), and — where LIST-STATUS (RFC 5819) is available — inside a " +
+				"`LIST ... RETURN (STATUS (MAILBOXID))`. Testable as a command-emission form: assert " +
+				"the client can place `MAILBOXID` in the STATUS request-item list. The paired server " +
+				"duty ('A server that advertises the OBJECTID capability MUST support the MAILBOXID " +
+				"status attribute') is server-only and excluded — see extractionNote. No RFC 9051 " +
+				"counterpart (OBJECTID is not rev2 core).",
+		},
+		{
+			id: "RFC8474-4.3-2",
+			source: "RFC8474",
+			section: "4.3",
+			title: "Client MUST parse the MAILBOXID (objectid) STATUS response item",
+			text:
+				'Syntax: "MAILBOXID" SP "(" objectid ")"\n\nThe response item in the STATUS response ' +
+				"contains the ObjectID assigned by the server for this mailbox.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Judgment level for the CLIENT (defining sentence; no client RFC 2119 keyword — " +
+				"leveled the same way as the KEPT §4.1/§4.2 parse duties RFC8474-4.1-1/-4.2-1, where " +
+				"the server-side MUST-emit is excluded and the implicit client parse duty is recorded " +
+				"at MUST). A client that requested MAILBOXID via STATUS must parse the " +
+				"`MAILBOXID (objectid)` STATUS response item (e.g. `* STATUS foo (MAILBOXID (F2212ea87" +
+				"-...))`) — and the same item interleaved in a LIST-STATUS `* STATUS` reply — and " +
+				"associate the ObjectID with the mailbox. Testable: a scripted STATUS reply carrying " +
+				"the item must parse into the correct mailbox without erroring. The server's " +
+				"assignment/emission of the id is server-only. No RFC 9051 counterpart.",
 		},
 
 		// ── §5.1 EMAILID Identifier for Identical Messages ─────────────────────────

@@ -59,11 +59,15 @@ const rfc4315: CatalogModule = {
 		"REV2-CORE ADJUDICATION (RFC 9051 double-scoring discipline): RFC 9051 did NOT fold " +
 		"the UIDPLUS client duties into rev2 core in a way that creates identical catalogued " +
 		"duties, so every entry here keeps profiles: [\"rev1\",\"rev2\"]. Per duty: (1) UID " +
-		"EXPUNGE (2.1-1) — RFC 9051 does NOT define a UID EXPUNGE command; it only references " +
-		"'UID EXPUNGE' in passing in a sequence-number-semantics note (see RFC9051 §6.4 / " +
-		"s6-selected.ts) and has no catalogued UID EXPUNGE command entry, so UID EXPUNGE " +
-		"remains a UIDPLUS-only command for both profiles — a rev2 client that uses UID " +
-		"EXPUNGE is bound only through this document; kept [\"rev1\",\"rev2\"]. (2)/(3) " +
+		"EXPUNGE (2.1-1) — RFC 9051 §6.4.9 DOES fully define UID EXPUNGE as absorbed rev2-base " +
+		"(the second form of the UID command, absorbed from RFC 4315, with the identical " +
+		"\\Deleted-only-within-the-UID-set semantics). BUT the rfc9051 catalog (catalog/rfc9051/" +
+		"s6-selected.ts §6.4.9 note) deliberately declines to catalogue any client-binding UID " +
+		"EXPUNGE duty: its use for disconnected resynchronization is stated with 'can ensure' " +
+		"(advisory) and carries no client 2119 keyword, so the rfc9051 catalog scores no " +
+		"UID EXPUNGE client duty. There is thus no rev2-core counterpart to double-score against, " +
+		"so UID EXPUNGE stays dual-profile — a rev2 client that uses UID EXPUNGE is held to it " +
+		"only through this document; kept [\"rev1\",\"rev2\"]. (2)/(3) " +
 		"APPENDUID/COPYUID acceptance (3-2/3-3) — RFC 9051 §7.1 DEFINES the APPENDUID and " +
 		"COPYUID response codes but its catalog (RFC9051-7.1 note in s7-responses-a.ts) " +
 		"records them as carrying NO client-binding MUST/SHOULD (server-side only); the only " +
@@ -108,10 +112,15 @@ const rfc4315: CatalogModule = {
 				"are untouched). The client-binding surface is the command syntax the client emits " +
 				"('UID' SP 'EXPUNGE' SP sequence-set, §4 ABNF uid-expunge) and this semantic " +
 				"guarantee it depends on. Conditional: binds only when the client uses the UIDPLUS " +
-				"UID EXPUNGE command. REV2: kept [\"rev1\",\"rev2\"] — RFC 9051 does NOT catalog a " +
-				"UID EXPUNGE command (it only references 'UID EXPUNGE' in a sequence-number note), " +
-				"so UID EXPUNGE remains a UIDPLUS-only command for a rev2 client too; not double-" +
-				"scored against any RFC 9051 entry. Currently self-actualizing fail: " +
+				"UID EXPUNGE command. REV2: kept [\"rev1\",\"rev2\"] — RFC 9051 §6.4.9 DOES fully " +
+				"define UID EXPUNGE as absorbed rev2-base (identical \\Deleted-only-within-the-UID-" +
+				"set semantics), but the rfc9051 catalog (s6-selected.ts §6.4.9 note) scores NO " +
+				"client-binding UID EXPUNGE duty (its resync use is advisory 'can ensure', no client " +
+				"2119 keyword), so there is no rev2-core counterpart to double-score against — hence " +
+				"the dual-profile tag stands in for a GAP in the rfc9051 catalog (RFC 9051 has the " +
+				"command in its text but the catalog omits a scored client entry). IF rfc9051 later " +
+				"gains a scored UID EXPUNGE client entry, this should be re-tagged rev1-only with a " +
+				"cross-ref to that id. Currently self-actualizing fail: " +
 				"driver.uidExpunge() throws NotImplementedError unconditionally, so the client has " +
 				"no UID EXPUNGE surface — it cannot exercise the command the RFC anticipates, which " +
 				"the compliance suite records as a failure for this entry. Testable by scripting a " +

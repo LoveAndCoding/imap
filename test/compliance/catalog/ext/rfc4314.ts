@@ -9,10 +9,12 @@ const rfc4314: CatalogModule = {
 		"control management commands and responses (§3.1 SETACL, §3.2 DELETEACL, §3.3 GETACL, " +
 		"§3.4 LISTRIGHTS, §3.5 MYRIGHTS, §3.6 ACL response, §3.7 LISTRIGHTS response, §3.8 " +
 		"MYRIGHTS response), §4 Rights Required to Perform Different IMAP4rev1 Commands, §5 " +
-		"Extended examples, §6 Security Considerations, §7 Formal Syntax, §8 IANA " +
+		"Other Considerations (§5.1 Additional Requirements and Implementation Notes — §5.1.1 " +
+		"Servers, §5.1.2 Clients; §5.2 Mapping of ACL Rights to READ-WRITE and READ-ONLY Response " +
+		"Codes), §6 Security Considerations, §7 Formal Syntax, §8 IANA " +
 		"Considerations, §9 References, §10 Acknowledgments/Change history. " +
 		"CLIENT/SERVER SPLIT (the crux for ACL — RFC 4314 is overwhelmingly server-directed): " +
-		"7 client-binding entries extracted. RFC 4314 defines five client commands (SETACL, " +
+		"8 client-binding entries extracted. RFC 4314 defines five client commands (SETACL, " +
 		"DELETEACL, GETACL, LISTRIGHTS, MYRIGHTS) and three untagged responses (ACL, LISTRIGHTS, " +
 		"MYRIGHTS), but nearly every normative MUST/SHOULD in the document binds the SERVER's " +
 		"rights-enforcement, ACL-storage, and response-generation behavior, not the client. The " +
@@ -20,9 +22,11 @@ const rfc4314: CatalogModule = {
 		"emit — the virtual/compound 'd' and 'c' rights the client must understand it is " +
 		"requesting the union of member rights when it sends them (§2.1.1); (b) the SETACL third-" +
 		"argument syntax the client must form correctly — optional +/- prefix then rights chars " +
-		"(§3.1); (c) the ONE explicit client-directed MUST in the whole document: clients MUST " +
+		"(§3.1); (c) the THREE explicit client-directed MUSTs in the document: clients MUST " +
 		"ignore the virtual 'd'/'c' rights in MYRIGHTS/ACL/LISTRIGHTS responses (§2.1.1 footnote " +
-		"'(*)'); (d) the client-directed SHOULD to warn before granting broad rights to 'anyone' " +
+		"'(*)'), and a client that reads+updates ACLs MUST preserve unrecognized rights it does " +
+		"not let the user change (§5.1.2 'Clients'); (d) the client-directed SHOULD to warn before " +
+		"granting broad rights to 'anyone' " +
 		"(§6). SKIPPED AS SERVER-ONLY (flagged per extractor rule 6 — all are rights-enforcement, " +
 		"storage, or response-generation duties bound to the server, observable by a client only " +
 		"through the server's own behavior, not a duty the client discharges): §2 'a server " +
@@ -51,7 +55,12 @@ const rfc4314: CatalogModule = {
 		"'an ACL-compliant server MUST check which rights are required', 'the server MUST NOT " +
 		"return a NO response if it can't list a mailbox', 'the server MUST NOT reveal ... " +
 		"existence', CREATE-inherits-ACL SHOULD) — this is pure server-side authorization " +
-		"enforcement, the bulk of the RFC; §5 examples (illustrative, no norms); §6 'An " +
+		"enforcement, the bulk of the RFC; §5 'Other Considerations' — §5.1 Additional Requirements " +
+		"and Implementation Notes contains §5.1.1 'Servers' (server-only) and §5.1.2 'Clients', a " +
+		"NORMATIVE client subsection now cataloged as RFC4314-5.1.2-1 (read+update-ACL clients MUST " +
+		"preserve unrecognized rights); §5.2 maps ACL rights to READ-WRITE/READ-ONLY response " +
+		"codes (server response-generation) and the numbered Examples in §5.2 are illustrative " +
+		"(no norms); §6 'An " +
 		"implementation MUST make sure the ACL commands themselves do not give information about " +
 		"mailboxes with appropriately restricted ACLs' and 'an ACL server MAY reject identifiers " +
 		"containing [PR29] sequences' (server security duties); §7 'Implementations MUST accept " +
@@ -70,8 +79,8 @@ const rfc4314: CatalogModule = {
 		"entry is identical to any entry here, and every entry keeps the standalone-extension " +
 		"default profiles ['rev1','rev2'] — a rev2 client that uses ACL is bound by these duties " +
 		"solely through RFC 4314. No rev1-only tag applies. " +
-		"Total: 7 client-binding entries (RFC4314-2.1.1-1..3, RFC4314-3.1-1..2, RFC4314-2-1, " +
-		"RFC4314-6-1). Untestable: 4 (RFC4314-2.1.1-1, RFC4314-2.1.1-2 — internal-decision, the " +
+		"Total: 8 client-binding entries (RFC4314-2.1.1-1..3, RFC4314-3.1-1..2, RFC4314-2-1, " +
+		"RFC4314-6-1, RFC4314-5.1.2-1). Untestable: 4 (RFC4314-2.1.1-1, RFC4314-2.1.1-2 — internal-decision, the " +
 		"client's intent in composing a rights string is wire-indistinguishable from an equivalent " +
 		"expanded string; RFC4314-2-1 — internal-decision, a well-formed lowercase rights string " +
 		"is indistinguishable from one produced by a client that reasons about the reserved-letter " +
@@ -304,10 +313,44 @@ const rfc4314: CatalogModule = {
 				"not a warning was displayed first. A black-box IMAP-protocol harness observes only " +
 				"the wire and cannot detect the presence, absence, or content of a UI warning dialog.",
 			notes:
-				"One of only two client-directed normative keywords in RFC 4314 (this SHOULD and the " +
-				"§2.1.1 ignore-d/c MUST). Explicitly scoped to 'IMAP clients implementing ACL that " +
-				"are able to modify ACLs' — i.e. conditional on the client offering ACL-editing. ACL " +
-				"is standalone in rev2, so profiles ['rev1','rev2'].",
+				"One of three client-directed normative keywords in RFC 4314 (this SHOULD, the " +
+				"§2.1.1 ignore-d/c MUST, and the §5.1.2 preserve-unrecognized-rights MUST). Explicitly " +
+				"scoped to 'IMAP clients implementing ACL that are able to modify ACLs' — i.e. " +
+				"conditional on the client offering ACL-editing. ACL is standalone in rev2, so " +
+				"profiles ['rev1','rev2'].",
+		},
+
+		// ── §5.1.2 Clients (client MUST preserve unrecognized rights) ────────────
+
+		{
+			id: "RFC4314-5.1.2-1",
+			source: "RFC4314",
+			section: "5.1.2",
+			title: "Read+update-ACL client MUST preserve unrecognized rights it can't change",
+			text:
+				"A client implementation that allows a user to read and update ACLs MUST preserve " +
+				"unrecognized rights that it doesn't allow the user to change. That is, if the client " +
+				"1) can read ACLs and 2) can update ACLs but 3) doesn't allow the user to change the " +
+				"rights the client doesn't recognize, then it MUST preserve unrecognized rights.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"The third explicit client-directed MUST in RFC 4314 (the §5.1.2 'Clients' subsection, " +
+				"put on clients 'in order to allow for future extensibility'). A client that lets a " +
+				"user read and update ACLs but does not expose editing of rights letters it does not " +
+				"recognize MUST carry those unrecognized rights through unchanged — otherwise it risks " +
+				"'unintentionally removing permissions it doesn't understand'. Testable black-box: " +
+				"feed the client a GETACL/ACL response for an identifier whose rights string contains " +
+				"a right the client does not recognize, have the user change a right the client DOES " +
+				"expose, and assert the re-emitted SETACL still carries the unknown rights character " +
+				"(does not drop it). Observable on the wire as the exact rights atom in the emitted " +
+				"SETACL third argument. Currently self-actualizing: driver.getacl()/setacl() throw " +
+				"NotImplementedError, so the client has no ACL read/re-emit surface — recorded as a " +
+				"failure for this entry. ACL is standalone in rev2 (not folded into RFC 9051 core), " +
+				"so profiles ['rev1','rev2']; see extractionNote rev2-core adjudication. Conditional " +
+				"on the client offering ACL read+update.",
 		},
 	],
 };
