@@ -6,10 +6,11 @@
  * entry is silently dropped. Registry:
  *   https://www.iana.org/assignments/imap-capabilities/imap-capabilities.xhtml
  *
- * STUB (Phase 3): seeds only the capabilities whose defining RFC is ALREADY
- * cataloged — the Phase 0/1/2 core (IMAP4rev1, IMAP4rev2, ID) plus the Phase 3
- * connection & security family. Every other registry entry is left as a
- * PENDING block comment below, to be promoted incrementally in Phases 4–6.
+ * Seeds every capability whose defining RFC is ALREADY cataloged — the
+ * Phase 0/1/2 core (IMAP4rev1, IMAP4rev2, ID), the Phase 3 connection &
+ * security family, and the Phase 4 mailbox/listing/metadata + message-ops
+ * family. Phase 5/6 registry entries remain PENDING block comments below,
+ * to be promoted incrementally as their catalogs land.
  *
  * The `source` on each `cataloged` entry MUST name a module present in
  * `allCatalogModules` (enforced by specs/meta/registry-coverage.test.ts). The
@@ -63,37 +64,109 @@ export const registryCoverage: RegistryEntry[] = [
 	{ capability: "LITERAL-", status: "cataloged", source: "RFC7888" },
 	{ capability: "UTF8=ACCEPT", status: "cataloged", source: "RFC6855" },
 
-	// ---- PENDING — Phase 4 (mailbox/listing/metadata + message ops) --------
-	// The Phase 4 catalog modules now exist (catalog/ext/rfc*.ts, registered in
-	// index.ts) but are still empty skeletons — so these tokens remain COMMENTS,
-	// not live `cataloged` entries. "cataloged" means "has requirements"; the
-	// Phase 4 wrap (Task 10 Step 2) promotes each token below to a live
-	// `{ capability, status: "cataloged", source }` entry once its module carries
-	// requirements. The itemized capability → source → command/response surface
-	// map makes that promotion mechanical:
-	//
-	//   UIDPLUS            → RFC4315  UID EXPUNGE; APPENDUID/COPYUID/UIDNOTSTICKY resp-codes
-	//   MOVE               → RFC6851  MOVE, UID MOVE
-	//   NAMESPACE          → RFC2342  NAMESPACE cmd + * NAMESPACE response
-	//   LIST-EXTENDED      → RFC5258  LIST selection opts, RETURN (...) opts, multiple patterns
-	//   LIST-STATUS        → RFC5819  LIST ... RETURN (STATUS (...))
-	//   SPECIAL-USE        → RFC6154  \Sent \Drafts \Junk \Trash \Archive \Flagged \All;
-	//                                 LIST ... RETURN (SPECIAL-USE)
-	//   CREATE-SPECIAL-USE → RFC6154  CREATE ... (USE (...))
-	//   ACL                → RFC4314  SETACL/DELETEACL/GETACL/LISTRIGHTS/MYRIGHTS;
-	//                                 ACL/MYRIGHTS/LISTRIGHTS responses
-	//   QUOTA              → RFC9208  GETQUOTA/GETQUOTAROOT/SETQUOTA; QUOTA/QUOTAROOT responses
-	//   QUOTA=RES-*        → RFC9208  per-resource capability tokens (STORAGE, MESSAGE, ...)
-	//   METADATA           → RFC5464  GETMETADATA/SETMETADATA (mailbox); METADATA response
-	//   METADATA-SERVER    → RFC5464  GETMETADATA/SETMETADATA "" (server-entry variant)
-	//   SAVEDATE           → RFC8514  FETCH SAVEDATE; SAVEDATE fetch item
-	//   OBJECTID           → RFC8474  FETCH EMAILID/THREADID; MAILBOXID resp-code
-	//   MULTIAPPEND        → RFC3502  APPEND with multiple message literals
-	//   CATENATE           → RFC4469  APPEND ... CATENATE (TEXT {n} URL "...")
-	//   BINARY             → RFC3516  FETCH BINARY[]/BINARY.SIZE[]; APPEND ~{n} literal8;
-	//                                 BINARY/UNKNOWN-CTE resp-codes
-	//   REPLACE            → RFC8508  REPLACE, UID REPLACE
-	//
+	// ---- Phase 4: mailbox/listing/metadata + message operations ------------
+	// Promoted from PENDING at the Phase 4 wrap: each module now carries
+	// requirements (catalog/ext/rfc*.ts) and at least one spec file cites its
+	// testable ids.
+	{
+		capability: "UIDPLUS",
+		status: "cataloged",
+		source: "RFC4315",
+		note: "UID EXPUNGE; APPENDUID/COPYUID/UIDNOTSTICKY resp-codes (resp-codes parse for real via text.code.ts).",
+	},
+	{ capability: "MOVE", status: "cataloged", source: "RFC6851", note: "MOVE, UID MOVE." },
+	{
+		capability: "NAMESPACE",
+		status: "cataloged",
+		source: "RFC2342",
+		note: "NAMESPACE cmd + * NAMESPACE response (response parses for real via namespace.ts).",
+	},
+	{
+		capability: "LIST-EXTENDED",
+		status: "cataloged",
+		source: "RFC5258",
+		note: "LIST selection/return options, multiple patterns. Mostly rev1-only (rev2 core absorbed it).",
+	},
+	{
+		capability: "LIST-STATUS",
+		status: "cataloged",
+		source: "RFC5819",
+		note: "LIST ... RETURN (STATUS (...)).",
+	},
+	{
+		capability: "SPECIAL-USE",
+		status: "cataloged",
+		source: "RFC6154",
+		note: "Special-use attributes; LIST ... RETURN (SPECIAL-USE).",
+	},
+	{
+		capability: "CREATE-SPECIAL-USE",
+		status: "cataloged",
+		source: "RFC6154",
+		note: "CREATE ... (USE (...)); [USEATTR] refusal code.",
+	},
+	{
+		capability: "ACL",
+		status: "cataloged",
+		source: "RFC4314",
+		note: "SETACL/DELETEACL/GETACL/LISTRIGHTS/MYRIGHTS; ACL/MYRIGHTS/LISTRIGHTS responses.",
+	},
+	{
+		capability: "QUOTA",
+		status: "cataloged",
+		source: "RFC9208",
+		note: "GETQUOTA/GETQUOTAROOT/SETQUOTA; QUOTA/QUOTAROOT responses parse for real (quota.ts). Obsoletes RFC 2087.",
+	},
+	{
+		capability: "QUOTA=RES-*",
+		status: "cataloged",
+		source: "RFC9208",
+		note: "Per-resource capability tokens (STORAGE, MESSAGE, ...) defined by RFC 9208.",
+	},
+	{
+		capability: "METADATA",
+		status: "cataloged",
+		source: "RFC5464",
+		note: "GETMETADATA/SETMETADATA (mailbox annotations); METADATA response.",
+	},
+	{
+		capability: "METADATA-SERVER",
+		status: "cataloged",
+		source: "RFC5464",
+		note: "GETMETADATA/SETMETADATA server-entry variant.",
+	},
+	{
+		capability: "SAVEDATE",
+		status: "cataloged",
+		source: "RFC8514",
+		note: "FETCH SAVEDATE; SAVEDATE fetch item; SAVEDBEFORE/ON/SINCE + SAVEDATESUPPORTED search keys.",
+	},
+	{
+		capability: "OBJECTID",
+		status: "cataloged",
+		source: "RFC8474",
+		note: "FETCH EMAILID/THREADID; MAILBOXID resp-code (parses for real) + STATUS MAILBOXID.",
+	},
+	{
+		capability: "MULTIAPPEND",
+		status: "cataloged",
+		source: "RFC3502",
+		note: "APPEND with multiple message literals.",
+	},
+	{
+		capability: "CATENATE",
+		status: "cataloged",
+		source: "RFC4469",
+		note: 'APPEND ... CATENATE (TEXT {n} URL "..."); BADURL/TOOBIG resp-codes parse for real.',
+	},
+	{
+		capability: "BINARY",
+		status: "cataloged",
+		source: "RFC3516",
+		note: "FETCH BINARY[]/BINARY.SIZE[]; APPEND ~{n} literal8; UNKNOWN-CTE resp-code parses for real. literal8 duties rev1-only (rev2 core).",
+	},
+	{ capability: "REPLACE", status: "cataloged", source: "RFC8508", note: "REPLACE, UID REPLACE." },
+
 	// ---- PENDING — Phase 5 (search/sort/thread + change tracking) ----------
 	// CONDSTORE (RFC 7162), QRESYNC (RFC 7162), SORT / SORT=DISPLAY (RFC 5256/5957),
 	// THREAD (RFC 5256), ESEARCH (RFC 4731), ESORT (RFC 5267),

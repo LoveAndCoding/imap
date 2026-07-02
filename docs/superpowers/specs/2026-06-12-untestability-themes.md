@@ -481,3 +481,83 @@ holds exactly its 3 dual-profile members.
 First re-evaluation candidate for the whole theme: wiring `zlib` into the ScriptedServer's
 scripting side (unblocks 3-2). A SASL-security-layer capability in both the client and the
 harness would additionally unblock 3-4/3-5.
+
+---
+
+# Phase 4 Untestability Delta (mailbox/listing/metadata + message ops)
+
+**Date:** 2026-07-02 (Phase 4, Task 10 / P4-E)
+**Population added:** the 15-source mailbox-management/listing/metadata/message-op family
+contributed **42** new `testability: "untestable"` entries. **No new theme was required** —
+all 42 fit the existing 11-theme taxonomy, and no flip via existing machinery is warranted
+(reasoning below). The taxonomy stays at **11 themes**.
+
+## Phase 4 additions per theme (per catalog entry)
+
+| Theme | Phase 4 additions | Typical members |
+|---|---|---|
+| `internal-decision` | 25 | ACL rights-string composition (d/c virtual-right equivalence); QUOTA "MUST NOT draw an inference" duties; OBJECTID opaque/case-sensitive treatment; UIDPLUS/MOVE fallback-strategy and post-NO state-reconciliation choices; REPLACE same-vs-different-mailbox choice |
+| `content-processing` | 6 | MULTIAPPEND/CATENATE assembled-message RFC 2822/MIME validity; METADATA CRLF-in-value and untrusted-value handling; BINARY own-CTE decoding (delegated at the library boundary) |
+| `user-intent-policy` | 5 | NAMESPACE let-user-select; LIST-EXTENDED LSUB-vs-LIST(SUBSCRIBED) policy; MOVE self-target permission |
+| `internal-state` | 2 | METADATA MUST-treat-success-as-changed; LIST-STATUS response-association bookkeeping |
+| `ui-presentation` | 2 | NAMESPACE manual-prefix entry affordance; ACL warn-before-granting-to-anyone dialog |
+| `capability-inventory` | 1 | CATENATE capability-gate before emitting |
+| `performance-expectation` | 1 | BINARY.SIZE "needlessly issuing" caution |
+
+Total: **42** entries, 7 themes touched. The four Phase-3-specific themes
+(`environment-limit`, `compressed-framing-opacity`, `out-of-band`, `cross-session`) gained
+**zero** Phase 4 members.
+
+## Intrinsic / instrumental re-verdicts — NO FLIPS
+
+The Phase 4 additions were re-examined against the two instrumental mechanisms (logger
+capture; multi-connection `arm()`) plus the connectLow event-observation path that Phase 4
+newly exploited for *testable* duties:
+
+- **`internal-decision` (largest gainer, +25) — INTRINSIC, no flip.** A compliant and a
+  non-compliant client produce identical wire traces (ACL `d`/`c` expansion equals the
+  member-rights string the RFC declares equivalent; a QUOTA client that "draws an inference"
+  emits nothing distinguishable; opaque-vs-structured ObjectID handling is byte-identical).
+  Each has its observable half — where one exists — already covered by a separately
+  cataloged *testable* entry.
+- **`content-processing` (+6) — INTRINSIC at the library boundary, no flip.** The assembled
+  message's RFC 2822/MIME validity and CTE decoding bind whichever consumer renders content;
+  this headless library delegates them across its public API, so asserting either outcome at
+  the API boundary encodes an API design choice, not the RFC duty. Consistent with the
+  Phase 1/2 `content-processing` verdict.
+- **`user-intent-policy` (+5), `internal-state` (+2), `capability-inventory` (+1),
+  `performance-expectation` (+1) — INTRINSIC, no flip.** Same defining properties as their
+  Phase 1/2 members: the wire shows *what* not *why* (user intent invisible); redundant
+  re-requests are RFC-permitted (no pass/fail boundary for caching/state); existence-of-
+  affordance is not a behavior; and "needlessly" has no wire signature.
+- **`ui-presentation` (+2) — INSTRUMENTAL but no remaining flip.** Both are MAY-level
+  affordance/dialog duties (manual-prefix entry; the anyone-grant warning) with no pass/fail
+  envelope even with logger capture — vacuous by requirement level, exactly like the
+  surviving Phase 1/2 `ui-presentation` members.
+
+**Note on what did NOT become untestable:** Phase 4 is the first substantially-implemented
+family, and the connectLow unsolicited-response path turned many resp-code/response
+duties into genuine *testable* passes/violations (NAMESPACE, QUOTA, UIDPLUS/MOVE resp-codes,
+CATENATE/BINARY/OBJECTID resp-codes) rather than untestable entries — the instrumental
+mechanisms were exploited to expand the testable set, not the untestable one. The 42
+untestable entries are the residue that genuinely has no black-box observable at this
+library's boundary.
+
+## Combined catalog totals after Phase 4 (per catalog entry)
+
+| Theme | total entries |
+|---|---|
+| `internal-decision` | 63 |
+| `capability-inventory` | 45 |
+| `user-intent-policy` | 16 |
+| `internal-state` | 12 |
+| `content-processing` | 10 |
+| `ui-presentation` | 9 |
+| `environment-limit` | 7 |
+| `performance-expectation` | 5 |
+| `out-of-band` | 4 |
+| `compressed-framing-opacity` | 3 |
+| `cross-session` | 1 |
+
+The taxonomy remains **11 themes**; no registration or `UNTESTABLE_THEMES` change was needed
+this phase.
