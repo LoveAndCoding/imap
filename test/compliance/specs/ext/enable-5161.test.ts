@@ -117,7 +117,7 @@ complianceTest(
 				// quoted-specials). Reject quoted strings, literals, and comma lists.
 				expectLine(
 					command("ENABLE", {
-						args: /^[^\s"(){%*\\]+(?: [^\s"(){%*\\]+)*$/,
+						args: /^[^\s",(){%*\\]+(?: [^\s",(){%*\\]+)*$/,
 					}),
 				),
 				// Server acknowledges: untagged ENABLED naming the enabled subset,
@@ -167,7 +167,7 @@ complianceTest(
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
 				expectLine(
 					command("ENABLE", {
-						args: /^[^\s"(){%*\\]+(?: [^\s"(){%*\\]+)*$/,
+						args: /^[^\s",(){%*\\]+(?: [^\s",(){%*\\]+)*$/,
 					}),
 				),
 				// Empty ENABLED: zero capabilities enabled. RFC 5161 §3.2 explicitly
