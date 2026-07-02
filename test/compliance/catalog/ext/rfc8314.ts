@@ -49,15 +49,27 @@ const rfc8314: CatalogModule = {
 		"advertisement: MX, SRV, DNSSEC, TLSA; the client-side SRV-consumption counterpart " +
 		"is §5.1, extracted). §4.6 Changes to Internet-Facing Servers — OUT OF SCOPE " +
 		"(server-operations guidance, no RFC 2119 keyword). " +
-		"§5 Use of TLS by Mail User Agents — the summary-bullet list is elaborated in " +
-		"§5.1-§5.5, each extracted from its subsection below; two bullets have no " +
-		"subsection elaboration and are extracted directly here: extracted 2 " +
-		"(RFC8314-5-1 prominent confidentiality indication; RFC8314-5-2 mandatory TLS 1.2 " +
-		"implementation floor). The remaining bullets duplicate §5.1/§5.2/§5.3 verbatim " +
-		"or near-verbatim and are extracted once, at their elaborating subsection, to " +
-		"avoid duplicate entries for the same duty. " +
-		"§5.1 Use of SRV Records in Establishing Configuration — extracted 6 " +
-		"(RFC8314-5.1-1 through RFC8314-5.1-6). " +
+		"§5 Use of TLS by Mail User Agents — the summary-bullet list has eight bullets. " +
+		"Four are elaborated in §5.1-§5.3 and extracted once at their elaborating " +
+		"subsection to avoid duplicate entries for the same duty: bullet 1 (SHOULD use " +
+		"DNS SRV discovery → §5.1/RFC8314-5.1-1), bullet 2 (SHOULD be configurable to " +
+		"require minimum confidentiality → §5.2/RFC8314-5.2-1), bullet 3 (MUST NOT treat a " +
+		"session as meeting minimum confidentiality if the cert cannot be validated → " +
+		"§5.3/RFC8314-5.3-1), and bullet 4 (MAY impose other future minimum-confidentiality " +
+		"requirements — a bare MAY with no pass/fail boundary, folded into §5.3's context " +
+		"rather than itemized). The remaining four bullets have no subsection elaboration " +
+		"and are extracted directly here: extracted 5 (RFC8314-5-1 SHOULD provide a " +
+		"prominent confidentiality indication [bullet 5, first sentence]; RFC8314-5-3 the " +
+		"MUST NOT constraining what that indication may claim [bullet 5, second sentence], " +
+		"split from 5-1 so its SHOULD level stays honest; RFC8314-5-2 mandatory TLS 1.2 " +
+		"implementation floor [bullet 6]; RFC8314-5-4 SHOULD implement RFC 7525 recommended " +
+		"ciphersuites [bullet 7]; RFC8314-5-5 SHOULD detect TLS availability and offer to " +
+		"upgrade a not-minimum-confidentiality account [bullet 8]). " +
+		"§5.1 Use of SRV Records in Establishing Configuration — extracted 7 " +
+		"(RFC8314-5.1-1 through RFC8314-5.1-7; RFC8314-5.1-7 is the 'MUST NOT test a Mail " +
+		"Account configuration by submitting credentials without a minimum-confidentiality " +
+		"TLS session' duty, cross-referenced to the observable no-credentials-before-TLS " +
+		"behavior of RFC8314-5.2-4). " +
 		"§5.2 Minimum Confidentiality Level — extracted 6 (RFC8314-5.2-1 through " +
 		"RFC8314-5.2-6). " +
 		"§5.3 Certificate Validation — extracted 3 (RFC8314-5.3-1 through RFC8314-5.3-3). " +
@@ -79,7 +91,7 @@ const rfc8314: CatalogModule = {
 		"duties, contributes no new keyword-bearing sentence of its own). " +
 		"§9 References, Appendix A (Design Considerations), Acknowledgements, Authors' " +
 		"Addresses — OUT OF SCOPE (non-normative). " +
-		"Total: 28 requirements extracted across §3.2, §3.4, §5, §5.1-§5.5. " +
+		"Total: 32 requirements extracted across §3.2, §3.4, §5, §5.1-§5.5. " +
 		"Cross-reference: RFC 9051 §11.1-1 (RFC9051-11.1-1, in " +
 		"test/compliance/catalog/rfc9051/s9-syntax-security.ts) is a pointer requirement " +
 		"stating clients 'MUST comply with relevant TLS recommendations from [RFC8314]'; " +
@@ -218,7 +230,47 @@ const rfc8314: CatalogModule = {
 				"Applies at the MUA/account-configuration layer generally, not specifically an IMAP " +
 				"wire behavior; retained in scope because the account it describes may be an IMAP " +
 				"account. Not elaborated by any RFC 8314 subsection — extracted directly from the §5 " +
-				"summary-bullet list per the module's coverage ledger.",
+				"summary-bullet list per the module's coverage ledger. This entry captures only the " +
+				"first sentence of the bullet (the SHOULD-provide-an-indication duty); the bullet's " +
+				"second sentence — a MUST NOT constraining WHAT that indication may claim — is a distinct " +
+				"obligation extracted separately as RFC8314-5-3 so this entry's SHOULD level stays honest.",
+		},
+		{
+			id: "RFC8314-5-3",
+			source: "RFC8314",
+			section: "5",
+			title: "MUA providing a confidentiality indication MUST NOT indicate confidentiality below TLS 1.1 + cert verification + minimum requirements",
+			text:
+				"If, however, an MUA provides such an indication, it MUST NOT " +
+				"indicate confidentiality for any connection that does not at " +
+				"least use TLS 1.1 with certificate verification and also meet the " +
+				"minimum confidentiality requirements associated with that account.",
+			level: "MUST NOT",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "untestable",
+			untestableTheme: "ui-presentation",
+			untestableRationale:
+				"Constrains the content of the client's confidentiality INDICATION to the user (the 'lock " +
+				"icon' / background-color / audible affordance of RFC8314-5-1), not a wire behavior: it " +
+				"says the MUA must not TELL the user a connection is confidential unless it uses at least " +
+				"TLS 1.1 with certificate verification and meets the account's minimum confidentiality " +
+				"requirements. This headless protocol library has no such user-facing confidentiality " +
+				"indicator (same mechanism (a) analysis as RFC8314-5-1 and RFC8314-5.4-4): there is no " +
+				"discrete server-supplied event to route through the public logger, and the ambient " +
+				"'this connection is confidential' UI affordance being constrained is delegated to the " +
+				"consuming application by design. The underlying TLS-1.1-floor / certificate-verification " +
+				"substance is separately and testably enforced at the connection level via RFC8314-5-2 / " +
+				"RFC9051-11.1-2 (TLS 1.2 MUST) and the cert-validation entries cross-referenced at " +
+				"RFC8314-3.2-1 / RFC8314-5.3-1 — this entry's untestability is about the indication " +
+				"framing, not the TLS/cert content.",
+			notes:
+				"Second sentence of §5's confidentiality-indication bullet, split from RFC8314-5-1 (its " +
+				"SHOULD-provide-an-indication first sentence) so the two requirement levels (SHOULD to " +
+				"provide vs. MUST NOT to over-claim) each stay honest. Conditional: binds only when an " +
+				"MUA provides a confidentiality indication in the first place ('If, however, an MUA " +
+				"provides such an indication'). Cross-reference: RFC8314-5-1 (the gated indication duty), " +
+				"RFC8314-5.4-4 (the parallel MUST-NOT-indicate-confidentiality-for-pinned-certs duty).",
 		},
 		{
 			id: "RFC8314-5-2",
@@ -245,6 +297,72 @@ const rfc8314: CatalogModule = {
 				"RFC9051-11.1-2's notes — RFC 8314 supplies that floor for rev1 deployments). The " +
 				"trailing MAY-earlier-versions/conditional-TLS-1.1-floor clause is bundled here as it " +
 				"qualifies the same sentence rather than stating an independent duty.",
+		},
+		{
+			id: "RFC8314-5-4",
+			source: "RFC8314",
+			section: "5",
+			title: "MUAs SHOULD implement the recommended TLS ciphersuites of RFC 7525 (or a successor)",
+			text:
+				"All MUAs SHOULD implement the recommended TLS ciphersuites " +
+				"described in [RFC7525] or a future BCP or Standards Track " +
+				"revision of that document.",
+			level: "SHOULD",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Asserts the implementation's TLS ciphersuite inventory includes the RFC 7525 " +
+				"recommended set. This client does not select or enumerate TLS ciphersuites itself: it " +
+				"delegates the entire TLS handshake — including ciphersuite negotiation — to Node's " +
+				"tls module / the underlying OpenSSL build, and exposes no ciphersuite-selection surface " +
+				"in its public API (src/connection). The set of offered ciphersuites is therefore a " +
+				"property of the host runtime's OpenSSL configuration, not a client-authored decision " +
+				"this harness can enumerate or assert against across the whole negotiation space — the " +
+				"defining capability-inventory shape. This mirrors the RFC 2595 / RFC 8314 environment " +
+				"reasoning applied elsewhere, but is filed as capability-inventory rather than " +
+				"environment-limit because the RFC 7525 suites ARE modern and negotiable by the platform " +
+				"(nothing in the environment prevents them); the gap is purely that the client offers no " +
+				"ciphersuite-selection affordance of its own to inspect.",
+			notes:
+				"§5 bullet 7, not elaborated by any RFC 8314 subsection — extracted directly from the " +
+				"summary-bullet list. Conditional: relevant to any TLS-capable MUA. Cross-reference: the " +
+				"companion server-side duty (§4 'All Mail Access Servers ... SHOULD implement the " +
+				"recommended TLS ciphersuites ...') is OUT OF SCOPE (server-directed) per the §4 coverage " +
+				"ledger; this is its MUA-directed counterpart.",
+		},
+		{
+			id: "RFC8314-5-5",
+			source: "RFC8314",
+			section: "5",
+			title: "MUA not requiring minimum confidentiality SHOULD detect TLS availability and offer to upgrade the account",
+			text:
+				"MUAs that are configured to not require minimum confidentiality " +
+				"for one or more accounts SHOULD detect when TLS becomes " +
+				"available on those accounts (using [RFC6186] or other means) and " +
+				"offer to upgrade the account to require TLS.",
+			level: "SHOULD",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Binds two affordances this headless library does not have: (a) an autonomous " +
+				"'detect when TLS becomes available' capability (via RFC 6186 SRV discovery or 'other " +
+				"means'), which is the same absent SRV/auto-configuration affordance gated in " +
+				"RFC8314-5.1-1 through -5.1-6 (host/port/TLS mode are always caller-supplied, there is no " +
+				"discovery code path), and (b) an 'offer to upgrade the account' UI action at the " +
+				"account-management layer this per-connection library does not model. A duty conditioned " +
+				"on absent capabilities has no exercise path, and the absence itself is a " +
+				"capability-inventory fact outside black-box reach.",
+			notes:
+				"§5 bullet 8, not elaborated by any RFC 8314 subsection — extracted directly from the " +
+				"summary-bullet list. Conditional: applies only to accounts configured to NOT require " +
+				"minimum confidentiality. Cross-reference: RFC8314-5.1-1 (the RFC 6186 SRV-support " +
+				"affordance this bullet's detection leg relies on) and RFC8314-5.2-6 (the most-secure-" +
+				"means-available default), both untestable for the same caller-supplies-configuration " +
+				"reason.",
 		},
 
 		// ── §5.1 Use of SRV Records in Establishing Configuration ────────────────
@@ -392,6 +510,38 @@ const rfc8314: CatalogModule = {
 			notes:
 				"Conditional: binds only if/when the MUA consults SRV records per connection attempt, " +
 				"an affordance this client does not implement (host/port are always caller-supplied).",
+		},
+		{
+			id: "RFC8314-5.1-7",
+			source: "RFC8314",
+			section: "5.1",
+			title: "MUA MUST NOT test a Mail Account configuration by submitting credentials without a minimum-confidentiality TLS session",
+			text:
+				'an MUA MUST NOT attempt to "test" a particular Mail Account ' +
+				"configuration by submitting the user's authentication credentials " +
+				"to a server, unless a TLS session meeting minimum confidentiality " +
+				"levels has been established with that server.",
+			level: "MUST NOT",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Conditional: binds when the client would submit credentials to test/validate a Mail " +
+				"Account configuration. The account-configuration-'test' framing is an MUA-setup-flow " +
+				"concept this headless library does not model as a distinct action, but the concrete wire " +
+				"constraint it imposes — never sending authentication credentials to a server until a TLS " +
+				"session meeting the minimum confidentiality level is established — is exactly the " +
+				"observable no-credentials-before-TLS behavior already exercised by RFC8314-5.2-4 (MUST " +
+				"NOT perform any operation other than capability discovery / STARTTLS before minimum " +
+				"confidentiality is provided). Testable by the same mechanism as RFC8314-5.2-4: script a " +
+				"plaintext pre-TLS server and assert the client never issues LOGIN/AUTHENTICATE " +
+				"credential-bearing commands before TLS is negotiated. Cross-reference: RFC8314-5.2-4 is " +
+				"the broader 'any operation' statement of this same duty; this §5.1 sentence is the " +
+				"account-configuration-testing-specific restatement (source text opens 'Similarly, an MUA " +
+				"MUST NOT ...', trimmed to the operative clause here). The verbatim source additionally " +
+				"continues 'If minimum confidentiality requirements have not been satisfied, the MUA must " +
+				"explicitly warn ...', a UI-presentation duty not extracted (delegated to the consuming " +
+				"application, per RFC8314-5-1's rationale).",
 		},
 
 		// ── §5.2 Minimum Confidentiality Level ────────────────────────────────

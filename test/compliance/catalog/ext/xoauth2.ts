@@ -85,21 +85,24 @@ const xoauth2: CatalogModule = {
 			source: "XOAUTH2",
 			section: "exchange",
 			title: "AUTHENTICATE XOAUTH2 command invocation",
-			text: "The client invokes: AUTHENTICATE XOAUTH2 [base64-encoded-response]",
+			text:
+				"To log in with the SASL XOAUTH2 mechanism, the client invokes the `AUTHENTICATE` command " +
+				"with the mechanism parameter of `XOAUTH2`, and the initial client response as constructed " +
+				"above.",
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "testable",
 			notes:
-				"Vendor doc (source: XOAUTH2), from the 'IMAP Protocol Exchange' section. This quote came " +
-				"back only from the full-content WebFetch pass (not independently reproduced word-for-word " +
-				"by the targeted quote-extraction pass, which focused on sentences containing specific " +
-				"keywords) — flagged as PARAPHRASED-OF-NECESSITY rather than doubly-confirmed verbatim; " +
-				"the underlying fact (client sends the AUTHENTICATE command with mechanism name XOAUTH2 " +
-				"and the base64 response) is not in doubt, but the exact original sentence boundary/wording " +
-				"on the page was not independently cross-checked. Graded MUST: this is the command name and " +
-				"argument shape the server dispatches on; a client using a different mechanism keyword " +
-				"would not be invoking XOAUTH2 at all. Cross-reference: RFC 4959 (SASL-IR) defines the " +
+				"Vendor doc (source: XOAUTH2), from the 'IMAP Protocol Exchange' section. Re-quoted from " +
+				"the actual page sentence (previously an invented command template not on the page); the " +
+				"quote is reproduced with the page's own backtick code-formatting around `AUTHENTICATE` " +
+				"and `XOAUTH2`, and was confirmed verbatim across two independent WebFetch passes of " +
+				"https://developers.google.com/gmail/imap/xoauth2-protocol as fetched on 2026-07-01 " +
+				"(WebFetch returns HTML-to-markdown through a summarizing model, so this is " +
+				"verbatim-as-fetched rather than byte-verified against the raw page). Graded MUST: this is " +
+				"the command name and argument shape the server dispatches on; a client using a different " +
+				"mechanism keyword would not be invoking XOAUTH2 at all. Cross-reference: RFC 4959 (SASL-IR) defines the " +
 				"AUTHENTICATE command's initial-response extension that this exchange relies on; RFC 4422 " +
 				"defines the base AUTHENTICATE/SASL negotiation framework.",
 		},
@@ -110,14 +113,17 @@ const xoauth2: CatalogModule = {
 			title: "SASL-IR enables single-round-trip AUTHENTICATE",
 			text:
 				"The SASL-IR capability allows for sending the initial client response in the first line " +
-				"of the AUTHENTICATE command, so that only one round trip is required.",
+				"of the `AUTHENTICATE` command, so that only one round trip is required for authentication.",
 			level: "MAY",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "testable",
 			notes:
-				"Vendor doc (source: XOAUTH2). Quote matched exactly across both independent WebFetch " +
-				"passes as fetched on 2026-07-01. Graded MAY, not MUST: the sentence is descriptive " +
+				"Vendor doc (source: XOAUTH2). Re-quoted verbatim to include the previously truncated " +
+				"trailing words 'for authentication' and the page's backtick formatting around " +
+				"`AUTHENTICATE`; confirmed verbatim across two independent WebFetch passes of the page as " +
+				"fetched on 2026-07-01 (verbatim-as-fetched, not byte-verified — WebFetch returns " +
+				"HTML-to-markdown through a summarizing model). Graded MAY, not MUST: the sentence is descriptive " +
 				"('allows for... so that... is required' describes an optimization enabled by the server's " +
 				"SASL-IR capability), not an instruction that the client must always use the single-line " +
 				"form — a client may instead perform the base multi-line AUTHENTICATE/challenge/response " +

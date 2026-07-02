@@ -317,20 +317,21 @@ const rfc4422: CatalogModule = {
 			section: "3.6",
 			title: "Client MUST install the negotiated security layer upon receipt of a successful outcome",
 			text:
-				"If use of a security layer is negotiated in the authentication protocol exchange, the " +
-				"layer is installed by the server after indicating the outcome of the authentication " +
-				"exchange and installed by the client upon receipt of the outcome indication.",
+				"If the outcome is successful and a security layer was negotiated, this layer is then " +
+				"installed.",
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
 			testability: "testable",
 			notes:
-				"Sourced from §3.7 (Security Layers), which restates and sharpens the installation timing " +
-				"first introduced descriptively in §3.6's 'If the outcome is successful and a security " +
-				"layer was negotiated, this layer is then installed' — the §3.7 sentence is quoted here as " +
-				"the operative one because it assigns the installation act explicitly to the client side " +
-				"('installed by the client upon receipt'). No RFC 2119 keyword, but the sentence states a " +
-				"mandatory causal sequence with no permitted alternative — judgment: implicit MUST. Applies " +
+				"Quoted verbatim from §3.6 (Authentication Outcome) itself, so the entry's section/id and " +
+				"text now match. §3.7 (Security Layers) restates and sharpens the same installation timing " +
+				"and assigns the act explicitly to the client side ('installed by the client upon receipt " +
+				"of the outcome indication'); that §3.7 sentence is catalogued separately in this module's " +
+				"§3.7 entries (RFC4422-3.7-*) rather than borrowed here. The §3.6 sentence read together " +
+				"with §3.7's client-side assignment establishes the client's install-on-success duty. No " +
+				"RFC 2119 keyword, but the sentence states a mandatory causal sequence with no permitted " +
+				"alternative — judgment: implicit MUST. Applies " +
 				"only when the negotiated mechanism offers a security layer and negotiation succeeded " +
 				"(rare among mechanisms this client is likely to implement first, e.g. PLAIN/OAUTHBEARER " +
 				"offer none; a mechanism like GSSAPI or DIGEST-MD5 would trigger it). Testable once " +

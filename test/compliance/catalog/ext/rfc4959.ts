@@ -31,7 +31,7 @@ const rfc4959: CatalogModule = {
 				'This extension adds an optional second argument to the AUTHENTICATE command that is defined in Section 6.2.2 of [RFC3501]. If this second argument is present, it represents the contents of the "initial client response" defined in Section 5.1 of [RFC4422].',
 			level: "MAY",
 			applicability: "conditional",
-			profiles: ["rev1", "rev2"],
+			profiles: ["rev1"],
 			testability: "testable",
 			notes:
 				"No explicit RFC 2119 keyword; this is the definitional sentence establishing the client-" +
@@ -46,10 +46,13 @@ const rfc4959: CatalogModule = {
 				"AUTHENTICATE line with a second argument (or its absence) is directly observable on the " +
 				"wire. Cross-reference: RFC 9051 §6.2.2 folds this optional-second-argument grammar directly " +
 				"into the core AUTHENTICATE command text (see RFC9051-6.2.2-3) rather than keeping it as a " +
-				"separate SASL-IR extension — under rev2 this is core protocol, not an extension, so this " +
-				"entry is scoped to rev1 SASL-IR usage and to rev2 clients that still negotiate SASL-IR " +
-				"explicitly as a capability (rev2 servers remain free to advertise SASL-IR for backward " +
-				"compatibility even though the behavior is now mandatory core text). Also see RFC 4422 §5.1 " +
+				"separate SASL-IR extension — under rev2 this is core protocol, not an extension. Profiles: " +
+				"rev1 only. The optional-second-argument grammar is folded into rev2 core AUTHENTICATE " +
+				"(RFC9051-6.2.2-3), which is the rev2-core entry that scores this duty; scoring it under " +
+				"rev2 here as well would double-count the same rev2 obligation against RFC9051-6.2.2-3 " +
+				"(the same ENABLE/5161-precedent reasoning applied to the sibling entries), so this entry " +
+				"is scoped rev1-only and rev2 servers that still advertise SASL-IR for backward " +
+				"compatibility exercise the behavior via the rev2-core entry. Also see RFC 4422 §5.1 " +
 				"(initial response definition) and RFC 4616 (PLAIN mechanism, used in this RFC's own " +
 				"examples) — both still pending extraction in their own catalog files.",
 		},
@@ -62,7 +65,7 @@ const rfc4959: CatalogModule = {
 				'As with any other client response, this initial client response MUST be encoded as defined in Section 4 of [RFC4648]. It also MUST be transmitted outside of a quoted string or literal. To send a zero-length initial response, the client MUST send a single pad character ("="). This indicates that the response is present, but is a zero-length string.',
 			level: "MUST",
 			applicability: "conditional",
-			profiles: ["rev1", "rev2"],
+			profiles: ["rev1"],
 			testability: "testable",
 			notes:
 				"Four contiguous sentences extracted as one entry because they form a single cohesive " +
@@ -79,8 +82,13 @@ const rfc4959: CatalogModule = {
 				"initial response, the client MUST send a single pad character (\"=\").') — RFC 9051 §6.2.2 " +
 				"folds this SASL-IR encoding rule into core AUTHENTICATE text; RFC9051-6.2.2-3's own notes " +
 				"identify RFC 4959 as the rev1 source of this rule being generalized into rev2 core. Under " +
-				"rev2 this is therefore not extension behavior but core protocol — this entry remains scoped " +
-				"to the rev1/SASL-IR-extension framing, and RFC9051-6.2.2-3 is the rev2 CORE counterpart.",
+				"rev2 this is therefore not extension behavior but core protocol. Profiles: rev1 only — " +
+				"the rev2 base64/'=' -pad encoding duty is scored via RFC9051-6.2.2-3 (rev2-core), so " +
+				"scoring it under rev2 here as well would double-count the identical rev2 obligation " +
+				"against RFC9051-6.2.2-3 (following the ENABLE/RFC 5161 precedent of scoping an " +
+				"extension entry to rev1 when its duty is restated in rev2 core). This entry remains " +
+				"scoped to the rev1/SASL-IR-extension framing; RFC9051-6.2.2-3 is the rev2-CORE " +
+				"counterpart that carries the rev2 score.",
 		},
 		{
 			id: "RFC4959-3-3",
@@ -91,7 +99,7 @@ const rfc4959: CatalogModule = {
 				"clients that implement this extension MUST NOT send an initial client response to servers that do not advertise the SASL-IR capability. In such a situation, clients MUST fall back to an IMAP [RFC3501] compatible mode.",
 			level: "MUST NOT",
 			applicability: "conditional",
-			profiles: ["rev1", "rev2"],
+			profiles: ["rev1"],
 			testability: "testable",
 			notes:
 				"Two contiguous sentences extracted as one entry: the prohibition and its mandated remedy " +
@@ -113,6 +121,13 @@ const rfc4959: CatalogModule = {
 				"any SASL-IR capability advertisement) — under rev2 this MUST NOT is specific to rev1/SASL-IR " +
 				"deployments and does not carry forward as a rev2 CORE obligation, which is exactly the " +
 				"'folded into core, no longer a separate extension gate' point noted in RFC9051-6.2.2-3. " +
+				"Profiles: rev1 only. Unlike RFC4959-3-1/-3-2 (whose duties ARE restated in rev2 core at " +
+				"RFC9051-6.2.2-3 and so are scoped rev1-only to avoid double-scoring that rev2-core entry), " +
+				"this MUST-NOT-unless-advertised gate has NO rev2-core restatement at all: rev2 core " +
+				"AUTHENTICATE accepts the optional initial response unconditionally, with no " +
+				"advertise-SASL-IR precondition, so this is a rev1/SASL-IR-extension-only duty that " +
+				"genuinely does not exist under rev2 — hence rev1-only, and there is no rev2 entry that " +
+				"carries an equivalent score. " +
 				"Also see RFC 4422 (SASL framework this extension layers on) and RFC 4616 (PLAIN mechanism " +
 				"used in this RFC's own worked examples), both still pending extraction in their own catalog " +
 				"files.",
