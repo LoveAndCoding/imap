@@ -20,6 +20,23 @@ import rfc8437 from "./ext/rfc8437";
 import rfc7888 from "./ext/rfc7888";
 import rfc6855 from "./ext/rfc6855";
 
+// Phase 4 — mailbox/listing/metadata + message operations (skeletons; extracted in Task 4).
+import rfc4315 from "./ext/rfc4315";
+import rfc6851 from "./ext/rfc6851";
+import rfc2342 from "./ext/rfc2342";
+import rfc5258 from "./ext/rfc5258";
+import rfc5819 from "./ext/rfc5819";
+import rfc6154 from "./ext/rfc6154";
+import rfc4314 from "./ext/rfc4314";
+import rfc9208 from "./ext/rfc9208";
+import rfc5464 from "./ext/rfc5464";
+import rfc8514 from "./ext/rfc8514";
+import rfc8474 from "./ext/rfc8474";
+import rfc3502 from "./ext/rfc3502";
+import rfc4469 from "./ext/rfc4469";
+import rfc3516 from "./ext/rfc3516";
+import rfc8508 from "./ext/rfc8508";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -40,6 +57,22 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc8437,
 	rfc7888,
 	rfc6855,
+	// Phase 4 — mailbox/listing/metadata + message operations
+	rfc4315,
+	rfc6851,
+	rfc2342,
+	rfc5258,
+	rfc5819,
+	rfc6154,
+	rfc4314,
+	rfc9208,
+	rfc5464,
+	rfc8514,
+	rfc8474,
+	rfc3502,
+	rfc4469,
+	rfc3516,
+	rfc8508,
 ];
 
 export function findRequirement(id: string) {

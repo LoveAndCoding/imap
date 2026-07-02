@@ -34,3 +34,26 @@ test("catalog contains the Phase 3 connection & security family sources", () => 
 		]),
 	);
 });
+
+test("catalog contains the Phase 4 mailbox/listing/metadata + message-ops family sources", () => {
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(
+		expect.arrayContaining([
+			"RFC4315",
+			"RFC6851",
+			"RFC2342",
+			"RFC5258",
+			"RFC5819",
+			"RFC6154",
+			"RFC4314",
+			"RFC9208",
+			"RFC5464",
+			"RFC8514",
+			"RFC8474",
+			"RFC3502",
+			"RFC4469",
+			"RFC3516",
+			"RFC8508",
+		]),
+	);
+});
