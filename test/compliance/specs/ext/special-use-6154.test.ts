@@ -1,0 +1,397 @@
+/**
+ * RFC 6154 — "IMAP LIST Extension for Special-Use Mailboxes." Covers BOTH the
+ * SPECIAL-USE capability (special-use name-attributes + the SPECIAL-USE LIST
+ * selection/return options) AND the CREATE-SPECIAL-USE capability (the CREATE
+ * `(USE (...))` parameter + the `[USEATTR]` response code).
+ *
+ * Testable catalog ids covered here (see test/compliance/catalog/ext/rfc6154.ts):
+ *
+ *   RFC6154-2-1  Client MAY request only special-use mailboxes via the SPECIAL-USE
+ *                selection option: `LIST (SPECIAL-USE) "" "*"`. testable.
+ *   RFC6154-2-2  Client MAY request special-use attributes via the SPECIAL-USE
+ *                return option: `LIST "" "%" RETURN (SPECIAL-USE)`. testable.
+ *   RFC6154-3-1  Client MUST NOT use the USE parameter unless CREATE-SPECIAL-USE is
+ *                advertised. testable (prohibition).
+ *   RFC6154-3-2  Client CREATE with special use MAY carry the USE parameter:
+ *                `CREATE MySpecial (USE (\Drafts \Sent))`. testable.
+ *   RFC6154-3-3  Client MUST handle a tagged NO carrying `[USEATTR]` on CREATE
+ *                refusal. testable.
+ *   RFC6154-6-1  Client MUST accept the seven special-use name-attributes
+ *                (\All \Archive \Drafts \Flagged \Junk \Sent \Trash) in LIST
+ *                responses. testable.
+ *   RFC6154-6-2  Client MUST ignore list attributes it does not understand.
+ *                testable.
+ *
+ * Untestable: 0 (every RFC 6154 client entry is testable).
+ *
+ * PROFILES: all seven keep ["rev1","rev2"]. RFC 9051 (IMAP4rev2) did NOT absorb
+ * RFC 6154's special-use surface into core — §6.3.4 CREATE has no USE parameter,
+ * §7.3.1 defines no special-use attributes, and there is no SPECIAL-USE option or
+ * [USEATTR] code in the rev2 catalog — so RFC 6154 remains a standalone extension
+ * scoring these duties under both profiles. RFC6154-3-1 is cross-referenced (not
+ * deduped) against the GENERAL option gate RFC9051-6.3.9-5, which is a distinct
+ * duty (LIST options vs the CREATE-side USE parameter). See the module extractionNote.
+ *
+ * SELF-ACTUALIZING (unimplemented). driver.list() (widened with selectOptions/
+ * returnOptions) and driver.create() (widened with useAttributes) both throw
+ * NotImplementedError: the client has no special-use LIST or CREATE-USE surface.
+ * Every test drives the relevant verb → the call rejects → "unimplemented", while
+ * the script encodes the exact RFC-conformant wire form (and a tight matcher, for
+ * the emit-form tests, that rejects a plausible wrong emission). expectFailure:
+ * "unimplemented" is declared on every test.
+ */
+import { expect } from "vitest";
+
+import { command } from "../../harness/matchers";
+import { expectLine, reply } from "../../harness/script";
+import { NotImplementedError } from "../../driver/errors";
+import { complianceTest } from "../../runner/compliance-test";
+import { useComplianceFixture } from "../../runner/fixture";
+import { sessionPrelude } from "../../runner/state";
+
+const f = useComplianceFixture();
+
+// Capabilities advertising the SPECIAL-USE / CREATE-SPECIAL-USE features per profile.
+function suCaps(profile: "rev1" | "rev2", extra: string[] = ["SPECIAL-USE"]): string[] {
+	return profile === "rev2"
+		? ["IMAP4rev2", "LITERAL-", ...extra]
+		: ["IMAP4rev1", ...extra];
+}
+
+// ── RFC6154-2-1: SPECIAL-USE selection option ────────────────────────────────
+// `C: t3 LIST (SPECIAL-USE) "" "*"` (§5.2) — the option is a bare atom inside the
+// parenthesized selection-option list, immediately after LIST and before the
+// reference/pattern. The matcher requires the parenthesized `(SPECIAL-USE)` list
+// preceding the reference and pattern, rejecting a bare `LIST "" "*"` with no
+// selection option, or the atom placed outside the parentheses. list() is
+// unimplemented → the call rejects first.
+complianceTest(
+	{
+		reqs: ["RFC6154-2-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client emits LIST (SPECIAL-USE) selection option to list only special-use mailboxes",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				// Parenthesized selection-option list containing SPECIAL-USE, then the
+				// reference and pattern.
+				expectLine(
+					command("LIST", {
+						args: /^\((?:[A-Z-]+ )*SPECIAL-USE(?: [A-Z-]+)*\) (?:""|"[^"]*"|[^\s"]+) (?:""|"[^"]*"|[^\s"]+)$/,
+					}),
+				),
+				reply("OK List completed.", ['* LIST (\\Sent) "/" "Sent Items"']),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.list() with a SPECIAL-USE selection option must throw today").toBeInstanceOf(
+			NotImplementedError,
+		);
+		// When implemented: SPECIAL-USE appears inside a parenthesized selection list.
+		const listLine = server.commandLines.find((l) => l.verb === "LIST");
+		if (listLine) {
+			expect(listLine.args, "SPECIAL-USE must be a parenthesized selection option").toMatch(
+				/^\([^)]*SPECIAL-USE[^)]*\)/,
+			);
+		}
+	},
+);
+
+// ── RFC6154-2-2: SPECIAL-USE return option ───────────────────────────────────
+// `C: t2 LIST "" "%" RETURN (SPECIAL-USE)` (§5.2) — the option appears inside the
+// trailing RETURN parenthesized list. The matcher requires the RETURN keyword and
+// the parenthesized SPECIAL-USE after the reference/pattern, rejecting a missing
+// RETURN keyword or the atom outside the parentheses. list() rejects first.
+complianceTest(
+	{
+		reqs: ["RFC6154-2-2"],
+		profiles: ["rev1", "rev2"],
+		title: "client emits LIST ... RETURN (SPECIAL-USE) to request special-use attributes",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				expectLine(
+					command("LIST", {
+						args: /^(?:""|"[^"]*"|[^\s"]+) (?:""|"[^"]*"|[^\s"]+) RETURN \((?:[A-Z-]+ )*SPECIAL-USE(?: [A-Z-]+)*\)$/,
+					}),
+				),
+				reply("OK List completed.", ['* LIST (\\Marked \\Sent) "/" "Sent"']),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.list() with a SPECIAL-USE return option must throw today").toBeInstanceOf(
+			NotImplementedError,
+		);
+		const listLine = server.commandLines.find((l) => l.verb === "LIST");
+		if (listLine) {
+			expect(listLine.args, "SPECIAL-USE must appear inside the RETURN parentheses").toMatch(
+				/RETURN \([^)]*SPECIAL-USE[^)]*\)/,
+			);
+		}
+	},
+);
+
+// ── RFC6154-3-1: MUST NOT use USE parameter unless CREATE-SPECIAL-USE advertised ─
+// PROHIBITION test — never expectLine the forbidden command. Arm a server whose
+// CAPABILITY advertises SPECIAL-USE (the LIST-side capability) but NOT
+// CREATE-SPECIAL-USE (the distinct CREATE-side capability). Drive create() with a
+// USE attribute; a conformant client must not emit a CREATE carrying `(USE (...))`
+// when CREATE-SPECIAL-USE was never advertised. create() is unimplemented → the
+// call rejects (unimplemented); the transcript guard proves no USE parameter
+// reached the wire.
+complianceTest(
+	{
+		reqs: ["RFC6154-3-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client MUST NOT emit CREATE (USE (...)) unless CREATE-SPECIAL-USE is advertised",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				// SPECIAL-USE advertised, CREATE-SPECIAL-USE deliberately NOT.
+				...sessionPrelude(suCaps(ctx.profile, ["SPECIAL-USE"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				// No CREATE-with-USE is scripted — any such command is a violation.
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.create("Archive", { useAttributes: ["\\Archive"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.create() with a USE attribute must throw today").toBeInstanceOf(
+			NotImplementedError,
+		);
+		await server.assertCompleted();
+		// Transcript guard: no CREATE carrying a USE parameter reached the wire.
+		expect(
+			server.transcript.clientLines(),
+			"no CREATE USE parameter may be sent without CREATE-SPECIAL-USE",
+		).not.toMatch(/\bUSE\b/i);
+	},
+);
+
+// ── RFC6154-3-2: CREATE with the USE parameter ───────────────────────────────
+// `C: t2 CREATE MySpecial (USE (\Drafts \Sent))` (§5.3) — the literal atom USE, a
+// space, then a parenthesized space-separated list of use-attr tokens. The matcher
+// requires the mailbox name followed by `(USE (<attrs>))`, rejecting attributes
+// that are not parenthesized, a missing USE keyword, or attributes passed as a bare
+// flag list. create() is unimplemented → the call rejects first.
+complianceTest(
+	{
+		reqs: ["RFC6154-3-2"],
+		profiles: ["rev1", "rev2"],
+		title: "client emits CREATE <mailbox> (USE (<attrs>)) to designate special uses at creation",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile, ["SPECIAL-USE", "CREATE-SPECIAL-USE"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				// mailbox SP "(USE (" use-attr *(SP use-attr) "))"
+				expectLine(
+					command("CREATE", {
+						args: /^(?:"[^"]*"|[^\s"]+) \(USE \(\\[A-Za-z]+(?: \\[A-Za-z]+)*\)\)$/,
+					}),
+				),
+				reply("OK Create completed."),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
+			NotImplementedError,
+		);
+		// When implemented: the attributes appear inside a (USE (...)) parameter,
+		// never as a bare flag list.
+		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
+		if (createLine) {
+			expect(createLine.args, "special uses must be inside a (USE (...)) parameter").toMatch(
+				/\(USE \(/,
+			);
+		}
+	},
+);
+
+// ── RFC6154-3-3: handle a tagged NO carrying [USEATTR] on CREATE refusal ─────
+// `C: t3 CREATE Everything (USE (\All))` / `S: t3 NO [USEATTR] \All not supported`
+// (§5.3). A client that emitted a special-use CREATE MUST accept a tagged
+// `NO [USEATTR] ...` as a well-formed, per-spec refusal — surfacing the CREATE as
+// failed, not treating the [USEATTR] resp-text-code as a protocol/parse error.
+// create() is unimplemented → the call rejects first; the script documents the
+// exact refusal the client must accept once it can drive the CREATE.
+complianceTest(
+	{
+		reqs: ["RFC6154-3-3"],
+		profiles: ["rev1", "rev2"],
+		title: "client accepts a tagged NO [USEATTR] as a well-formed CREATE-special-use refusal",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile, ["SPECIAL-USE", "CREATE-SPECIAL-USE"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(command("CREATE")),
+				// §5.3 refusal: tagged NO carrying the [USEATTR] response code.
+				reply("NO [USEATTR] \\All not supported"),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.create("Everything", { useAttributes: ["\\All"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
+			NotImplementedError,
+		);
+		// When implemented: the client surfaces the CREATE as failed (the NO) and does
+		// NOT choke on the [USEATTR] code — the connection remains usable.
+		expect(driver.active, "client stays active after a NO [USEATTR] refusal").toBe(true);
+	},
+);
+
+// ── RFC6154-6-1: accept the seven special-use name-attributes in LIST responses ─
+// The seven attributes \All \Archive \Drafts \Flagged \Junk \Sent \Trash extend
+// mbx-list-oflag: a client parsing LIST responses MUST accept any of them wherever
+// a mailbox-list flag may appear, interleaved with existing flags (\Marked,
+// \HasNoChildren, ...). Script a LIST response carrying all seven across several
+// mailboxes; the client must parse them without error. list() is unimplemented →
+// the call rejects (unimplemented); the script documents the acceptance duty.
+complianceTest(
+	{
+		reqs: ["RFC6154-6-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client accepts the seven special-use name-attributes in LIST responses",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				expectLine(command("LIST")),
+				// All seven special-use attributes, interleaved with ordinary flags.
+				reply("OK List completed.", [
+					'* LIST (\\HasNoChildren \\All) "/" "All Mail"',
+					'* LIST (\\HasNoChildren \\Archive) "/" "Archive"',
+					'* LIST (\\HasNoChildren \\Drafts) "/" "Drafts"',
+					'* LIST (\\Marked \\Flagged) "/" "Flagged"',
+					'* LIST (\\HasNoChildren \\Junk) "/" "Spam"',
+					'* LIST (\\HasNoChildren \\Sent) "/" "Sent Items"',
+					'* LIST (\\HasNoChildren \\Trash) "/" "Trash"',
+				]),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
+		// When implemented: the client parses all seven special-use attributes without
+		// error and stays connected.
+		expect(
+			driver.active,
+			"client must parse LIST responses carrying special-use attributes",
+		).toBe(true);
+	},
+);
+
+// ── RFC6154-6-2: ignore list attributes the client does not understand ───────
+// use-attr-ext = "\" atom ; Clients MUST ignore list attributes they do not
+// understand. A client MUST NOT choke on an unrecognized "\"-prefixed atom (e.g. a
+// future "\Xyzzy" special use) in a LIST response — it parses the base response and
+// skips the unknown attribute. Script a LIST entry mixing a known flag with an
+// unknown "\Xyzzy" attribute. list() is unimplemented → the call rejects
+// (unimplemented). applicability "always" per the catalog (baseline robustness).
+complianceTest(
+	{
+		reqs: ["RFC6154-6-2"],
+		profiles: ["rev1", "rev2"],
+		title: "client ignores an unrecognized list attribute and parses the base LIST response",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(suCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				expectLine(command("LIST")),
+				// An unrecognized "\Xyzzy" attribute alongside a known one — the client
+				// MUST ignore the unknown attribute, not reject the mailbox line.
+				reply("OK List completed.", ['* LIST (\\HasNoChildren \\Xyzzy) "/" "INBOX"']),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.list("", "*");
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
+		// When implemented: the client survives the unknown attribute (no parse abort /
+		// disconnect) and treats the base LIST entry normally.
+		expect(
+			driver.active,
+			"client must remain connected after ignoring an unknown list attribute",
+		).toBe(true);
+	},
+);
