@@ -57,3 +57,23 @@ test("catalog contains the Phase 4 mailbox/listing/metadata + message-ops family
 		]),
 	);
 });
+
+test("catalog contains the Phase 5 search/sort/sync/events family sources", () => {
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(
+		expect.arrayContaining([
+			"RFC7162",
+			"RFC5256",
+			"RFC5957",
+			"RFC4731",
+			"RFC5267",
+			"RFC5182",
+			"RFC6203",
+			"RFC9394",
+			"RFC2177",
+			"RFC5465",
+			"RFC5466",
+			"RFC5032",
+		]),
+	);
+});

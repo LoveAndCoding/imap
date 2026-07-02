@@ -37,6 +37,20 @@ import rfc4469 from "./ext/rfc4469";
 import rfc3516 from "./ext/rfc3516";
 import rfc8508 from "./ext/rfc8508";
 
+// Phase 5 — search/sort/sync/events (skeletons; extracted in Task 4).
+import rfc7162 from "./ext/rfc7162";
+import rfc5256 from "./ext/rfc5256";
+import rfc5957 from "./ext/rfc5957";
+import rfc4731 from "./ext/rfc4731";
+import rfc5267 from "./ext/rfc5267";
+import rfc5182 from "./ext/rfc5182";
+import rfc6203 from "./ext/rfc6203";
+import rfc9394 from "./ext/rfc9394";
+import rfc2177 from "./ext/rfc2177";
+import rfc5465 from "./ext/rfc5465";
+import rfc5466 from "./ext/rfc5466";
+import rfc5032 from "./ext/rfc5032";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -73,6 +87,19 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc4469,
 	rfc3516,
 	rfc8508,
+	// Phase 5 — search/sort/sync/events
+	rfc7162,
+	rfc5256,
+	rfc5957,
+	rfc4731,
+	rfc5267,
+	rfc5182,
+	rfc6203,
+	rfc9394,
+	rfc2177,
+	rfc5465,
+	rfc5466,
+	rfc5032,
 ];
 
 export function findRequirement(id: string) {
