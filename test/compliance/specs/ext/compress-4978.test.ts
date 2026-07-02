@@ -23,9 +23,10 @@
  *                content of the compressed octet stream AFTER a successful
  *                COMPRESS OK, and the harness has no DEFLATE/zlib codec on its
  *                server-scripting side to encode or decode that stream. The
- *                catalog tags these with a PLACEHOLDER 'environment-limit' theme
- *                pending the proposed 'compressed-framing-opacity' retag (P3-E);
- *                this spec file does NOT exercise them (see report).
+ *                catalog tags these with the 'compressed-framing-opacity' theme
+ *                (registered at P3-E in test/compliance/catalog/types.ts and the
+ *                untestability-themes taxonomy); this spec file does NOT exercise
+ *                them (see report).
  *
  * COMMAND SYNTAX (RFC 4978 §3, §5 ABNF: compress = "COMPRESS" SP algorithm;
  * algorithm = "DEFLATE"): the only defined algorithm is DEFLATE, so the sole

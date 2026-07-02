@@ -442,12 +442,39 @@ alone suffices.
 
 ## Effect on counts
 
-The combined untestable population becomes **59** entries across **11** themes (56 from
-Phases 1–2 + 3 from RFC 4978). The three entries move **out of** `environment-limit`
-(which returns to its 2 rev1-only members, RFC3501-11.1-1/-2) and **into**
-`compressed-framing-opacity` (3 members, dual-profile rev1+rev2). No Phase 1/Phase 2 verdict
-changes; this is a pure re-home of placeholder-tagged entries onto their honest theme plus
-the schema registration in `test/compliance/catalog/types.ts` (`UNTESTABLE_THEMES`).
+The taxonomy grows from **10 themes to 11**. What P3-E changes is narrow: the three
+RFC 4978 entries (`RFC4978-3-2/-4/-5`) move **out of** the `environment-limit` placeholder
+and **into** `compressed-framing-opacity`. No entry's testability flips, and no Phase 1 or
+Phase 2 verdict changes — this is a pure re-home onto the honest theme plus the schema
+registration in `test/compliance/catalog/types.ts` (`UNTESTABLE_THEMES`).
+
+Note on totals: the Phase 1/Phase 2 tables above count only the RFC 3501 + RFC 2971 +
+RFC 9051 population (56 untestable requirement×profile instances). Phase 3 added the full
+14-source connection & security family, which contributes many further untestable entries
+across most themes (TLS-environment duties, SASL capability-inventory pointers, internal
+decisions, etc.) — so the live catalog totals below are the authoritative figures, not the
+Phase 2 table. Measured per **catalog entry** (not profile-doubled) across the whole catalog
+after this retag:
+
+| Theme | entries |
+|---|---|
+| `capability-inventory` | 44 |
+| `internal-decision` | 38 |
+| `user-intent-policy` | 11 |
+| `internal-state` | 10 |
+| `ui-presentation` | 7 |
+| `environment-limit` | 7 |
+| `content-processing` | 4 |
+| `performance-expectation` | 4 |
+| `out-of-band` | 4 |
+| `compressed-framing-opacity` | 3 |
+| `cross-session` | 1 |
+
+`environment-limit` therefore retains **7** members after the RFC 4978 re-home, not 2: the
+two rev1-only RFC 3501 cipher duties (RFC3501-11.1-1/-2) plus genuine Phase 3 TLS-environment
+entries (e.g. RFC2595 3DES / wildcard-vs-loopback-IP, RFC9525 wildcard-needs-DNS-hostname)
+that were extracted straight into it and are correctly homed. `compressed-framing-opacity`
+holds exactly its 3 dual-profile members.
 
 ## Forward-looking
 
