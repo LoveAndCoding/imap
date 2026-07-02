@@ -112,11 +112,6 @@ interface ParsedExpunge {
 	sequenceNumber?: number;
 }
 
-function fetchContent(ev: ObservedEvent): ParsedFetch {
-	return ((ev.detail as { content?: unknown } | undefined)?.content ??
-		{}) as ParsedFetch;
-}
-
 function contentOf<T>(ev: ObservedEvent): T {
 	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as T;
 }
@@ -153,7 +148,7 @@ async function deliverUnsolicitedFetch(
 	// The response stream must survive the FETCH: the trailing EXISTS update
 	// must also surface (a parser that died mid-line would never deliver it).
 	await waitForUntagged(driver, "EXISTS");
-	const content = fetchContent(fetchEvent);
+	const content = contentOf<ParsedFetch>(fetchEvent);
 	expect(content.sequenceNumber).toBe(1);
 	return content;
 }
