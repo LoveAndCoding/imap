@@ -44,10 +44,12 @@
  *                      pass — a client that never surfaces ALERT text anywhere
  *                      trivially satisfies 7.1-1's absence assertion).
  *   7.1-1 (absence):   on a plaintext connection, the ALERT content must NOT be
- *                      surfaced at attention grade (SHOULD ignore). Absence is
- *                      asserted after a bounded flush window — waitForUntagged
- *                      cannot be used because there is no positive event to poll
- *                      for; the point is that nothing attention-grade appears.
+ *                      surfaced at ANY log level (SHOULD ignore) — per the catalog
+ *                      caveat, absence means gone from the full log stream, not
+ *                      merely downgraded below attention grade. Absence is asserted
+ *                      after a bounded flush window — waitForUntagged cannot be
+ *                      used because there is no positive event to poll for; the
+ *                      point is that nothing appears at all.
  *   7.1-2 (marking):   if the client DOES surface an unprotected ALERT, the
  *                      emitted payload must carry a structural "suspicious"
  *                      marker (an explicit source tag such as "ALERT", not mere
@@ -514,10 +516,13 @@ complianceTest(
 // ── RFC9051-7.1-1: client SHOULD ignore ALERT received without TLS/SASL ──────
 // Absence leg of the graded ALERT trio. On a PLAINTEXT connection (no TLS, no
 // SASL security layer) the server sends an "* OK [ALERT] ..." line. Per §7.1 the
-// content SHOULD be ignored — it must NOT be surfaced at attention grade. There
-// is no positive event to poll for (the point is that nothing appears), so
-// waitForUntagged cannot apply; instead we allow a bounded flush window and then
-// assert the absence of an attention-grade ALERT emission carrying the sentinel.
+// content SHOULD be ignored. Per the catalog entry's binding absence-assertion
+// caveat, "ignored" means the ALERT content is absent from the logger output at
+// ANY level — not merely suppressed at attention grade while leaking through at a
+// lower level (debug/silly). So the assertion scans the FULL captured log stream
+// for the sentinel, not just warn/error entries. There is no positive event to
+// poll for (the point is that nothing appears), so waitForUntagged cannot apply;
+// instead we allow a bounded flush window and then assert absence.
 //
 // Pairing caveat (see the file header): a client that never surfaces ALERT text
 // under ANY connection condition would pass this absence assertion trivially.
@@ -531,7 +536,7 @@ complianceTest(
 		reqs: ["RFC9051-7.1-1"],
 		profiles: ["rev2"],
 		title:
-			"client does not surface a plaintext-connection ALERT at attention grade (SHOULD ignore)",
+			"client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
 		timeout: 5000,
 	},
 	async () => {
@@ -556,14 +561,12 @@ complianceTest(
 		await server.assertCompleted();
 		// Bounded flush window, then assert absence (no positive event to poll for).
 		await new Promise<void>((r) => setTimeout(r, 100));
-		const alertSurfaced = driver.logs.some(
-			(entry) =>
-				(entry.level === "warn" || entry.level === "error") &&
-				entry.message.includes(alertText),
-		);
+		// Scan the FULL log stream at any level — the ALERT content must not leak
+		// through anywhere (not just at attention grade), per the catalog caveat.
+		const alertSurfaced = driver.logs.some((entry) => entry.message.includes(alertText));
 		expect(
 			alertSurfaced,
-			"a plaintext-connection ALERT must not be surfaced at attention grade (SHOULD ignore)",
+			"a plaintext-connection ALERT must not be surfaced at any log level (SHOULD ignore)",
 		).toBe(false);
 	},
 );
