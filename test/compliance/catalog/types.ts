@@ -46,6 +46,24 @@ const LEVELS: ReadonlySet<string> = new Set([
 	"MAY",
 ]);
 const PROFILES: ReadonlySet<string> = new Set(["rev1", "rev2"]);
+/**
+ * Canonical untestability taxonomy — mirrors
+ * docs/superpowers/specs/2026-06-12-untestability-themes.md (append-only).
+ * A typo'd theme would otherwise validate and spawn a phantom bucket in the
+ * theme analysis, so membership is enforced here.
+ */
+const UNTESTABLE_THEMES: ReadonlySet<string> = new Set([
+	"internal-decision",
+	"internal-state",
+	"content-processing",
+	"capability-inventory",
+	"user-intent-policy",
+	"performance-expectation",
+	"ui-presentation",
+	"out-of-band",
+	"environment-limit",
+	"cross-session",
+]);
 
 export function validateCatalog(modules: CatalogModule[]): string[] {
 	const problems: string[] = [];
@@ -84,6 +102,9 @@ export function validateCatalog(modules: CatalogModule[]): string[] {
 			}
 			if (req.testability === "untestable" && !req.untestableTheme?.trim()) {
 				problems.push(`${where}: untestable without untestableTheme`);
+			}
+			if (req.untestableTheme && !UNTESTABLE_THEMES.has(req.untestableTheme)) {
+				problems.push(`${where}: unknown untestableTheme '${req.untestableTheme}'`);
 			}
 			if (req.testability === "testable" && req.untestableTheme) {
 				problems.push(`${where}: untestableTheme on a testable entry`);
