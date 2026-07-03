@@ -26,7 +26,7 @@ const rfc5267: CatalogModule = {
 		"family construction (this RFC states the gates only from the server side). Note the " +
 		"RFC 9394 interplay: the PARTIAL *search return option* is also reachable via the later " +
 		"'PARTIAL' capability (RFC 9394 §3.2 gate: 'PARTIAL' or 'CONTEXT=SEARCH'), whose own gate " +
-		"entry RFC9394-2-1 took the untestable/capability-inventory adjudication — the divergence " +
+		"entry RFC9394-3-1 took the untestable/capability-inventory adjudication — the divergence " +
 		"is flagged for the auditor on RFC5267-4.1-1. " +
 		"RFC 9394 RELATIONSHIP: RFC 9394 ('Updates: 4731, 5267') later revises PARTIAL (adds " +
 		"minus-prefixed newest-first ranges, a UID FETCH PARTIAL modifier, and restates the " +
@@ -300,7 +300,7 @@ const rfc5267: CatalogModule = {
 				"Gates their use on SEARCH/UID SEARCH. AUDITOR NOTE on the PARTIAL overlap: RFC " +
 				"9394 later provides an alternative gate for the PARTIAL search return option " +
 				"(its 'PARTIAL' capability; RFC 9394 §3.2 applies when the server advertises " +
-				"'PARTIAL' or 'CONTEXT=SEARCH'), and its gate entry RFC9394-2-1 took the " +
+				"'PARTIAL' or 'CONTEXT=SEARCH'), and its gate entry RFC9394-3-1 took the " +
 				"untestable/capability-inventory adjudication — this file follows the Phase 5 " +
 				"batch majority (RFC4731-1-1, RFC6203-1-1, RFC6203-6-3: testable emission " +
 				"prohibition) instead; flagged for reconciliation. Testable: script a server " +

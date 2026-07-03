@@ -201,7 +201,9 @@ export const registryCoverage: RegistryEntry[] = [
 	//                                   * OK [NOTIFICATIONOVERFLOW].
 	// FILTERS               → RFC5466 — filter definitions used within NOTIFY/SEARCH.
 	// WITHIN                → RFC5032 — SEARCH OLDER n / YOUNGER n
-	//                                   (rev2-core overlap: RFC 9051 core has OLDER/YOUNGER).
+	//                                   (standalone: RFC 9051 did NOT absorb OLDER/YOUNGER —
+	//                                   early rev2 drafts had them, dropped before publication;
+	//                                   zero occurrences in the published RFC 9051).
 	//
 	// ---- PENDING — Phase 6 (i18n + misc + vendor + registry completion) ----
 	// UTF8=ONLY (RFC 6855), LANGUAGE (RFC 5255), I18NLEVEL=1 / I18NLEVEL=2 (RFC 5255),

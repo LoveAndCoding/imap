@@ -7,7 +7,7 @@ const rfc6203: CatalogModule = {
 		"Conventions, §3 The FUZZY Search Key, §4 Relevancy Scores for Search Results, §5 Fuzzy " +
 		"Matching with Non-String Search Keys, §6 Extensions to SORT and SEARCH, §7 Formal Syntax, " +
 		"§8 Security Considerations, §9 IANA Considerations, §10 Acknowledgements, §11 Normative " +
-		"References, Author's Address). 12 client-binding entries extracted. Only three sentences in " +
+		"References, Author's Address). 12 client-binding entries extracted. Only two sentences in " +
 		"the whole document carry client-directed UPPERCASE RFC 2119 keywords viewed strictly — the " +
 		"two 'RELEVANCY ... MUST NOT be used unless a FUZZY search key is also given' prohibitions " +
 		"(§4 return option → RFC6203-4-3; §6 sort criterion → RFC6203-6-2) — so most entries are " +
@@ -60,8 +60,11 @@ const rfc6203: CatalogModule = {
 		"extension default profiles [\"rev1\",\"rev2\"]. All entries applicability 'conditional' " +
 		"(they bind only a client that uses fuzzy search / RELEVANCY at all). Untestable: 3 " +
 		"(RFC6203-3-2, RFC6203-4-4, RFC6203-8-1; all theme ui-presentation). Quote verification: " +
-		"all 12 text segments (plus 23 notes-embedded quotes) mechanically verified as substrings " +
-		"of the whitespace-flattened RFC text.",
+		"the extractor died before running its checker, and the RFC6203-3-2 quote had silently " +
+		"joined the RFC's line-wrap hyphenation; verification was completed at audit (P5-C) — " +
+		"the 3-2 text was repaired to the flattened form 'not-necessarily- deterministic' and " +
+		"all 12 text segments were then mechanically verified as substrings of the " +
+		"whitespace-flattened RFC text.",
 	requirements: [
 		// ── §1 Introduction (capability gate) ───────────────────────────────────
 
@@ -128,7 +131,7 @@ const rfc6203: CatalogModule = {
 			title: "Client must warn the user that fuzzy results are not necessarily deterministic",
 			text:
 				'Clients asking for "fuzzy" really are requesting search results in a ' +
-				"not-necessarily-deterministic way and need to give the user appropriate warning " +
+				"not-necessarily- deterministic way and need to give the user appropriate warning " +
 				"about that.",
 			level: "MUST",
 			applicability: "conditional",
@@ -148,7 +151,10 @@ const rfc6203: CatalogModule = {
 				"discipline — 'need to' expresses necessity, not advice. The quoted sentence is the " +
 				"conclusion of §3's paragraph explaining that fuzzy algorithms may change, adapt to " +
 				"user habits, or vary across users/time due to operational decisions such as load " +
-				"balancing.",
+				"balancing. Whitespace note: 'not-necessarily- deterministic' preserves the RFC's " +
+				"own line-wrap hyphenation ('not-necessarily-' / 'deterministic' broken across a " +
+				"line) as flattened by the mechanical quote checker — same treatment as RFC 5256's " +
+				"'upwards- compatible'.",
 		},
 
 		// ── §4 Relevancy Scores for Search Results ──────────────────────────────

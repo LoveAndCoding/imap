@@ -52,9 +52,10 @@ const rfc5465: CatalogModule = {
 		"EXISTS-precedes-FETCH-precedes-ESEARCH ordering MUSTs and the " +
 		"no-FETCH-on-flag-change-membership SHOULD (server generation); §8 'Implementations MUST " +
 		"accept these strings in a case-insensitive fashion' (shared ABNF-preamble boilerplate — same " +
-		"exclusion as RFC5464/RFC5161); §9 the client self-denial-of-service warning (no RFC 2119 " +
+		"exclusion as RFC5464/RFC5161; §8's fetch-att-placement ABNF comment IS scored, as " +
+		"RFC5465-8-1); §9 the client self-denial-of-service warning (no RFC 2119 " +
 		"keyword; its client-facing content is already RFC5465-3.1-5).\n\n" +
-		"CLIENT-BINDING extracted (26 entries): §3.1 the NOTIFY SET/NONE command forms (grammar per " +
+		"CLIENT-BINDING extracted (27 entries): §3.1 the NOTIFY SET/NONE command forms (grammar per " +
 		"§8 ABNF: notify = 'NOTIFY' SP (notify-set / notify-none); notify-set = 'SET' " +
 		"[status-indicator] SP event-groups), the implicit-NOOP acceptance after NOTIFY SET, the " +
 		"omitted-SELECTED-means-SELECTED-NONE semantics, acceptance of pre-tagged-OK STATUS responses " +
@@ -69,7 +70,10 @@ const rfc5465: CatalogModule = {
 		"untagged 'OK [NOTIFICATIONOVERFLOW]' acceptance and the implicit " +
 		"treat-as-NOTIFY-NONE/resynchronize duty; §6.1 the two SELECTED-specifier composition rules; " +
 		"§7 the extended UPDATE-with-fetch-atts return option (client command form defined by this " +
-		"document even though CONTEXT itself is RFC 5267's).\n\n" +
+		"document even though CONTEXT itself is RFC 5267's); §8 one entry — the ABNF-comment " +
+		"composition restriction confining the MessageNew fetch-att list to " +
+		"SELECTED/SELECTED-DELAYED event groups (RFC5465-8-1; the comment's 'fett-att' is the " +
+		"RFC's own typo, preserved verbatim).\n\n" +
 		"REV2 CROSS-REFERENCE: NOTIFY is NOT folded into IMAP4rev2 (RFC 9051) — verified by grepping " +
 		"catalog/rfc9051/ for NOTIFY/5465 (only hit is an unrelated lowercase 'notify the client' in " +
 		"an EXISTS duty). It remains a standalone extension in rev2, so every entry defaults " +
@@ -86,12 +90,14 @@ const rfc5465: CatalogModule = {
 		"RFC5465-3.1-5 ('advised'), RFC5465-5-3 ('can'), RFC5465-5.2-1/-5.3-1/-5.4-2/-5.5-1 " +
 		"(descriptive 'notifies the client by sending' — parse duties), RFC5465-5.2-4/-5.3-2 " +
 		"('cannot' prohibitions), RFC5465-5.8-2 (implicit), RFC5465-6.1-1/-6.1-2 ('can be " +
-		"specified' / 'It is an error'), RFC5465-7-1 ('can request').\n\n" +
+		"specified' / 'It is an error'), RFC5465-7-1 ('can request'), RFC5465-8-1 (ABNF comment " +
+		"'may only be present').\n\n" +
 		"Untestable: 3 entries — RFC5465-3.1-3 (omitted-SELECTED semantics, internal-decision), " +
 		"RFC5465-3.1-5 (limit-mailboxes advisory, performance-expectation), RFC5465-5.8-2 " +
-		"(post-overflow state model, internal-state). Total: 26 client-binding entries " +
+		"(post-overflow state model, internal-state). Total: 27 client-binding entries " +
 		"(RFC5465-3.1-1..8, RFC5465-5-1..3, RFC5465-5.1-1, RFC5465-5.2-1..4, RFC5465-5.3-1..2, " +
-		"RFC5465-5.4-1..2, RFC5465-5.5-1, RFC5465-5.8-1..2, RFC5465-6.1-1..2, RFC5465-7-1).",
+		"RFC5465-5.4-1..2, RFC5465-5.5-1, RFC5465-5.8-1..2, RFC5465-6.1-1..2, RFC5465-7-1, " +
+		"RFC5465-8-1).",
 	requirements: [
 		// ── §3.1 The NOTIFY Command ──────────────────────────────────────────────
 
@@ -761,6 +767,39 @@ const rfc5465: CatalogModule = {
 				"fetch-att SHOULD NOT applies to this list too. Testable black-box: a client-emitted " +
 				"UPDATE option with fetch-atts matches the modifier-update grammar. Conditional; " +
 				"standalone in rev2, so [\"rev1\",\"rev2\"].",
+		},
+
+		// ── §8 Formal Syntax ─────────────────────────────────────────────────────
+
+		{
+			id: "RFC5465-8-1",
+			source: "RFC5465",
+			section: "8",
+			title:
+				"Client MUST NOT attach a MessageNew fetch-att list outside SELECTED/SELECTED-DELAYED " +
+				"event groups",
+			text:
+				"The fett-att list may only be present for the SELECTED/SELECTED-DELAYED mailbox " +
+				"filter (<filter-mailboxes>).",
+			level: "MUST NOT",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Judgment level (ABNF-comment restriction, no RFC 2119 keyword): the §8 comment on " +
+				"the message-event production ('MessageNew' [SP \"(\" fetch-att *(SP fetch-att) " +
+				"\")\" ]) confines the optional fetch-att parenthesis to event groups whose " +
+				"filter-mailboxes is SELECTED or SELECTED-DELAYED — 'may only be present' is a hard " +
+				"composition restriction on the client's NOTIFY SET command, mapped to MUST NOT " +
+				"(the client must not emit MessageNew with fetch-atts inside an " +
+				"inboxes/personal/subscribed/subtree/mailboxes event group). 'fett-att' is the " +
+				"RFC's own typo for fetch-att, preserved verbatim per the quote-fidelity " +
+				"discipline. Parallels the two §6.1 composition rules RFC5465-6.1-1/-6.1-2 (which " +
+				"restrict what the selected-family specifiers may carry; this one restricts where " +
+				"the fetch-att list may appear). Testable black-box: a NOTIFY SET command with " +
+				"fetch-atts in a non-SELECTED event group is wire-observable — inspect every " +
+				"emitted event-group and assert fetch-att parentheses appear only under " +
+				"SELECTED/SELECTED-DELAYED. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 	],
 };
