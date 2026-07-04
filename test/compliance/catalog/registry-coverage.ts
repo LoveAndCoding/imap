@@ -6,18 +6,20 @@
  * entry is silently dropped. Registry:
  *   https://www.iana.org/assignments/imap-capabilities/imap-capabilities.xhtml
  *
- * Seeds every capability whose defining RFC is ALREADY cataloged — the
- * Phase 0/1/2 core (IMAP4rev1, IMAP4rev2, ID), the Phase 3 connection &
- * security family, the Phase 4 mailbox/listing/metadata + message-ops
- * family, and the Phase 5 search/sort/sync/events family. Phase 6 registry
- * entries remain a PENDING block comment below, to be promoted when that
- * catalog lands (Phase 6 also performs the live IANA cross-check).
+ * COMPLETE as of the Phase 6 wrap: every token in the committed IANA snapshot
+ * (catalog/iana-snapshot.ts) has an entry here with an auditable status —
+ * `cataloged` (Phases 0–6 families, each backed by a module with requirements
+ * and ≥1 spec file), `no-client-requirements`, `obsoleted-by`, or
+ * `out-of-scope` (each with an explanatory note). specs/meta/registry-coverage.test.ts
+ * runs the LIVE cross-check: it asserts every snapshot token is covered here,
+ * every `cataloged` source resolves to a populated module, and every
+ * non-cataloged entry carries a note.
  *
- * The `source` on each `cataloged` entry MUST name a module present in
- * `allCatalogModules` (enforced by specs/meta/registry-coverage.test.ts). The
- * live IANA cross-check (that every registry entry appears here) is deferred to
- * the Phase 6 completion task; today the meta-test asserts internal consistency
- * only — see that test's header for the documented rationale.
+ * MAINTENANCE: refreshing iana-snapshot.ts (re-fetch + diff) is a periodic task;
+ * a new IANA token would fail the cross-check until reconciled here. X-GM-EXT-1
+ * (Gmail vendor) is cataloged but is NOT an IANA token, so it is not expected in
+ * the snapshot. Note the registry now references RFC 9755 (obsoletes RFC 6855)
+ * for the UTF8 tokens — see the UTF8=ONLY entry.
  */
 
 export interface RegistryEntry {
@@ -489,38 +491,128 @@ export const registryCoverage: RegistryEntry[] = [
 			"token.",
 	},
 
-	// ---- PENDING — Phase 6 scope-table tokens (promoted to `cataloged` at the
-	// wrap, once each module carries requirements and a spec file cites them —
-	// same has-requirements rule as prior phases; skeletons already registered
-	// in catalog/index.ts) ----------------------------------------------------
-	// UTF8=ONLY (RFC 9755, which obsoletes RFC 6855 — client duties already
-	//   live in ext/rfc6855.ts from Phase 3; RFC 9755 also removes APPEND's
-	//   UTF8 data item and relaxes BODYSTRUCTURE message/global handling
-	//   relative to RFC 6855 — a future phase should re-verify rfc6855.ts's
-	//   quotes against RFC 9755's current text; registry-entry-only for now
-	//   per this task's instructions, no new catalog),
-	// LANGUAGE / I18NLEVEL=1 / I18NLEVEL=2 (RFC 5255),
-	// CONVERT (RFC 5259),
-	// URLAUTH (RFC 4467), URLAUTH=BINARY (RFC 5524),
-	// CHILDREN (RFC 3348),
-	// AUTH=SCRAM-SHA-1 (RFC 5802), AUTH=SCRAM-SHA-256 (RFC 7677),
-	// AUTH=ANONYMOUS (RFC 4505), AUTH=EXTERNAL (extends ext/rfc4422.ts),
-	// LOGIN-REFERRALS (RFC 2221), MAILBOX-REFERRALS (RFC 2193),
-	// X-GM-EXT-1 (Gmail vendor extensions; not an IANA registry token — no
-	//   snapshot entry expected, catalogued via the design's Vendor family).
-	//
-	// ---- Phase 6 reconciliation-delta sources (bounded round; genuine
-	// client-binding duties confirmed via RFC-abstract review) — skeletons
-	// registered in catalog/index.ts, JOIN the Task 4 extraction alongside the
-	// scope-table tokens above ---------------------------------------------
-	// APPENDLIMIT (RFC 7889) — client SHOULD parse mailbox/global APPENDLIMIT
-	//   and avoid oversized APPEND/non-synchronizing-literal use.
-	// STATUS=SIZE (RFC 8438) — client requests STATUS SIZE, MUST accept 63-bit
-	//   values.
-	// LIST-MYRIGHTS (RFC 8440) — client requests LIST RETURN (MYRIGHTS), parses
-	//   the untagged MYRIGHTS response and its ordering/absence rules.
-	// PREVIEW (RFC 8970) — client requests FETCH (PREVIEW [LAZY]), parses the
-	//   string/empty-string/NIL response forms.
-	// INPROGRESS (RFC 9585) — client accepts/guards the untagged INPROGRESS
-	//   response code during long-running commands.
+	// ---- Phase 6: i18n + misc + vendor (promoted from PENDING at the wrap;
+	// each module carries requirements and ≥1 spec file cites its testable ids) --
+	{
+		capability: "LANGUAGE",
+		status: "cataloged",
+		source: "RFC5255",
+		note: "LANGUAGE command + * LANGUAGE response; localized text. * LANGUAGE untagged response has no parser handler (stream-death measured).",
+	},
+	{
+		capability: "I18NLEVEL=1",
+		status: "cataloged",
+		source: "RFC5255",
+		note: "i;unicode-casemap default comparator; no client negotiation surface (RFC 5255 §4.3).",
+	},
+	{
+		capability: "I18NLEVEL=2",
+		status: "cataloged",
+		source: "RFC5255",
+		note: "COMPARATOR command/response + [BADCOMPARATOR]; comparator scoping over SEARCH/SORT/THREAD.",
+	},
+	{
+		capability: "CONVERT",
+		status: "cataloged",
+		source: "RFC5259",
+		note: "CONVERT/UID CONVERT; * CONVERTED response (no parser handler — stream-death); TEMPFAIL/MAXCONVERT* resp-codes (bare-arg dropped).",
+	},
+	{
+		capability: "URLAUTH",
+		status: "cataloged",
+		source: "RFC4467",
+		note: "GENURLAUTH/URLFETCH/RESETKEY; URLMECH resp-code parses for real. * GENURLAUTH/* URLFETCH untagged responses have no handler (stream-death).",
+	},
+	{
+		capability: "URLAUTH=BINARY",
+		status: "cataloged",
+		source: "RFC5524",
+		note: "Extended URLFETCH BINARY/BODYPARTSTRUCTURE/BODY parameters; literal8/nstring/NIL framing.",
+	},
+	{
+		capability: "CHILDREN",
+		status: "cataloged",
+		source: "RFC3348",
+		note: "\\HasChildren/\\HasNoChildren acceptance (parses for real). rev1-only: rev2 core (RFC 9051 §7.3.1) + RFC 5258 own the overlapping duties — adjudicated in-catalog.",
+	},
+	{
+		capability: "AUTH=SCRAM-SHA-1",
+		status: "cataloged",
+		source: "RFC5802",
+		note: "SCRAM client-first/final message encodings, ServerSignature verification, channel-binding gs2 flags. Self-actualizing (no AUTHENTICATE surface).",
+	},
+	{
+		capability: "AUTH=SCRAM-SHA-256",
+		status: "cataloged",
+		source: "RFC7677",
+		note: "SHA-256 + iteration-count deltas over RFC 5802; -PLUS session-hash rule. Cross-refs RFC5802 ids.",
+	},
+	{
+		capability: "AUTH=ANONYMOUS",
+		status: "cataloged",
+		source: "RFC4505",
+		note: "Single trace message (token/email, UTF-8, ≤255 chars, no NUL), base64.",
+	},
+	{
+		capability: "AUTH=EXTERNAL",
+		status: "cataloged",
+		source: "RFC4422",
+		note: "SASL EXTERNAL (RFC 4422 Appendix A): empty vs authzid-bearing initial response, single-message exchange.",
+	},
+	{
+		capability: "LOGIN-REFERRALS",
+		status: "cataloged",
+		source: "RFC2221",
+		note: "[REFERRAL imap://...] in tagged NO/OK + untagged BYE. Kind parses for real; bare URL argument dropped (AtomTextCode defect, measured violation).",
+	},
+	{
+		capability: "MAILBOX-REFERRALS",
+		status: "cataloged",
+		source: "RFC2193",
+		note: "[REFERRAL ...] on SELECT/etc.; RLIST/RLSUB command forms. Kind parses (incl. non-IMAP URL schemes); bare URL argument dropped (measured violation).",
+	},
+	{
+		capability: "X-GM-EXT-1",
+		status: "cataloged",
+		source: "X-GM-EXT-1",
+		note: "Gmail vendor extensions (no RFC; cataloged from the Google Developers page): X-GM-MSGID/THRID/LABELS fetch+STORE, X-GM-RAW search. NOT an IANA registry token — excluded from the live cross-check.",
+	},
+	{
+		capability: "UTF8=ONLY",
+		status: "cataloged",
+		source: "RFC6855",
+		note: "Client UTF-8 duties live in ext/rfc6855.ts (Phase 3). MAINTENANCE: the live registry now references RFC 9755 (obsoletes RFC 6855; removes APPEND's UTF8 data item, relaxes BODYSTRUCTURE handling) — a future pass should re-verify rfc6855.ts quotes against RFC 9755.",
+	},
+
+	// ---- Phase 6 reconciliation-delta sources (bounded round) -----------------
+	{
+		capability: "APPENDLIMIT",
+		status: "cataloged",
+		source: "RFC7889",
+		note: "APPENDLIMIT / APPENDLIMIT=n capability parsing (bare vs valued forms distinguished for real via capability map); [TOOBIG] handling.",
+	},
+	{
+		capability: "STATUS=SIZE",
+		status: "cataloged",
+		source: "RFC8438",
+		note: "STATUS (SIZE) + * STATUS (SIZE n) 63-bit acceptance. Dual-profile: rev2 folds the SIZE caution (RFC9051-6.3.11-3) but not the wire vocabulary.",
+	},
+	{
+		capability: "LIST-MYRIGHTS",
+		status: "cataloged",
+		source: "RFC8440",
+		note: "LIST ... RETURN (MYRIGHTS) + interleaved * MYRIGHTS (cross-refs RFC4314's MYRIGHTS parsing).",
+	},
+	{
+		capability: "PREVIEW",
+		status: "cataloged",
+		source: "RFC8970",
+		note: "FETCH (PREVIEW [LAZY]) + * FETCH (PREVIEW ...) string/empty/NIL forms.",
+	},
+	{
+		capability: "INPROGRESS",
+		status: "cataloged",
+		source: "RFC9585",
+		note: "* OK [INPROGRESS (tag current goal)] acceptance — parenthesized arg parses for real; resp-code kind is NOT case-folded (measured violation).",
+	},
 ];
