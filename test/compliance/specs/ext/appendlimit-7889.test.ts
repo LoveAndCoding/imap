@@ -14,22 +14,28 @@
  *                  (STATUS (APPENDLIMIT)) to batch-query mailbox limits.
  *   RFC7889-4-1    Client MUST accept a tagged NO [TOOBIG] as the well-formed
  *                  rejection of an over-limit APPEND.
+ *   RFC7889-2-1    Client MUST distinguish the bare APPENDLIMIT capability
+ *                  form from the valued APPENDLIMIT=<number> form.
+ *                    *** REAL — driver.hasCapability() genuinely
+ *                    distinguishes "APPENDLIMIT=<n>" from bare
+ *                    "APPENDLIMIT" (verified: CapabilityList.add() stores
+ *                    each CAPABILITY token verbatim, uppercased, as its own
+ *                    map key — the "=value" suffix is never stripped) ***
+ *   RFC7889-3.2-2  Client SHOULD fall back to plain STATUS when the server
+ *                  lacks the LIST STATUS return option (self-actualizing).
+ *   RFC7889-4-2    Client SHOULD avoid non-synchronizing literals when the
+ *                  maximum upload size is unknown (self-actualizing).
  *
- * Untestable ids NOT cited (per the catalog's own testability tags — all
- * technically 'testable' per the module but omitted here as redundant/
- * lower-value coverage given file scope; see the catalog module for full
- * detail): RFC7889-2-1 (bare-vs-valued capability form parsing — no
- * dedicated capability-parsing observation surface exists in the harness
- * distinct from generic CAPABILITY handling already covered elsewhere),
- * RFC7889-3.2-2 (SHOULD-level LIST-STATUS fallback to plain STATUS),
- * RFC7889-4-2 (SHOULD-level avoid non-synchronizing literals when the
- * upload limit is unknown).
- *
- * OBSERVATION: all entries are self-actualizing — driver.status()/list()/
- * append() throw NotImplementedError unconditionally, so the client has no
- * APPENDLIMIT-aware surface at all today. The scripted server pins the
- * exact wire forms from RFC 7889's own worked examples (§3.1, §3.2, §4) so
- * each matcher is non-vacuous once implemented.
+ * OBSERVATION: all entries except RFC7889-2-1 are self-actualizing —
+ * driver.status()/list()/append() throw NotImplementedError unconditionally,
+ * so the client has no APPENDLIMIT-aware surface at all today. The scripted
+ * server pins the exact wire forms from RFC 7889's own worked examples
+ * (§3.1, §3.2, §4) so each matcher is non-vacuous once implemented.
+ * RFC7889-2-1 is different: capability parsing itself is fully implemented
+ * (Session.capabilities is a real CapabilityList populated from the server's
+ * CAPABILITY response, and driver.hasCapability(name) does an exact,
+ * case-insensitive map lookup against the verbatim token) — this is a
+ * genuine, currently-reachable REAL probe, not a self-actualizing gap.
  */
 import { expect } from "vitest";
 
@@ -147,6 +153,162 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		const big = Buffer.alloc(1024, "x");
 		await driver.append("INBOX", big); // throws NotImplementedError today
+		await server.assertCompleted();
+		const append = server.commandLines.find((l) => l.verb === "APPEND");
+		expect(append, "APPEND must have been emitted").toBeDefined();
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC7889-2-1 — distinguish bare APPENDLIMIT from valued APPENDLIMIT=<number>
+// (REAL — genuine pass)
+// ═════════════════════════════════════════════════════════════════════════════
+// §2: two distinct capability forms — (a) "APPENDLIMIT=<number>" (a single
+// global upload limit for all mailboxes) and (b) bare "APPENDLIMIT" (the
+// client must discover per-mailbox limits via STATUS/LIST). §5's ABNF pins
+// the grammar: 'capability =/ "APPENDLIMIT" ["=" number]' — the optional
+// "=number" suffix is the sole distinguishing token. A client that conflates
+// the two forms either fails to learn the global limit or wrongly assumes a
+// global limit exists. PROBED: src/parser/structure/capability.ts's
+// CapabilityList.add() stores each CAPABILITY token VERBATIM (uppercased) as
+// its own Map key — "APPENDLIMIT=1234" and bare "APPENDLIMIT" are genuinely
+// distinct entries, never conflated — so driver.hasCapability() correctly
+// distinguishes them today; this is a real, currently-reachable probe, not a
+// self-actualizing gap.
+complianceTest(
+	{
+		reqs: ["RFC7889-2-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client distinguishes the valued APPENDLIMIT=<number> capability form from the bare form",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(
+					ctx.profile === "rev2"
+						? ["IMAP4rev2", "LITERAL-", "APPENDLIMIT=1234"]
+						: ["IMAP4rev1", "APPENDLIMIT=1234"],
+					{ profile: ctx.profile },
+				),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await server.assertCompleted();
+		// SPEC: the valued form "APPENDLIMIT=1234" MUST be recognized as such
+		// (implying a single global limit, no per-mailbox discovery needed).
+		expect(
+			driver.hasCapability("APPENDLIMIT=1234"),
+			"the client must recognize the exact valued capability token 'APPENDLIMIT=1234'",
+		).toBe(true);
+		// And it MUST NOT be conflated with/reported as the bare form, which
+		// carries the different semantic (per-mailbox discovery required) —
+		// a client that stripped the '=value' suffix before storage would
+		// wrongly report hasCapability("APPENDLIMIT") === true here too.
+		expect(
+			driver.hasCapability("APPENDLIMIT"),
+			"the valued form must not be conflated with the bare 'APPENDLIMIT' form " +
+				"(RFC7889-2-1) — a client that discards the '=value' suffix cannot " +
+				"tell the two capability semantics apart",
+		).toBe(false);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC7889-3.2-2 — fall back to plain STATUS when the server lacks LIST-STATUS
+// (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §3.2: "If the server does not support the STATUS return option on the LIST
+// command, then the client should use the STATUS command instead." Script a
+// CAPABILITY advertising bare APPENDLIMIT but NOT LIST-STATUS; a compliant
+// client falls back to per-mailbox STATUS (APPENDLIMIT) queries rather than
+// attempting (or silently failing to discover limits via) the unsupported
+// LIST RETURN (STATUS (...)) form.
+complianceTest(
+	{
+		reqs: ["RFC7889-3.2-2"],
+		profiles: ["rev1", "rev2"],
+		title: "client falls back to STATUS (APPENDLIMIT) when the server does not advertise LIST-STATUS",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				// APPENDLIMIT advertised (bare form), but LIST-STATUS is NOT.
+				...sessionPrelude(appendlimitCaps(ctx.profile), { profile: ctx.profile }),
+				expectLine(command("STATUS", { args: /^INBOX \(APPENDLIMIT\)$/i })),
+				reply("OK STATUS completed", ["* STATUS INBOX (APPENDLIMIT 257890)"]),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		// Intended behavior: since LIST-STATUS is absent, the client falls back
+		// to a plain STATUS (APPENDLIMIT) query rather than LIST ... RETURN
+		// (STATUS (APPENDLIMIT)). driver.status() throws NotImplementedError
+		// today, so no fallback decision can actually be observed yet.
+		await driver.status("INBOX", ["APPENDLIMIT"]); // throws NotImplementedError today
+		await server.assertCompleted();
+		const status = server.commandLines.find((l) => l.verb === "STATUS");
+		expect(status, "STATUS (fallback) must have been emitted").toBeDefined();
+		const list = server.commandLines.find((l) => l.verb === "LIST");
+		expect(
+			list,
+			"the client must not attempt LIST RETURN (STATUS (...)) against a " +
+				"server that never advertised LIST-STATUS",
+		).toBeUndefined();
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC7889-4-2 — avoid non-synchronizing literals when the upload limit is
+// unknown (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §4: "A client SHOULD avoid use of non-synchronizing literals [RFC7888]
+// when the maximum upload size supported by the IMAP server is unknown."
+// Script a server that has NOT advertised any APPENDLIMIT value; assert the
+// client's APPEND literal is a synchronizing literal (no trailing '+' on the
+// literal length prefix) rather than a LITERAL+/LITERAL- non-synchronizing
+// one, avoiding the wasted-upload scenario this RFC's §1 motivates.
+complianceTest(
+	{
+		reqs: ["RFC7889-4-2"],
+		profiles: ["rev1", "rev2"],
+		title: "client avoids non-synchronizing literals for APPEND when the upload limit is unknown",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		// No APPENDLIMIT advertised at all — the upload limit is unknown.
+		const caps = ctx.profile === "rev2" ? ["IMAP4rev2", "LITERAL-"] : ["IMAP4rev1"];
+		server.arm([
+			[
+				...sessionPrelude(caps, { profile: ctx.profile }),
+				expectLine({
+					description: "APPEND with a SYNCHRONIZING literal (no trailing '+'/'-' on the length prefix)",
+					match: (line: string) => {
+						const m = /^\S+ APPEND INBOX \{(\d+)([+-]?)\}$/i.exec(line);
+						if (!m) {
+							return { ok: false, reason: `expected APPEND ... {<n>} with no non-sync suffix, got: '${line}'` };
+						}
+						const [, , suffix] = m;
+						if (suffix === "+" || suffix === "-") {
+							return {
+								ok: false,
+								reason: `literal length suffix '${suffix}' is a non-synchronizing literal (RFC 7888) — must avoid this when the upload limit is unknown (RFC7889-4-2)`,
+							};
+						}
+						return { ok: true };
+					},
+				}),
+				reply("OK APPEND completed"),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		const body = Buffer.from("Subject: test\r\n\r\nHello.\r\n", "utf8");
+		await driver.append("INBOX", body); // throws NotImplementedError today
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();

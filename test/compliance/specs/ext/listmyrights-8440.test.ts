@@ -17,15 +17,15 @@
  *   RFC8440-3-3  Client (implicit) MUST accept a LIST response with no
  *                accompanying MYRIGHTS response as a well-formed outcome
  *                (rights lookup unavailable for that mailbox), not an error.
+ *   RFC8440-6-1  Client SHOULD scope LIST-MYRIGHTS requests with a narrow
+ *                match pattern/selection option (self-actualizing).
  *
  * Untestable/cross-referenced, NOT cited here: the untagged MYRIGHTS
  * response's own wire shape (mailbox + rights string; ignoring virtual d/c
  * rights) is already scored under RFC4314-2.1.1-3/§3.5/§3.8 — this file
  * scores only the LIST-side request/ordering/absence delta RFC 8440 adds.
- * RFC8440-6-1 (SHOULD-level narrow match-pattern scoping) is a lower-value
- * SHOULD-level advisory omitted from this file's scope.
  *
- * OBSERVATION: all three entries are self-actualizing — driver.list() and
+ * OBSERVATION: all four entries are self-actualizing — driver.list() and
  * driver.myrights() both throw NotImplementedError unconditionally, so the
  * client has no LIST-MYRIGHTS-aware surface at all today. Wire forms and
  * the LIST/MYRIGHTS pairing/absence shapes are pinned to RFC 8440's own §1/
@@ -122,5 +122,66 @@ complianceTest(
 		expect(driver.active, "client remains active after a LIST with no paired MYRIGHTS").toBe(
 			true,
 		);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC8440-6-1 — scope LIST-MYRIGHTS requests with a narrow match pattern/
+// selection option (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §6: "Clients SHOULD use a suitable match pattern and/or selection option to
+// limit the set of mailboxes returned to only those in whose rights they are
+// interested." Motivated by the server-side cost of generating MYRIGHTS
+// responses for a large mailbox hierarchy. Script a mailbox hierarchy with
+// many mailboxes and assert the client's LIST RETURN (MYRIGHTS) pattern is
+// scoped (a specific subtree, not an unqualified wildcard sweep) when only a
+// subset of mailboxes' rights are of interest.
+complianceTest(
+	{
+		reqs: ["RFC8440-6-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client scopes LIST RETURN (MYRIGHTS) with a narrow match pattern rather than an unqualified wildcard",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile }),
+				// A client only interested in the "Archive" subtree's rights SHOULD
+				// scope its LIST pattern to that subtree (e.g. "Archive/%" or
+				// "Archive*"), not sweep the entire mailbox hierarchy with "%"/"*".
+				expectLine({
+					description: "LIST RETURN (MYRIGHTS) scoped to a specific subtree, not an unqualified wildcard sweep",
+					match: (line: string) => {
+						const m = /^"" (\S+) RETURN \(MYRIGHTS\)$/i.exec(line);
+						if (!m) {
+							return { ok: false, reason: `expected LIST "" <pattern> RETURN (MYRIGHTS), got: '${line}'` };
+						}
+						const [, pattern] = m;
+						if (pattern === "%" || pattern === "*" || pattern === '"%"' || pattern === '"*"') {
+							return {
+								ok: false,
+								reason: `LIST pattern '${pattern}' is an unqualified wildcard sweep of the entire mailbox hierarchy (RFC8440-6-1 SHOULD violation) — the client is only interested in a subset of mailboxes' rights`,
+							};
+						}
+						return { ok: true };
+					},
+				}),
+				reply("OK LIST completed", [
+					'* LIST () "/" "Archive"',
+					'* MYRIGHTS "Archive" lrswipkxtecda',
+				]),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		// Intended usage once implemented: a caller wanting only the Archive
+		// subtree's rights scopes the LIST pattern accordingly rather than
+		// sweeping the whole hierarchy.
+		await driver.list("", "Archive/%", { returnOptions: ["MYRIGHTS"] }); // throws today
+		await server.assertCompleted();
+		const list = server.commandLines.find((l) => l.verb === "LIST");
+		expect(list, "LIST must have been emitted").toBeDefined();
 	},
 );

@@ -3,12 +3,15 @@
  * standalone extension over RFC 9051: one new resp-text-code (embeddable
  * only in an untagged OK) plus its eponymous capability.
  *
- * Testable catalog id covered here (see test/compliance/catalog/ext/rfc9585.ts):
+ * Testable catalog ids covered here (see test/compliance/catalog/ext/rfc9585.ts):
  *
  *   RFC9585-4-1  Client MUST accept the INPROGRESS resp-text-code in an
  *                untagged OK in every ABNF-permitted form (bare, and the
  *                tag/progress/goal tuple with independent NILs).
  *                  *** REAL SIGNAL — genuine pass ***
+ *   RFC9585-5-1  Client (implicit) MUST accept INPROGRESS and its embedded
+ *                literals case-insensitively.
+ *                  *** REAL SIGNAL — genuine VIOLATION ***
  *
  * Untestable ids NOT cited (per the catalog's own testability tags, all
  * internal-decision/user-intent-policy — the client attaches no consumer
@@ -19,11 +22,7 @@
  *   changing GOAL), RFC9585-4-4 (MUST NOT treat PROGRESS/GOAL as
  *   authoritative beyond progress evaluation; disregard exception-inducing
  *   values), RFC9585-4-5 (MAY disregard notifications entirely; UI policy
- *   is the client's own decision), RFC9585-5-1 (case-insensitive acceptance
- *   — testable in principle but not independently probed here beyond what
- *   RFC9585-4-1 already exercises with canonical-case input; the catalog
- *   keeps it as a separate entry for its own §5 location, not a distinct
- *   behavioral surface).
+ *   is the client's own decision).
  *
  * REAL PARSE SURFACE (per the catalog's extractionNote, itself independently
  * re-probed here before writing): unlike the bare-argument NOUPDATE/
@@ -38,6 +37,22 @@
  * forms) the expected 3-element contents array — a client that dropped the
  * parenthesized argument, mis-slotted an element, or choked on any of the
  * four shapes would fail this assertion.
+ *
+ * RFC9585-5-1 REAL VIOLATION (probed empirically before writing, via a
+ * throwaway harness script): src/parser/structure/text.code.ts's `match()`
+ * reads `const kind = matchedTokens[1]?.value` — the lexer AtomToken's raw,
+ * UN-case-folded wire value (src/lexer/tokens/atom.ts's getTrueValue() is a
+ * verbatim passthrough) — and AtomTextCode's constructor stores that exact
+ * string as `.kind` with no normalization. A scripted
+ * '* OK [inprogress ("A001" 175 NIL)] ...' (lowercase keyword) was confirmed
+ * live to produce a parsed serverStatus event with
+ * `content.text.code.kind === "inprogress"` (lowercase, verbatim), NOT
+ * "INPROGRESS" — the client does not fold the resp-text-code keyword to a
+ * case-insensitive canonical form as RFC9585-5-1 (and RFC 9051's own
+ * formal-syntax case-insensitivity preamble) requires. This is a genuine,
+ * non-vacuous wire-observable defect distinct from RFC9585-4-1's uppercase-
+ * input pass: a client that DID fold case would report kind === "INPROGRESS"
+ * for this same lowercase input and pass; this one does not.
  */
 import { expect } from "vitest";
 
@@ -185,5 +200,50 @@ complianceTest(
 		// the resp-code kind — this rejects a parser that mis-slotted or
 		// truncated the tuple.
 		expect(content?.text?.code?.contents).toEqual(['"A001"', "454", "1000"]);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC9585-5-1 — case-insensitive acceptance of the INPROGRESS keyword
+// (HONEST VIOLATION)
+// ═════════════════════════════════════════════════════════════════════════════
+// §5's formal-syntax preamble: "all alphabetic characters are case-
+// insensitive... Implementations MUST accept these strings in a case-
+// insensitive fashion." A lowercase '* OK [inprogress ("A001" 175 NIL)]' is
+// exactly the same resp-text-code semantically; a compliant client must
+// surface the same normalized kind it would for the canonical uppercase
+// spelling. PROBED: text.code.ts's match() keys its kind switch off the raw,
+// un-folded lexer token value with no case-normalization step, so the
+// resulting AtomTextCode.kind is the literal lowercase wire string.
+complianceTest(
+	{
+		reqs: ["RFC9585-5-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client accepts a lower-case `* OK [inprogress (...)]` resp-text-code case-insensitively",
+		expectFailure: "violation",
+		timeout: 5000,
+	},
+	async () => {
+		const driver = await unsolicitedOk('* OK [inprogress ("A001" 175 NIL)] Still working (lower-case)...');
+		await waitForUntagged(driver, "EXISTS");
+		const statusEvent = driver.events.find((e) => e.type === "serverStatus" && !!(
+			(e.detail as { content?: ParsedStatusContent } | undefined)?.content?.text?.code
+		));
+		expect(statusEvent, "the OK [inprogress (...)] line must surface a parsed resp-code").toBeDefined();
+		const content = (statusEvent!.detail as { content?: ParsedStatusContent }).content;
+		// SPEC: RFC9585-5-1 requires case-insensitive acceptance — the parsed
+		// kind must be recognized as INPROGRESS regardless of wire casing.
+		// PROBED: the client currently surfaces the raw, un-folded wire string
+		// ("inprogress", lowercase) instead of the canonical "INPROGRESS".
+		expect(
+			content?.text?.code?.kind,
+			"a lower-case 'inprogress' resp-text-code must be recognized as INPROGRESS " +
+				"(RFC 9585 §5's case-insensitivity MUST) — the client currently surfaces " +
+				"the raw un-folded wire-case string instead",
+		).toBe("INPROGRESS");
+		// The tuple contents themselves are unaffected by keyword casing — still
+		// recoverable — confirming this is specifically a kind-normalization gap,
+		// not a wholesale parse failure of the lower-case line.
+		expect(content?.text?.code?.contents).toEqual(['"A001"', "175", "NIL"]);
 	},
 );

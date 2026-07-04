@@ -17,13 +17,11 @@
  *                  preview available".
  *   RFC8970-4.1-1  Client (implicit) MUST emit the LAZY priority modifier as
  *                  the literal wire form "PREVIEW (LAZY)".
- *
- * Untestable/lower-priority, NOT cited here: RFC8970-3.3-1 (client MUST
- * treat PREVIEW text as unencoded UTF-8 text/plain — a rendering-layer
- * duty with no distinct wire-parse assertion beyond receiving the string
- * FETCH already exercises) and RFC8970-4.2-1 (SHOULD NOT continually
- * re-issue FETCH PREVIEW (LAZY) — a request-cadence duty requiring a
- * multi-request timing probe out of this file's scope).
+ *   RFC8970-3.3-1  Client MUST treat PREVIEW text as unencoded UTF-8
+ *                  text/plain data (not content-transfer-decoded)
+ *                  (self-actualizing).
+ *   RFC8970-4.2-1  Client SHOULD NOT continually re-issue FETCH PREVIEW
+ *                  (LAZY) requests in a selected mailbox (self-actualizing).
  *
  * REAL-SIGNAL ASSESSMENT (per the catalog's own note): no REAL parse
  * surface is reachable for ANY PREVIEW duty — driver.fetch()/uidFetch()
@@ -179,5 +177,102 @@ complianceTest(
 			fetch!.args,
 			"the LAZY modifier must be spelled exactly '(LAZY)' immediately following PREVIEW",
 		).toMatch(/^1 \(PREVIEW \(LAZY\)\)$/i);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC8970-3.3-1 — PREVIEW text MUST be treated as unencoded UTF-8 text/plain
+// (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §3.3: "The generated preview text MUST be treated as text/plain [RFC2046]
+// media type data by the client. The generated string MUST NOT be content
+// transfer encoded and MUST be encoded in UTF-8." A client that
+// content-transfer-decodes (e.g. attempts base64 decode) or mis-decodes the
+// PREVIEW nstring as a non-UTF-8 charset is non-conformant. Script a PREVIEW
+// response containing non-ASCII UTF-8 bytes that would ALSO happen to be
+// valid base64 if misinterpreted as such — a client that wrongly
+// content-transfer-decodes it would produce different (wrong) bytes than
+// the plain UTF-8 text itself.
+complianceTest(
+	{
+		reqs: ["RFC8970-3.3-1"],
+		profiles: ["rev1", "rev2"],
+		title: "FETCH PREVIEW text is interpreted as literal UTF-8 text/plain, not content-transfer-decoded",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		// Non-ASCII UTF-8 preview text (café — includes a 2-byte UTF-8 sequence)
+		// that is ALSO syntactically valid base64. A client that incorrectly
+		// content-transfer-decodes (base64-decodes) this string would surface
+		// different bytes than the literal UTF-8 text; a compliant client
+		// surfaces the string exactly as received.
+		const previewText = "café";
+		server.arm([
+			[
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				expectLine(command("FETCH", { args: /^1 \(PREVIEW\)$/i })),
+				reply("OK FETCH completed", [`* 1 FETCH (PREVIEW "${previewText}")`]),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.fetch("1", ["PREVIEW"]); // throws NotImplementedError today
+		await server.assertCompleted();
+		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
+		expect(fetch, "FETCH must have been emitted").toBeDefined();
+		// When implemented: the client's surfaced PREVIEW string must equal the
+		// literal UTF-8 text verbatim — not base64-decoded, not re-encoded, not
+		// mis-decoded under a different charset.
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC8970-4.2-1 — SHOULD NOT continually re-issue FETCH PREVIEW (LAZY) in a
+// selected mailbox (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §4.2: "A client SHOULD NOT continually issue FETCH PREVIEW requests with
+// the LAZY modifier in a selected mailbox as the server is under no
+// requirement to return preview information for this command, which could
+// lead to an unnecessary waste of system and network resources." Script a
+// sequence of two immediate, back-to-back FETCH PREVIEW (LAZY) requests
+// against the SAME message with no intervening triggering event (no new
+// mail, no user-initiated refresh) — a compliant client should not emit an
+// unprompted repeat request, since the server is under no obligation to
+// return different (or any) data on retry.
+complianceTest(
+	{
+		reqs: ["RFC8970-4.2-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client does not continually re-issue FETCH PREVIEW (LAZY) for the same message with no triggering event",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async (ctx) => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				expectLine(command("FETCH", { args: /^1 \(PREVIEW \(LAZY\)\)$/i })),
+				reply("OK FETCH completed", ['* 1 FETCH (PREVIEW NIL)']),
+				// A second, immediate FETCH PREVIEW (LAZY) for the SAME message with
+				// no intervening state change would violate the SHOULD NOT — the
+				// scripted server does not arm a response for it, so if the client
+				// wrongly re-issues one, server.assertCompleted() below would be
+				// left with an unconsumed/unexpected line and fail the script.
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.fetch("1", ["PREVIEW (LAZY)"]); // throws NotImplementedError today
+		// Intended probe once implemented: immediately re-request the same
+		// message's PREVIEW (LAZY) with no triggering event and assert the
+		// client does not emit a second, unprompted FETCH line.
+		await server.assertCompleted();
+		const fetches = server.commandLines.filter((l) => l.verb === "FETCH");
+		expect(
+			fetches.length,
+			"the client must not continually re-issue FETCH PREVIEW (LAZY) for the " +
+				"same message absent a triggering event (RFC8970-4.2-1)",
+		).toBe(1);
 	},
 );

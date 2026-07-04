@@ -54,14 +54,17 @@
  *   RFC2193-5.2-1  Issue RLSUB rather than LSUB under MAILBOX-REFERRALS
  *                    (self-actualizing — driver.rlsub() throws
  *                    NotImplementedError; command form pinned).
+ *   RFC2221-3-1    Client MUST NOT follow more than 10 levels of referral
+ *                    without consulting the user (self-actualizing — no
+ *                    driver surface follows a referral chain at all today).
+ *   RFC2193-3-1    Client (implicit) MUST be prepared for a URL of any type
+ *                    in a REFERRAL code, though it need only process IMAP
+ *                    URLs. *** REAL — kind-pass leg (non-IMAP URL scheme) ***
  *
  * Untestable ids NOT cited (per the catalog modules' own testability tags):
- *   RFC2221-3-1 (self-actualizing/out-of-band — no referral-following loop
- *   surface), RFC2221-4-1 (internal-decision — permanent-vs-temporary),
+ *   RFC2221-4-1 (internal-decision — permanent-vs-temporary),
  *   RFC2221-4-2/-6-1 and RFC2193-3-4 (out-of-band — following a referral to
- *   a second connection), RFC2193-3-1 (narrow-acceptance "any URL type" —
- *   graceful-ignore with no implemented referral-following surface to
- *   probe non-vacuously), RFC2193-4.3-2 (internal-decision — reissue vs.
+ *   a second connection), RFC2193-4.3-2 (internal-decision — reissue vs.
  *   constituent-command strategy choice).
  *
  * OBSERVATION SPLIT:
@@ -519,5 +522,94 @@ complianceTest(
 		expect(rlsub!.args, "RLSUB takes reference SP mailbox-pattern, same shape as LSUB").toMatch(
 			/^"" "\*"$/,
 		);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC2221-3-1 — MUST NOT follow >10 levels of referral without consulting the
+// user (self-actualizing)
+// ═════════════════════════════════════════════════════════════════════════════
+// §3: 'A client MUST NOT follow more than 10 levels of referral without
+// consulting the user.' Conditional on the client implementing referral-
+// following at all — exercising the numeric ceiling would require scripting
+// 11 chained servers and a second-connection-per-hop client capability. No
+// driver surface follows a referral chain today: LOGIN/AUTHENTICATE always
+// throw NotImplementedError before a first referral could even be recovered
+// and followed, let alone an 11th — self-actualizing failure, script/matcher
+// pinned so the assertion is non-vacuous once referral-following lands.
+complianceTest(
+	{
+		reqs: ["RFC2221-3-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client does not auto-follow more than 10 levels of chained referral without consulting the user",
+		expectFailure: "unimplemented",
+		timeout: 5000,
+	},
+	async () => {
+		// Intended script (once a referral-following driver verb exists): chain
+		// 11 LOGIN attempts, each replying with a tagged NO [REFERRAL <urlN>]
+		// pointing at the next hop; assert the client stops auto-following
+		// after the 10th and does not itself issue an unconsulted 12th LOGIN.
+		// Today, LOGIN throws NotImplementedError on the very first attempt,
+		// before any referral URL is even recovered — self-actualizing.
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(["IMAP4rev1", "LOGIN-REFERRALS"]),
+				expectLine(command("LOGIN")),
+				reply("NO [REFERRAL IMAP://user;AUTH=*@SERVER2/] Try SERVER2."),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass"); // throws NotImplementedError today
+		await server.assertCompleted();
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RFC2193-3-1 — client MUST be prepared for a URL of any type, though it
+// need only process IMAP URLs (REAL — kind-pass leg)
+// ═════════════════════════════════════════════════════════════════════════════
+// §3: 'A client that supports the REFERRALS extension MUST be prepared for a
+// URL of any type, but it need only be able to process IMAP URLs.' 'Be
+// prepared for' is satisfied by a graceful non-crash/non-hang response to a
+// non-IMAP URL scheme (e.g. 'http:') inside a REFERRAL code — the client is
+// not required to act on it, only to not choke on its mere presence. Probed
+// via a non-IMAP-scheme URL in a tagged NO's REFERRAL code, mirroring the
+// kind-pass legs above: the AtomTextCode fallback's kind-acceptance is
+// scheme-agnostic (only the URL argument content itself is dropped, per this
+// module's REAL-SIGNAL note — a pre-existing, orthogonal defect, not this
+// entry's concern), so the client must still surface the tagged NO with the
+// REFERRAL kind intact and continue the session rather than crashing/hanging
+// on an unrecognized URL scheme.
+complianceTest(
+	{
+		reqs: ["RFC2193-3-1"],
+		profiles: ["rev1", "rev2"],
+		title: "client is prepared for (does not crash on) a non-IMAP-scheme URL in a REFERRAL response code",
+		timeout: 5000,
+	},
+	async () => {
+		const driver = await unsolicited([
+			"a1 NO [REFERRAL http://example.com/not-an-imap-url] See http://example.com/not-an-imap-url instead.",
+		]);
+		const found = await pollFor(() =>
+			taggedEvents(driver).some(
+				(t) =>
+					t.tag?.id === "a1" &&
+					t.status?.status === "NO" &&
+					t.status?.text?.code?.kind === "REFERRAL",
+			),
+		);
+		expect(
+			found,
+			"the tagged NO must surface with a parsed REFERRAL resp-code kind even when " +
+				"the enclosed URL is a non-IMAP scheme (RFC 2193 §3: MUST be prepared for a " +
+				"URL of any type) — a client choking on/crashing on the unrecognized scheme " +
+				"would fail this",
+		).toBe(true);
+		// "Be prepared for" is satisfied by graceful tolerance, not by acting on
+		// the non-IMAP URL — the session must continue normally afterward.
+		await waitForUntagged(driver, "EXISTS");
 	},
 );
