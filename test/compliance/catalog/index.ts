@@ -64,6 +64,15 @@ import rfc2193 from "./ext/rfc2193";
 import rfc3348 from "./ext/rfc3348";
 import xgmext1 from "./ext/xgmext1";
 
+// Phase 6 — reconciliation-delta sources (registry-discovered tokens with
+// genuine client-binding duties; skeletons, extracted in Task 4 alongside
+// the scope-table family above).
+import rfc7889 from "./ext/rfc7889";
+import rfc8438 from "./ext/rfc8438";
+import rfc8440 from "./ext/rfc8440";
+import rfc8970 from "./ext/rfc8970";
+import rfc9585 from "./ext/rfc9585";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -125,6 +134,12 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc2193,
 	rfc3348,
 	xgmext1,
+	// Phase 6 — reconciliation-delta sources
+	rfc7889,
+	rfc8438,
+	rfc8440,
+	rfc8970,
+	rfc9585,
 ];
 
 export function findRequirement(id: string) {

@@ -96,3 +96,16 @@ test("catalog contains the Phase 6 i18n/misc/vendor family sources", () => {
 		]),
 	);
 });
+
+test("catalog contains the Phase 6 reconciliation-delta sources", () => {
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(
+		expect.arrayContaining([
+			"RFC7889",
+			"RFC8438",
+			"RFC8440",
+			"RFC8970",
+			"RFC9585",
+		]),
+	);
+});
