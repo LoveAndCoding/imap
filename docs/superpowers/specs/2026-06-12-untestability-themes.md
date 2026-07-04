@@ -628,3 +628,70 @@ bare-argument drops, THREAD infinite-recursion getter) rather than untestable en
 
 Total: **217** untestable entries across the 770-requirement catalog. The taxonomy remains
 **11 themes**; no registration or `UNTESTABLE_THEMES` change was needed this phase.
+
+---
+
+# Phase 6 Untestability Delta (i18n + misc + vendor + registry completion) — FINAL
+
+**Date:** 2026-07-04 (Phase 6, Task 9 / P6-E)
+**Population added:** the closing family (LANGUAGE/I18NLEVEL, CONVERT, URLAUTH/BINARY, SCRAM,
+ANONYMOUS, EXTERNAL, referrals, CHILDREN, X-GM-EXT-1, + 5 reconciliation-delta sources)
+contributed **32** new `testability: "untestable"` entries. **No new theme was required** — all
+32 fit the existing 11-theme taxonomy, and no flip via existing machinery is warranted. The
+taxonomy closes the suite at **11 themes**.
+
+## Phase 6 additions per theme (per catalog entry)
+
+| Theme | Phase 6 additions | Typical members |
+|---|---|---|
+| `internal-decision` | 18 | SCRAM/ANONYMOUS SASLprep-and-mapping choices, URLAUTH access-identifier choice, CONVERT default-conversion/comment-drop internal handling, X-GM opaque-id and capability-gate-per-feature restatements, referral fallback strategies |
+| `out-of-band` | 6 | ANONYMOUS/CONVERT/EXTERNAL "use mutual SASL/TLS" and "get user permission before sending trace info" duties (conduct outside the protocol), referral second-connection duties |
+| `internal-state` | 3 | CONVERT no-cross-session-result-stability belief; referral/RENAME follow-up state |
+| `user-intent-policy` | 3 | ANONYMOUS/CONVERT "be careful requesting" duties; EXTERNAL deployment-security guidance |
+| `content-processing` | 1 | CONVERT comment-drop graceful-handling at the library boundary |
+| `ui-presentation` | 1 | LANGUAGE namespace-prefix↔TRANSLATION-string presentation |
+
+Total: **32** entries, 6 themes touched. `capability-inventory`, `performance-expectation`,
+`environment-limit`, `cross-session`, and `compressed-framing-opacity` gained zero Phase 6
+members.
+
+## Intrinsic / instrumental re-verdicts — NO FLIPS
+
+All 32 additions are structurally identical to established members of their themes:
+- **`internal-decision` (+18, the dominant gainer)** — SASLprep application, opaque-id treatment,
+  and per-feature capability-gating produce identical wire traces whether or not the internal
+  decision was made "correctly"; wire-indistinguishable, INTRINSIC.
+- **`out-of-band` (+6)** — "use TLS", "get user permission", "connect to the referral host" bind
+  conduct outside the observed protocol session; require code audit or a second connection the
+  single-session black-box harness does not model. INTRINSIC.
+- **The rest** — invisible intent (`user-intent-policy`), RFC-permitted-redundancy / internal
+  beliefs (`internal-state`), library-boundary delegation (`content-processing`), and vacuous
+  MAY-level presentation (`ui-presentation`) — all matching prior verdicts.
+
+**Note on the testable side (final):** Phase 6 again used the connectLow / AtomTextCode paths to
+turn response-acceptance duties into *measured* signal rather than untestable entries — the
+REFERRAL bare-argument drop (4th confirmed instance of the AtomTextCode defect), INPROGRESS's
+parenthesized-arg survival and non-case-folded kind, URLMECH acceptance, \HasChildren, and the
+LANGUAGE/CONVERT/GENURLAUTH/URLFETCH untagged-response stream-deaths are all in the tested
+population, not here.
+
+## FINAL combined catalog totals (per catalog entry, end of suite)
+
+| Theme | total entries |
+|---|---|
+| `internal-decision` | 90 |
+| `capability-inventory` | 48 |
+| `internal-state` | 25 |
+| `user-intent-policy` | 24 |
+| `content-processing` | 15 |
+| `ui-presentation` | 14 |
+| `out-of-band` | 10 |
+| `performance-expectation` | 8 |
+| `environment-limit` | 7 |
+| `cross-session` | 5 |
+| `compressed-framing-opacity` | 3 |
+
+Total: **249** untestable entries across the final 960-requirement catalog. The taxonomy is
+final at **11 themes** — 10 derived bottom-up in Phases 1–2, plus `compressed-framing-opacity`
+registered in Phase 3; Phases 4–6 added 116 untestable entries across those 11 with zero new
+themes, confirming the taxonomy's completeness. The suite is COMPLETE.
