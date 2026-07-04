@@ -111,6 +111,23 @@ test("Phase 5 verbs throw NotImplementedError", async () => {
 	await expect(driver.notify({ set: "NONE" })).rejects.toBeInstanceOf(NotImplementedError);
 });
 
+test("Phase 6 verbs throw NotImplementedError", async () => {
+	const driver = new ComplianceDriver();
+	await expect(driver.language(["en", "fr"])).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.convert("1", "1", { "message/global": "message/rfc822" })).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(
+		driver.genurlauth([{ url: "imap://user@server/mbox/;uid=1", mechanism: "INTERNAL" }]),
+	).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.urlfetch(["imap://user@server/mbox/;uid=1"])).rejects.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.resetkey("INBOX", ["INTERNAL"])).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.rlist("", "*")).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(driver.rlsub("", "*")).rejects.toBeInstanceOf(NotImplementedError);
+});
+
 test("Phase 5 widened signatures still throw NotImplementedError", async () => {
 	const driver = new ComplianceDriver();
 	await expect(driver.search(["ALL"], { return: ["MIN", "MAX"] })).rejects.toBeInstanceOf(NotImplementedError);

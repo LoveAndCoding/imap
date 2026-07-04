@@ -409,6 +409,37 @@ export class ComplianceDriver {
 		throw new NotImplementedError("NOTIFY");
 	}
 
+	// ---- Phase 6: i18n + misc + vendor family -------------------------------
+	// LANGUAGE/I18NLEVEL (RFC 5255), CONVERT (RFC 5259), URLAUTH (RFC 4467),
+	// URLAUTH=BINARY (RFC 5524), MAILBOX-REFERRALS (RFC 2193)
+	public async language(_tags?: string[]): Promise<never> {
+		throw new NotImplementedError("LANGUAGE");
+	}
+	public async convert(
+		_seq: string,
+		_part: string,
+		_transformation: unknown,
+	): Promise<never> {
+		throw new NotImplementedError("CONVERT");
+	}
+	public async genurlauth(
+		_urls: Array<{ url: string; mechanism: string }>,
+	): Promise<never> {
+		throw new NotImplementedError("GENURLAUTH");
+	}
+	public async urlfetch(_urls: string[]): Promise<never> {
+		throw new NotImplementedError("URLFETCH");
+	}
+	public async resetkey(_mailbox?: string, _mechanisms?: string[]): Promise<never> {
+		throw new NotImplementedError("RESETKEY");
+	}
+	public async rlist(_ref: string, _pattern: string): Promise<never> {
+		throw new NotImplementedError("RLIST");
+	}
+	public async rlsub(_ref: string, _pattern: string): Promise<never> {
+		throw new NotImplementedError("RLSUB");
+	}
+
 	// ------------------------------------------------------------------------
 
 	private toConfig(opts: DriverConnectOptions) {
