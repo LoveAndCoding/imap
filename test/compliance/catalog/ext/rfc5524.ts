@@ -13,7 +13,9 @@ const rfc5524: CatalogModule = {
 		"parameters and a richer, parenthesized response form, gated behind its own distinct " +
 		"capability 'URLAUTH=BINARY' (§3, §6: 'This document defines the URLFETCH=BINARY IMAP " +
 		"capability' — the document text says URLFETCH=BINARY in §6 but the capability string " +
-		"registered and used throughout the formal syntax and abstract is 'URLAUTH=BINARY'; §3 " +
+		"registered and used throughout the formal syntax is 'URLAUTH=BINARY' (the Abstract does " +
+		"not itself name any capability string — it is purely descriptive purpose-of-the-extension " +
+		"prose); §3 " +
 		"'This extension is available in any IMAP server implementation that includes " +
 		"URLAUTH=BINARY within its capability string' and §5 ABNF 'capability =/ " +
 		'\"URLAUTH=BINARY\"\' are the authoritative forms and are what this catalog\'s capability-' +
@@ -50,7 +52,7 @@ const rfc5524: CatalogModule = {
 		"NUL-octet framing rule for BINARY); §5 the ABNF-only ext-vs-simple response-shape " +
 		"discipline (a client that issued the unextended url-fetch-simple form MUST accept only the " +
 		"unextended urldata-simple response shape back, not the extended form).\n\n" +
-		"Untestable: 0 entries. Total: 7 client-binding entries (RFC5524-1-1, RFC5524-3.1-1..4, " +
+		"Untestable: 0 entries. Total: 7 client-binding entries (RFC5524-3-1, RFC5524-3.1-1..4, " +
 		"RFC5524-3.2-1..2). All cross-reference the corresponding RFC4467 base entries in their " +
 		"notes rather than restating shared unextended-URLFETCH duties.\n\n" +
 		"RFC 8174 discipline: RFC 5524 predates RFC 8174 and cites RFC 2119 only (§2: 'The key " +
@@ -58,9 +60,11 @@ const rfc5524: CatalogModule = {
 		'NOT\", \"RECOMMENDED\", \"MAY\", and \"OPTIONAL\" in this document are to be interpreted as ' +
 		"described in RFC 2119 [KEYWORDS]'), so lowercase 'must'/'should' were never normative " +
 		"here anyway; every extracted entry rests on an UPPERCASE RFC 2119 keyword in its source " +
-		"sentence EXCEPT the capability-gate entry (RFC5524-1-1, judgment call parallel to " +
-		"RFC4467-1-1) and the ABNF-only response-shape entry (RFC5524-3.2-2, judgment call parallel " +
-		"to RFC4467-9-1..3), both flagged in their notes.\n\n" +
+		"sentence EXCEPT the capability-gate entry (RFC5524-3-1, judgment call parallel to " +
+		"RFC4467-1-1), flagged in its notes; RFC5524-3.2-2's `text` field (the ABNF-plus-comment " +
+		"shape) does itself carry uppercase RFC 2119 keywords ('literal8 MUST be used', 'content " +
+		"SHOULD use nstring') and so is not part of this exception list, despite being a " +
+		"structural/ABNF-derived entry like the RFC4467-9-1..3 precedent it otherwise parallels.\n\n" +
 		"PROFILES: URLAUTH=BINARY is not folded into IMAP4rev2 (RFC 9051) — verified by grepping " +
 		"catalog/rfc9051.ts for URLAUTH/BINARY/BODYPARTSTRUCTURE-as-capability (zero hits for this " +
 		"capability token). It remains a standalone extension in rev2, so every entry defaults " +
@@ -72,9 +76,9 @@ const rfc5524: CatalogModule = {
 		// ── §1 / §3 / §5 Capability gate ─────────────────────────────────────────
 
 		{
-			id: "RFC5524-1-1",
+			id: "RFC5524-3-1",
 			source: "RFC5524",
-			section: "1",
+			section: "3",
 			title: "Client MUST NOT use extended URLFETCH parameters without the URLAUTH=BINARY capability",
 			text:
 				"This extension is available in any IMAP server implementation that\n   includes URLAUTH=BINARY within its capability string.",

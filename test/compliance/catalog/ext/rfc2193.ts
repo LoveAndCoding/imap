@@ -26,9 +26,11 @@ const rfc2193: CatalogModule = {
 		"entry 3, since RENAME's multi-URL semantics differ qualitatively from SELECT's replica-list " +
 		"semantics); (6) implicit MUST accept a REFERRAL response code on COPY (testable, same REAL " +
 		"probe surface); (7) implicit MUST issue RLIST instead of LIST when MAILBOX-REFERRALS is in " +
-		"use, so that remote mailboxes are included (testable command-form duty, currently " +
-		"unimplemented — no rlist driver verb exists in this worktree yet); (8) implicit MUST issue " +
-		"RLSUB instead of LSUB under the same condition (testable, same unimplemented-verb status); " +
+		"use, so that remote mailboxes are included (testable command-form duty; a driver.rlist() " +
+		"verb exists in this worktree as of commit 74a9620 and throws NotImplementedError, so this " +
+		"is self-actualizing/unimplemented rather than unreachable for lack of a driver verb); (8) " +
+		"implicit MUST issue RLSUB instead of LSUB under the same condition (testable, same " +
+		"self-actualizing driver.rlsub()-exists-and-throws-NotImplementedError status); " +
 		"(9) implicit MUST connect to the (or each) referral URL's host, honoring its embedded user;" +
 		"AUTH=* restriction, to process the referred mailbox (untestable — out-of-band, same multi-" +
 		"connection reasoning as RFC2221-4-2, and the identical NOTE text 'user;AUTH=* is specified " +
@@ -94,9 +96,10 @@ const rfc2193: CatalogModule = {
 		"6), while the URL argument(s) — critically including the SECOND URL when RENAME sends a pair, " +
 		"and any THIRD+ URL in a multi-replica SELECT response — are expected to be dropped entirely " +
 		"(genuine VIOLATION for entries 1 and 3, and for the URL-recovery half of 2/4/5/6). Command-" +
-		"emission duties (entries 7-8, RLIST/RLSUB) have no implemented driver verb in this worktree " +
-		"(grepped driver.ts: no rlist/rlsub among the NotImplementedError-throwing verbs), so they " +
-		"remain self-actualizing/unimplemented rather than REAL until Task 1's driver verbs land. " +
+		"emission duties (entries 7-8, RLIST/RLSUB): driver.rlist()/driver.rlsub() verbs now exist " +
+		"in driver.ts (added by commit 74a9620, Phase 6 Task 1) and throw NotImplementedError, so " +
+		"they remain self-actualizing/unimplemented (an honest not-yet-implemented report) rather " +
+		"than REAL -- not because the verbs are absent. " +
 		"Total: 11 client-binding entries (RFC2193-3-1..4, RFC2193-4.1-1, RFC2193-4.2-1, RFC2193-4.3-1, " +
 		"RFC2193-4.3-2, RFC2193-4.4-1, RFC2193-5.1-1, RFC2193-5.2-1). Untestable: 2 " +
 		"(RFC2193-3-4 out-of-band; RFC2193-4.3-2 internal-decision).",
@@ -325,11 +328,11 @@ const rfc2193: CatalogModule = {
 				"client that keeps issuing plain LIST cannot discover its remote mailboxes at all). " +
 				"Command-form wire shape pinned by §5.1's RLIST syntax (Arguments: reference name, " +
 				"mailbox name with possible wildcards; Responses: untagged LIST; Result: OK/NO/BAD) " +
-				"and §6's ABNF 'rlist = \"RLIST\" SPACE mailbox SPACE list_mailbox'. Currently " +
-				"unimplemented: no rlist verb exists in test/compliance/driver/driver.ts in this " +
-				"worktree (Task 1 of the Phase 6 plan introduces it separately) — self-actualizing " +
-				"unimplemented once a driver.rlist() verb throwing NotImplementedError lands, not yet " +
-				"a REAL probe surface.",
+				"and §6's ABNF 'rlist = \"RLIST\" SPACE mailbox SPACE list_mailbox'. A driver.rlist() " +
+				"verb exists in test/compliance/driver/driver.ts in this worktree (added by commit " +
+				"74a9620, Phase 6 Task 1) and throws NotImplementedError — self-actualizing " +
+				"unimplemented (the verb exists and honestly reports its own absence of a real " +
+				"implementation), not yet a REAL probe surface.",
 		},
 
 		// ── §5.2 RLSUB Command ───────────────────────────────────────────────────
@@ -353,9 +356,10 @@ const rfc2193: CatalogModule = {
 				"distinct entry because RLSUB is its own command with its own §5.2 syntax block " +
 				"(Arguments: reference name, mailbox name with possible wildcards; Responses: " +
 				"untagged LSUB; Result: OK/NO/BAD) and its own ABNF production ('rlsub = \"RLSUB\" " +
-				"SPACE mailbox SPACE list_mailbox'), distinct from RLIST's. Currently unimplemented: " +
-				"no rlsub verb exists in driver.ts in this worktree; same self-actualizing-once-" +
-				"stubbed status as RFC2193-5.1-1.",
+				"SPACE mailbox SPACE list_mailbox'), distinct from RLIST's. A driver.rlsub() verb " +
+				"exists in driver.ts in this worktree (added by commit 74a9620, Phase 6 Task 1) and " +
+				"throws NotImplementedError; same self-actualizing-unimplemented status as " +
+				"RFC2193-5.1-1.",
 		},
 
 		// ── §3 Introduction and Overview (connection-following duty) ────────────

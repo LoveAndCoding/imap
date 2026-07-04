@@ -51,12 +51,14 @@ const rfc5259: CatalogModule = {
 		"floors and error-generation duties, and the SHOULD ('Servers SHOULD offer additional " +
 		"character encoding conversions') is server-capability guidance — none is a client action; " +
 		"§7.2 is explicitly informative ('This section is informative') and server-implementor " +
-		"guidance, not a client duty; §8.2 the BODYPARTSTRUCTURE-matches-BINARY MUST, the " +
+		"guidance, not a client duty; §8.2 the BODYPARTSTRUCTURE-matches-BINARY MUST and the " +
 		"ordering MUSTs ('the server MUST return the BODYPARTSTRUCTURE data prior to...BINARY data', " +
-		"'MUST be after the UID data item'), and the MIME-type-match guarantee are server response-" +
-		"construction duties (the client's reciprocal is simply accepting whatever well-formed order " +
-		"the server sends — already covered by the general CONVERTED-response acceptance in " +
-		"RFC5259-8.1-1, so not double-cataloged); §8.3 'The returned value MUST be exact and MUST " +
+		"'MUST be after the UID data item') are server response-construction duties (the client's " +
+		"reciprocal is simply accepting whatever well-formed order the server sends — already covered " +
+		"by the general CONVERTED-response acceptance in RFC5259-8.1-1, so not double-cataloged); " +
+		"the MIME-type-match guarantee/error-treatment sentence immediately following, by contrast, " +
+		"IS extracted as a client-binding entry (RFC5259-8.2-1) rather than excluded here, since it " +
+		"states what the CLIENT may expect/do, not a server construction duty; §8.3 'The returned value MUST be exact and MUST " +
 		"NOT change during a duration of an IMAP session' and the expunge-fallback MAY are server " +
 		"duties (client's reciprocal no-caching-across-sessions MUST is captured as RFC5259-8.3-2); " +
 		"§8.4 the subset/omission/ERROR-preference MUSTs and SHOULD are server response-construction " +
@@ -73,7 +75,7 @@ const rfc5259: CatalogModule = {
 		"returning', 'servers SHOULD log the client authentication identity', 'server implementors " +
 		"SHOULD isolate the conversion function' are all server-side security duties (the client-" +
 		"facing security SHOULDs are captured as RFC5259-13-1/-2).\n\n" +
-		"CLIENT-BINDING extracted (26 entries): §3.1 the capability-gate MUST (client MUST NOT " +
+		"CLIENT-BINDING extracted (28 entries): §3.1 the capability-gate MUST (client MUST NOT " +
 		"issue CONVERT without seeing the capability); §5.1 the CONVERSIONS command form and its " +
 		"accepted result codes; §6 the single-conversion-per-command constraint (and the MAY-" +
 		"pipeline allowance), the default-conversion NIL marker, the SHOULD-avoid-default-" +
@@ -83,11 +85,13 @@ const rfc5259: CatalogModule = {
 		"destination MIME type MUST be specified with BODY[HEADER]/[...HEADER]/[...MIME]' " +
 		"construction constraint, and the graceful-handling-of-dropped-comments duty; §7 " +
 		"conversion-parameter-name case-insensitivity; §8.1 the CONVERTED untagged response " +
-		"acceptance and the TAG-correlator matching duty; §8.3 the no-cross-session-result-" +
+		"acceptance and the TAG-correlator matching duty; §8.2 the client's MIME-type-match " +
+		"expectation and license to treat a mismatch as an error; §8.3 the no-cross-session-result-" +
 		"stability-assumption duty and the concrete no-caching/no-reuse-across-connections " +
 		"prohibition; §8.4 the AVAILABLECONVERSIONS response acceptance; §9 the " +
 		"TEMPFAIL/MAXCONVERTMESSAGES/MAXCONVERTPARTS tagged-NO resp-code parse duties, the " +
-		"ERROR-phrase framing plus its BADPARAMETERS/MISSINGPARAMETERS shape-parsing duties, the " +
+		"ERROR-phrase framing plus its TEMPFAIL-mm/BADPARAMETERS/MISSINGPARAMETERS shape-parsing " +
+		"duties (including the TEMPFAIL-mm client wait-time SHOULD), the " +
 		"MAY-retry-after-TEMPFAIL allowance, and the OK-means-at-least-one-succeeded interpretation " +
 		"duty; §13 the two client-facing security SHOULDs (care around requesting/processing " +
 		"conversions; mutual SASL/TLS).\n\n" +
@@ -116,9 +120,9 @@ const rfc5259: CatalogModule = {
 		"internal-state), RFC5259-13-1 (clients should be careful requesting/processing " +
 		"conversions, user-intent-policy), RFC5259-13-2 (SHOULD use mutual SASL/TLS to trust " +
 		"servers, out-of-band — connection-security posture, not observable via the CONVERT wire " +
-		"exchange itself and already the general subject of the SASL/TLS catalogs). Total: 26 " +
+		"exchange itself and already the general subject of the SASL/TLS catalogs). Total: 28 " +
 		"client-binding entries (RFC5259-3.1-1, RFC5259-5.1-1..2, RFC5259-6-1..8, RFC5259-7-1, " +
-		"RFC5259-8.1-1..2, RFC5259-8.3-1..2, RFC5259-8.4-1, RFC5259-9-1..7, RFC5259-13-1..2).",
+		"RFC5259-8.1-1..2, RFC5259-8.2-1, RFC5259-8.3-1..2, RFC5259-8.4-1, RFC5259-9-1..8, RFC5259-13-1..2).",
 	requirements: [
 		// ── §3.1 CAPABILITY Response ─────────────────────────────────────────────
 
@@ -227,8 +231,9 @@ const rfc5259: CatalogModule = {
 				"issues two separate CONVERT/UID CONVERT commands (optionally pipelined) rather than " +
 				"folding both into one convert-params clause. Conditional; standalone in rev2, so " +
 				"[\"rev1\",\"rev2\"]. Verbatim note: the source RFC text itself contains a stray " +
-				"space in 'CONVERT/ UID CONVERT' (a line-wrap artifact at the page 6/7 boundary in " +
-				"the original), reproduced here exactly as published.",
+				"space in 'CONVERT/ UID CONVERT' (a plain line-wrap artifact within page 6 of the " +
+				"original — the sentence and its wrap sit well before the page 6/[Page 7] boundary, " +
+				"not at it), reproduced here exactly as published.",
 		},
 		{
 			id: "RFC5259-6-2",
@@ -481,6 +486,43 @@ const rfc5259: CatalogModule = {
 				"[\"rev1\",\"rev2\"].",
 		},
 
+		// ── §8.2 BODYPARTSTRUCTURE CONVERT Request and Response Item ────────────
+
+		{
+			id: "RFC5259-8.2-1",
+			source: "RFC5259",
+			section: "8.2",
+			title: "Client can expect the returned MIME type to match the one requested and can treat a mismatch as an error",
+			text:
+				"Note that the client can expect the returned " +
+				"MIME type to match the one it requested (as the server is required to " +
+				"obey the requested MIME type) and can treat mismatch as an error.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Judgment level: descriptive guarantee-plus-license sentence, no UPPERCASE keyword, " +
+				"but it establishes the client's interpretive contract for BODYPARTSTRUCTURE's MIME " +
+				"type field once a concrete (non-default) target MIME type was requested — the " +
+				"client is entitled to rely on the returned type matching the requested one, and MAY " +
+				"treat a divergence as an error rather than silently accepting it. This is distinct " +
+				"from the BODYPARTSTRUCTURE-matches-BINARY ordering/consistency MUSTs that are " +
+				"excluded as server-only in this module's extractionNote (§8.2's server-worded " +
+				"'the server MUST return the BODYPARTSTRUCTURE data prior to ... BINARY data'); this " +
+				"entry is the client-facing expectation/error-treatment counterpart the extractionNote " +
+				"had not yet given a scoring home. Level MUST reflects that the expectation itself " +
+				"('can expect ... to match') is a guarantee the client is entitled to depend on; the " +
+				"'can treat mismatch as an error' clause is itself framed as a MAY-level license, noted " +
+				"here as a judgment call in the absence of an inline RFC 2119 keyword. Testable " +
+				"black-box: script a CONVERT request naming a concrete target MIME type and a " +
+				"BODYPARTSTRUCTURE response whose MIME type/sub-type fields diverge from the requested " +
+				"one, and assert the client either surfaces this as an error condition or, at minimum, " +
+				"does not silently mis-treat the divergent type as if it were the requested one. " +
+				"Conditional on the client requesting BODYPARTSTRUCTURE with a concrete (non-default) " +
+				"target MIME type; standalone in rev2, so [\"rev1\",\"rev2\"].",
+		},
+
 		// ── §8.3 BINARY.SIZE CONVERT Request and Response Item ──────────────────
 
 		{
@@ -658,8 +700,10 @@ const rfc5259: CatalogModule = {
 				"'TEMPFAIL mm - ...', 'BADPARAMETERS from-concrete-mime-type to-mime-type " +
 				"\"(\" transcoding-params \")\" - ...', and 'MISSINGPARAMETERS from-concrete-mime-type " +
 				"to-mime-type \"(\" transcoding-params \")\" - ...' (each quoted verbatim in its own " +
-				"entry: RFC5259-9-1 covers TEMPFAIL, RFC5259-9-5 covers BADPARAMETERS, RFC5259-9-6 " +
-				"covers MISSINGPARAMETERS — this entry deliberately stops at the colon rather than " +
+				"entry: RFC5259-9-8 covers the ERROR-phrase convert-error-code's 'TEMPFAIL mm' form " +
+				"(distinct from RFC5259-9-1, which covers the plain resp-text-code 'TEMPFAIL' with no " +
+				"minutes argument, a different ABNF production), RFC5259-9-5 covers BADPARAMETERS, " +
+				"RFC5259-9-6 covers MISSINGPARAMETERS — this entry deliberately stops at the colon rather than " +
 				"paraphrasing the three-item list into running prose). Per the ABNF (§10) these are " +
 				"'convert-error-code = \"TEMPFAIL\" [SP nz-number] / bad-params / missing-params', " +
 				"each nested inside a 'converterror-phrase = \"(\" \"ERROR\" SP convert-err-descript SP " +
@@ -749,6 +793,33 @@ const rfc5259: CatalogModule = {
 				"data item and one ERROR-phrase data item followed by a tagged OK, and assert the " +
 				"client treats the overall command as succeeded (not erroring merely because one item " +
 				"failed). Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
+		},
+		{
+			id: "RFC5259-9-8",
+			source: "RFC5259",
+			section: "9",
+			title: "Client SHOULD wait at least mm minutes before retrying after an ERROR TEMPFAIL mm",
+			text: "The client SHOULD wait\n         for at least mm minutes before retrying.",
+			level: "SHOULD",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Explicit client SHOULD, from the convert-error-code enumeration's 'TEMPFAIL mm' " +
+				"branch (distinct from RFC5259-9-1's plain resp-text-code 'TEMPFAIL' with no minutes " +
+				"argument — RFC5259-9-4's note previously and wrongly claimed RFC5259-9-1 already " +
+				"covered this ERROR-phrase 'TEMPFAIL mm' form; corrected there to point here instead). " +
+				"Full context: 'TEMPFAIL mm -  The transcoding request failed temporarily.  It might " +
+				"succeed later, so the client MAY retry.  The client SHOULD wait for at least mm " +
+				"minutes before retrying.' Per the ABNF (§10) 'convert-error-code = \"TEMPFAIL\" " +
+				"[SP nz-number] / bad-params / missing-params', the optional nz-number is the mm " +
+				"minutes value carried inside an ERROR phrase's convert-error-code (RFC5259-9-4), not " +
+				"the bare tagged-NO resp-text-code of RFC5259-9-1. Testable black-box: script a " +
+				"CONVERTED response whose data item carries an ERROR phrase with convert-error-code " +
+				"'TEMPFAIL 5' and assert a client that retries the same conversion does not do so " +
+				"before roughly 5 minutes have elapsed. Conditional on the client retrying after a " +
+				"TEMPFAIL-mm ERROR phrase at all (retrying itself remains a MAY, per the immediately " +
+				"preceding sentence); standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 
 		// ── §13 Security Considerations ───────────────────────────────────────────

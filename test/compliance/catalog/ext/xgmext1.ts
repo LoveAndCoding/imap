@@ -18,8 +18,9 @@ import type { CatalogModule } from "../types";
  *                the X-GM-THRID FETCH attribute and its use in
  *                SEARCH/UID SEARCH.
  *   - `labels` — the "Access to Gmail labels: X-GM-LABELS" section: the
- *                X-GM-LABELS FETCH attribute, its STORE forms, and its use
- *                in SEARCH/UID SEARCH.
+ *                X-GM-LABELS FETCH attribute, its STORE forms, its use
+ *                in SEARCH/UID SEARCH, and the section's own XLIST-based
+ *                label-list-retrieval sentence (labels-10).
  *   - `raw`    — the "Extension of the SEARCH command: X-GM-RAW" section:
  *                the X-GM-RAW search key.
  *
@@ -55,13 +56,19 @@ const xgmext1: CatalogModule = {
 		"presence of extensions' (X-GM-EXT-1-cap-1/2, the capability gate all other sections are " +
 		"conditional on), 'Access to the Gmail unique message ID: X-GM-MSGID' (X-GM-EXT-1-msgid-1..5), " +
 		"'Access to the Gmail thread ID: X-GM-THRID' (X-GM-EXT-1-thrid-1..5), 'Access to Gmail labels: " +
-		"X-GM-LABELS' (X-GM-EXT-1-labels-1..8), and 'Extension of the SEARCH command: X-GM-RAW' " +
+		"X-GM-LABELS' (X-GM-EXT-1-labels-1..10, including labels-10's XLIST-based label-list-retrieval " +
+		"sentence, which sits inside the X-GM-LABELS section itself), and 'Extension of the SEARCH " +
+		"command: X-GM-RAW' " +
 		"(X-GM-EXT-1-raw-1..2). Reviewed and deliberately excluded as non-client-binding or out of this " +
-		"catalog's scope: the 'Special-Use Extension of the LIST command' and 'XLIST is deprecated' " +
-		"sections (these describe RFC 6154 Special-Use attributes and the XLIST-to-Special-Use " +
-		"migration, which are already covered by the existing RFC 6154 catalog — cataloging them again " +
-		"under X-GM-EXT-1 would be cross-catalog double-scoring of the same client duty against a " +
-		"different source id); the IMAP ID/RFC 2971 contact-address recommendation (already covered by " +
+		"catalog's scope: the SEPARATE 'Special-Use Extension of the LIST command' and 'XLIST is " +
+		"deprecated' sections (these describe RFC 6154 Special-Use attributes and the XLIST-to-" +
+		"Special-Use migration, which are already covered by the existing RFC 6154 catalog — " +
+		"cataloging them again under X-GM-EXT-1 would be cross-catalog double-scoring of the same " +
+		"client duty against a different source id; this exclusion does NOT extend to labels-10's " +
+		"XLIST sentence, which lives in the distinct X-GM-LABELS section and describes using XLIST " +
+		"itself, a command RFC 6154 does not define or cover — RFC 6154 only covers the recommended " +
+		"LIST/SPECIAL-USE replacement, not the deprecated XLIST command); the IMAP ID/RFC 2971 " +
+		"contact-address recommendation (already covered by " +
 		"the existing RFC 2971 catalog). Provenance: this is a vendor doc (source: X-GM-EXT-1, not IANA/ " +
 		"RFC); fetched via WebFetch (HTML-to-markdown through a summarizing model, not raw bytes) with " +
 		"five independent passes on 2026-07-04 — a broad-summary pass and four targeted quote-extraction " +
@@ -562,12 +569,14 @@ const xgmext1: CatalogModule = {
 			testability: "testable",
 			notes:
 				"Vendor doc (source: X-GM-EXT-1). Quote confirmed verbatim across two independent " +
-				"targeted WebFetch passes as fetched on 2026-07-04. No worked SEARCH example for this " +
-				"specific form was found in any of the five fetches (only the FETCH/STORE examples for " +
-				"X-GM-LABELS were shown); the sentence itself is nonetheless clear and unambiguous about " +
-				"the wire form (`X-GM-LABELS <label>` as a search key), consistent with the analogous, " +
-				"page-confirmed X-GM-MSGID/X-GM-THRID SEARCH key forms (X-GM-EXT-1-msgid-4/thrid-4) which " +
-				"do have worked examples. Graded MAY: permissive availability of a search-key form.",
+				"targeted WebFetch passes as fetched on 2026-07-04. CORRECTED (a prior version of this " +
+				"note wrongly claimed no worked SEARCH example was found for this form): a worked " +
+				"example does exist on the page and was confirmed across two independent targeted " +
+				"WebFetch passes on 2026-07-04: `a012 SEARCH X-GM-LABELS foo` / `* SEARCH 1 2` / " +
+				"`a012 OK SEARCH (Success)` — confirming the wire form (`X-GM-LABELS <label>` as a " +
+				"search key), consistent with the analogous, page-confirmed X-GM-MSGID/X-GM-THRID " +
+				"SEARCH key forms (X-GM-EXT-1-msgid-4/thrid-4). Graded MAY: permissive availability of " +
+				"a search-key form.",
 		},
 		{
 			id: "X-GM-EXT-1-labels-9",
@@ -591,6 +600,49 @@ const xgmext1: CatalogModule = {
 			notes:
 				"Vendor doc (source: X-GM-EXT-1). Same underlying quote as X-GM-EXT-1-cap-2, restated " +
 				"under the labels section so this feature family documents its own capability precondition.",
+		},
+		{
+			id: "X-GM-EXT-1-labels-10",
+			source: "X-GM-EXT-1",
+			section: "labels",
+			title: "XLIST retrieves the entire list of labels for a mailbox",
+			text: "Use the `XLIST` command to get the entire list of labels for a mailbox.",
+			level: "MAY",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "untestable",
+			untestableTheme: "internal-decision",
+			untestableRationale:
+				"XLIST is Gmail's own (non-standard, pre-dating and now superseded by RFC 6154 " +
+				"SPECIAL-USE) command for enumerating labels/mailboxes with special-use attributes " +
+				"attached; the page elsewhere documents XLIST is deprecated in favor of the standard " +
+				"LIST command combined with RFC 6154's SPECIAL-USE attributes (already covered by the " +
+				"existing RFC 6154 catalog, per this module's extractionNote's exclusion of the page's " +
+				"'Special-Use Extension of the LIST command'/'XLIST is deprecated' sections). Whether a " +
+				"client chooses to call the deprecated XLIST command at all — versus the recommended " +
+				"LIST-based replacement — is now purely an internal client-implementation-strategy " +
+				"choice with no remaining spec-compliance consequence: both a client that still issues " +
+				"XLIST and one that has fully migrated to LIST-with-SPECIAL-USE can correctly retrieve " +
+				"the complete label set, and a black-box harness has no normative basis (post-" +
+				"deprecation) to prefer one over the other. This is why the entry is graded MAY/" +
+				"untestable/internal-decision rather than folded into the RFC 6154 catalog: the RFC " +
+				"6154 SPECIAL-USE mechanism this sentence's XLIST is described elsewhere as superseded " +
+				"by is a distinct command surface (LIST with an attribute-matching extension) from " +
+				"XLIST itself, so RFC 6154 does not directly cover 'use XLIST' as a client action — " +
+				"only 'use LIST/SPECIAL-USE instead' — leaving this sentence without a scoring home " +
+				"until now.",
+			notes:
+				"Vendor doc (source: X-GM-EXT-1), from 'Access to Gmail labels: X-GM-LABELS'. Quote " +
+				"confirmed verbatim across two independent targeted WebFetch passes as fetched on " +
+				"2026-07-04. This sentence sits inside the X-GM-LABELS section (not the separate " +
+				"'Special-Use Extension of the LIST command'/'XLIST is deprecated' sections this " +
+				"module's extractionNote already excludes as RFC-6154-covered) and has no scoring home " +
+				"under RFC 6154, since RFC 6154 is the SPECIAL-USE attribute mechanism, not the (now-" +
+				"deprecated) XLIST command itself — RFC 6154 covers what should be used INSTEAD of " +
+				"XLIST, not the act of using XLIST. Graded MAY (permissive: 'Use the XLIST command' " +
+				"describes an available option, not a mandated one, and is doubly non-mandatory given " +
+				"XLIST's documented deprecation) and untestable/internal-decision per the rationale " +
+				"above: this is a judgment call, flagged here rather than silently omitted.",
 		},
 		{
 			id: "X-GM-EXT-1-raw-1",

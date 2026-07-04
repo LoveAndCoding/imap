@@ -156,7 +156,7 @@ const rfc5255: CatalogModule = {
 			title: "Client MUST re-issue LANGUAGE after a security layer is subsequently negotiated",
 			text:
 				"If a security layer (such as SASL or TLS) is subsequently negotiated by the client, " +
-				"it MUST re- issue the LANGUAGE command in order to make sure that no previous " +
+				"it MUST re-issue the LANGUAGE command in order to make sure that no previous " +
 				"active attack (if any) on LANGUAGE negotiation has effect on subsequent error " +
 				"messages.",
 			level: "MUST",
@@ -164,12 +164,16 @@ const rfc5255: CatalogModule = {
 			profiles: ["rev1", "rev2"],
 			testability: "testable",
 			notes:
-				"Explicit client MUST. Restated in §7 Security Considerations ('Clients MUST re- " +
+				"Explicit client MUST, quoted verbatim from §3.1 (unbroken 're-issue', no line-wrap " +
+				"space in this section). Restated in §7 Security Considerations, where the source " +
+				"text genuinely wraps at that location ('Clients MUST re- " +
 				"issue the LANGUAGE command once a security layer is active, in order to prevent " +
 				"this attack from impacting subsequent protocol operations.') — the same normative " +
 				"obligation for the same security rationale (an active attacker could have " +
 				"suppressed/modified an unprotected pre-TLS/pre-auth LANGUAGE negotiation), so it is " +
-				"cataloged once here rather than as a duplicate entry. Testable black-box: script a " +
+				"cataloged once here rather than as a duplicate entry; the §7 restatement (with its " +
+				"own genuine line-wrap artifact) is a side observation only and is not the source of " +
+				"this entry's `text`, which is drawn exclusively from §3.1. Testable black-box: script a " +
 				"pre-LANGUAGE-then-STARTTLS (or SASL security-layer) sequence and assert the client " +
 				"sends a fresh LANGUAGE command after the layer activates, if it issued one at all " +
 				"before. Conditional on the client having issued LANGUAGE pre-security-layer and then " +

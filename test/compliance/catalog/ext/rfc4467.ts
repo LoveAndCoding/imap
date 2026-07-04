@@ -246,6 +246,41 @@ const rfc4467: CatalogModule = {
 				"userid suffix) as the access identifier. Conditional; standalone in rev2, so " +
 				'[\"rev1\",\"rev2\"].',
 		},
+		{
+			id: "RFC4467-3-6",
+			source: "RFC4467",
+			section: "3",
+			title: "Client's GENURLAUTH url-rump argument MUST include a valid access identifier",
+			text:
+				'There is a valid access identifier that, in the case of\n          "submit+" and "user+", will contain a valid userid.',
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Judgment level: this is item (3) of §7 BASE.6.3.GENURLAUTH's four-point server-" +
+				"validation checklist ('The server MUST validate each supplied URL as follows: ... " +
+				"(3) There is a valid access identifier ...'), worded on the SERVER's validation " +
+				"duty rather than directly on the client; the extracted client-binding counterpart " +
+				"is the construction duty this validation check implies — a client's GENURLAUTH " +
+				"url-rump argument (the not-yet-authorized URL ending in ';URLAUTH=<access>', per " +
+				"RFC4467-9-2) MUST itself carry a well-formed access identifier (one of 'submit+" +
+				"<userid>', 'user+<userid>', 'authuser', or 'anonymous', per RFC4467-3-1..5) or the " +
+				"server is required to reject it. Evidenced by the §5 worked example: 'C: a775 " +
+				"GENURLAUTH \"imap://joe@example.com/INBOX/;uid=20/;section=1.2\" INTERNAL' (no " +
+				"';urlauth=' component in the supplied URL) is answered 'S: a775 BAD missing access " +
+				"identifier in supplied URL' — a client omitting the access identifier gets a " +
+				"BAD failure, confirming this is a hard client-construction requirement, not merely " +
+				"a server-internal check. Level MUST is a judgment call (the checklist item itself " +
+				"has no inline RFC 2119 keyword; MUST reflects that a client omitting the access " +
+				"identifier cannot successfully complete GENURLAUTH, per the worked BAD example). " +
+				"Testable black-box: script a GENURLAUTH argument list and assert the client never " +
+				"omits the access identifier from the url-rump it supplies (equivalently, assert a " +
+				"server that returns the worked-example BAD failure for a missing access identifier " +
+				"is treated as a graceful, expected failure rather than a protocol error). " +
+				"Conditional on the client using GENURLAUTH; standalone in rev2, so " +
+				'[\"rev1\",\"rev2\"].',
+		},
 
 		// ── §7 Additional Commands ───────────────────────────────────────────────
 
@@ -449,7 +484,12 @@ const rfc4467: CatalogModule = {
 				"one url/mechanism pair is required (GENURLAUTH takes no bare form), and (b) each " +
 				"repetition is a strict pair — a client MUST NOT send an unpaired trailing URL or an " +
 				"unpaired trailing mechanism. Note the argument is 'url-rump' (§9: 'contains " +
-				"authimapurlrump as defined below' — i.e. the URL WITHOUT any ';URLAUTH=' suffix), " +
+				"authimapurlrump as defined below', where authimapurlrump = authimapurl iurlauth-rump " +
+				"and iurlauth-rump = [expire] \";URLAUTH=\" access -- i.e. the URL RETAINING its own " +
+				"';URLAUTH=<access>' component and dropping only the trailing ':<mech>:<token>' " +
+				"portion, matching §6's validation-side definition of the rump URL ('the URL minus the " +
+				"\":\" and the \"<mech>:<token>\" portion') -- CORRECTED from a prior note that wrongly " +
+				"described this as the URL without any ';URLAUTH=' suffix), " +
 				"confirming a client requesting authorization sends the not-yet-authorized rump URL, " +
 				"not a pre-existing authorized one. Companion to RFC4467-7-2's prose-level entry. " +
 				"Judgment level MUST. Testable black-box. Conditional; standalone in rev2, so " +
