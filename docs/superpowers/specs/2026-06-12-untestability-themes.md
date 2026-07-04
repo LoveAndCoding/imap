@@ -561,3 +561,70 @@ library's boundary.
 
 The taxonomy remains **11 themes**; no registration or `UNTESTABLE_THEMES` change was needed
 this phase.
+
+---
+
+# Phase 5 Untestability Delta (search/sort/sync/events)
+
+**Date:** 2026-07-03 (Phase 5, Task 10 / P5-E)
+**Population added:** the 12-source search/sort/sync/events family contributed **42** new
+`testability: "untestable"` entries. **No new theme was required** — all 42 fit the existing
+11-theme taxonomy, and no flip via existing machinery is warranted. The taxonomy stays at
+**11 themes**.
+
+## Phase 5 additions per theme (per catalog entry)
+
+| Theme | Phase 5 additions | Typical members |
+|---|---|---|
+| `internal-state` | 10 | CONDSTORE/QRESYNC cache-interpretation duties (per-message MODSEQ bookkeeping, post-resync reconciliation, `$`-lifetime beliefs, context result-list maintenance in RFC 5267) |
+| `internal-decision` | 9 | pipelining-avoidance choices, UPDATE-scope interpretation, CONTEXT hint triggers, stale-result awareness (WITHIN) |
+| `user-intent-policy` | 5 | re-issue-search-when-currency-needed (WITHIN), filter-deletion intent, LSUB-vs-LIST policy analogues |
+| `cross-session` | 4 | QRESYNC known-UID/seq-match-data derivation from a prior session's cache — the theme's natural home, growing it from 1 to 5 members |
+| `ui-presentation` | 4 | FUZZY warn-the-user duties, MAY-display-name (FILTERS) |
+| `content-processing` | 4 | filter value/description content duties (UTF-8 semantics beyond encoding, language tags, i-default) |
+| `performance-expectation` | 3 | IDLE ~29-minute re-issue advice (mirrors RFC9051-6.3.13-2), NOTIFY timeliness cautions |
+| `capability-inventory` | 3 | capability-gate constructions with no wire-observable half (FILTERS, CATENATE-style gates) |
+
+Total: **42** entries, 8 themes touched. `environment-limit`, `out-of-band`, and
+`compressed-framing-opacity` gained zero Phase 5 members.
+
+## Intrinsic / instrumental re-verdicts — NO FLIPS
+
+- **`cross-session` (+4) — INTRINSIC (re-confirmed with its first real cluster).** The QRESYNC
+  parameters (uidvalidity, modseq, known-uids, seq-match-data) are *derived from a
+  cross-session cache this headless library does not keep* — the same consumer-delegation
+  verdict as RFC9051-2.3.1.1-1 (the theme's original member). Two scripted sessions can
+  present the values but cannot observe whether a (hypothetical) cache produced them; the
+  observable half (the wire FORM of `SELECT … (QRESYNC (…))`) is separately cataloged as
+  testable. The multi-connection mechanism was re-evaluated against the larger population and
+  again produces no flip. *Forward-looking note:* if the library grows a persistent
+  sync-state cache with a public surface, these 4 entries are the first re-evaluation
+  candidates.
+- **All other themes — INTRINSIC per their established defining properties.** The Phase 5
+  members are structurally identical to prior members (wire shows what not why; RFC-permitted
+  redundancy has no pass/fail boundary; expectations/timing have no wire signature; MAY-level
+  presentation is vacuous even with the logger).
+
+**Note on the testable side:** as in Phase 4, the connectLow unsolicited-response path turned
+the family's response-acceptance duties into genuine measured signal (≈60 real passes and
+≈20 real violations — VANISHED unaccepted, ESEARCH ADDTO clobber, NOUPDATE/UNDEFINED-FILTER
+bare-argument drops, THREAD infinite-recursion getter) rather than untestable entries.
+
+## Combined catalog totals after Phase 5 (per catalog entry)
+
+| Theme | total entries |
+|---|---|
+| `internal-decision` | 72 |
+| `capability-inventory` | 48 |
+| `internal-state` | 22 |
+| `user-intent-policy` | 21 |
+| `content-processing` | 14 |
+| `ui-presentation` | 13 |
+| `performance-expectation` | 8 |
+| `environment-limit` | 7 |
+| `cross-session` | 5 |
+| `out-of-band` | 4 |
+| `compressed-framing-opacity` | 3 |
+
+Total: **217** untestable entries across the 770-requirement catalog. The taxonomy remains
+**11 themes**; no registration or `UNTESTABLE_THEMES` change was needed this phase.

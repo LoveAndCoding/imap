@@ -8,9 +8,10 @@
  *
  * Seeds every capability whose defining RFC is ALREADY cataloged — the
  * Phase 0/1/2 core (IMAP4rev1, IMAP4rev2, ID), the Phase 3 connection &
- * security family, and the Phase 4 mailbox/listing/metadata + message-ops
- * family. Phase 5/6 registry entries remain PENDING block comments below,
- * to be promoted incrementally as their catalogs land.
+ * security family, the Phase 4 mailbox/listing/metadata + message-ops
+ * family, and the Phase 5 search/sort/sync/events family. Phase 6 registry
+ * entries remain a PENDING block comment below, to be promoted when that
+ * catalog lands (Phase 6 also performs the live IANA cross-check).
  *
  * The `source` on each `cataloged` entry MUST name a module present in
  * `allCatalogModules` (enforced by specs/meta/registry-coverage.test.ts). The
@@ -167,44 +168,107 @@ export const registryCoverage: RegistryEntry[] = [
 	},
 	{ capability: "REPLACE", status: "cataloged", source: "RFC8508", note: "REPLACE, UID REPLACE." },
 
-	// ---- PENDING — Phase 5 (search/sort/sync/events) ------------------------
-	// Itemized capability → source → surface map (17 tokens, 12 sources).
-	// COMMENTS until the Phase 5 wrap promotes them to live `cataloged` entries
-	// (promotion requires each module to carry requirements and at least one
-	// spec file to cite its testable ids — same pattern as the Phase 4 wrap).
-	//
-	// CONDSTORE             → RFC7162 — SELECT/EXAMINE ... (CONDSTORE); FETCH ... (CHANGEDSINCE n);
-	//                                   STORE ... (UNCHANGEDSINCE n); SEARCH MODSEQ; MODSEQ fetch item;
-	//                                   HIGHESTMODSEQ/NOMODSEQ/MODIFIED resp-codes; STATUS HIGHESTMODSEQ.
-	//                                   (RFC 7162 obsoletes RFC 4551.)
-	// QRESYNC               → RFC7162 — SELECT ... (QRESYNC (uidvalidity modseq [known-uids]));
-	//                                   VANISHED / VANISHED (EARLIER) responses; UID FETCH ... (VANISHED).
-	//                                   (RFC 7162 obsoletes RFC 5162.)
-	// SORT                  → RFC5256 — SORT (crit...) charset keys; UID SORT; * SORT response.
-	// SORT=DISPLAY          → RFC5957 — DISPLAYFROM/DISPLAYTO sort criteria.
-	// THREAD=ORDEREDSUBJECT → RFC5256 — THREAD ORDEREDSUBJECT charset keys; * THREAD response.
-	// THREAD=REFERENCES     → RFC5256 — THREAD REFERENCES charset keys; * THREAD response.
-	// ESEARCH               → RFC4731 — SEARCH RETURN (MIN MAX ALL COUNT); * ESEARCH response
-	//                                   (rev2-core overlap: RFC 9051 uses the ESEARCH result format
-	//                                   for core SEARCH — extraction adjudicates rev1-only tags).
-	// ESORT                 → RFC5267 — SORT RETURN (...).
-	// CONTEXT=SEARCH        → RFC5267 — SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM.
-	// CONTEXT=SORT          → RFC5267 — SORT RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM.
-	// SEARCHRES             → RFC5182 — SEARCH RETURN (SAVE); '$' marker in seq-set args
-	//                                   (rev2-core overlap: RFC 9051 core has SAVE + '$').
-	// SEARCH=FUZZY          → RFC6203 — SEARCH FUZZY <key>; RELEVANCY sort/return.
-	// PARTIAL               → RFC9394 — SEARCH RETURN (PARTIAL m:n); FETCH ... (PARTIAL m:n) context;
-	//                                   * ESEARCH ... PARTIAL acceptance.
-	// IDLE                  → RFC2177 — IDLE → + → bare DONE flow
-	//                                   (rev2-core overlap: RFC 9051 §6.3.13 folds IDLE into core).
-	// NOTIFY                → RFC5465 — NOTIFY SET/NONE (events); unsolicited event streams;
-	//                                   * OK [NOTIFICATIONOVERFLOW].
-	// FILTERS               → RFC5466 — filter definitions used within NOTIFY/SEARCH.
-	// WITHIN                → RFC5032 — SEARCH OLDER n / YOUNGER n
-	//                                   (standalone: RFC 9051 did NOT absorb OLDER/YOUNGER —
-	//                                   early rev2 drafts had them, dropped before publication;
-	//                                   zero occurrences in the published RFC 9051).
-	//
+	// ---- Phase 5: search/sort/sync/events -----------------------------------
+	// Promoted from PENDING at the Phase 5 wrap: each module carries
+	// requirements and at least one spec file cites its testable ids.
+	{
+		capability: "CONDSTORE",
+		status: "cataloged",
+		source: "RFC7162",
+		note: "SELECT (CONDSTORE); FETCH (CHANGEDSINCE n); STORE (UNCHANGEDSINCE n); SEARCH MODSEQ. MODSEQ fetch item + HIGHESTMODSEQ/NOMODSEQ/MODIFIED codes + STATUS HIGHESTMODSEQ parse for real. Obsoletes RFC 4551.",
+	},
+	{
+		capability: "QRESYNC",
+		status: "cataloged",
+		source: "RFC7162",
+		note: "SELECT (QRESYNC (...)); VANISHED responses (client cannot accept them today — measured violations); UID FETCH (VANISHED). Obsoletes RFC 5162.",
+	},
+	{
+		capability: "SORT",
+		status: "cataloged",
+		source: "RFC5256",
+		note: "SORT (crit...) charset keys; UID SORT; * SORT response.",
+	},
+	{
+		capability: "SORT=DISPLAY",
+		status: "cataloged",
+		source: "RFC5957",
+		note: "DISPLAYFROM/DISPLAYTO sort criteria.",
+	},
+	{
+		capability: "THREAD=ORDEREDSUBJECT",
+		status: "cataloged",
+		source: "RFC5256",
+		note: "THREAD ORDEREDSUBJECT charset keys; * THREAD response.",
+	},
+	{
+		capability: "THREAD=REFERENCES",
+		status: "cataloged",
+		source: "RFC5256",
+		note: "THREAD REFERENCES charset keys; * THREAD response.",
+	},
+	{
+		capability: "ESEARCH",
+		status: "cataloged",
+		source: "RFC4731",
+		note: "SEARCH RETURN (MIN MAX ALL COUNT); * ESEARCH parses for real (mailbox/search.ts). rev2-core overlap: RFC 9051 uses the ESEARCH result format for core SEARCH — rev1-only tags adjudicated in-catalog.",
+	},
+	{ capability: "ESORT", status: "cataloged", source: "RFC5267", note: "SORT RETURN (...)." },
+	{
+		capability: "CONTEXT=SEARCH",
+		status: "cataloged",
+		source: "RFC5267",
+		note: "SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM (two-ADDTO Map-clobber measured as a violation).",
+	},
+	{
+		capability: "CONTEXT=SORT",
+		status: "cataloged",
+		source: "RFC5267",
+		note: "SORT RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM.",
+	},
+	{
+		capability: "SEARCHRES",
+		status: "cataloged",
+		source: "RFC5182",
+		note: "SEARCH RETURN (SAVE); '$' in seq-set args. rev2-core overlap: RFC 9051 core has SAVE + '$' — rev1-only tags adjudicated in-catalog.",
+	},
+	{
+		capability: "SEARCH=FUZZY",
+		status: "cataloged",
+		source: "RFC6203",
+		note: "SEARCH FUZZY <key>; RELEVANCY sort/return.",
+	},
+	{
+		capability: "PARTIAL",
+		status: "cataloged",
+		source: "RFC9394",
+		note: "SEARCH RETURN (PARTIAL m:n); * ESEARCH PARTIAL pair parses for real.",
+	},
+	{
+		capability: "IDLE",
+		status: "cataloged",
+		source: "RFC2177",
+		note: "IDLE / continuation / bare DONE flow. rev2-core overlap: RFC 9051 §6.3.13 folds IDLE into core — rev1-only tags adjudicated in-catalog.",
+	},
+	{
+		capability: "NOTIFY",
+		status: "cataloged",
+		source: "RFC5465",
+		note: "NOTIFY SET/NONE (events); unsolicited event streams parse for real; [NOTIFICATIONOVERFLOW]/[BADEVENT] accepted.",
+	},
+	{
+		capability: "FILTERS",
+		status: "cataloged",
+		source: "RFC5466",
+		note: "FILTER search key + METADATA-stored definitions; [UNDEFINED-FILTER] kind accepted but its bare argument is dropped (measured violation).",
+	},
+	{
+		capability: "WITHIN",
+		status: "cataloged",
+		source: "RFC5032",
+		note: "SEARCH OLDER n / YOUNGER n. Standalone: RFC 9051 did NOT absorb OLDER/YOUNGER (early rev2 drafts had them, dropped before publication; zero occurrences in the published RFC).",
+	},
+
 	// ---- PENDING — Phase 6 (i18n + misc + vendor + registry completion) ----
 	// UTF8=ONLY (RFC 6855), LANGUAGE (RFC 5255), I18NLEVEL=1 / I18NLEVEL=2 (RFC 5255),
 	// SMTPUTF8-related, CONVERT (RFC 5259), URLAUTH (RFC 4467),
