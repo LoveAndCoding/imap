@@ -293,6 +293,11 @@ complianceTest(
 		await waitForUntagged(driver, "EXISTS");
 		// (The client currently surfaces the name with its quoting intact — the
 		// values are the acceptance observable.)
+		// TODO(name-fidelity): toContain deliberately tolerates the undequoted
+		// STATUS mailbox name (`"Lists/Lemonade"` with quotes). The acceptance
+		// duty is value-proven by UIDNEXT/MESSAGES below, but this leniency
+		// papers over a real dequoting quirk — tighten to toBe("Lists/Lemonade")
+		// once the client dequotes STATUS names, or add a name-fidelity leg.
 		expect(status.name).toContain("Lists/Lemonade");
 		expect(status.uidnext).toBe(10002);
 		expect(status.messages).toBe(503);

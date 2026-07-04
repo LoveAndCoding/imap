@@ -680,17 +680,23 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5267-4.3.1-1 — accept `* NO [NOUPDATE "<tag>"]` as a non-fatal refusal (REAL)
+// RFC5267-4.3.1-1 — accept `* NO [NOUPDATE "<tag>"]` as a non-fatal refusal
 // ═════════════════════════════════════════════════════════════════════════════
-// resp-text-code =/ "NOUPDATE" SP quoted. Unknown resp-codes fall through to
-// the client's AtomTextCode path (the BADURL/TOOBIG precedent), so the §4.3.1
-// example line must surface as a parsed serverStatus carrying the NOUPDATE
-// code with its quoted tag — and the stream must survive it. Genuine outcome.
+// resp-text-code =/ "NOUPDATE" SP quoted. The NOUPDATE atom itself survives the
+// client's AtomTextCode fallback (the BADURL/TOOBIG precedent) and the stream
+// survives the NO — but the quoted tag argument is DROPPED: AtomTextCode feeds
+// its argument tokens to splitSpaceSeparatedList with the default "(" start
+// token, so any bare (unparenthesized) resp-code argument is silently discarded
+// and `contents` comes back empty (the same client defect the UNDEFINED-FILTER
+// test measures in filters-5466). Honest outcome today: VIOLATION on the
+// tag-exposure assertion. A fix that surfaces bare resp-code arguments makes
+// this test pass unchanged.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged NO with the NOUPDATE response code and quoted tag argument",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -715,10 +721,6 @@ complianceTest(
 					(c.text.code.contents ?? []).some((v) => v.includes("B02")),
 			),
 		);
-		if (!found) {
-			// TEMP DEBUG
-			console.log(JSON.stringify(driver.events, (_k, v) => (typeof v === "bigint" ? String(v) : v), 2));
-		}
 		expect(
 			found,
 			"a NO [NOUPDATE \"B02\"] must surface as a parsed NOUPDATE resp-code carrying the refused tag",

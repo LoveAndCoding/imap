@@ -30,9 +30,13 @@
  *   idle = "IDLE" CRLF "DONE"    → C: a1 IDLE ␍␊  S: + idling ␍␊  C: DONE ␍␊
  * IDLE takes NO arguments (args: null) and DONE is a BARE line — the harness
  * bareLine("DONE") matcher rejects a tagged 'a2 DONE', trailing whitespace, or
- * any other content, so a wrong impl is never vacuously accepted. reply()
- * after the bare match answers with the IDLE command's own tag (matcher
- * self-test: harness/__tests__/scripted-server.test.ts).
+ * any other content. reply() after the bare match answers with the IDLE
+ * command's own tag (matcher self-test: harness/__tests__/scripted-server.test.ts).
+ * CAVEAT: the script steps alone do NOT enforce the wait-for-'+' ordering —
+ * the harness's send() step never inspects pending client bytes, so a client
+ * that pipelines DONE before the continuation would still complete the script.
+ * The RFC2177-3-3 test therefore additionally asserts transcript ORDERING
+ * (the S '+ idling' record must precede the first C record carrying DONE).
  *
  * OBSERVATION SPLIT (REAL-signal-first, probed before writing):
  *  - RFC2177-3-2's acceptance half has a REAL parse surface: unsolicited
@@ -127,8 +131,12 @@ complianceTest(
 // §3/§4: 'IDLE' CRLF with NO arguments; the client then waits for the server's
 // '+' continuation before sending anything further; the exchange ends with the
 // bare DONE and the tagged completion. The args:null matcher rejects any
-// argument-bearing IDLE; a DONE sent before the '+' would arrive at the
-// send('+ idling') step and fail the script. idle() throws → unimplemented.
+// argument-bearing IDLE. NOTE: the script steps alone would NOT catch a DONE
+// pipelined before the '+' (send() never inspects buffered client bytes — a
+// premature DONE just waits in the buffer for the later expect step), so the
+// wait-for-'+' duty is enforced below by asserting transcript ordering: the
+// server's '+ idling' record must precede the first client record carrying
+// DONE. idle() throws → unimplemented today.
 complianceTest(
 	{
 		reqs: ["RFC2177-3-3"],
@@ -155,6 +163,17 @@ complianceTest(
 		const idle = server.commandLines.find((l) => l.verb === "IDLE");
 		expect(idle, "IDLE must have been emitted").toBeDefined();
 		expect(idle!.args, "IDLE takes no arguments (RFC 2177 §4)").toBe("");
+		// Wait-for-'+' enforcement (see header CAVEAT): the transcript records
+		// chunks in arrival order, so the continuation must precede the DONE.
+		const wire = server.transcript.format();
+		const contAt = wire.indexOf("+ idling");
+		const doneAt = wire.search(/C: [^\n]*DONE/);
+		expect(contAt, "the '+ idling' continuation must appear on the wire").toBeGreaterThanOrEqual(0);
+		expect(doneAt, "the client's DONE must appear on the wire").toBeGreaterThanOrEqual(0);
+		expect(
+			doneAt,
+			"client MUST NOT send DONE before the server's '+' continuation (RFC 2177 §3)",
+		).toBeGreaterThan(contAt);
 	},
 );
 
