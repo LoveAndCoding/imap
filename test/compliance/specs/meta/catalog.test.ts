@@ -77,3 +77,22 @@ test("catalog contains the Phase 5 search/sort/sync/events family sources", () =
 		]),
 	);
 });
+
+test("catalog contains the Phase 6 i18n/misc/vendor family sources", () => {
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(
+		expect.arrayContaining([
+			"RFC5255",
+			"RFC5259",
+			"RFC4467",
+			"RFC5524",
+			"RFC5802",
+			"RFC7677",
+			"RFC4505",
+			"RFC2221",
+			"RFC2193",
+			"RFC3348",
+			"X-GM-EXT-1",
+		]),
+	);
+});

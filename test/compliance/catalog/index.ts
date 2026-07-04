@@ -51,6 +51,19 @@ import rfc5465 from "./ext/rfc5465";
 import rfc5466 from "./ext/rfc5466";
 import rfc5032 from "./ext/rfc5032";
 
+// Phase 6 — i18n + misc + vendor + registry completion (skeletons; extracted in Task 4).
+import rfc5255 from "./ext/rfc5255";
+import rfc5259 from "./ext/rfc5259";
+import rfc4467 from "./ext/rfc4467";
+import rfc5524 from "./ext/rfc5524";
+import rfc5802 from "./ext/rfc5802";
+import rfc7677 from "./ext/rfc7677";
+import rfc4505 from "./ext/rfc4505";
+import rfc2221 from "./ext/rfc2221";
+import rfc2193 from "./ext/rfc2193";
+import rfc3348 from "./ext/rfc3348";
+import xgmext1 from "./ext/xgmext1";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -100,6 +113,18 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc5465,
 	rfc5466,
 	rfc5032,
+	// Phase 6
+	rfc5255,
+	rfc5259,
+	rfc4467,
+	rfc5524,
+	rfc5802,
+	rfc7677,
+	rfc4505,
+	rfc2221,
+	rfc2193,
+	rfc3348,
+	xgmext1,
 ];
 
 export function findRequirement(id: string) {
