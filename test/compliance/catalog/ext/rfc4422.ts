@@ -87,7 +87,44 @@ const rfc4422: CatalogModule = {
 		"'testable' only in the sense that a self-actualizing compliance script could exercise it " +
 		"once AUTHENTICATE exists; each such entry's notes say so explicitly. A handful of duties " +
 		"are untestable regardless of implementation status (internal-decision mechanism selection, " +
-		"user-facing re-prompt behavior) and are tagged with the standard taxonomy themes.",
+		"user-facing re-prompt behavior) and are tagged with the standard taxonomy themes. " +
+		"[2026-07-04 Phase 6 addendum] Appendix A (SASL EXTERNAL mechanism) extraction, scoped per " +
+		"the RFC 4422/RFC 4505/RFC 5802/RFC 7677 AUTH= mechanism family completion pass. This " +
+		"appendix is explicitly marked normative ('This appendix is normative.', preamble) and is no " +
+		"longer out of scope now that EXTERNAL is a design-named client-facing AUTH= mechanism (see " +
+		"the Phase 6 plan's registry scope table). A.1 EXTERNAL Technical Specification: 3 entries " +
+		"(RFC4422-A.1-1 client-first exchange shape — client sends data first, or if it withholds an " +
+		"initial response the server issues an empty challenge before the client provides one; " +
+		"RFC4422-A.1-2 the initial response's content — UTF-8 encoding of the authorization identity " +
+		"string, with the empty/non-empty cases tied to which identity the client is requesting; " +
+		"RFC4422-A.1-3 the exchange is exactly one challenge/response pair, i.e. 'no additional " +
+		"challenges and responses' after the client's initial response). The mechanism-name sentence " +
+		"('The name of this mechanism is \"EXTERNAL\"') and 'the mechanism does not provide a " +
+		"security layer' are absorbed as context/cross-reference material into RFC4422-A.1-1's notes " +
+		"rather than extracted as independent entries — the former is a naming fact already covered " +
+		"generically by RFC4422-3.1-1's mechanism-name syntax rule, the latter is a negative " +
+		"(absence-of-capability) statement with no affirmative client action to bind. The preamble's " +
+		"'the client cannot make any assumption as to what external means the server has used... nor " +
+		"... the form of credentials' is descriptive risk/scope-setting with no RFC 2119 keyword and " +
+		"no independently testable client action beyond what A.1-1/-2 already bind, skipped. The " +
+		"exchange-failure enumeration (six bullet points: credentials not established via external " +
+		"means, inadequate credentials, server unwilling/unable to associate an empty authzid, " +
+		"invalid non-empty authzid syntax, disallowed non-empty authzid identity, or any other " +
+		"server-side unwillingness) and the closing 'otherwise the exchange is successful... " +
+		"additional data is not provided' sentence are server-side outcome-determination and " +
+		"response-content duties, not client actions, skipped (consistent with this module's existing " +
+		"§3.6 scope note that outcome-message content is a server/protocol-message-design duty). A.2 " +
+		"SASL EXTERNAL Examples: explicitly 'not definitive' illustration transcripts with no " +
+		"independent normative content beyond what A.1 already states, skipped. A.3 Security " +
+		"Considerations: descriptive risk statement ('provides no security protection... vulnerable " +
+		"to spoofing... It should only be used when adequate security services have been established') " +
+		"— the lowercase 'should' is deployment/policy guidance on when to enable EXTERNAL at all, " +
+		"judgment: not elevated to a testable entry because 'adequate security services' is undefined " +
+		"and unobservable black-box (the same user-intent-policy class as RFC4422-6.1.2-1), noted but " +
+		"not catalogued. All three new entries are client-binding only; profiles rev1+rev2 (EXTERNAL " +
+		"is an AUTH= mechanism usable under either IMAP revision's AUTHENTICATE). Quote verification: " +
+		"mechanically re-fetched and substring-checked against https://www.rfc-editor.org/rfc/" +
+		"rfc4422.txt per the mandatory-verification rule; all four Appendix A text segments passed.",
 	requirements: [
 		// ── §3 The Authentication Exchange ──────────────────────────────────────
 		{
@@ -515,6 +552,111 @@ const rfc4422: CatalogModule = {
 				"scheme's per-section numbering rule — a harness assertion satisfying one satisfies both. " +
 				"Testable once AUTHENTICATE with a security-layer mechanism is implemented, by the same " +
 				"oversized-buffer script described for RFC4422-3.7-3.",
+		},
+
+		// ── Appendix A: The SASL EXTERNAL Mechanism ──────────────────────────────
+		// [2026-07-04 Phase 6 addendum] — see the dated extractionNote paragraph above.
+		{
+			id: "RFC4422-A.1-1",
+			source: "RFC4422",
+			section: "A.1",
+			title: "EXTERNAL is a client-first mechanism: client sends data first, or the server issues an empty challenge before the client's initial response",
+			text:
+				"The client is expected to send data first in the authentication " +
+				"exchange.  Where the client does not provide an initial response data " +
+				"in its request to initiate the authentication exchange, the server is " +
+				"to respond to the request with an empty initial challenge and then " +
+				"the client is to provide its initial response.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"'Is expected to' states the mechanism's defining exchange shape rather than using an " +
+				"explicit RFC 2119 keyword — judgment: implicit MUST, since a client that instead waited " +
+				"for the server to send data first (with no client-first data at all, ever) would not be " +
+				"implementing EXTERNAL as specified. Applies only when the client selects AUTH=EXTERNAL. " +
+				"Two legal client-first sequences: (a) client attaches its initial response directly to " +
+				"AUTHENTICATE (RFC 4959 SASL-IR / RFC 9051 §6.2.2 core initial-response field — saves a " +
+				"round trip, illustrated in this appendix's second example), or (b) client sends bare " +
+				"AUTHENTICATE with no initial response, server replies with an empty ('+ \"\"') challenge " +
+				"per this sentence, and the client then sends its initial response as the reply to that " +
+				"empty challenge (illustrated in the appendix's first example). Both sequences carry " +
+				"exactly the client's one authzid-encoding payload (RFC4422-A.1-2) and nothing further " +
+				"(RFC4422-A.1-3). The mechanism-naming sentence ('The name of this mechanism is " +
+				"\"EXTERNAL\"') is absorbed here as context rather than a separate entry — it is a bare " +
+				"naming fact already generically covered by RFC4422-3.1-1's mechanism-name syntax rule, " +
+				"with no distinct client duty of its own. Likewise 'the mechanism does not provide a " +
+				"security layer' is a negative capability statement (nothing to install, nothing to " +
+				"frame per RFC4422-3.6-1/3.7-*) rather than an affirmative action to bind, so it is noted " +
+				"but not separately catalogued. Testable once AUTHENTICATE EXTERNAL is implemented: " +
+				"script both sequences against a scripted server and assert the client either (a) sends " +
+				"a well-formed initial-response literal on the AUTHENTICATE line, or (b) sends bare " +
+				"AUTHENTICATE, receives '+ \"\"', and then sends its response line — never silence, never " +
+				"a second unsolicited data send before any challenge.",
+		},
+		{
+			id: "RFC4422-A.1-2",
+			source: "RFC4422",
+			section: "A.1",
+			title: "Client's EXTERNAL response is the UTF-8 encoding of the authorization identity string, empty or non-empty per the requested identity",
+			text:
+				"The client sends the initial response containing the UTF-8 [RFC3629] " +
+				"encoding of the requested authorization identity string.  This " +
+				"response is non-empty when the client is requesting to act as the " +
+				"identity represented by the (non-empty) string.  This response is " +
+				"empty when the client is requesting to act as the identity the server " +
+				"associated with its authentication credentials.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"Explicit descriptive 'sends' framing with no RFC 2119 keyword, but this is EXTERNAL's " +
+				"sole wire-content rule and the ABNF immediately following (external-initial-resp = " +
+				"authz-id-string; authz-id-string = *( UTF8-char-no-nul ); UTF8-char-no-nul = " +
+				"UTF8-1-no-nul / UTF8-2 / UTF8-3 / UTF8-4; UTF8-1-no-nul = %x01-7F) is a hard syntactic " +
+				"constraint — judgment: implicit MUST. This is the EXTERNAL-specific concretization of " +
+				"the generic framework rules already catalogued at RFC4422-3.4.1-1 (authzid string " +
+				"excludes NUL; absent/empty equivalence) and RFC4422-3.4.1-2 (non-empty string requests " +
+				"that specific identity) — kept as a separate entry because it binds the client to a " +
+				"concrete wire encoding (UTF-8 octets, NUL-excluding per the ABNF's %x01-7F leading-byte " +
+				"range) that RFC 4422's abstract §3.4.1 text does not itself specify. 'Associated with " +
+				"its authentication credentials' in the last sentence refers to the credentials the " +
+				"client established via the external means (e.g. a TLS client certificate), not a " +
+				"server-side detail. The syntax/ABNF sentences and the cross-reference to [RFC3629]'s " +
+				"UTF8-2/3/4 productions are absorbed into this entry's text/notes as the mechanical " +
+				"encoding rule the client MUST follow when constructing the response octets, rather than " +
+				"extracted as an independent entry. Testable once AUTHENTICATE EXTERNAL is implemented: " +
+				"assert the client's initial-response payload, base64-decoded, is valid UTF-8, contains " +
+				"no NUL byte, and is empty exactly when the caller requested no explicit authzid and " +
+				"non-empty exactly when a specific identity string was requested.",
+		},
+		{
+			id: "RFC4422-A.1-3",
+			source: "RFC4422",
+			section: "A.1",
+			title: "EXTERNAL is a single-message exchange: no additional challenges or responses follow the client's initial response",
+			text: "There are no additional challenges and responses.",
+			level: "MUST",
+			applicability: "conditional",
+			profiles: ["rev1", "rev2"],
+			testability: "testable",
+			notes:
+				"No RFC 2119 keyword; a flat declarative statement of the mechanism's fixed shape — " +
+				"judgment: implicit MUST NOT on the client sending, or expecting to be asked to send, any " +
+				"further data after its one initial-response payload (whichever of RFC4422-A.1-1's two " +
+				"sequences was used to deliver it). The immediately following sentence ('the server is to " +
+				"return the outcome of the authentication exchange') is the server-side consequence of " +
+				"this same shape and is absorbed as context rather than extracted separately — it is the " +
+				"EXTERNAL-specific instance of the already-catalogued generic outcome-delivery framework " +
+				"(RFC4422-3.6-1's install-on-success duty applies to whatever outcome EXTERNAL's single " +
+				"round trip produces, but EXTERNAL itself negotiates no security layer per RFC4422-A.1-1's " +
+				"notes, so that duty is vacuously satisfied for this mechanism). Testable once " +
+				"AUTHENTICATE EXTERNAL is implemented: assert that after the client's single initial-" +
+				"response line, the next line the client sends (if any, absent a tagged OK/NO/BAD) is not " +
+				"another AUTHENTICATE continuation-response literal — the exchange concludes in exactly " +
+				"one client-sent data line.",
 		},
 	],
 };
