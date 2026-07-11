@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Find ways the change could be exploited, leak data it shouldn't, or weaken an existing protection.
 
+Findings aren't limited to confirmed exploits. An unstated trust assumption, a risk you can't fully rule out, or a real hardening opportunity are all worth reporting even when nothing is definitively exploitable.
+
 ## Investigation scope
 Treat all data originating from the remote IMAP server, the network, or any external/user-controlled input as untrusted. Trace it from where it enters the code to every place it's used, not just the line it first appears on.
 
@@ -52,7 +54,7 @@ logger.debug('Login attempt');
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct issue
-- `Category`: `Security`
+- `Category`: pick what fits — `Security` for a confirmed exploitable issue, but also `Assumption` (an unstated trust boundary), `Uncertainty` (can't confirm exploitability), `Gap` (missing hardening), `Improvement`, or another accurate label. Don't force a borderline case into `Security`.
 - `Priority`: reflect real exploitability and impact — a theoretical issue with no practical trigger is not automatically `Critical`
 - Out of scope: issues that aren't about exploitability or data exposure
 

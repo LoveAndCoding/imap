@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Assess any new or changed third-party dependencies in this change.
 
+Findings aren't limited to confirmed problems. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively wrong.
+
 ## Investigation scope
 This lens only applies when the diff touches a package manifest or lockfile (e.g. `package.json`, `yarn.lock`). If it doesn't, report zero findings rather than searching for something to comment on.
 
@@ -35,7 +37,7 @@ This lens only applies when the diff touches a package manifest or lockfile (e.g
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct dependency concern
-- `Category`: `Uncertainty` for unverifiable maintenance/license status, `Improvement` for pinning/necessity concerns, `Bug` only for an actual incompatibility (e.g. conflicting license)
+- `Category`: pick what fits — `Uncertainty` for unverifiable maintenance/license status, `Improvement` for pinning/necessity concerns, `Bug` for an actual incompatibility (e.g. conflicting license), `Assumption`, or another accurate label.
 - If the diff doesn't touch a manifest/lockfile: report no findings, don't force one
 
 ## Rules

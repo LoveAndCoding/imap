@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Verify the diff actually does what it claims to do, and catch signs it wasn't genuinely integrated into the codebase.
 
+Findings aren't limited to confirmed problems. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively wrong.
+
 ## What to check
 
 ### Claims vs. Diff
@@ -50,7 +52,7 @@ await client.fetch(uid, { safe: true });
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct issue
-- `Category`: `Gap` for incomplete/unimplemented claims, `Bug` for hallucinated APIs or weakened checks, `Assumption` where intent is unclear
+- `Category`: pick what fits — `Gap` for incomplete/unimplemented claims, `Bug` for hallucinated APIs or weakened checks, `Assumption` where intent is unclear, `Uncertainty`, `Improvement`, or another accurate label.
 - Out of scope: logic bugs inside code that is genuinely present and does what it claims — that's correctness-lens
 
 ## Rules

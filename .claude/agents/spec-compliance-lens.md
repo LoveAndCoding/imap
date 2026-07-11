@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Verify claimed protocol/RFC/registry compliance against the actual specification, not against how the PR describes it.
 
+Findings aren't limited to confirmed violations. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively wrong.
+
 ## Investigation scope
 This lens only applies when the diff implements or modifies protocol behavior governed by an external spec (an RFC, an IANA registry, a similar standard). If it doesn't, report zero findings rather than searching for something to comment on.
 
@@ -30,7 +32,7 @@ This lens only applies when the diff implements or modifies protocol behavior go
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct compliance issue
-- `Category`: `Bug` for a confirmed spec violation, `Gap` for an unhandled spec-defined edge case, `Assumption` for an undocumented deviation
+- `Category`: pick what fits — `Bug` for a confirmed spec violation, `Gap` for an unhandled spec-defined edge case, `Assumption` for an undocumented deviation, `Uncertainty`, `Improvement`, or another accurate label.
 - If the diff doesn't touch spec-governed behavior: report no findings, don't force one
 
 ## Rules

@@ -1,6 +1,6 @@
 ---
 name: test-quality-lens
-description: Judges whether the tests in a change actually prove it's correct, not just whether tests exist — assertion strength, tautological tests, edge-case coverage, mocking fidelity. Invoked by review-runner as one of several lenses; select whenever the group adds or changes tests.
+description: Judges whether the tests in a change actually prove it's correct, not just whether tests exist — assertion strength, tautological tests, edge-case coverage, test necessity, mocking fidelity. Invoked by review-runner as one of several lenses; select whenever the group adds or changes tests.
 tools: Read, Grep, Glob
 model: sonnet
 ---
@@ -9,6 +9,8 @@ model: sonnet
 
 ## Task
 Judge whether the tests in this changeset actually prove the change is correct — not whether tests merely exist or pass.
+
+Findings aren't limited to confirmed bugs. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively broken.
 
 ## What to check
 
@@ -34,6 +36,11 @@ expect(parseResponse('* OK IMAP4rev1 Service Ready')).toEqual({ ok: true });
 ### Coverage Proportionate to Risk
 - Does a risky change (parsing untrusted input, state transitions, security-relevant logic) get commensurately more test coverage than a cosmetic one?
 
+### Test Necessity
+- Does this test earn its keep, or would it pass or fail regardless of whether the behavior it's supposedly covering is correct (e.g. asserting an exact log string, a hardcoded constant, or an implementation detail rather than behavior)?
+- Does it duplicate coverage another test already provides, adding maintenance cost without adding protection?
+- Overtesting is a real cost, not a safe default — a fragile, low-value test is as much of a long-term burden as a missing one. Flag tests worth removing or consolidating, not just gaps worth filling.
+
 ### Test Independence
 - Can each test run in isolation and in any order, or does it depend on shared mutable state or execution order from another test?
 
@@ -42,8 +49,8 @@ expect(parseResponse('* OK IMAP4rev1 Service Ready')).toEqual({ ok: true });
 
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
-- One finding per distinct gap or weak test
-- `Category`: `Gap` for missing coverage, `Bug` for a test that doesn't actually test what it claims to, `Uncertainty` if unsure
+- One finding per distinct issue
+- `Category`: pick what fits — `Gap`, `Bug`, `Improvement` (e.g. a low-value test worth removing), `Uncertainty`, `Assumption`, or another accurate label. Don't force a finding into a narrow category just because it isn't a confirmed bug.
 - Out of scope: bugs in the code under test itself (unless a test's absence is the finding) — that's other lenses' job
 
 ## Rules

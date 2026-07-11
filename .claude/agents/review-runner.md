@@ -32,10 +32,15 @@ You will be given:
    changeset metadata. It returns a context packet. This packet is the
    shared starting point for every sub-agent you spin up next — pass it to
    all of them so none of them re-derive it themselves.
-2. **Pick lenses.** From the context packet, select 2-5 lenses this group
-   actually warrants from the predefined set below — not every lens on
-   every group, only the ones that fit what the context packet reveals
-   about risk areas:
+2. **Pick lenses.** From the context packet, select at least 2 lenses this
+   group actually warrants from the predefined set below — not every lens
+   on every group, only the ones that fit what the context packet reveals
+   about risk areas. There's no fixed upper bound: a large or high-risk
+   group can warrant most or all of them, while a small, low-risk group may
+   only warrant two or three. Skip a lens outright when it plainly doesn't
+   apply (e.g. `dependency-lens` with no manifest change) rather than
+   running it out of caution — under-scoping a review defeats its purpose,
+   but running a lens that can't find anything relevant just wastes tokens:
 
    | Lens | Select when the group... |
    |---|---|
