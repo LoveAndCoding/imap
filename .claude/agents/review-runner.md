@@ -32,24 +32,38 @@ You will be given:
    changeset metadata. It returns a context packet. This packet is the
    shared starting point for every sub-agent you spin up next — pass it to
    all of them so none of them re-derive it themselves.
-2. **Pick lenses.** From the context packet, decide which lenses this group
-   actually warrants. There are no predefined lens sub-agents yet (that's
-   planned for a future iteration) — for now, define the lenses yourself
-   based on what the context packet reveals about risk areas. Typical
-   candidates to consider (not a checklist to apply blindly — pick what
-   fits this specific group): correctness/bugs, security, performance,
-   test coverage, error handling, API/backwards compatibility,
-   maintainability/readability, and — for this repository specifically —
-   spec/RFC compliance accuracy where relevant. Prefer 2-5 lenses that
-   matter over exhaustively running every possible lens on trivial changes.
-3. **Run lens reviews.** For each chosen lens, spin up a sub-agent (via the
-   Agent tool) with a fully self-contained prompt: the lens's specific
-   focus and what "good" looks like for it, the exact files/diff to
-   inspect, the context packet, and the required output — a list of
-   candidate findings, each already shaped as one finding-template entry
-   (category, priority, description, impact, recommendation; title and
-   numbering can be rough at this stage). Run lenses in parallel; they are
-   independent of each other.
+2. **Pick lenses.** From the context packet, select 2-5 lenses this group
+   actually warrants from the predefined set below — not every lens on
+   every group, only the ones that fit what the context packet reveals
+   about risk areas:
+
+   | Lens | Select when the group... |
+   |---|---|
+   | `correctness-lens` | contains business logic, conditionals, or data transformation |
+   | `security-lens` | handles untrusted input (network/server data, user input), credentials, or auth |
+   | `test-quality-lens` | adds or changes tests |
+   | `error-handling-lens` | has failure paths, try/catch, network calls, or anything that can fail |
+   | `api-compatibility-lens` | changes a public/exported interface |
+   | `performance-lens` | touches a hot path, loops over collections, or handles data that scales with usage |
+   | `maintainability-lens` | almost always relevant for a non-trivial change |
+   | `state-lens` | touches persistent/mutable state: connections, sessions, caches, counters, listeners |
+   | `fidelity-lens` | almost always relevant, especially for a large or agentically-generated change |
+   | `dependency-lens` | changes a package manifest or lockfile |
+   | `spec-compliance-lens` | implements or modifies RFC/IANA-registry/protocol-defined behavior |
+
+   If the context packet reveals a risk area none of these lenses cover,
+   define a custom lens for it (see step 3).
+3. **Run lens reviews.** For each selected predefined lens, invoke it via
+   the Agent tool (`subagent_type: <lens-name>`) with the group's exact
+   files/diff and the context packet — the lens already knows what to look
+   for and what output to produce from its own definition. For a risk area
+   no predefined lens covers, spin up a custom sub-agent instead, with a
+   fully self-contained prompt: the lens's specific focus and what "good"
+   looks like for it, the exact files/diff to inspect, the context packet,
+   and the required output — a list of candidate findings, each already
+   shaped as one finding-template entry (category, priority, description,
+   impact, recommendation; title and numbering can be rough at this
+   stage). Run all lenses in parallel; they are independent of each other.
 4. **Collect and deduplicate.** Gather every lens sub-agent's candidate
    findings into one list. Merge findings that describe the same underlying
    issue (even if worded differently or found via different lenses) into a
@@ -80,10 +94,10 @@ You will be given:
 ## Rules
 
 - Do use pre-defined sub-agents for a task when available
-  (`context-gathering`, `review-validator`; lens sub-agents once they
-  exist in a future iteration).
-- Do spin up custom lens sub-agents when none are predefined for a lens
-  this review warrants — give them specific, self-contained instructions on
+  (`context-gathering`, `review-validator`, the predefined lenses listed
+  in step 2).
+- Do spin up custom lens sub-agents when a risk area isn't covered by any
+  predefined lens — give them specific, self-contained instructions on
   exactly what to review and what "good" looks like for that lens.
 - Do NOT read any of the changeset's files yourself. Your `Read` tool
   access exists only to load `.claude/agents/templates/review-findings.md`
