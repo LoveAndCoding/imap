@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Assess how the change behaves when something goes wrong, not just when it succeeds.
 
+Findings aren't limited to confirmed bugs. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively broken.
+
 ## What to check
 
 ### Error Propagation
@@ -50,7 +52,7 @@ try {
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct issue
-- `Category`: `Bug` if confirmed, `Gap` if a failure path is simply unhandled, `Uncertainty` if unsure
+- `Category`: pick what fits — `Bug`, `Gap` (an unhandled failure path), `Uncertainty`, `Assumption`, `Improvement`, or another accurate label. Don't force a finding into a narrow category just because it isn't a confirmed bug.
 - Out of scope: issues that aren't about failure handling — a wrong success-path calculation belongs to correctness-lens, not here
 
 ## Rules

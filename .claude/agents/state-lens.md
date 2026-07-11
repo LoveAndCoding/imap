@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Find bugs that only appear across a *sequence* of operations over time — not visible from reading one call in isolation.
 
+Findings aren't limited to confirmed bugs. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively broken.
+
 ## Investigation scope
 State bugs are rarely visible in the diff hunk alone. Before judging any change to a field, cache, counter, listener, or connection/session object: grep the containing file(s) — and callers, if easy to find — for every other read and write of it. If a state machine exists (explicit or implied), map its valid states and transitions before judging any single transition in isolation.
 
@@ -92,7 +94,7 @@ function onMessage(id) {
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct state bug
-- `Category`: `Bug` if confirmed, `Uncertainty` if suspected but unconfirmed
+- `Category`: pick what fits — `Bug` for a confirmed state bug, `Uncertainty` if suspected but unconfirmed, `Assumption`, `Improvement`, or another accurate label. Don't force a borderline case into `Bug`.
 - Out of scope: anything not about state consistency (logic, security, performance, etc.)
 
 ## Rules

@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Flag changes that meaningfully hurt performance or resource usage at this codebase's actual scale. Do not flag micro-optimizations that don't matter at that scale.
 
+Findings aren't limited to confirmed regressions. An unstated scaling assumption, a risk you can't fully rule out without profiling, or a real optimization opportunity are all worth reporting even when nothing is definitively broken.
+
 ## What to check
 
 ### Algorithmic Complexity
@@ -44,7 +46,7 @@ for (const msg of messages) {
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct performance issue
-- `Category`: `Bug` for a clear regression, `Improvement` for a real but non-urgent optimization opportunity
+- `Category`: pick what fits — `Bug` for a clear regression, `Improvement` for a real but non-urgent optimization opportunity, `Uncertainty` if you can't confirm impact without profiling, `Assumption`, or another accurate label.
 - Out of scope: correctness issues that happen to involve a loop — only report if the actual concern is performance/resource cost
 
 ## Rules

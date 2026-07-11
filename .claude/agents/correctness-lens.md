@@ -10,6 +10,8 @@ model: sonnet
 ## Task
 Find bugs — cases where the code doesn't do what it's supposed to do, judged one call/function at a time.
 
+Findings aren't limited to confirmed bugs. An unstated assumption, a risk you can't fully rule out, or a real improvement opportunity are all worth reporting even when nothing is definitively broken.
+
 ## What to check
 
 ### Conditionals & Branching
@@ -55,7 +57,7 @@ function withFlag(list, flag) {
 ## Output
 Findings in `.claude/agents/templates/review-findings.md` format.
 - One finding per distinct bug
-- `Category`: `Bug` if confirmed, `Uncertainty` if suspected but unconfirmed
+- `Category`: pick what fits — `Bug` for a confirmed defect, but also `Assumption`, `Uncertainty`, or `Improvement` when nothing is definitively broken, or another accurate label. Don't force a borderline case into `Bug`.
 - Out of scope: state-over-time bugs, error propagation, exploitability — those belong to other lenses even if you notice them; report only the correctness angle
 
 ## Rules
