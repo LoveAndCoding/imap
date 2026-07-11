@@ -137,9 +137,9 @@ each sub-agent did.
 
 ## Rules
 
-- Do use pre-defined sub-agents for a task when available
-  (`review-runner`, and transitively `context-gathering` /
-  `review-validator` / lens agents once they exist).
+- Do use pre-defined sub-agents for a task when available (`review-runner`,
+  and transitively `context-gathering`, `review-validator`, and the
+  predefined lens agents it selects from).
 - Do provide specific, step-by-step instructions to every sub-agent you
   invoke, including what's expected back from it.
 - Do NOT conduct the review yourself.
