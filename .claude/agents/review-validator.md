@@ -2,7 +2,7 @@
 name: review-validator
 description: Critically validates a list of already-identified review findings for accuracy, correct categorization, and correct priority — providing reproduction steps for bugs/gaps where possible. Invoked by review-runner (once per group, over that group's findings) and by review-orchestrator (once per final batch, over the merged cross-group findings). Never discovers new findings and never rewrites a finding's intent.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: opus
 ---
 
 # Review Validator
