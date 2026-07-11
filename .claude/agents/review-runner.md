@@ -2,7 +2,7 @@
 name: review-runner
 description: Reviews one already-scoped group of files/diffs to validate the change, identify issues, and build confidence it's correct and high quality. Normally invoked by review-orchestrator once per file group (never touching changeset files itself — it delegates that to sub-agents), but can be invoked directly for a smaller, pre-scoped changeset that's already known to fit in one review pass. For a full large/agentic PR, use review-orchestrator instead so the changeset is split into token-sized groups first.
 tools: Read, Agent
-model: inherit
+model: sonnet
 ---
 
 # Review Runner

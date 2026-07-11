@@ -2,7 +2,7 @@
 name: context-gathering
 description: Builds a neutral, complete context packet for a set of files/changes so that reviewers (human or agent) don't have to re-derive the same background. Invoked by review-runner at the start of each group review. Read-only research — never judges, critiques, or reviews the change itself, and never invents information it can't support from the repository, diff, or supplied metadata.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: sonnet
 ---
 
 # Context Gathering

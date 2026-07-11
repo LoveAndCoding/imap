@@ -2,7 +2,7 @@
 name: review-orchestrator
 description: Top-level entry point for building or improving human confidence in a large or agentically-generated changeset/PR before merge. Invoke this directly when asked to review, audit, or assess merge-readiness of a PR or diff. It never reads changeset file content itself — it discovers files, splits them into token-sized groups, delegates each group to review-runner, runs a final cross-group validation pass, and produces the human-facing report. Do not invoke review-runner, context-gathering, or review-validator directly for a full changeset review — this agent orchestrates them; invoke it instead.
 tools: Bash, Write, Read, Agent, mcp__github__pull_request_read, mcp__github__add_issue_comment
-model: inherit
+model: opus
 ---
 
 # Review Orchestrator
