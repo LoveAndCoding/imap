@@ -30,14 +30,12 @@
  * validates the AUTHENTICATE line's IR argument (present/absent, base64, "=")
  * against the advertised-capability gate, making the matchers genuine
  * assertions. The zero-length-IR duty below is scripted against EXTERNAL,
- * which the mechanism registry doesn't yet recognize, so that one test still
- * fails 'unimplemented'.
+ * now implemented (src/sasl/external.ts), so it drives a genuine exchange too.
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { expectLine, reply, send } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -88,13 +86,11 @@ complianceTest(
 // To send a present-but-zero-length initial response, the client MUST send a
 // single pad character "=" (base64("") is "", so the RFC uses "=" to signal
 // "present but empty"). The matcher accepts ONLY "AUTHENTICATE <mech> =".
-// authenticate() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC4959-3-2"],
 		profiles: ["rev1"],
 		title: "SASL-IR: a zero-length initial response is the single pad character '='",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -110,11 +106,14 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		// An empty-string initial response must be encoded as "=", not omitted and
 		// not sent as an empty base64 token.
-		await driver.authenticate("EXTERNAL", ""); // throws today
+		await driver.authenticate("EXTERNAL", "");
 		await server.assertCompleted();
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
-		expect(authLine!.args, "zero-length IR is the single pad character '='").toBe("=");
+		expect(
+			authLine!.args,
+			"zero-length IR is the single pad character '=' after the mechanism name",
+		).toBe("EXTERNAL =");
 	},
 );
 

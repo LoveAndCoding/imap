@@ -23,19 +23,29 @@
  *     the RFC 9051 §6.2.2 empty-literal "=" convention, or a genuinely empty
  *     continuation line — both accepted by the matcher below)
  *
- * SELF-ACTUALIZATION: no AUTHENTICATE surface — driver.authenticate() throws
- * NotImplementedError, so every duty below fails 'unimplemented'. The scripted
- * server exercises both client-first sequences A.1-1 permits (inline IR vs.
- * bare AUTHENTICATE + empty challenge) and the matcher decodes/validates the
- * response bytes, so once an AUTHENTICATE EXTERNAL surface exists the same
- * assertions become genuine, non-vacuous checks.
+ * SELF-ACTUALIZATION: src/sasl/external.ts now implements EXTERNAL, so every
+ * duty below drives a genuine AUTHENTICATE EXTERNAL exchange rather than
+ * hitting `NotImplementedError`. The scripted server exercises both
+ * client-first sequences A.1-1 permits (inline IR vs. bare AUTHENTICATE +
+ * empty challenge) and the matcher decodes/validates the response bytes.
+ * `ExternalMechanism.start()` always returns a non-null Buffer (even for an
+ * empty authzid), so this client deterministically inlines its response
+ * whenever SASL-IR is advertised (RFC 4959 §3) — the "OR bare AUTHENTICATE
+ * EXTERNAL followed by a continuation" alternative sequence A.1-1 permits is
+ * only actually witnessed on connections where SASL-IR is NOT advertised
+ * (the second test below). Every OK reply also folds in a `[CAPABILITY ...]`
+ * code matching what was originally advertised: RFC3501/9051-6.2.2-4 obliges
+ * a compliant client to re-issue CAPABILITY after a successful AUTHENTICATE
+ * whose tagged OK didn't already carry one, and a script that doesn't itself
+ * care about that duty needs this to avoid stalling on an unscripted round
+ * trip (see `authPlainExchange`'s identical `capsAfter` rationale in
+ * runner/state.ts).
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { expectLine, reply, send } from "../../harness/script";
 import { loadCertFixture } from "../../harness/tls";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -93,14 +103,20 @@ function externalResponse(expected: { authzid: string }) {
 // With SASL-IR advertised, the client attaches its EXTERNAL initial response
 // directly to the AUTHENTICATE line (RFC4422-A.1-1's first legal client-first
 // sequence) — one round trip. The response is a non-empty authzid, requesting
-// to act as that specific identity (RFC4422-A.1-2). authenticate() throws
-// today.
+// to act as that specific identity (RFC4422-A.1-2).
+//
+// `ExternalMechanism.start()` always returns a non-null Buffer, so with
+// SASL-IR advertised this client deterministically inlines — there is no
+// server continuation to script here at all (a prior version of this test
+// scripted one anyway, which forced a bogus second challenge onto a client
+// that had already sent its complete one-shot exchange, driving EXTERNAL's
+// step() to its documented single-pair throw and aborting the exchange
+// instead of completing it).
 complianceTest(
 	{
 		reqs: ["RFC4422-A.1-1", "RFC4422-A.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE EXTERNAL with an inline SASL-IR initial response carrying a non-empty authzid",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -109,18 +125,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=EXTERNAL", "SASL-IR"]),
-				// Inline-IR sequence: AUTHENTICATE EXTERNAL <base64 IR> in one line —
-				// OR bare AUTHENTICATE EXTERNAL followed by a continuation (accept
-				// either, since RFC4422-A.1-1 permits both client-first sequences).
-				expectLine({
-					description: "AUTHENTICATE EXTERNAL (with or without inline IR)",
-					match: (line) =>
-						command("AUTHENTICATE", { args: /^EXTERNAL(?: [A-Za-z0-9+/=]+)?$/i }).match(line),
-				}),
-				send("+ \r\n"),
+				// Inline-IR sequence: AUTHENTICATE EXTERNAL <base64 IR> in one line.
 				// Expected base64: dXNlckE=
-				expectLine(externalResponse({ authzid })),
-				reply("OK AUTHENTICATE completed"),
+				expectLine(
+					command("AUTHENTICATE", { args: /^EXTERNAL [A-Za-z0-9+/]+={0,2}$/i }),
+				),
+				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
+				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
+				// about.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=EXTERNAL SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -131,10 +144,14 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("EXTERNAL", authzid); // throws NotImplementedError today
+		await driver.authenticate("EXTERNAL", authzid);
 		await server.assertCompleted();
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
+		// Decode the inline IR argument and confirm it carries the requested
+		// authzid verbatim (RFC4422-A.1-2).
+		const irArg = authLine!.args.split(" ")[1];
+		expect(Buffer.from(irArg, "base64").toString("utf8")).toBe(authzid);
 	},
 );
 
@@ -152,7 +169,6 @@ complianceTest(
 		reqs: ["RFC4422-A.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE EXTERNAL with no inline IR: server issues an empty challenge, then the client responds",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -161,12 +177,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=EXTERNAL"]),
-				// Bare mechanism name only — no IR argument.
+				// Bare mechanism name only — no IR argument (SASL-IR not advertised).
 				expectLine(command("AUTHENTICATE", { args: /^EXTERNAL$/i })),
 				// Server MUST issue an empty initial challenge (RFC4422-A.1-1).
 				send("+ \r\n"),
 				expectLine(externalResponse({ authzid })),
-				reply("OK AUTHENTICATE completed"),
+				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
+				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
+				// about.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=EXTERNAL] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -177,10 +196,10 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("EXTERNAL", authzid); // throws NotImplementedError today
+		await driver.authenticate("EXTERNAL", authzid);
 		await server.assertCompleted();
-		// When implemented: the AUTHENTICATE line carried no IR argument, and a
-		// response line followed the server's empty challenge.
+		// The AUTHENTICATE line carried no IR argument, and a response line
+		// followed the server's empty challenge.
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
 		expect(authLine!.args, "no inline IR on the bare-AUTHENTICATE sequence").toMatch(/^EXTERNAL$/i);
@@ -198,7 +217,6 @@ complianceTest(
 		reqs: ["RFC4422-A.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE EXTERNAL sends an empty initial response when requesting the server-associated identity",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -206,14 +224,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=EXTERNAL", "SASL-IR"]),
-				expectLine({
-					description: "AUTHENTICATE EXTERNAL (with or without inline empty IR)",
-					match: (line) =>
-						command("AUTHENTICATE", { args: /^EXTERNAL(?: =)?$/i }).match(line),
-				}),
-				send("+ \r\n"),
-				expectLine(externalResponse({ authzid: "" })),
-				reply("OK AUTHENTICATE completed"),
+				// SASL-IR is advertised and EXTERNAL.start() always returns a
+				// non-null (here zero-length) Buffer, so this client
+				// deterministically inlines the empty IR as the RFC 4959 §3 "="
+				// pad — one round trip, no server continuation to script.
+				expectLine(command("AUTHENTICATE", { args: /^EXTERNAL =$/i })),
+				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
+				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
+				// about.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=EXTERNAL SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -226,7 +245,7 @@ complianceTest(
 		});
 		// No authzid argument at all — empty/absent per RFC4422-3.4.1-1's
 		// absent==empty equivalence, realized here as EXTERNAL's empty response.
-		await driver.authenticate("EXTERNAL"); // throws NotImplementedError today
+		await driver.authenticate("EXTERNAL");
 		await server.assertCompleted();
 	},
 );
@@ -243,7 +262,6 @@ complianceTest(
 		reqs: ["RFC4422-A.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE EXTERNAL is exactly one challenge/response pair — no further exchange follows",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -255,7 +273,10 @@ complianceTest(
 				expectLine(command("AUTHENTICATE", { args: /^EXTERNAL$/i })),
 				send("+ \r\n"),
 				expectLine(externalResponse({ authzid })),
-				reply("OK AUTHENTICATE completed"),
+				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
+				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
+				// about.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=EXTERNAL] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -266,10 +287,10 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("EXTERNAL", authzid); // throws NotImplementedError today
+		await driver.authenticate("EXTERNAL", authzid);
 		await server.assertCompleted();
-		// When implemented: exactly one AUTHENTICATE data line (the response) is
-		// sent for the whole exchange — no second continuation-response line.
+		// Exactly one AUTHENTICATE data line (the response) is sent for the
+		// whole exchange — no second continuation-response line.
 		const authLines = server.commandLines.filter((l) => l.verb === "AUTHENTICATE");
 		expect(authLines.length).toBe(1);
 	},

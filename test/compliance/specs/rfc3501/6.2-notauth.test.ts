@@ -88,14 +88,27 @@ complianceTest(
 // ── RFC3501-6.2.2-2: cancel AUTHENTICATE with a single '*' line ──────────
 // When the client wishes to cancel an in-progress AUTHENTICATE exchange it
 // MUST send a line consisting of a single "*" (i.e., "*\r\n").
-// Script: server sends a challenge; harness expects the cancellation line.
-// driver.authenticate() is unimplemented today; annotated unimplemented.
+//
+// A §9.3-compliant client never NAMES a mechanism it doesn't implement (an
+// earlier version of this test drove `driver.authenticate("GSSAPI")`, which
+// this library's registry doesn't recognize — `driver.authenticate()` throws
+// `NotImplementedError` before a single byte reaches the wire, so no real
+// AUTHENTICATE was ever sent and the duty was never actually witnessed).
+// GENUINE SCENARIO: AUTH=PLAIN advertised with SASL-IR NOT advertised, so
+// the AUTHENTICATE line carries no initial-response argument and the
+// client's PLAIN response instead arrives on the deferred continuation reply
+// (RFC 4422 §3.4-1's legal "respond" leg). PLAIN's entire exchange is that
+// one deferred response — its `step()` (src/sasl/plain.ts) always throws on
+// any further challenge, since a second continuation is a protocol violation
+// PLAIN has no legal answer for — so a server that sends a SECOND,
+// superfluous challenge forces the one scenario where the client's only
+// legal move is to cancel: this witnesses RFC3501-6.2.2-2 with a genuine
+// '*' on the wire, not merely documenting that it would be legal.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-2"],
 		profiles: ["rev1"],
 		title: "client sends a single '*' line to cancel an in-progress AUTHENTICATE exchange",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -103,13 +116,24 @@ complianceTest(
 		server.arm([
 			[
 				...greet(),
-				...capabilityExchange(["IMAP4rev1", "AUTH=GSSAPI"]),
-				// Client sends AUTHENTICATE GSSAPI (or any mechanism that prompts a
-				// challenge before the client has credentials).
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				// Server sends a challenge. The client must respond with "*" to cancel.
-				send("+ dGVzdC1jaGFsbGVuZ2U=\r\n"),
-				// Cancellation line: exactly "*" (no tag, no other content).
+				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
+				// No SASL-IR advertised: bare mechanism name, no inline IR argument.
+				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+				send("+ \r\n"),
+				// Leg 1: PLAIN answers the first (expected) challenge with its
+				// deferred initial response — the "respond" leg.
+				expectLine({
+					match: (line) => ({
+						ok: /^[A-Za-z0-9+/=]+$/.test(line),
+						reason: `expected base64 SASL response, got: '${line}'`,
+					}),
+					description: "base64 SASL response (deferred initial response)",
+				}),
+				// A second, superfluous challenge: PLAIN's step() has no legal
+				// answer for this and must abort.
+				send("+ dGVzdA==\r\n"),
+				// Leg 2: the ONLY legal continuation now is the bare '*' abort —
+				// exactly "*" (no tag, no other content).
 				expectLine({
 					match: (line) => ({
 						ok: line === "*",
@@ -117,15 +141,29 @@ complianceTest(
 					}),
 					description: "AUTHENTICATE cancellation line '*'",
 				}),
-				// Server sends tagged BAD to confirm the cancellation (tagged response is
-				// the valid termination of a cancelled AUTHENTICATE exchange).
-				reply("BAD AUTHENTICATE cancelled"),
+				// Tagged BAD confirms the cancellation. The [AUTHENTICATIONFAILED]
+				// code (RFC 5530) is required here, not decorative: spec §9.3 step 3
+				// only treats a failure as "credentials/mechanism wrong, stop" with
+				// this specific code — a bare BAD reads as an ordinary
+				// mechanism-negotiation failure and would make authenticate()'s
+				// selection algorithm fall through to a LOGIN attempt this script
+				// never scripts, hanging the test forever (the identical lesson is
+				// documented on the GENUINE ABORT SCENARIO test in
+				// ext/sasl-4422.test.ts).
+				reply("BAD [AUTHENTICATIONFAILED] AUTHENTICATE cancelled"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Once implemented: driver.authenticate("GSSAPI") should send AUTHENTICATE
-		// and then, receiving a challenge it cannot answer, send "*" to cancel.
-		await driver.authenticate("GSSAPI");
+		let authError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			authError = err;
+		}
+		expect(
+			authError,
+			"a cancelled AUTHENTICATE exchange must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );

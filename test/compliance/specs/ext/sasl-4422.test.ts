@@ -24,14 +24,15 @@
  * policy — user-intent-policy), and RFC4422-6.1.5-1 (blind-allocation — an
  * internal memory strategy). See the catalog module for their rationales.
  *
- * SELF-ACTUALIZATION: driver.authenticate() is implemented for the PLAIN
- * mechanism, so the PLAIN-driven duties below (RFC4422-3.1-1/3.3-1,
- * RFC4422-3.4.1-1) now exercise the real wire form via the scripted server
- * exchange. Duties that depend on a mechanism the registry doesn't recognize
- * (CRAM-MD5, GSSAPI) or on a negotiated SASL security layer still throw
- * NotImplementedError and remain annotated 'unimplemented'; their post-throw
- * assertions document the exact wire check that becomes genuine once those
- * surfaces exist. NEVER a vacuous pass.
+ * SELF-ACTUALIZATION: driver.authenticate() is implemented for PLAIN and (as
+ * of src/sasl/cram-md5.ts) CRAM-MD5, so the PLAIN-driven duties below
+ * (RFC4422-3.1-1/3.3-1, RFC4422-3.4.1-1) and the CRAM-MD5-driven duty
+ * (RFC4422-3-1) now exercise the real wire form via the scripted server
+ * exchange. Duties that depend on a negotiated SASL security layer (which
+ * this library has no mechanism for — GSSAPI is not on this library's
+ * roadmap) still throw NotImplementedError and remain annotated
+ * 'unimplemented'; their post-throw assertions document the exact wire check
+ * that becomes genuine once such a surface exists. NEVER a vacuous pass.
  */
 import { expect } from "vitest";
 
@@ -94,7 +95,6 @@ complianceTest(
 		reqs: ["RFC4422-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client attaches no initial response when the mechanism is server-first (CRAM-MD5)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -113,13 +113,16 @@ complianceTest(
 					}),
 					description: "base64 SASL response",
 				}),
-				reply("OK AUTHENTICATE completed"),
+				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
+				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
+				// about.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=CRAM-MD5 SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.authenticate("CRAM-MD5"); // throws NotImplementedError today
+		await driver.authenticate("CRAM-MD5");
 		await server.assertCompleted();
-		// When implemented: no IR argument accompanies a server-first mechanism.
+		// No IR argument accompanies a server-first mechanism.
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
 		expect(authLine!.args, "server-first mechanism carries no initial response").toMatch(
