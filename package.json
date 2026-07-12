@@ -18,7 +18,8 @@
 		"test:all": "test && test:e2e && test:old",
 		"test:e2e": "jest --testMatch=\"**/test/e2e/**/*.test.ts\"",
 		"test:old": "node test/test.js",
-		"test:compliance": "vitest run --config test/compliance/vitest.config.ts"
+		"test:compliance": "vitest run --config test/compliance/vitest.config.ts",
+		"typecheck:compliance": "tsc -p test/compliance/tsconfig.json --noEmit"
 	},
 	"engines": {
 		"node": ">=14.0.0"
