@@ -138,6 +138,33 @@ describe("openTls", () => {
 			}
 		});
 
+		test("rejects a SAN-less certificate whose Subject CN matches (no CN fallback)", async () => {
+			// RFC 9525 §6.6 / RFC 2595 §2.4: the Subject CN is not a valid
+			// identity source; only SAN entries (DNS-ID/IP-ID) are consulted.
+			// The cn-only fixture has CN=localhost and NO subjectAltName at
+			// all, and we connect to "localhost" with the CA trusted — so the
+			// ONLY way this handshake can succeed is a CN fallback. Node >= 12
+			// removed that fallback; this test witnesses it empirically so the
+			// policy documented in src/connection/tls.ts is verified, not
+			// assumed.
+			const cnOnly = loadCertFixture("cn-only");
+			const server = await startTlsServer(cnOnly);
+			cleanups.push(server.close);
+
+			expect.assertions(2);
+			try {
+				await openTls({
+					host: "localhost",
+					port: server.port,
+					timeoutMs: 3000,
+					tlsOptions: { ca: [cnOnly.cert] },
+				});
+			} catch (err) {
+				expect(err).toBeInstanceOf(TLSSocketError);
+				expect((err as TLSSocketError).reason).toBe("identity-mismatch");
+			}
+		});
+
 		test("rejects with a typed TLS error when the CA is not trusted", async () => {
 			const server = await startTlsServer(localhost);
 			cleanups.push(server.close);

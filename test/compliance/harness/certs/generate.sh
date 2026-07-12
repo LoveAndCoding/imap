@@ -99,3 +99,13 @@ MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500
   -addext "subjectAltName=URI:imap://localhost/"
 
 echo "Done. Commit the regenerated PEM files."
+
+# cn-only fixture: CN=localhost with NO subjectAltName at all. RFC 9525 §6.6 /
+# RFC 2595 §2.4: identity matching uses SAN (DNS-ID/IP-ID); the Subject CN is
+# not a valid identity source. Node >= 12's checkServerIdentity performs no CN
+# fallback, so a conformant stack must REJECT this certificate even though CN
+# matches the connection target — the unit test in
+# test/unit/connection/tls.test.ts witnesses that empirically.
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 36500 \
+  -keyout cn-only-key.pem -out cn-only-cert.pem \
+  -subj "/CN=localhost"

@@ -83,7 +83,7 @@ class ConnectionRunner {
 							await this.doReply(step);
 							break;
 						case "startTls":
-							await this.doStartTls();
+							await this.doStartTls(step);
 							break;
 						case "close":
 							this.socket.end();
@@ -283,7 +283,9 @@ class ConnectionRunner {
 		await this.doSend({ kind: "send", data: lines });
 	}
 
-	private async doStartTls(): Promise<void> {
+	private async doStartTls(
+		step: Extract<ScriptStep, { kind: "startTls" }>,
+	): Promise<void> {
 		if (!this.opts.tlsUpgrade) {
 			throw new Error("script has a startTls step but no tlsUpgrade cert configured");
 		}
@@ -293,18 +295,88 @@ class ConnectionRunner {
 					`but before the TLS handshake (negotiation begins immediately after the CRLF)`,
 			);
 		}
+		const expectAbort = step.expectAbort ?? false;
 		const plain = this.socket;
 		plain.removeAllListeners("data");
 		this.server.transcript.record("!", "<TLS handshake (server side)>");
-		const secured = await new Promise<tls.TLSSocket>((resolve, reject) => {
+
+		type HandshakeOutcome =
+			| { kind: "secure"; socket: tls.TLSSocket }
+			| { kind: "aborted" };
+
+		const outcome = await new Promise<HandshakeOutcome>((resolve, reject) => {
 			const t = new tls.TLSSocket(plain, {
 				isServer: true,
 				key: this.opts.tlsUpgrade!.key,
 				cert: this.opts.tlsUpgrade!.cert,
 			});
-			t.once("secure", () => resolve(t));
-			t.once("error", reject);
+			let settled = false;
+			const cleanup = () => {
+				t.removeListener("secure", onSecure);
+				t.removeListener("error", onError);
+				t.removeListener("close", onEnded);
+				plain.removeListener("close", onEnded);
+			};
+			const onSecure = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				resolve({ kind: "secure", socket: t });
+			};
+			const onError = (err: Error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				if (expectAbort) {
+					resolve({ kind: "aborted" });
+				} else {
+					reject(err);
+				}
+			};
+			// A client that aborts a handshake mid-flight (e.g. rejecting the
+			// server's identity after inspecting the certificate) typically just
+			// closes the transport — Node never fires 'secure' or 'error' on the
+			// server-side TLSSocket in that case, only 'close' (either on the
+			// wrapping TLSSocket or on the raw socket it wraps, depending on how
+			// far negotiation got). Without this handler, that outcome would hang
+			// this promise — and therefore the whole script — forever.
+			const onEnded = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				if (expectAbort) {
+					resolve({ kind: "aborted" });
+				} else {
+					reject(
+						new Error(
+							"the underlying transport closed before the TLS handshake completed " +
+								"(the peer aborted the negotiation instead of completing it)",
+						),
+					);
+				}
+			};
+			t.once("secure", onSecure);
+			t.once("error", onError);
+			t.once("close", onEnded);
+			plain.once("close", onEnded);
 		});
+
+		if (outcome.kind === "aborted") {
+			// Expected outcome for an expectAbort step: the client tore the
+			// connection down instead of completing the handshake. There is
+			// nothing further to wire up — the transport is gone.
+			return;
+		}
+
+		const secured = outcome.socket;
+		if (expectAbort) {
+			secured.destroy();
+			throw new Error(
+				"expected the client to abort the TLS handshake (e.g. after a failed " +
+					"post-STARTTLS identity check), but the handshake completed successfully",
+			);
+		}
+
 		// The handshake error handler on `secured` is now stale (handshake done).
 		// Replace it with one that routes post-handshake errors into the failure path.
 		secured.removeAllListeners("error");

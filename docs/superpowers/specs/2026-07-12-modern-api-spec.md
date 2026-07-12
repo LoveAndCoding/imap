@@ -867,9 +867,13 @@ LOGIN-fallback (not SASL: the LOGIN command, used per §9.3).
   every TLS socket — implicit AND the STARTTLS upgrade — is created through
   `openTls(socket|target, policy)` in this module. It always sets
   `servername` to the configured reference identity (the config `host`;
-  never a CNAME/MX-resolved name — RFC 7817 §3), relies on Node's
-  `checkServerIdentity` (DNS-ID matching, no CN fallback, URI-ID never
-  consulted) and `rejectUnauthorized: true`. Handshake or identity failure
+  never a CNAME/MX-resolved name — RFC 7817 §3), wraps Node's
+  `checkServerIdentity` with a SAN-presence precondition (Node's built-in
+  matcher alone falls back to the Subject CN when a certificate carries no
+  subjectAltName — verified empirically; RFC 9525 §6.6 forbids CN as an
+  identity source, so SAN-less certificates are rejected before
+  delegation; DNS-ID/IP-ID matching and URI-ID exclusion then come from
+  the built-in matcher) and `rejectUnauthorized: true`. Handshake or identity failure
   → socket destroyed, `TlsError` with `reason` propagated to the awaiting
   promise — **rejection, never a hang** (fixes the driver-backstop findings).
 - **10.2 tlsOptions merge:** caller `tlsOptions` may add `ca`,

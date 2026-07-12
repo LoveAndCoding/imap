@@ -27,7 +27,7 @@ const CERT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "certs"
  *                       finds no usable presented identifier matching the connection target and
  *                       MUST reject (the URI-ID is not consulted for identity).
  */
-export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san" | "expired" | "uri-id"): CertFixture {
+export function loadCertFixture(name: "localhost" | "wrong-host" | "san-only-match" | "san-mismatch" | "multi-san" | "expired" | "uri-id" | "cn-only"): CertFixture {
 	return {
 		key: fs.readFileSync(path.join(CERT_DIR, `${name}-key.pem`)),
 		cert: fs.readFileSync(path.join(CERT_DIR, `${name}-cert.pem`)),

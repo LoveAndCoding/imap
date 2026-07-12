@@ -117,6 +117,28 @@ export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
 		// Enforced identity policy — always wins over anything above.
 		servername: host,
 		rejectUnauthorized: true,
+		// RFC 9525 §6.6: the Subject CN is NOT a valid identity source —
+		// only SAN entries (DNS-ID/IP-ID) may match. Node's built-in
+		// checkServerIdentity still falls back to the Subject CN when a
+		// certificate carries no subjectAltName at all (verified empirically
+		// by test/unit/connection/tls.test.ts's cn-only fixture test), so a
+		// SAN-less certificate must be rejected here before delegating to
+		// the built-in matcher for everything else.
+		checkServerIdentity: (
+			hostname: string,
+			cert: tls.PeerCertificate,
+		): Error | undefined => {
+			if (!cert.subjectaltname) {
+				const err = new Error(
+					`Certificate presents no subjectAltName; the Subject CN ` +
+						`is not a valid identity source (RFC 9525 §6.6). ` +
+						`Cannot verify the identity of "${hostname}".`,
+				) as NodeJS.ErrnoException;
+				err.code = "ERR_TLS_CERT_ALTNAME_INVALID";
+				return err;
+			}
+			return tls.checkServerIdentity(hostname, cert);
+		},
 	};
 	if (socket) {
 		connectOptions.socket = socket;
