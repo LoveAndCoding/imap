@@ -3,6 +3,7 @@ import { ciCanonicalize } from "../../lexer/case-insensitive";
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
+import { EnabledResponse } from "./enabled";
 import { Expunge } from "./expunge";
 import { Fetch } from "./fetch";
 import { IDResponse } from "./id";
@@ -17,6 +18,7 @@ import { VanishedResponse } from "./vanished";
 
 type ContentType =
 	| CapabilityList
+	| EnabledResponse
 	| Expunge
 	| Fetch
 	| IDResponse
@@ -81,6 +83,7 @@ export default class UntaggedResponse {
 			const toCheckList = [
 				StatusResponse,
 				CapabilityList,
+				EnabledResponse,
 				IDResponse,
 				NamespaceResponse,
 				QuotaRootResponse,

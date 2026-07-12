@@ -2,6 +2,7 @@ export * from "./authenticate";
 export * from "./base";
 export * from "./capability";
 export * from "./collector";
+export * from "./enable";
 export * from "./id";
 export * from "./login";
 export * from "./logout";

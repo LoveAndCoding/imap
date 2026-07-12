@@ -513,4 +513,250 @@ describe("ImapClient (spec §3.2/§3.3)", () => {
 			expect(server.transcript.clientLines()).not.toMatch(/\bLOGOUT\b/);
 		});
 	});
+
+	describe("ENABLE (spec §3.4, M1.8)", () => {
+		test("enableExtensions() happy path: only advertised caps go on the wire, ENABLED is consumed, client.enabled updates, return value is the enabled set", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR UTF8=ACCEPT"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 UTF8=ACCEPT"]),
+					// Only "UTF8=ACCEPT" survives the advertisement filter --
+					// "X-BOGUS" was never advertised and must not appear here.
+					expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
+					reply("OK ENABLE completed", ["* ENABLED UTF8=ACCEPT"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: false, // no auto-ENABLE -- this test drives enableExtensions() itself
+			});
+			await client.connect();
+			expect(client.state).toBe("authenticated");
+
+			const result = await client.enableExtensions(["UTF8=ACCEPT", "X-BOGUS"]);
+
+			expect(result).toEqual(["UTF8=ACCEPT"]);
+			expect(client.enabled.has("UTF8=ACCEPT")).toBe(true);
+			expect(client.enabled.has("X-BOGUS")).toBe(false);
+			await server.assertCompleted();
+		});
+
+		test("enableExtensions() with a fully-unadvertised list resolves [] and writes zero bytes (RFC 5161: never ENABLE an unadvertised capability)", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: false,
+			});
+			await client.connect();
+			const before = server.transcript.clientLines();
+
+			const result = await client.enableExtensions(["X-BOGUS", "X-ALSO-BOGUS"]);
+
+			expect(result).toEqual([]);
+			expect(client.enabled.size).toBe(0);
+			// No ENABLE line (or any other bytes) were written for this call.
+			expect(server.transcript.clientLines()).toBe(before);
+			await server.assertCompleted();
+		});
+
+		test("enableExtensions() results accumulate in client.enabled across separate calls", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR UTF8=ACCEPT X-FOO"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 UTF8=ACCEPT X-FOO"]),
+					expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
+					reply("OK ENABLE completed", ["* ENABLED UTF8=ACCEPT"]),
+					expectLine(command("ENABLE", { args: "X-FOO" })),
+					reply("OK ENABLE completed", ["* ENABLED X-FOO"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: false,
+			});
+			await client.connect();
+
+			await client.enableExtensions(["UTF8=ACCEPT"]);
+			expect(client.enabled.size).toBe(1);
+
+			await client.enableExtensions(["X-FOO"]);
+			expect([...client.enabled].sort()).toEqual(["UTF8=ACCEPT", "X-FOO"]);
+			await server.assertCompleted();
+		});
+
+		test("connect() ritual, default extensions:\"auto\": ENABLEs UTF8=ACCEPT once authenticated, when advertised", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR UTF8=ACCEPT"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 UTF8=ACCEPT"]),
+					expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
+					reply("OK ENABLE completed", ["* ENABLED UTF8=ACCEPT"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				// `extensions` omitted -> default "auto".
+			});
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			expect(client.enabled.has("UTF8=ACCEPT")).toBe(true);
+			await server.assertCompleted();
+		});
+
+		test("extensions:false: connect() never issues ENABLE even when the auto-enable set is advertised", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR UTF8=ACCEPT"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 UTF8=ACCEPT"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: false,
+			});
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			expect(client.enabled.size).toBe(0);
+			await server.assertCompleted();
+			expect(server.transcript.clientLines()).not.toMatch(/\bENABLE\b/);
+		});
+
+		test("explicit array config: connect() ENABLEs exactly the configured caps, still filtered to advertised", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR CONDSTORE"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 CONDSTORE"]),
+					// "X-NOT-ADVERTISED" is filtered out; only CONDSTORE is requested.
+					expectLine(command("ENABLE", { args: "CONDSTORE" })),
+					reply("OK ENABLE completed", ["* ENABLED CONDSTORE"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: ["CONDSTORE", "X-NOT-ADVERTISED"],
+			});
+			await client.connect();
+
+			expect(client.enabled.has("CONDSTORE")).toBe(true);
+			expect(client.enabled.has("X-NOT-ADVERTISED")).toBe(false);
+			await server.assertCompleted();
+		});
+
+		test('enableExtensions() in "not-authenticated" state rejects StateError (ENABLE is authenticated-only, RFC 5161 §3.1)', async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 UTF8=ACCEPT"]),
+				],
+			]);
+
+			client = new ImapClient(baseConfig(server.port));
+			await client.connect();
+			expect(client.state).toBe("not-authenticated");
+			const before = server.transcript.clientLines();
+
+			// "UTF8=ACCEPT" IS advertised, so this exercises the state gate
+			// itself rather than the (unrelated) zero-length-after-filter path.
+			await expect(client.enableExtensions(["UTF8=ACCEPT"])).rejects.toBeInstanceOf(
+				StateError,
+			);
+
+			expect(client.enabled.size).toBe(0);
+			expect(server.transcript.clientLines()).toBe(before);
+		});
+
+		test("an empty ENABLED reply (RFC 5161 §3.2 no-op) resolves [] and leaves client.enabled unchanged", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR CONDSTORE"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 CONDSTORE"]),
+					expectLine(command("ENABLE", { args: "CONDSTORE" })),
+					reply("OK ENABLE completed", ["* ENABLED"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+				extensions: false,
+			});
+			await client.connect();
+
+			const result = await client.enableExtensions(["CONDSTORE"]);
+
+			expect(result).toEqual([]);
+			expect(client.enabled.size).toBe(0);
+			await server.assertCompleted();
+		});
+	});
 });

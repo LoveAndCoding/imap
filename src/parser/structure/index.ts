@@ -4,6 +4,7 @@ export { default as UnknownResponse, UnknownContent } from "./unknown";
 export { default as UntaggedResponse } from "./untagged";
 
 export * from "./capability";
+export * from "./enabled";
 export * from "./expunge";
 export * from "./fetch";
 export * from "./flag";

@@ -4,6 +4,7 @@ import { TypedEmitter } from "tiny-typed-emitter";
 
 import {
 	CapabilityCommand,
+	EnableCommand,
 	IdCommand,
 	LogoutCommand,
 	NoopCommand,
@@ -48,7 +49,17 @@ import type { ClientState } from "./state";
  * `performAuthentication()` below.
  */
 
-const EMPTY_ENABLED: ReadonlySet<string> = new Set();
+/**
+ * The "understood-enable set" for `extensions: "auto"` (spec §3.4): every
+ * capability the client itself knows how to make use of once ENABLEd, that
+ * "auto" is willing to turn on automatically without being asked. Grows as
+ * later milestones land the extension itself -- `QRESYNC` (M4), `CONDSTORE`
+ * (M4; implied by QRESYNC), `UIDONLY` (M5). `IMAP4rev2` is deliberately
+ * excluded permanently: enabling it is a profile decision the caller opts
+ * into explicitly (a future `profile:"rev2"` config, not yet implemented),
+ * never something "auto" reaches for on its own.
+ */
+const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT"];
 
 const TLS_MODE_TO_CONNECTION: Record<TlsMode, TLSSetting> = {
 	on: TLSSetting.DEFAULT,
@@ -91,6 +102,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	private readonly config: ResolvedConfig;
 	private readonly stateMachine = new ClientStateMachine();
 	private readonly capabilityRegistry = new CapabilityRegistry();
+	/** ENABLEd extensions (spec §3.4), accumulative across every
+	 *  `enableExtensions()` call (including the `connect()` ritual's own
+	 *  auto-ENABLE) -- never cleared for the life of the client, mirroring
+	 *  RFC 5161 §3.2's "ENABLE is not a NEGATIVE toggle; enablement only ever
+	 *  ADDS, never removes". */
+	private readonly _enabled = new Set<string>();
 
 	private _serverId: IdResponseMap = null;
 	private _logoutPromise: Promise<void> | null = null;
@@ -178,6 +195,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 			// Step 6': ID, in ANY resulting state (RFC 2971).
 			await this.maybeSendId();
+
+			// Step 6: ENABLE per spec §3.4. Only meaningful once authenticated
+			// (RFC 5161 §3.1 legal-states); skipped silently otherwise (e.g. no
+			// `auth` config supplied, so `connect()` leaves the client
+			// "not-authenticated").
+			await this.maybeEnable();
 		} catch (err) {
 			throw await this.abortConnect(err);
 		}
@@ -335,9 +358,8 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return this._serverId;
 	}
 
-	/** Empty until M1.8 wires ENABLE. */
 	public get enabled(): ReadonlySet<string> {
-		return EMPTY_ENABLED;
+		return this._enabled;
 	}
 
 	public get secure(): boolean {
@@ -346,6 +368,34 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	public async noop(): Promise<void> {
 		await this.run(new NoopCommand());
+	}
+
+	/**
+	 * ENABLE (spec §3.4/§3.2, RFC 5161): requests `caps` be enabled, first
+	 * filtering to only those the server has actually advertised -- RFC 5161
+	 * is explicit that a client must never ENABLE an unadvertised capability,
+	 * so `caps` is a REQUEST, not a guarantee of what gets sent. If nothing
+	 * survives that filter, resolves `[]` immediately without writing any
+	 * bytes or submitting a command at all (so this intentionally bypasses
+	 * `run()`'s state check in that specific case -- there is no command to
+	 * gate when nothing would be sent). A non-empty filtered list is
+	 * submitted as a real `EnableCommand`, which DOES go through `run()`'s
+	 * normal state/`StateError` gating (legal only in "authenticated").
+	 *
+	 * The server's ENABLED response (possibly empty, per RFC 5161 §3.2 -- a
+	 * no-op is a successful completion, not an error) is merged into
+	 * `client.enabled` and also returned directly.
+	 */
+	public async enableExtensions(caps: string[]): Promise<string[]> {
+		const advertised = caps.filter((cap) => this.capabilityRegistry.view.has(cap));
+		if (advertised.length === 0) {
+			return [];
+		}
+		const enabled = await this.run(new EnableCommand(advertised));
+		for (const cap of enabled) {
+			this._enabled.add(cap);
+		}
+		return enabled;
 	}
 
 	// -- Layer 2 escape hatch --------------------------------------------------
@@ -508,6 +558,39 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		}
 		const values = id ? sanitizeIdValues(id) : undefined;
 		this._serverId = await this.connection.runCommand(new IdCommand(values));
+	}
+
+	/**
+	 * `connect()`'s step-6 seam (spec §3.4): ENABLE per the `extensions`
+	 * config. Only runs once authenticated (RFC 5161 §3.1 restricts ENABLE to
+	 * the authenticated state, before any SELECT/EXAMINE) -- a `connect()`
+	 * that never authenticates (no `auth` config, PREAUTH-less greeting)
+	 * leaves the client "not-authenticated" and this is a silent no-op, same
+	 * as `maybeSendId()`'s own guards are no-ops when their precondition
+	 * isn't met.
+	 *
+	 * `extensions: false` -> never ENABLE anything. `"auto"` (default) ->
+	 * request every capability in `AUTO_ENABLE_SET`, which `enableExtensions`
+	 * itself filters down to whatever the server actually advertised (so an
+	 * `AUTO_ENABLE_SET` member the server doesn't support is silently
+	 * dropped, zero bytes). An explicit `string[]` -> request exactly those,
+	 * same advertisement filtering. Either way, `enableExtensions` already
+	 * resolves `[]` with zero bytes written when nothing survives the
+	 * filter, so there is nothing further to special-case here.
+	 */
+	private async maybeEnable(): Promise<void> {
+		if (this.stateMachine.current !== "authenticated") {
+			return;
+		}
+		const extensions = this.config.extensions;
+		if (extensions === false) {
+			return;
+		}
+		const requested = extensions === "auto" ? AUTO_ENABLE_SET : extensions;
+		if (requested.length === 0) {
+			return;
+		}
+		await this.enableExtensions([...requested]);
 	}
 
 	/**
