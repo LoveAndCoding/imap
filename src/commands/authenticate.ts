@@ -62,6 +62,11 @@ export class AuthenticateCommand extends Command<void> {
 	readonly verb = "AUTHENTICATE";
 	readonly queueMode = "isolated" as const;
 	readonly states = ["not-authenticated"] as const;
+	/** The whole SASL exchange this command drives is credential-bearing
+	 *  (spec §10.3's gate treats an authentication ATTEMPT as a whole, not a
+	 *  per-mechanism filter — see `Command.sendsCredentials` and
+	 *  `performAuthSelection`'s matching top-of-function gate). */
+	readonly sendsCredentials = true;
 
 	private readonly mechanism: SaslMechanism;
 	private readonly ctx: SaslContext;

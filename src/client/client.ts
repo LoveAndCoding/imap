@@ -442,6 +442,27 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				{ state: current, required: [...command.states] },
 			);
 		}
+		// §10.3 cleartext credential gate (CRITICAL-1): `performAuthSelection`
+		// (client/auth.ts) already enforces this for the normal
+		// connect()/authenticate() path, but that's a mechanism-selection-level
+		// gate, not a chokepoint — a caller that bypasses it entirely (e.g.
+		// `client.run(new LoginCommand(...))`, or a hand-built
+		// `AuthenticateCommand`) would otherwise send credentials with zero
+		// enforcement. `run()` IS that chokepoint: every submission, from
+		// every call site, passes through here before a single byte is
+		// written, so this is where the policy is actually guaranteed rather
+		// than merely usually-applied.
+		if (
+			command.sendsCredentials &&
+			!this.connection.isSecure &&
+			!this.config.allowInsecureAuth
+		) {
+			throw new TlsError(
+				`"${command.verb}" would send credentials over a cleartext transport, ` +
+					"and allowInsecureAuth is not set (spec §10.3, RFC 8314 §5)",
+				{ phase: "steady", reason: "policy" },
+			);
+		}
 		if (command.capability) {
 			const required = Array.isArray(command.capability)
 				? command.capability
@@ -512,6 +533,22 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			if (this.stateMachine.current !== "disconnected") {
 				this.stateMachine.transition("disconnected");
 			}
+			// CRITICAL-2 adjacent (spec §3.5/I-2's own invalidation model already
+			// applies this same discipline to STARTTLS/auth/UNAUTHENTICATE):
+			// without this, a client instance that reconnects after ANY
+			// disconnect — not just the mid-command-drop scenario this fix
+			// targets — would keep treating the PREVIOUS connection's
+			// capabilities as current, silently skipping `ensureCapabilities()`'s
+			// CAPABILITY round trip on the new connection (`Connection`'s own,
+			// separate capability precursor already invalidates itself on
+			// socket close; this registry is `ImapClient`'s own, higher-level
+			// one and was never wired to do the same). Silent (no
+			// `capabilitiesChanged` emission): several compliance rows pin
+			// "exactly one capabilitiesChanged, from the greeting's own
+			// [CAPABILITY] code" for a session that ends in an ordinary close —
+			// this is pure internal cache housekeeping for the NEXT connect(),
+			// not a fact about the server worth surfacing as a public event.
+			this.capabilityRegistry.invalidateSilently();
 			this.emit("close", {
 				graceful: wasGraceful && !error,
 				...(error ? { error } : {}),

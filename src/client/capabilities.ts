@@ -163,6 +163,24 @@ export class CapabilityRegistry {
 	}
 
 	/**
+	 * Same reset as `invalidate()` (drops to "unknown", bumps `epoch`), but
+	 * does NOT notify `onChange` subscribers. For internal housekeeping only
+	 * — currently: `ImapClient` clearing its capability cache when the
+	 * connection drops, so a LATER reconnect's `ensureCapabilities()` doesn't
+	 * skip re-fetching. That housekeeping is not itself a fact about the
+	 * server worth surfacing through the public `capabilitiesChanged` event
+	 * (nothing about the server's capabilities changed — the client merely
+	 * forgot them because the transport went away); a caller that wants to
+	 * know when the connection dropped already has the client's `close`
+	 * event for that.
+	 */
+	public invalidateSilently(): void {
+		this.caps = null;
+		this.authMechs = null;
+		this.mutableView.epoch += 1;
+	}
+
+	/**
 	 * Subscribes to every `set()`/`invalidate()` (the `capabilitiesChanged`
 	 * event's eventual backing). Returns an unsubscribe function.
 	 */

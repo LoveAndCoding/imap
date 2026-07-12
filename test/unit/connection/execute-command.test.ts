@@ -53,14 +53,34 @@ function makeFakeConnection() {
 		emitServerStatus: () => undefined,
 		emitUnhandled: () => undefined,
 	});
+	// CRITICAL-2: `executeCommand` races a teardown signal (see
+	// `Connection.onTeardown`) alongside the tagged-response/literal-gate
+	// waits. This fake reproduces the same subscribe/fire/unsubscribe
+	// contract so existing tests (which never fire teardown) keep working,
+	// and so a test that wants to exercise it can call `fireTeardown()`.
+	const teardownListeners = new Set<(err: Error) => void>();
 	const connection = {
 		capabilityRegistry: { value: null as { has(cap: string): boolean } | null },
 		router,
+		// `execute-command.ts`'s interactive-continuation write-back checks
+		// this before writing (CRITICAL-2 adjacent: guards against writing to
+		// an already-torn-down connection) — these tests never tear the fake
+		// connection down, so it stays live throughout.
+		isActive: true,
 		writeBytes: (buf: Buffer) => {
 			written.push(buf);
 		},
+		onTeardown: (cb: (err: Error) => void) => {
+			teardownListeners.add(cb);
+			return () => {
+				teardownListeners.delete(cb);
+			};
+		},
 	};
-	return { connection: connection as never, written, router };
+	const fireTeardown = (err: Error) => {
+		for (const cb of [...teardownListeners]) cb(err);
+	};
+	return { connection: connection as never, written, router, fireTeardown };
 }
 
 describe("executeCommand (spec §7.1/§6.2 — the queue's per-command wire I/O)", () => {
@@ -151,6 +171,66 @@ describe("executeCommand (spec §7.1/§6.2 — the queue's per-command wire I/O)
 			router.routeContinuation(parseLine(`+ ready${CRLF}`) as ContinueResponse);
 			router.routeTagged(parseLine(`A00006 OK done${CRLF}`) as TaggedResponse);
 			await expect(secondResult).resolves.toBe("ok");
+		});
+	});
+
+	describe("teardown race (CRITICAL-2 — a suspended executeCommand() wait must settle, not dangle, on teardown)", () => {
+		test("firing teardown mid-literal-gate rejects the command AND unregisters the gate's continuation owner", async () => {
+			const { connection, fireTeardown, router } = makeFakeConnection();
+			const cmd = new LiteralAppendCommand();
+
+			const resultPromise = executeCommand(connection, cmd, "A00009");
+			await flushMicrotasks();
+
+			// The literal announcement is out; the command is suspended waiting
+			// on '+' with a continuation owner registered for the gate. Without
+			// the fix, firing teardown here has no effect at all: the
+			// `taggedPromise`-only race never settles, `executeCommand`'s
+			// promise never settles, and the gate's continuation-owner
+			// registration is never released.
+			fireTeardown(new Error("connection torn down"));
+
+			await expect(resultPromise).rejects.toThrow("connection torn down");
+
+			// Proves the gate's continuation owner was actually released (not
+			// just that the outer promise happened to settle some other way):
+			// registering a fresh owner right after must succeed — before the
+			// fix this would throw "a continuation owner is already
+			// registered".
+			expect(() =>
+				router.registerContinuationOwner({ onContinuation: () => undefined }),
+			).not.toThrow();
+		});
+
+		test("firing teardown while only awaiting the tagged response (no literal gate in play) rejects the command", async () => {
+			const { connection, fireTeardown } = makeFakeConnection();
+			const cmd = new NoopCommand();
+
+			const resultPromise = executeCommand(connection, cmd, "A00010");
+			await flushMicrotasks();
+
+			// No literal in this command — `performWrite` already returned and
+			// `executeCommand` is suspended on `taggedPromise` alone (the
+			// mid-AUTHENTICATE-drop shape: the tag/claimant registrations are
+			// still live, nothing left to write). Teardown must still settle it.
+			fireTeardown(new Error("connection torn down"));
+
+			await expect(resultPromise).rejects.toThrow("connection torn down");
+		});
+
+		test("a command that completes normally before teardown fires is unaffected by a later fireTeardown() call", async () => {
+			const { connection, router, fireTeardown } = makeFakeConnection();
+			const cmd = new NoopCommand();
+
+			const resultPromise = executeCommand(connection, cmd, "A00011");
+			await flushMicrotasks();
+			router.routeTagged(parseLine(`A00011 OK done${CRLF}`) as TaggedResponse);
+
+			await expect(resultPromise).resolves.toBeNull();
+
+			// The command already unregistered its teardown listener in its own
+			// `finally` — firing teardown now must be a harmless no-op.
+			expect(() => fireTeardown(new Error("late teardown"))).not.toThrow();
 		});
 	});
 

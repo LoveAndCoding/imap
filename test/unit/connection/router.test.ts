@@ -265,6 +265,67 @@ describe("Router (spec §8)", () => {
 		});
 	});
 
+	describe("reset() (CRITICAL-2: clears every registry, defense in depth)", () => {
+		test("clears the tag map — a tag registered before reset() is unknown after", () => {
+			const { host, calls } = makeHost();
+			const router = new Router(host);
+			const resolve = vi.fn();
+			router.registerTag("A1", { resolveTagged: resolve });
+
+			router.reset();
+
+			const resp = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+			router.routeTagged(resp);
+
+			expect(resolve).not.toHaveBeenCalled();
+			expect(calls.unhandled).toEqual([resp]);
+		});
+
+		test("clears the claimant list — a response that would have been claimed is unhandled after reset()", () => {
+			const { host, calls } = makeHost();
+			const router = new Router(host);
+			const pushed: UntaggedResponse[] = [];
+			router.registerClaimant({
+				claims: (r) => r.type === "CAPABILITY",
+				push: (r) => pushed.push(r),
+			});
+
+			router.reset();
+
+			const resp = parseLine(`* CAPABILITY IMAP4rev1${CRLF}`) as UntaggedResponse;
+			router.routeUntagged(resp);
+
+			expect(pushed).toEqual([]);
+			expect(calls.unhandled).toEqual([resp]);
+		});
+
+		test("clears the continuation owner — registering a new one right after reset() never throws, and a continuation with no owner is unhandled", () => {
+			const { host, calls } = makeHost();
+			const router = new Router(host);
+			router.registerContinuationOwner({ onContinuation: () => undefined });
+
+			router.reset();
+
+			const resp = parseLine(`+ ready${CRLF}`) as ContinueResponse;
+			router.routeContinuation(resp);
+			expect(calls.unhandled).toEqual([resp]);
+
+			// The stale owner from before reset() is gone — a fresh registration
+			// (exactly what the NEXT connect()/authenticate() on the same
+			// Connection instance does) must not throw "continuation owner
+			// already registered".
+			expect(() =>
+				router.registerContinuationOwner({ onContinuation: () => undefined }),
+			).not.toThrow();
+		});
+
+		test("reset() on an already-empty router is a harmless no-op", () => {
+			const { host } = makeHost();
+			const router = new Router(host);
+			expect(() => router.reset()).not.toThrow();
+		});
+	});
+
 	describe("unknown-response routing", () => {
 		test("emits unknownResponse/response and unhandled for a non-null unknown response", () => {
 			const { host, calls } = makeHost();

@@ -64,6 +64,21 @@ export abstract class Command<TResult> {
 	 *  exclusively. */
 	abstract readonly queueMode: QueueMode;
 
+	/** Declares that SUBMITTING this command sends credentials over the wire
+	 *  as part of its exchange — `LoginCommand`'s password argument, or the
+	 *  entire SASL exchange `AuthenticateCommand` drives (spec §10.3, RFC
+	 *  8314 §5: credentials must never be sent over cleartext unless the
+	 *  caller opted into `allowInsecureAuth`). `ImapClient.run()` is the
+	 *  chokepoint EVERY submission passes through (the public escape hatch
+	 *  included), so it enforces this flag BEFORE the command ever reaches
+	 *  the queue — a caller that bypasses `performAuthSelection()`'s own
+	 *  mechanism-level gate (e.g. `client.run(new LoginCommand(...))`
+	 *  directly) is still caught there. `performAuthSelection`'s gate stays
+	 *  in place too (defense in depth, mechanism-level filtering) — this
+	 *  flag does not replace it. Defaults to `false`; only credential-
+	 *  bearing commands override it to `true`. */
+	readonly sendsCredentials: boolean = false;
+
 	private _tag: string | undefined;
 	private _submitted = false;
 

@@ -18,6 +18,10 @@ export class LoginCommand extends Command<void> {
 	readonly verb = "LOGIN";
 	readonly queueMode = "serial" as const;
 	readonly states = ["not-authenticated"] as const;
+	/** LOGIN's whole point is sending the password in the clear as an
+	 *  ordinary command argument — spec §10.3's cleartext-credential gate
+	 *  applies to it unconditionally (see `Command.sendsCredentials`). */
+	readonly sendsCredentials = true;
 
 	constructor(
 		private readonly user: string,

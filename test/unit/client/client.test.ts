@@ -8,13 +8,16 @@ import {
 	send,
 } from "../../compliance/harness/script";
 import { ScriptedServer } from "../../compliance/harness/scripted-server";
+import { loadCertFixture } from "../../compliance/harness/tls";
 
 import { ImapClient } from "../../../src/client/client";
 import type { ImapClientConfig } from "../../../src/client/config";
 import type { ClientState } from "../../../src/client/state";
+import { AuthenticateCommand } from "../../../src/commands/authenticate";
 import { Command } from "../../../src/commands/base";
 import type { ResponseCollector } from "../../../src/commands/collector";
 import type { CommandWriter } from "../../../src/commands/writer";
+import { LoginCommand } from "../../../src/commands/login";
 import {
 	AuthError,
 	CapabilityError,
@@ -22,6 +25,7 @@ import {
 	StateError,
 	TlsError,
 } from "../../../src/errors";
+import { createPlainMechanism } from "../../../src/sasl/plain";
 
 /** A minimal, inert fake command for exercising `run()`'s gating in
  *  isolation — never actually reaches the wire in these tests (gating
@@ -408,6 +412,149 @@ describe("ImapClient (spec §3.2/§3.3)", () => {
 			expect(caught).toBeInstanceOf(AuthError);
 			expect(client.state).toBe("disconnected");
 			expect(server.transcript.clientLines()).not.toMatch(/\bLOGIN\b/);
+		});
+	});
+
+	describe("run() bypass gate (CRITICAL-1: §10.3 cleartext credential policy enforced at run(), the chokepoint every submission passes through — not just inside performAuthSelection)", () => {
+		test("client.run(new LoginCommand(...)) directly, cleartext, allowInsecureAuth unset: TlsError('policy'), zero LOGIN bytes", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			// No `auth` config -- connect() leaves the client not-authenticated
+			// without ever calling performAuthSelection(); a bare `client.run()`
+			// call is the ONLY gate LoginCommand passes through here.
+			client = new ImapClient(baseConfig(server.port));
+			await client.connect();
+			const before = server.transcript.clientLines();
+
+			let caught: unknown;
+			try {
+				await client.run(new LoginCommand("u", "p"));
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(TlsError);
+			expect((caught as TlsError).reason).toBe("policy");
+			// Zero LOGIN bytes: the transcript is unchanged from before the call.
+			expect(server.transcript.clientLines()).toBe(before);
+			expect(server.transcript.clientLines()).not.toMatch(/\bLOGIN\b/);
+		});
+
+		test("client.run(new LoginCommand(...)) directly, cleartext, allowInsecureAuth:true: LOGIN is sent", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+					expectLine(command("LOGIN", { args: "u p" })),
+					reply("OK LOGIN completed"),
+				],
+			]);
+
+			client = new ImapClient({ ...baseConfig(server.port), allowInsecureAuth: true });
+			await client.connect();
+
+			await expect(client.run(new LoginCommand("u", "p"))).resolves.toBeUndefined();
+			await server.assertCompleted();
+		});
+
+		test("client.run(new LoginCommand(...)) over an already-secure (implicit TLS) transport is allowed even with allowInsecureAuth unset", async () => {
+			const localhost = loadCertFixture("localhost");
+			server = await ScriptedServer.start({ tlsImplicit: localhost });
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+					expectLine(command("LOGIN", { args: "u p" })),
+					reply("OK LOGIN completed"),
+				],
+			]);
+
+			client = new ImapClient({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: "on",
+				tlsOptions: { ca: [localhost.cert] },
+				timeouts: { connect: 2000, greeting: 2000 },
+			});
+			await client.connect();
+			expect(client.secure).toBe(true);
+
+			await expect(client.run(new LoginCommand("u", "p"))).resolves.toBeUndefined();
+			await server.assertCompleted();
+		});
+
+		test("client.run(new AuthenticateCommand(...)) directly, cleartext, allowInsecureAuth unset: TlsError('policy'), zero AUTHENTICATE bytes", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
+				],
+			]);
+
+			client = new ImapClient(baseConfig(server.port));
+			await client.connect();
+			const before = server.transcript.clientLines();
+
+			const mechanism = createPlainMechanism();
+			const ctx = { user: "u", pass: "p", host: "127.0.0.1", port: server.port };
+			const cmd = new AuthenticateCommand({
+				mechanism,
+				ctx,
+				initialResponse: await mechanism.start(ctx),
+				saslIrAllowed: true,
+			});
+
+			let caught: unknown;
+			try {
+				await client.run(cmd);
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(TlsError);
+			expect((caught as TlsError).reason).toBe("policy");
+			expect(server.transcript.clientLines()).toBe(before);
+			expect(server.transcript.clientLines()).not.toMatch(/AUTHENTICATE/);
+		});
+
+		test("client.run(new AuthenticateCommand(...)) directly, cleartext, allowInsecureAuth:true: AUTHENTICATE is sent", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+				],
+			]);
+
+			client = new ImapClient({ ...baseConfig(server.port), allowInsecureAuth: true });
+			await client.connect();
+
+			const mechanism = createPlainMechanism();
+			const ctx = { user: "u", pass: "p", host: "127.0.0.1", port: server.port };
+			const cmd = new AuthenticateCommand({
+				mechanism,
+				ctx,
+				initialResponse: await mechanism.start(ctx),
+				saslIrAllowed: true,
+			});
+
+			await expect(client.run(cmd)).resolves.toBeUndefined();
+			await server.assertCompleted();
 		});
 	});
 

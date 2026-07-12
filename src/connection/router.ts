@@ -150,6 +150,29 @@ export class Router {
 		};
 	}
 
+	/**
+	 * Clears every registry — tag map, claimant list, continuation owner
+	 * (CRITICAL-2, defense in depth). A `Router` instance lives for the
+	 * whole lifetime of its owning `Connection`, across reconnects, so
+	 * without this a command whose `executeCommand()` invocation never got
+	 * to run its own `finally` unregistration (the socket died before its
+	 * tagged response ever arrived — see `execute-command.ts`) would leave
+	 * a stale tag/claimant/continuation-owner registration that survives
+	 * into a LATER `connect()`/`authenticate()` on the SAME instance — for a
+	 * dangling `continuationOwner` in particular, that later
+	 * `registerContinuationOwner()` call throws synchronously
+	 * ("continuation owner already registered"), permanently breaking the
+	 * client. Called from `Connection.onSocketClose` and
+	 * `teardownFailedConnect`. Purely additive bookkeeping: does not itself
+	 * notify anything registered (a suspended `executeCommand()` wait is
+	 * unstuck separately via `Connection.onTeardown`).
+	 */
+	reset(): void {
+		this.tagMap.clear();
+		this.claimants.length = 0;
+		this.continuationOwner = null;
+	}
+
 	// -- routing (fed by connection.ts's parser fan-out) ---------------------
 
 	routeUntagged(resp: UntaggedResponse): void {

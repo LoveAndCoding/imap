@@ -5,7 +5,7 @@ import * as tls from "tls";
 import { TypedEmitter } from "tiny-typed-emitter";
 
 import { CapabilityCommand, StartTLSCommand, Command } from "../commands";
-import { IMAPError } from "../errors";
+import { ConnectionError, IMAPError } from "../errors";
 import NewlineTranform from "../newline.transform";
 import Lexer from "../lexer";
 import Parser, {
@@ -110,6 +110,41 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	private transientConnectError?: (err: unknown) => void;
 
 	/**
+	 * Teardown listeners (CRITICAL-2): fired whenever this connection's
+	 * transport tears down while a command may still be in flight
+	 * (`onSocketClose`, `teardownFailedConnect`) so `execute-command.ts` can
+	 * race a suspended continuation/tagged-response wait against teardown
+	 * instead of leaving it — and the `finally` cleanup that depends on it
+	 * running — dangling forever. See `onTeardown()`.
+	 */
+	private readonly teardownListeners = new Set<(err: ConnectionError) => void>();
+
+	/**
+	 * Registers `cb` to be invoked (with a `ConnectionError`) the next time
+	 * this connection tears down mid-flight. Returns an unsubscribe
+	 * function — `execute-command.ts` always calls it in its own `finally`
+	 * once a command settles (whether via teardown or normally), so a
+	 * long-lived `Connection` never accumulates one live listener per
+	 * historical command.
+	 */
+	public onTeardown(cb: (err: ConnectionError) => void): () => void {
+		this.teardownListeners.add(cb);
+		return () => {
+			this.teardownListeners.delete(cb);
+		};
+	}
+
+	/** Fires every currently-registered teardown listener with `err`, then
+	 *  clears the set (each registration is meant to fire at most once). */
+	private fireTeardown(err: ConnectionError): void {
+		const listeners = [...this.teardownListeners];
+		this.teardownListeners.clear();
+		for (const cb of listeners) {
+			cb(err);
+		}
+	}
+
+	/**
 	 * (Re-)attaches the transient connect-time error handler to the CURRENT
 	 * `this.socket`. Called after every socket (re)assignment during
 	 * `connect()` — including the mid-flight swap to the TLS socket in
@@ -145,6 +180,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.preauthed = false;
 		this.commandQueue.stop();
 		this.transientConnectError = undefined;
+		// CRITICAL-2: a command (e.g. the STARTTLS/CAPABILITY round trips that
+		// run DURING connect() itself) can be in flight when a connect()
+		// attempt aborts here — clear router state and unstick any suspended
+		// `executeCommand()` wait the same way a steady-state teardown does
+		// (see `onSocketClose`), so a stale registration can't survive into a
+		// later connect() attempt on this same instance.
+		this.router.reset();
+		this.fireTeardown(
+			new ConnectionError("Connection attempt aborted", { phase: "connect" }),
+		);
 	}
 
 	constructor(options: IMAPConnectionConfiguration) {
@@ -221,6 +266,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		}
 		this.socket = undefined;
 		const timeoutWait = timeout || DEFAULT_TIMEOUT;
+
+		// CRITICAL-2 adjacent: fresh newline-splitter/lexer/parser chain for
+		// THIS attempt — see `resetProcessingPipeline()`'s own doc comment for
+		// why reusing the previous attempt's (possibly already-`destroyed`)
+		// chain silently breaks incoming-data parsing on a later reconnect.
+		this.resetProcessingPipeline();
 
 		// CRITICAL-1: every attempt starts from a clean slate. Without this,
 		// a Connection that saw a rejected cleartext PREAUTH greeting on a
@@ -397,9 +448,31 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		this.socket!.off("error", this.transientConnectError!);
 		this.transientConnectError = undefined;
-		this.socket!.on("error", this.onSocketError);
-		this.socket!.once("end", this.onSocketEnd);
-		this.socket!.once("close", this.onSocketClose);
+		// CRITICAL-2 adjacent: `onSocketError`/`onSocketEnd`/`onSocketClose` are
+		// long-lived instance methods reused across every `connect()` on this
+		// same `Connection` — their bodies read `this.socket` (the CURRENT
+		// field), not a reference captured at bind time. A stale 'error'/
+		// 'end'/'close' event arriving LATE from an already-superseded socket
+		// (e.g. a mid-command drop immediately followed by a successful
+		// reconnect on the SAME instance, well within this same event-loop
+		// turn) would otherwise act on whatever `this.socket` NOW points to —
+		// stopping the queue, ending, or tearing down a totally unrelated,
+		// healthy connection. `guard()` makes each handler a no-op once
+		// `this.socket` has moved on from the socket it was registered
+		// against (including the ordinary case where an earlier handler for
+		// the SAME teardown already nulled it out).
+		const boundSocket = this.socket!;
+		const guard =
+			<A extends unknown[]>(fn: (...args: A) => void) =>
+			(...args: A) => {
+				if (this.socket !== boundSocket) {
+					return;
+				}
+				fn(...args);
+			};
+		boundSocket.on("error", guard(this.onSocketError));
+		boundSocket.once("end", guard(this.onSocketEnd));
+		boundSocket.once("close", guard(this.onSocketClose));
 
 		// Manually call because the ready event will likely have passed
 		this.onSocketReady();
@@ -430,6 +503,21 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// this instance starts from Not Authenticated again.
 		this.capabilityRegistry.invalidate();
 		this.preauthed = false;
+		// CRITICAL-2: clear router registries (tag map / claimants /
+		// continuation owner) and unstick any `executeCommand()` invocation
+		// still suspended waiting on a continuation or tagged response that
+		// will now never arrive — a mid-command socket drop otherwise leaves
+		// a stale `continuationOwner` that makes the NEXT
+		// connect()/authenticate() on this same instance throw synchronously
+		// ("continuation owner already registered"). Both run BEFORE
+		// 'disconnected' fires so a synchronous reconnect from a
+		// 'disconnected' listener never observes stale router state.
+		this.router.reset();
+		this.fireTeardown(
+			new ConnectionError("Connection closed while a command was pending", {
+				phase: "steady",
+			}),
+		);
 		this.emit("disconnected", !hadErr);
 	};
 	protected onSocketEnd = () => {
@@ -481,8 +569,28 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			emitUnhandled: (resp) => this.emit("unhandled", resp),
 			emitAlert: (text, meta) => this.emit("alert", text, meta),
 		});
+		this.resetProcessingPipeline();
+	}
 
-		// Setup our Lexing/Parsing
+	/**
+	 * (Re-)builds the whole newline-splitter -> lexer -> parser `.pipe()`
+	 * chain, and re-wires the parser's event fan-out into the (persistent)
+	 * `router`. CRITICAL-2 adjacent: called once from the constructor AND
+	 * fresh at the top of every `connect()` attempt (see below) — NOT just
+	 * once for the lifetime of this `Connection` instance. `.pipe()`
+	 * auto-`end()`s its destination once the SOURCE emits a graceful 'end'
+	 * (a FIN, as opposed to an abrupt RST, which produces 'close'/'error'
+	 * with no 'end' at all); a stream Node has fully finished is, by
+	 * default (`autoDestroy`), then also `destroyed`. Since `processingPipeline`
+	 * used to be built exactly once, in the constructor, ANY connection that
+	 * ended gracefully — an ordinary, successful teardown, not just a
+	 * mid-command drop — permanently killed it: bytes arriving on a LATER
+	 * `connect()`'s new socket would be piped into an already-destroyed
+	 * transform stream and simply vanish before ever reaching the parser,
+	 * surfacing as an inexplicable greeting/command timeout with no error at
+	 * all. Rebuilding the chain fresh every attempt is the fix.
+	 */
+	private resetProcessingPipeline(): void {
 		this.processingPipeline = new NewlineTranform({ allowHalfOpen: true });
 		this.lexer = new Lexer();
 		this.parser = new Parser();

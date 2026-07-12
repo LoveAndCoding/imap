@@ -38,9 +38,17 @@ function makeFakeConnection() {
 	const connection = {
 		capabilityRegistry: { value: null as { has(cap: string): boolean } | null },
 		router,
+		// `execute-command.ts`'s interactive-continuation write-back checks
+		// this before writing (CRITICAL-2 adjacent) — these tests never tear
+		// the fake connection down, so it stays live throughout.
+		isActive: true,
 		writeBytes: (buf: Buffer) => {
 			written.push(buf);
 		},
+		// CRITICAL-2: `executeCommand` subscribes to this (see
+		// `Connection.onTeardown`) — a fake connection needs it too, even
+		// though none of these tests fire it.
+		onTeardown: () => () => undefined,
 	};
 	return { connection: connection as never, written, router };
 }

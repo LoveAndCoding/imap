@@ -40,6 +40,10 @@ function makeFakeConnection() {
 		writeBytes: (buf: Buffer) => {
 			written.push(buf);
 		},
+		// CRITICAL-2: `executeCommand` subscribes to this (see
+		// `Connection.onTeardown`) — a fake connection needs it too, even
+		// though none of these tests fire it.
+		onTeardown: () => () => undefined,
 	};
 	return { connection: connection as never, written, router };
 }
