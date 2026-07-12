@@ -85,14 +85,13 @@ const expired = loadCertFixture("expired");
 // ── RFC8314-3.2-1: cert validation on the Implicit TLS (imaps) port ───────
 // Wrong-host cert over an Implicit TLS listener; CA trusted, so the only
 // failure mode is the identity mismatch. A conformant client refuses. The
-// current client performs no hostname verification → violation.
+// client performs hostname verification via connection/tls.ts → pass.
 complianceTest(
 	{
 		reqs: ["RFC8314-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title:
 			"Implicit TLS on imaps port: client rejects a certificate whose identity does not match the server",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -151,16 +150,14 @@ complianceTest(
 // PKIX (RFC 5280) certification-path validation includes the validity window.
 // The expired fixture has a MATCHING identity but an expired validity window;
 // even with the CA trusted, a conformant client MUST reject it — gracefully,
-// as a failed connect. OBSERVED: the client does not surface the rejection; it
-// hangs until the test-timeout fires (reporter counts this as a violation via
-// Fix 3). Annotated 'violation' — same shared TLS-rejection defect as the
-// hostname-mismatch/URI-ID hangs, isolated here to the expiry cause.
+// as a failed connect. The connection/tls.ts policy module's `rejectUnauthorized:
+// true` surfaces the expiry as a rejected promise (via the shared TLS-error
+// path) rather than hanging → pass.
 complianceTest(
 	{
 		reqs: ["RFC8314-5.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client rejects an expired server certificate (PKIX certification-path validation)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

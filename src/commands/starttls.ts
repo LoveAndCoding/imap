@@ -1,5 +1,4 @@
 import { TLSSocketError } from "../connection/errors";
-import { IMAPError } from "../errors";
 import { TaggedResponse } from "../parser";
 import { Command, StandardResponseTypes } from "./base";
 
@@ -16,7 +15,10 @@ export class StartTLSCommand extends Command<boolean> {
 		) as TaggedResponse;
 
 		if (!taggedResponse) {
-			return new IMAPError(`Unknown error trying to run STARTTLS`);
+			return new TLSSocketError(
+				`Unknown error trying to run STARTTLS`,
+				"handshake",
+			);
 		}
 
 		let msg: string;

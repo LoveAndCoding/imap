@@ -20,8 +20,10 @@
  * These duties predate and are restated by RFC 3501 §6.2.1/§11.1; the tests
  * mirror the RFC3501 STARTTLS/TLS-identity specs but cite the RFC 2595 family
  * ids so the source is scored independently. Known client defects reproduced:
- * hostname verification is absent (identity-mismatch tests → violation) and the
- * STARTTLS upgrade path is broken (STARTTLS-usage tests → violation).
+ * the STARTTLS upgrade path's choreography (capability re-issue, no-bytes
+ * invariant) is still broken (STARTTLS-usage tests → violation; a later
+ * milestone). Hostname/identity verification (implicit TLS) is now enforced
+ * by the connection/tls.ts policy module → pass.
  */
 import { expect } from "vitest";
 
@@ -45,13 +47,13 @@ const multiSan = loadCertFixture("multi-san");
 // identity (2.4-1); on mismatch it SHOULD ask for confirmation or terminate
 // (2.4-8). For an automated non-interactive client, termination is expected.
 // Wrong-host cert over Implicit TLS; CA trusted, so the only failure mode is
-// the identity mismatch. Current client performs no hostname check → violation.
+// the identity mismatch. The client performs the hostname check via
+// connection/tls.ts and rejects → pass.
 complianceTest(
 	{
 		reqs: ["RFC2595-2.4-1", "RFC2595-2.4-8"],
 		profiles: ["rev1", "rev2"],
 		title: "client rejects a certificate whose identity does not match the server hostname",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

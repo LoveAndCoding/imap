@@ -201,14 +201,13 @@ complianceTest(
 // The client MUST check the server hostname against the certificate identity.
 // Scenario: cert for wrong.example.test; client connects to 127.0.0.1 with the
 // cert's CA trusted, so the only failure path is the identity mismatch. A
-// conformant client refuses the connection. The current client does not verify
-// hostname → violation (mirrors RFC9525-6.6-1 / RFC3501-11.1-3).
+// conformant client refuses the connection. The client verifies hostname via
+// connection/tls.ts → pass (mirrors RFC9525-6.6-1 / RFC3501-11.1-3).
 complianceTest(
 	{
 		reqs: ["RFC9051-11.1-6"],
 		profiles: ["rev2"],
 		title: "implicit TLS: client rejects a certificate whose identity does not match the server hostname",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

@@ -41,7 +41,7 @@
  *   only failure mode is the identity mismatch. A conformant client must refuse
  *   the connection. This mirrors the RFC9525-6.6-1 scenario but cites the
  *   RFC3501 §11.1 ids. Both specs apply — multi-req citation is correct.
- *   Current client: does not perform hostname verification → violation/timeout.
+ *   The client performs hostname verification via connection/tls.ts → pass.
  *
  * RFC3501-11.1-7 (SAN dNSName precedence): Two scenarios:
  *   A. cert has SAN dNSName=localhost/IP=127.0.0.1, CN=wrong.example.test.
@@ -49,16 +49,23 @@
  *   B. cert has SAN dNSName=wrong.example.test, CN=localhost.
  *      A conformant client should REJECT: SAN is present but mismatches.
  *      (CN match is irrelevant when SAN is present — SAN takes precedence.)
- *      Current client does not enforce SAN mismatch → connects (violation).
+ *      Node's default checkServerIdentity enforces SAN precedence → rejects (pass).
  *
  * RFC3501-11.1-8 (post-STARTTLS check): The client MUST check whether acceptable
  *   security was achieved after STARTTLS. Scenario: STARTTLS upgrade to a server
  *   presenting a wrong-host certificate — the TLS handshake will fail due to
  *   identity mismatch (or, if the client doesn't check, will proceed when it
- *   shouldn't). Current driver: the connect() call with 'starttls' and a wrong
- *   cert fails immediately at the STARTTLS exchange level (broken STARTTLS).
- *   The test expectation is honest: we check whether ok === false and driver
- *   is inactive, capturing whatever failure the client produces.
+ *   shouldn't). Current driver: the STARTTLS upgrade now goes through
+ *   connection/tls.ts and correctly rejects the identity mismatch (connect()
+ *   rejects, ok === false, driver inactive). Still annotated 'violation'
+ *   because this scenario's server script also expects a post-abort CAPABILITY
+ *   round trip to complete (`server.assertCompleted()`) — a spec-compliant
+ *   client must not send further commands after a failed STARTTLS handshake
+ *   (§10.4 "connection is dead"), so that round trip can never happen; the
+ *   general STARTTLS choreography (capability re-issue, no-bytes invariant) is
+ *   a separate, later milestone. The test expectation is honest: we check
+ *   whether ok === false and driver is inactive, capturing whatever failure
+ *   the client produces.
  *
  * RFC3501-11.1-9 (wildcard MAY, case-insensitive, multiple names): The client
  *   connects by IP address (127.0.0.1), not by DNS name. Wildcard certificate
@@ -146,7 +153,6 @@ complianceTest(
 		reqs: ["RFC3501-11.1-3", "RFC3501-11.1-4", "RFC9525-6.6-1"],
 		profiles: ["rev1"],
 		title: "implicit TLS: client rejects certificate whose identity does not match the server hostname",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -228,7 +234,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"SAN precedence: client rejects connection when SAN dNSName mismatches, even if CN matches",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
