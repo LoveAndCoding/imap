@@ -95,7 +95,7 @@ class Lexer extends Transform {
 		// If we got an order value, we need to sort things after
 		const needToSort = typeof order === "number";
 		// If we didn't get an order, just append it to the end
-		if (!needToSort) {
+		if (typeof order !== "number") {
 			order = (this.rules[this.rules.length - 1]?.order || 0) + 1;
 		}
 
@@ -143,7 +143,7 @@ class Lexer extends Transform {
 			for (const { rule } of this.rules) {
 				partialMatchAtEnd =
 					partialMatchAtEnd ||
-					("matchIncludingEOL" in rule &&
+					(typeof rule.matchIncludingEOL === "function" &&
 						!!rule.matchIncludingEOL(matchedTokens));
 			}
 			// If we didn't have a match that includes the EOL
@@ -168,7 +168,7 @@ class Lexer extends Transform {
 		let processing = content;
 		let originalPos = 0;
 		while (processing.length) {
-			let token: ILexerToken<unknown> = null;
+			let token: ILexerToken<unknown> | null = null;
 			for (let r = 0; r < this.rules.length; r++) {
 				token = this.rules[r].rule.match(processing, originalPos);
 				if (token !== null) {

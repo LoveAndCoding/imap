@@ -1,8 +1,9 @@
 import { TokenizationError } from "../../../../src/errors";
 import { BigIntToken, NumberToken } from "../../../../src/lexer/tokens/number";
 import { TokenTypes } from "../../../../src/lexer/types";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/errors");
+vi.mock("../../../../src/errors");
 
 describe("NumberToken", () => {
 	test("Initializes correctly", () => {
@@ -31,7 +32,7 @@ describe("NumberToken", () => {
 	test("Throws TokenizationError for non-numeric values", () => {
 		// Arrange
 		const shouldThrow = () => new NumberToken("abc");
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 
@@ -49,7 +50,7 @@ describe("NumberToken", () => {
 		const shouldThrow = () => {
 			new NumberToken("10000000000000000000000000000000000");
 		};
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 
@@ -92,7 +93,7 @@ describe("BigIntToken", () => {
 		const shouldThrow = () => {
 			new BigIntToken("abc");
 		};
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 

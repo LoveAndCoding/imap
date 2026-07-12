@@ -1,13 +1,15 @@
-import { ILexerToken, TokenTypes } from "../types";
+import { ILexerToken, TokenTypeTrueValueMap, TokenTypes } from "../types";
 
 export abstract class BaseToken<T> implements ILexerToken<T> {
-	readonly value: string;
+	abstract readonly value: string;
 
 	constructor(public readonly type: TokenTypes) {}
 
 	abstract getTrueValue(): T;
 
-	isType(type: TokenTypes) {
+	isType<TT extends TokenTypes>(
+		type: TT,
+	): this is ILexerToken<TokenTypeTrueValueMap[TT]> {
 		return this.type === type;
 	}
 }

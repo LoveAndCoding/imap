@@ -1,7 +1,8 @@
 import { NilRule } from "../../../../src/lexer/rules/nil";
 import { NilToken } from "../../../../src/lexer/tokens/nil";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/lexer/tokens/nil");
+vi.mock("../../../../src/lexer/tokens/nil");
 
 describe("NilRule", () => {
 	// We'll always need a rule, so just make one for each test
@@ -13,7 +14,7 @@ describe("NilRule", () => {
 	test("Matches a NIL value", () => {
 		// Arrange
 		const str = "NIL";
-		const NilTokenMock = NilToken as jest.MockedClass<typeof NilToken>;
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
 
 		// Act
 		const match = rule.match(str);
@@ -26,7 +27,7 @@ describe("NilRule", () => {
 	test("Partial match on a NIL value with other values", () => {
 		// Arrange
 		const str = "NIL LIONAIRE";
-		const NilTokenMock = NilToken as jest.MockedClass<typeof NilToken>;
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
 
 		// Act
 		const match = rule.match(str);
@@ -42,7 +43,7 @@ describe("NilRule", () => {
 	test("No match for a lowercase nil", () => {
 		// Arrange
 		const str = "nil";
-		const NilTokenMock = NilToken as jest.MockedClass<typeof NilToken>;
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
 
 		// Act
 		const match = rule.match(str);

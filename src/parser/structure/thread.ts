@@ -10,7 +10,7 @@ class ThreadMessage {
 
 	public static parseThread(tokens: LexerTokenList) {
 		const sets = splitSpaceSeparatedList(tokens);
-		let msg: number;
+		let msg: number | undefined;
 
 		if (
 			sets[0] &&

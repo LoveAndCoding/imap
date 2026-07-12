@@ -14,12 +14,12 @@ export class MailboxStatus {
 
 	public readonly name: string;
 
-	public readonly highestmodseq: number | bigint;
-	public readonly messages: number;
-	public readonly recent: number;
-	public readonly uidnext: number;
-	public readonly uidvalidity: number;
-	public readonly unseen: number;
+	public readonly highestmodseq?: number | bigint;
+	public readonly messages?: number;
+	public readonly recent?: number;
+	public readonly uidnext?: number;
+	public readonly uidvalidity?: number;
+	public readonly unseen?: number;
 
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [

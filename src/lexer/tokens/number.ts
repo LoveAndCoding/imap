@@ -15,7 +15,6 @@ export const MAX_ALLOWED_NUMBER = 4294967296;
 export class NumberToken
 	extends BaseToken<number>
 	implements ILexerToken<number> {
-	public readonly type: TokenTypes;
 	private readonly number: number;
 
 	constructor(public readonly value: string) {
@@ -48,7 +47,6 @@ export class NumberToken
 export class BigIntToken
 	extends BaseToken<bigint>
 	implements ILexerToken<bigint> {
-	public readonly type: TokenTypes;
 	private readonly number: bigint;
 
 	constructor(public readonly value: string) {

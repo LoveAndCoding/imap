@@ -61,7 +61,8 @@ export class MessageHeader {
 			if (!this.fields.has(field)) {
 				this.fields.set(field, contents);
 			} else {
-				let allContents = this.fields.get(field);
+				// Safe: we just confirmed `this.fields.has(field)` above
+				let allContents = this.fields.get(field)!;
 				if (!Array.isArray(allContents)) {
 					allContents = [allContents];
 				}
@@ -94,9 +95,9 @@ export function match(
 			length,
 		} = MessageBodySection.getBodySectionInfo(tokens);
 
-		if (type.startsWith("HEADER")) {
+		if (type?.startsWith("HEADER")) {
 			return {
-				match: new MessageHeader(text, offset),
+				match: new MessageHeader(text ?? undefined, offset),
 				length,
 			};
 		}
@@ -110,7 +111,7 @@ export function match(
 
 	if (isRFCHeaderMatch) {
 		return {
-			match: new MessageHeader(getNStringValue(tokens[2])),
+			match: new MessageHeader(getNStringValue(tokens[2]) ?? undefined),
 			length: 3,
 		};
 	}

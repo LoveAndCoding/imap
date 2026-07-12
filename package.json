@@ -14,15 +14,18 @@
 	},
 	"scripts": {
 		"build": "tsc -d",
-		"test": "jest",
-		"test:all": "test && test:e2e && test:old",
-		"test:e2e": "jest --testMatch=\"**/test/e2e/**/*.test.ts\"",
-		"test:old": "node test/test.js",
+		"typecheck": "tsc --noEmit",
+		"lint": "eslint .",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"test": "vitest run test/unit test/integration --coverage",
+		"test:all": "npm test && npm run test:e2e && npm run test:compliance",
+		"test:e2e": "vitest run test/e2e",
 		"test:compliance": "vitest run --config test/compliance/vitest.config.ts",
 		"typecheck:compliance": "tsc -p test/compliance/tsconfig.json --noEmit"
 	},
 	"engines": {
-		"node": ">=14.0.0"
+		"node": ">=22.0.0"
 	},
 	"keywords": [
 		"imap",
@@ -42,16 +45,15 @@
 		"url": "git+ssh://git@github.com/LoveAndCoding/imap.git"
 	},
 	"devDependencies": {
-		"@types/jest": "^26.0.23",
-		"@types/node": "^12.7.12",
-		"@typescript-eslint/eslint-plugin": "^4.26.0",
-		"@typescript-eslint/parser": "^4.26.0",
-		"eslint": "^7.28.0",
-		"eslint-config-prettier": "^8.3.0",
-		"jest": "^27.0.4",
-		"ts-jest": "^27.0.3",
-		"typescript": "^4.3.2",
-		"vitest": "4.1.8"
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^22.9.4",
+		"@vitest/coverage-v8": "^4.1.10",
+		"eslint": "^10.7.0",
+		"eslint-config-prettier": "^10.1.8",
+		"prettier": "^3.9.5",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.63.0",
+		"vitest": "^4.1.10"
 	},
 	"bugs": {
 		"url": "https://github.com/LoveAndCoding/imap/issues"
@@ -61,8 +63,5 @@
 		"lib": "src",
 		"test": "test"
 	},
-	"license": "MIT",
-	"resolutions": {
-		"vite": "^6.0.0"
-	}
+	"license": "MIT"
 }

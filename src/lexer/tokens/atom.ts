@@ -10,8 +10,6 @@ import { BaseToken } from "./base";
 export class AtomToken
 	extends BaseToken<string>
 	implements ILexerToken<string> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: string) {
 		super(TokenTypes.atom);
 	}

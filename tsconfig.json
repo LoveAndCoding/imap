@@ -3,11 +3,9 @@
 		"module": "commonjs",
 		"noImplicitAny": false,
 		"outDir": "dist",
-		"baseUrl": ".",
-		"paths": {
-			"*": ["node_modules/*"]
-		},
-		"target": "ES2020"
+		"rootDir": "src",
+		"target": "ES2022",
+		"types": ["node"]
 	},
 	"include": ["src/**/*"]
 }

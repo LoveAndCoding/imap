@@ -26,7 +26,7 @@ type AdditionalExtensionData =
 
 type Disposition = {
 	type: string;
-	attributes: Map<string, string>;
+	attributes: null | Map<string, string>;
 };
 
 // From spec:
@@ -40,11 +40,11 @@ type Disposition = {
 //   body-fields     = body-fld-param SP body-fld-id SP body-fld-desc SP
 //                     body-fld-enc SP body-fld-octets
 export class MessageBodyStructure {
-	public readonly mediaType: string;
-	public readonly mediaSubType: string;
+	public readonly mediaType: null | string;
+	public readonly mediaSubType: null | string;
 	public readonly parameters: null | Map<string, string>;
-	public readonly id: string;
-	public readonly description: string;
+	public readonly id: null | string;
+	public readonly description: null | string;
 	public readonly encoding: null | string;
 	public readonly octets: number;
 	// Message type structures
@@ -55,12 +55,14 @@ export class MessageBodyStructure {
 	// Extension data
 	public readonly md5?: null | string;
 	public readonly disposition?: null | Disposition;
-	public readonly language?: string[];
-	public readonly location?: string;
-	public readonly additionalExtensionData: AdditionalExtensionData;
+	public readonly language?: null | string[];
+	public readonly location?: null | string;
+	public readonly additionalExtensionData?: AdditionalExtensionData;
 
 	// From spec: body-fld-dsp    = "(" string SP body-fld-param ")" / nil
-	public static parseDisposition(disposition: LexerTokenList): Disposition {
+	public static parseDisposition(
+		disposition: LexerTokenList,
+	): Disposition | null | undefined {
 		if (disposition && disposition.length) {
 			if (
 				disposition.length === 1 &&
@@ -94,7 +96,9 @@ export class MessageBodyStructure {
 	}
 
 	// From spec: body-fld-lang   = nstring / "(" string *(SP string) ")"
-	public static parseLanguage(lang: LexerTokenList): string[] {
+	public static parseLanguage(
+		lang: LexerTokenList,
+	): string[] | null | undefined {
 		if (lang && lang.length === 1) {
 			const val = getNStringValue(lang);
 			if (val !== null) {
@@ -262,11 +266,11 @@ export class MessageBodyStructure {
 //                     [SP body-ext-mpart]
 export class MessageBodyMultipartStructure {
 	public readonly additionalExtensionData?: AdditionalExtensionData;
-	public readonly parameters?: Map<string, string>;
-	public readonly disposition?: Disposition;
-	public readonly language?: string[];
-	public readonly location?: string;
-	public readonly structures = [];
+	public readonly parameters?: null | Map<string, string>;
+	public readonly disposition?: null | Disposition;
+	public readonly language?: null | string[];
+	public readonly location?: null | string;
+	public readonly structures: MessageBodyStructure[] = [];
 
 	constructor(
 		partTokens: LexerTokenList,

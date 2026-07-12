@@ -12,12 +12,15 @@ export type ResponseType =
 	| ContinueResponse
 	| TaggedResponse
 	| UntaggedResponse
-	| UnknownResponse;
+	| UnknownResponse
+	| null;
 
 interface IParserEvents {
 	continue: (response: ContinueResponse) => void;
 	tagged: (repsonse: TaggedResponse) => void;
-	unknown: (repsonse: UnknownResponse) => void;
+	// `null` here accommodates `parseTokens` returning `null` for a
+	// malformed/too-short token list — see the flag comment there.
+	unknown: (repsonse: UnknownResponse | null) => void;
 	untagged: (reponse: UntaggedResponse) => void;
 
 	// Definitions from ReadableStream/WriteableStream
@@ -76,7 +79,7 @@ class Parser extends Transform {
 		_: any,
 		done: (error?: Error) => void,
 	) {
-		let error: Error;
+		let error: Error | undefined;
 		try {
 			const resp = this.parseTokens(tokens);
 			this.push(resp);
@@ -90,13 +93,19 @@ class Parser extends Transform {
 				this.emit("unknown", resp);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err : new Error(err);
+			error = err instanceof Error ? err : new Error(String(err));
 		}
 		done(error);
 	}
 
 	public parseTokens(tokens: LexerTokenList): ResponseType {
 		if (!tokens || tokens.length < 2) {
+			// FLAG: this `null` return flows into `this.push(resp)` in
+			// `_transform` below. `Readable.push(null)` is normally the
+			// signal that ends a Node stream, which seems unlikely to be
+			// the intent here for a merely too-short/malformed token
+			// list. Preserving existing behavior as-is; needs a human
+			// call on what should actually happen in this case.
 			return null;
 		}
 

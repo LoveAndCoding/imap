@@ -23,7 +23,7 @@ export type IdCommandValues = Partial<
 	}
 >;
 
-export type IdResponseMap = ReadonlyMap<string, null | string>;
+export type IdResponseMap = null | ReadonlyMap<string, null | string>;
 
 const DEFAULT_ID_OPTS: IdCommandValues = {
 	name: "node-imap",
@@ -44,7 +44,7 @@ export class IdCommand extends Command<IdResponseMap> {
 			return this.type;
 		}
 
-		const keyValPairs = [];
+		const keyValPairs: string[] = [];
 		for (const [key, val] of Object.entries(this.valuesToSend)) {
 			if (key in IdCommandKeys) {
 				keyValPairs.push(createIMAPSafeString(key));

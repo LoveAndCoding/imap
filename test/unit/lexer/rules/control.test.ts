@@ -8,8 +8,9 @@ import {
 	OperatorToken,
 	SPToken,
 } from "../../../../src/lexer/tokens/control";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/lexer/tokens/control");
+vi.mock("../../../../src/lexer/tokens/control");
 
 describe("OperatorRule", () => {
 	// We'll always need a rule, so just make one for each test
@@ -21,7 +22,7 @@ describe("OperatorRule", () => {
 	test("Matches a known operator value", () => {
 		// Arrange
 		const str = "*";
-		const OperatorTokenMock = OperatorToken as jest.MockedClass<
+		const OperatorTokenMock = OperatorToken as MockedClass<
 			typeof OperatorToken
 		>;
 
@@ -36,7 +37,7 @@ describe("OperatorRule", () => {
 	test("Matches only a single known operator value", () => {
 		// Arrange
 		const str = "*";
-		const OperatorTokenMock = OperatorToken as jest.MockedClass<
+		const OperatorTokenMock = OperatorToken as MockedClass<
 			typeof OperatorToken
 		>;
 
@@ -51,7 +52,7 @@ describe("OperatorRule", () => {
 	test("Doesn't match space value", () => {
 		// Arrange
 		const str = " ";
-		const OperatorTokenMock = OperatorToken as jest.MockedClass<
+		const OperatorTokenMock = OperatorToken as MockedClass<
 			typeof OperatorToken
 		>;
 
@@ -74,7 +75,7 @@ describe("SPRule", () => {
 	test("Matches a space character", () => {
 		// Arrange
 		const str = " ";
-		const SPTokenMock = SPToken as jest.MockedClass<typeof SPToken>;
+		const SPTokenMock = SPToken as MockedClass<typeof SPToken>;
 
 		// Act
 		const match = rule.match(str);
@@ -87,7 +88,7 @@ describe("SPRule", () => {
 	test("Matches only a single space character at a time", () => {
 		// Arrange
 		const str = " ";
-		const SPTokenMock = SPToken as jest.MockedClass<typeof SPToken>;
+		const SPTokenMock = SPToken as MockedClass<typeof SPToken>;
 
 		// Act
 		const match = rule.match(str.repeat(3));
@@ -103,7 +104,7 @@ describe("SPRule", () => {
 		const lf = "\n";
 		const tab = "\t";
 		const nbsp = "\u00A0";
-		const SPTokenMock = SPToken as jest.MockedClass<typeof SPToken>;
+		const SPTokenMock = SPToken as MockedClass<typeof SPToken>;
 
 		// Act
 		const crMatch = rule.match(cr);
@@ -130,7 +131,7 @@ describe("CRLFRule", () => {
 	test("Matches a space character", () => {
 		// Arrange
 		const str = "\r\n";
-		const CRLFTokenMock = CRLFToken as jest.MockedClass<typeof CRLFToken>;
+		const CRLFTokenMock = CRLFToken as MockedClass<typeof CRLFToken>;
 
 		// Act
 		const match = rule.match(str);
@@ -143,7 +144,7 @@ describe("CRLFRule", () => {
 	test("Matches only a single space character at a time", () => {
 		// Arrange
 		const str = "\r\n";
-		const CRLFTokenMock = CRLFToken as jest.MockedClass<typeof CRLFToken>;
+		const CRLFTokenMock = CRLFToken as MockedClass<typeof CRLFToken>;
 
 		// Act
 		const match = rule.match(str.repeat(3));
@@ -161,7 +162,7 @@ describe("CRLFRule", () => {
 		const tab = "\t";
 		const sp = " ";
 		const nbsp = "\u00A0";
-		const CRLFTokenMock = CRLFToken as jest.MockedClass<typeof CRLFToken>;
+		const CRLFTokenMock = CRLFToken as MockedClass<typeof CRLFToken>;
 
 		// Act
 		const crMatch = rule.match(cr);

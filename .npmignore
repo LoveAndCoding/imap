@@ -1,6 +1,8 @@
 .eslint*
 .git*
 .prettier*
+eslint.config.js
+vitest.config.ts
 tsconfig.json
 node_modules/*
 src/*

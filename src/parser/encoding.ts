@@ -12,7 +12,7 @@ export function decodeBytes(
 	mlen: number,
 	pendoffset: number,
 	state: IState,
-	nextBuf: Buffer,
+	nextBuf: Buffer | undefined,
 ) {
 	if (encodingExists(encoding)) {
 		if (state.buffer !== undefined) {
@@ -43,7 +43,7 @@ export function decodeBytes(
 			try {
 				ret = new TextDecoder(encoding).decode(buf);
 			} catch (e) {
-				if (e.message.indexOf("Seeking") === 0) {
+				if (e instanceof Error && e.message.indexOf("Seeking") === 0) {
 					isPartial = true;
 				}
 			}
@@ -139,15 +139,15 @@ export function decodeWords(str: string, state?: IState) {
 			curReplace: undefined,
 			encoding: undefined,
 			remainder: undefined,
-			replaces: undefined,
+			replaces: [],
 		};
 	}
 
 	state.replaces = [];
 
 	let bytes: Buffer;
-	let regexMatch: RegExpExecArray;
-	let next: ISequence;
+	let regexMatch: RegExpExecArray | null;
+	let next: ISequence | undefined;
 	let i: number;
 	let j: number;
 	let leni: number;
@@ -237,7 +237,7 @@ export function decodeWords(str: string, state?: IState) {
 				str =
 					str.substring(0, rpl[j].fromOffset) +
 					rpl[j].val +
-					str.substring(seq[j].toOffset);
+					str.substring(rpl[j].toOffset);
 			}
 		} else {
 			str =

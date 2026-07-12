@@ -41,7 +41,9 @@ export class ParsingError extends Error {
 			inputStr = "";
 			this.input.forEach((i) => (inputStr += i.value));
 		} else {
-			inputStr = this.input;
+			// Array.prototype.join treats undefined/null entries as an
+			// empty string, so match that here for a missing input.
+			inputStr = this.input ?? "";
 		}
 
 		return [this.message, inputStr].join("\n");

@@ -199,7 +199,7 @@ export function match(
 		if (contents[0] && contents[0].isType(TokenTypes.space)) {
 			contents.shift();
 		}
-		let code: TextCode = null;
+		let code: TextCode;
 		switch (kind) {
 			case "APPENDUID":
 				code = new AppendUIDTextCode(contents);

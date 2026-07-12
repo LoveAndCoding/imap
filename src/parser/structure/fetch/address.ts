@@ -49,7 +49,7 @@ export class AddressList {
 
 		// Remove the surrounding () tokens
 		const addrs = splitUnseparatedListofLists(tokens.slice(1, -1));
-		let currGroup: AddressGroup;
+		let currGroup: AddressGroup | undefined;
 		for (const addr of addrs) {
 			const parsed = new Address(addr);
 

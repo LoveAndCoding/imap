@@ -1,7 +1,8 @@
 import { NumberRule } from "../../../../src/lexer/rules/number";
 import { BigIntToken, NumberToken } from "../../../../src/lexer/tokens/number";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/lexer/tokens/number");
+vi.mock("../../../../src/lexer/tokens/number");
 
 describe("NumberRule", () => {
 	// We'll always need a rule, so just make one for each test
@@ -13,7 +14,7 @@ describe("NumberRule", () => {
 	test("Matches a simple integer value", () => {
 		// Arrange
 		const str = "13";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
+		const NumberTokenMock = NumberToken as MockedClass<
 			typeof NumberToken
 		>;
 
@@ -28,7 +29,7 @@ describe("NumberRule", () => {
 	test("Matches an large integer value with bigint", () => {
 		// Arrange
 		const str = "1300000000000000000000";
-		const BigIntTokenMock = BigIntToken as jest.MockedClass<
+		const BigIntTokenMock = BigIntToken as MockedClass<
 			typeof BigIntToken
 		>;
 
@@ -43,7 +44,7 @@ describe("NumberRule", () => {
 	test("Partial match to a number with other characters", () => {
 		// Arrange
 		const str = "10abc";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
+		const NumberTokenMock = NumberToken as MockedClass<
 			typeof NumberToken
 		>;
 
@@ -58,7 +59,7 @@ describe("NumberRule", () => {
 	test("Partial match to integer part of a float", () => {
 		// Arrange
 		const str = "1.3";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
+		const NumberTokenMock = NumberToken as MockedClass<
 			typeof NumberToken
 		>;
 
@@ -73,7 +74,7 @@ describe("NumberRule", () => {
 	test("No match for negative values", () => {
 		// Arrange
 		const str = "-10";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
+		const NumberTokenMock = NumberToken as MockedClass<
 			typeof NumberToken
 		>;
 
@@ -88,7 +89,7 @@ describe("NumberRule", () => {
 	test("No match for non-number values", () => {
 		// Arrange
 		const str = "abc";
-		const NumberTokenMock = NumberToken as jest.MockedClass<
+		const NumberTokenMock = NumberToken as MockedClass<
 			typeof NumberToken
 		>;
 
