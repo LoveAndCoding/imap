@@ -1,16 +1,43 @@
-import CommandQueue, { AsyncQueueContext } from "../../../src/connection/queue";
 import { vi } from "vitest";
 
+import { ConnectionError } from "../../../src/errors";
+
+// `AsyncQueueContext`/`CommandQueue` now do real wire I/O (tag assignment,
+// `CommandWriter` serialization, router attribution) via
+// `connection/execute-command.ts`'s `executeCommand()` for every dispatched
+// command. That module is exercised end-to-end elsewhere (the command
+// lifecycle / literal-gate tests); here we mock it so these tests can stay
+// focused on what they always tested — SCHEDULING (context grouping,
+// pipeline/serial/isolated grouping, hold/release, cancellation) — without
+// needing a real socket/router/parser underneath every fake command.
+vi.mock("../../../src/connection/execute-command", () => ({
+	executeCommand: vi.fn(),
+}));
+
+import { executeCommand } from "../../../src/connection/execute-command";
+import CommandQueue, { AsyncQueueContext } from "../../../src/connection/queue";
+
+const mockExecuteCommand = executeCommand as unknown as ReturnType<typeof vi.fn>;
+
+/** A fake `Command<any>` — the queue only ever reads `.queueMode` off it
+ *  directly; everything else is handled by the (mocked) `executeCommand`. */
+function fakeCommand(queueMode: "pipeline" | "serial" | "isolated" = "pipeline"): any {
+	return { queueMode, verb: "FAKE" };
+}
+
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
 describe("AsyncQueueContext", () => {
+	beforeEach(() => {
+		mockExecuteCommand.mockReset();
+		mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
+	});
+
 	describe(".constructor", () => {
 		test("Sets initial state", () => {
-			// Arrange
 			const connMock: any = vi.fn();
-
-			// Act
 			const ctx = new AsyncQueueContext(connMock, true, true);
 
-			// Assert
 			expect(ctx.connection).toEqual(connMock);
 			expect(ctx.isIsolated).toEqual(true);
 			expect(ctx.running).toEqual(true);
@@ -21,38 +48,28 @@ describe("AsyncQueueContext", () => {
 
 	describe(".add", () => {
 		test("Adds a new command to the queue", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const ctx = new AsyncQueueContext(connMock);
-			const cmdMock: any = vi.fn();
 
-			// Act
-			ctx.add(cmdMock);
+			ctx.add(fakeCommand());
 
-			// Assert
 			expect(ctx.commands).toBeInstanceOf(Set);
 			expect(ctx.commands.size).toBe(1);
-			expect(ctx.commands.values().next().value).toBe(cmdMock);
 		});
 
-		test("Adds a new command to the queue and starts it if running", () => {
-			// Arrange
+		test("Adds a new command to the queue and starts it (executeCommand called) if running", () => {
 			const connMock: any = vi.fn();
 			const ctx = new AsyncQueueContext(connMock, true);
-			const cmdMock: any = { run: vi.fn() };
-			cmdMock.run.mockImplementation(() => Promise.resolve());
+			mockExecuteCommand.mockResolvedValue(null);
 
-			// Act
-			ctx.add(cmdMock);
+			ctx.add(fakeCommand());
 
-			// Assert
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
 		});
 	});
 
 	describe(".run", () => {
 		test("Triggers idle event if no commands to run", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const ctx = new AsyncQueueContext(connMock);
 			let startTriggered = false;
@@ -60,41 +77,36 @@ describe("AsyncQueueContext", () => {
 			ctx.once("start", () => (startTriggered = true));
 			ctx.once("idle", () => (idleTriggered = true));
 
-			// Act
 			ctx.run();
 
-			// Assert
 			expect(startTriggered).toBe(true);
 			expect(idleTriggered).toBe(true);
 		});
 
-		test("Starts commands if there are commands to run", () => {
-			// Arrange
+		test("Starts commands (calls executeCommand) if there are commands to run", () => {
 			const connMock: any = vi.fn();
 			const ctx = new AsyncQueueContext(connMock);
-			const cmdMock: any = { run: vi.fn() };
-			cmdMock.run.mockImplementation(() => Promise.resolve());
-			ctx.commands.add(cmdMock);
+			mockExecuteCommand.mockResolvedValue(null);
+			ctx.add(fakeCommand());
 
-			// Act
 			ctx.run();
 
-			// Assert
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
 		});
 	});
 });
 
 describe("CommandQueue", () => {
+	beforeEach(() => {
+		mockExecuteCommand.mockReset();
+		mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
+	});
+
 	describe(".constructor", () => {
 		test("Sets initial state", () => {
-			// Arrange
 			const connMock: any = vi.fn();
-
-			// Act
 			const q = new CommandQueue(connMock);
 
-			// Assert
 			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(0);
 		});
@@ -102,118 +114,158 @@ describe("CommandQueue", () => {
 
 	describe(".add", () => {
 		test("Creates new queue context when queue is empty", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
-			const cmdMock: any = { run: vi.fn() };
+			const cmd = fakeCommand();
 
-			// Act
-			q.add(cmdMock);
+			q.add(cmd);
 
-			// Assert
 			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(1);
 			expect(q.queueContexts[0].commands.size).toBe(1);
-			expect(q.queueContexts[0].commands.values().next().value).toEqual(
-				cmdMock,
-			);
 		});
 
-		test("Creates new queue context when existing context requires isolation", () => {
-			// Arrange
+		test("Creates new queue context when existing context is isolated", () => {
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			const ctxMock: any = { isIsolated: true };
 			q.queueContexts.push(ctxMock);
-			const cmdMock: any = { run: vi.fn() };
 
-			// Act
-			q.add(cmdMock);
+			q.add(fakeCommand());
 
-			// Assert
 			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(2);
 			expect(q.queueContexts[1].isIsolated).toBe(false);
 			expect(q.queueContexts[1].commands.size).toBe(1);
-			expect(q.queueContexts[1].commands.values().next().value).toEqual(
-				cmdMock,
-			);
 		});
 
-		test("Creates new queue context when command requires isolation", () => {
-			// Arrange
+		test("Creates a new (own) queue context for a serial command when the current context already has commands", () => {
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			const ctxMock: any = { isIsolated: false, size: 1 };
 			q.queueContexts.push(ctxMock);
-			const cmdMock: any = { run: vi.fn(), requiresOwnContext: true };
 
-			// Act
-			q.add(cmdMock);
+			q.add(fakeCommand("serial"));
 
-			// Assert
-			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(2);
 			expect(q.queueContexts[1].isIsolated).toBe(true);
 			expect(q.queueContexts[1].commands.size).toBe(1);
-			expect(q.queueContexts[1].commands.values().next().value).toEqual(
-				cmdMock,
-			);
+		});
+
+		test("Creates a new (own) queue context for an isolated command when the current context already has commands", () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			const ctxMock: any = { isIsolated: false, size: 1 };
+			q.queueContexts.push(ctxMock);
+
+			q.add(fakeCommand("isolated"));
+
+			expect(q.queueContexts).toHaveLength(2);
+			expect(q.queueContexts[1].isIsolated).toBe(true);
+		});
+
+		test("pipeline commands share the current (non-isolated, non-empty) context", () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			const ctxMock: any = { isIsolated: false, size: 1, add: vi.fn() };
+			q.queueContexts.push(ctxMock);
+
+			q.add(fakeCommand("pipeline"));
+
+			// No new context — the pipeline command was added to the existing one.
+			expect(q.queueContexts).toHaveLength(1);
+			expect(ctxMock.add).toHaveBeenCalledTimes(1);
 		});
 	});
 
 	describe("context lifecycle", () => {
-		const flushMicrotasks = () =>
-			new Promise((resolve) => setImmediate(resolve));
-
 		test("Runs a command queued after an isolated command once the isolated context completes", async () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
-			const isolatedCmd: any = {
-				run: vi.fn(() => Promise.resolve()),
-				requiresOwnContext: true,
-				emit: vi.fn(),
-			};
-			const followupCmd: any = {
-				run: vi.fn(() => Promise.resolve()),
-				emit: vi.fn(),
-			};
+			let resolveIsolated!: () => void;
+			mockExecuteCommand
+				.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveIsolated = resolve)))
+				.mockImplementationOnce(() => Promise.resolve());
 
-			// Act
 			q.start();
-			q.add(isolatedCmd);
-			q.add(followupCmd);
+			q.add(fakeCommand("isolated"));
+			q.add(fakeCommand("pipeline"));
 			await flushMicrotasks();
 
-			// Assert: the isolated context completed, was removed, and the
-			// next context became active and ran its command. Before the
-			// removeQueueContext fix the completed isolated context pinned
-			// the queue and followupCmd.run was never called.
-			expect(isolatedCmd.run).toBeCalled();
-			expect(followupCmd.run).toBeCalled();
+			// The follow-up pipeline command's own context hasn't started yet —
+			// only one call to executeCommand so far (the isolated one).
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(1);
+
+			resolveIsolated();
+			await flushMicrotasks();
+
+			// The isolated context completed, was removed, and the next context
+			// became active and ran its command.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(2);
 		});
 
 		test("Emits idle and empties contexts once all commands complete", async () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
-			const cmdMock: any = {
-				run: vi.fn(() => Promise.resolve()),
-				emit: vi.fn(),
-			};
+			mockExecuteCommand.mockResolvedValue(null);
 			let idleTriggered = false;
 			q.once("idle", () => (idleTriggered = true));
 
-			// Act
 			q.start();
-			q.add(cmdMock);
+			q.add(fakeCommand());
 			await flushMicrotasks();
 
-			// Assert
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
 			expect(idleTriggered).toBe(true);
 			expect(q.queueContexts).toHaveLength(0);
+		});
+
+		test("pipeline commands sharing a context are concurrently in flight", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
+
+			q.start();
+			q.add(fakeCommand("pipeline"));
+			q.add(fakeCommand("pipeline"));
+
+			// Both were dispatched immediately — pipeline mode allows concurrent
+			// in-flight commands sharing one context, no waiting for the first.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(2);
+			expect(q.queueContexts).toHaveLength(1);
+		});
+
+		test("serial exclusivity: a serial command doesn't run concurrently with a pipeline command ahead of it, and a follow-up pipeline command waits for the serial one to drain", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			let resolveA!: () => void;
+			let resolveB!: () => void;
+			mockExecuteCommand
+				.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveA = resolve))) // A (pipeline)
+				.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveB = resolve))) // B (serial)
+				.mockImplementationOnce(() => Promise.resolve()); // C (pipeline)
+
+			q.start();
+			q.add(fakeCommand("pipeline")); // A — context #1
+			q.add(fakeCommand("serial")); // B — forced into its own context (#1 is non-empty)
+			q.add(fakeCommand("pipeline")); // C — the context ahead of it (B's) is isolated, so C also gets its own
+			await flushMicrotasks();
+
+			// Only A has actually been dispatched — B/C's contexts haven't been
+			// promoted to active yet (context #1 hasn't drained).
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(1);
+
+			resolveA();
+			await flushMicrotasks();
+
+			// B now runs alone; C still waits.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(2);
+
+			resolveB();
+			await flushMicrotasks();
+
+			// C finally runs, only once B has fully drained.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(3);
 		});
 	});
 
@@ -221,142 +273,121 @@ describe("CommandQueue", () => {
 	// after sending its own command so that nothing else can write bytes
 	// between the tagged OK and the completion of the TLS handshake.
 	describe("hold/release (I-1: no bytes between STARTTLS OK and handshake completion)", () => {
-		const flushMicrotasks = () =>
-			new Promise((resolve) => setImmediate(resolve));
-
 		test("a command added while held is not dispatched until release()", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			q.start();
-			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+			mockExecuteCommand.mockResolvedValue(null);
 
-			// Act: simulate the window between the STARTTLS tagged OK and the
-			// handshake completing — nothing may be written while held.
 			q.hold();
-			q.add(cmdMock);
+			q.add(fakeCommand());
 
-			// Assert: held, so no bytes for this command have been written yet.
-			expect(cmdMock.run).not.toBeCalled();
+			expect(mockExecuteCommand).not.toBeCalled();
 
-			// Act: handshake completes, the hold is lifted.
 			q.release();
 
-			// Assert: only now does the withheld command actually write.
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
 		});
 
 		test("a command already dispatched before hold() keeps running (only later writes are blocked)", () => {
-			// Arrange — mirrors the real STARTTLS sequence: `runCommand(tlsCmd)`
-			// synchronously writes the STARTTLS bytes, THEN the queue is held.
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			q.start();
-			const startTlsCmd: any = {
-				run: vi.fn(() => Promise.resolve()),
-				emit: vi.fn(),
-				requiresOwnContext: true,
-			};
+			mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
 
-			// Act
-			q.add(startTlsCmd); // dispatched immediately — not held yet
+			q.add(fakeCommand("isolated")); // dispatched immediately — not held yet
 			q.hold();
 
-			// Assert: STARTTLS's own bytes were written before the hold began.
-			expect(startTlsCmd.run).toBeCalledTimes(1);
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(1);
 		});
 
 		test("release() is a no-op when not currently held", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			q.start();
-			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+			mockExecuteCommand.mockResolvedValue(null);
 
-			// Act
 			q.release(); // never held — must not throw or misbehave
-			q.add(cmdMock);
+			q.add(fakeCommand());
 
-			// Assert: ordinary (unheld) dispatch still happens immediately.
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
 		});
 
 		test("a context promoted to active while still held withholds its writes too", async () => {
-			// Arrange: an isolated (STARTTLS-shaped) command occupies the active
-			// context; a second command is queued behind it in its own context.
-			// While the first command is in flight, hold() is engaged (as the
-			// real upgrade does) and the first command then resolves — promoting
-			// the second context to active. Its command must NOT be dispatched
-			// while still held, even though context promotion happens mid-hold.
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			q.start();
 
 			let resolveFirst: () => void = () => undefined;
-			const firstCmd: any = {
-				run: vi.fn(
-					() => new Promise<void>((resolve) => (resolveFirst = resolve)),
-				),
-				emit: vi.fn(),
-				requiresOwnContext: true,
-			};
-			const secondCmd: any = {
-				run: vi.fn(() => Promise.resolve()),
-				emit: vi.fn(),
-				requiresOwnContext: true,
-			};
+			mockExecuteCommand
+				.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveFirst = resolve)))
+				.mockImplementationOnce(() => Promise.resolve());
 
-			q.add(firstCmd);
-			q.add(secondCmd);
+			q.add(fakeCommand("isolated"));
+			q.add(fakeCommand("isolated"));
 			q.hold();
 
-			// Act: the first (isolated) command completes while still held,
-			// which promotes the second context to active.
 			resolveFirst();
 			await flushMicrotasks();
 
-			// Assert: the second command must still be withheld.
-			expect(secondCmd.run).not.toBeCalled();
+			// The second command must still be withheld — only one call so far.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(1);
 
-			// Act
 			q.release();
 			await flushMicrotasks();
 
-			// Assert
-			expect(secondCmd.run).toBeCalled();
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(2);
 		});
 
-		// CRITICAL-2 defensive hygiene: a dead/erroring socket mid-STARTTLS
-		// tears the connection down via `stop()`, not `release()` — `stop()`
-		// must reset `held` itself so a hold engaged right before the failure
-		// can never survive into (and permanently wedge) a later reconnect
-		// attempt that reuses this same CommandQueue instance.
 		test("stop() resets held even when release() was never called", () => {
-			// Arrange
 			const connMock: any = vi.fn();
 			const q = new CommandQueue(connMock);
 			q.start();
 
-			// Act: simulate a hold engaged (as STARTTLS does) that is never
-			// cleanly released — e.g. the connection died and was torn down
-			// via stop() instead.
 			q.hold();
 			expect(q.isHeld).toBe(true);
 			q.stop();
 
-			// Assert: held must not survive stop().
 			expect(q.isHeld).toBe(false);
 
-			// A subsequent start() + hold()/release() cycle (as a later
-			// reconnect attempt would do) must behave normally — nothing
-			// left permanently wedged.
 			q.start();
-			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+			mockExecuteCommand.mockResolvedValue(null);
 			q.hold();
-			q.add(cmdMock);
-			expect(cmdMock.run).not.toBeCalled();
+			q.add(fakeCommand());
+			expect(mockExecuteCommand).not.toBeCalled();
 			q.release();
-			expect(cmdMock.run).toBeCalled();
+			expect(mockExecuteCommand).toBeCalled();
+		});
+	});
+
+	describe("cancellation (spec §6.3: typed ConnectionError, never a bare string)", () => {
+		test("stop() rejects a pending (held, not-yet-dispatched) command with ConnectionError(phase: 'steady')", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			q.hold(); // e.g. mid-STARTTLS hold window
+			const promise = q.add(fakeCommand());
+
+			q.stop("simulated close");
+
+			await expect(promise).rejects.toBeInstanceOf(ConnectionError);
+			await expect(promise).rejects.toMatchObject({ phase: "steady" });
+			expect(mockExecuteCommand).not.toBeCalled();
+		});
+
+		test("stop() rejects an in-flight (already-dispatched) command the same way", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
+
+			const promise = q.add(fakeCommand());
+			expect(mockExecuteCommand).toBeCalled();
+
+			q.stop();
+
+			await expect(promise).rejects.toBeInstanceOf(ConnectionError);
+			await expect(promise).rejects.toMatchObject({ phase: "steady" });
 		});
 	});
 });

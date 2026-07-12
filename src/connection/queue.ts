@@ -1,13 +1,15 @@
 import { TypedEmitter } from "tiny-typed-emitter";
 
-import { Command } from "../commands";
+import { Command } from "../commands/base";
+import { ConnectionError } from "../errors";
 
 import type Connection from "../connection";
+import { executeCommand } from "./execute-command";
 
 type AsyncQueueEvents = {
-	commandStart: (command: Command) => void;
-	commandDone: (command: Command) => void;
-	commandCanceled: (command: Command) => void;
+	commandStart: (command: Command<unknown>) => void;
+	commandDone: (command: Command<unknown>) => void;
+	commandCanceled: (command: Command<unknown>) => void;
 
 	start: () => void;
 	idle: () => void;
@@ -17,23 +19,66 @@ type CommandQueueEvents = {
 	idle: () => void;
 };
 
+// Tag generator (moved from the old commands/base.ts — spec §7.1: the tag is
+// now assigned by the QUEUE at write time, not by the Command constructor,
+// so command instances are reusable/testable values until submitted). One
+// generator instance is owned per `CommandQueue` (i.e. per connection).
+const MAX_TAG_ALPHA_LENGTH = 400;
+
+export function* commandIdGenerator(): Generator<string, never> {
+	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+	let alphaCount = 0;
+	do {
+		let lead = "";
+		let toAddCount = alphaCount;
+		while (toAddCount >= 0) {
+			lead += alpha[toAddCount % alpha.length];
+			toAddCount -= alpha.length;
+		}
+
+		for (let num = 1; num < Number.MAX_SAFE_INTEGER; num++) {
+			yield `${lead}${num.toString().padStart(5, "0")}`;
+		}
+
+		if (alphaCount >= MAX_TAG_ALPHA_LENGTH * 26) {
+			// We've sent more commands than is reasonable already, but start
+			// over just in case. Are we approaching heat-death of the
+			// universe yet?
+			alphaCount = 0;
+		}
+	} while (++alphaCount < Number.MAX_SAFE_INTEGER);
+	throw new Error("How did you even get here?!?!");
+}
+
+/** One command handed to `.add()`, paired with the promise executor
+ *  functions the original caller (`Connection.runCommand`) is awaiting. */
+interface QueuedCommand {
+	readonly command: Command<unknown>;
+	readonly resolve: (value: unknown) => void;
+	readonly reject: (reason: unknown) => void;
+}
+
 export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
-	public commands: Set<Command<any>>;
+	public commands: Set<QueuedCommand>;
 	public running: boolean;
 
 	/**
-	 * Commands that have been handed to `add()`/`run()` while the owning
+	 * Commands that have been handed to `add()` while the owning
 	 * `CommandQueue` is held (§6.1 drain guarantee, I-1) sit here instead of
-	 * being dispatched to `command.run()` — so no bytes reach the socket —
-	 * until `flushPending()` runs them on release.
+	 * being dispatched — so no bytes reach the socket — until
+	 * `flushPending()` runs them on release.
 	 */
-	private pending: Set<Command<any>>;
+	private pending: Set<QueuedCommand>;
 
 	constructor(
 		public readonly connection: Connection,
 		immediatelyStart = false,
 		public readonly isIsolated: boolean = false,
 		private readonly isHeld: () => boolean = () => false,
+		private readonly nextTag: () => string = (() => {
+			const gen = commandIdGenerator();
+			return () => gen.next().value;
+		})(),
 	) {
 		super();
 		this.commands = new Set();
@@ -49,19 +94,37 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		return this.commands.size;
 	}
 
-	public add(command: Command<any>) {
-		this.commands.add(command);
-
-		if (this.running) {
-			this.dispatch(command);
-		}
+	/** Submits `command`, returning the promise its execution will settle. */
+	public add<T>(command: Command<T>): Promise<T> {
+		return new Promise<T>((resolve, reject) => {
+			const qc: QueuedCommand = {
+				command,
+				resolve: resolve as (value: unknown) => void,
+				reject,
+			};
+			this.commands.add(qc);
+			if (this.running) {
+				this.dispatch(qc);
+			}
+		});
 	}
 
-	protected remove(command: Command<any>) {
-		this.commands.delete(command);
-		this.pending.delete(command);
-		command.emit("cancel");
-		this.emit("commandCanceled", command);
+	protected remove(qc: QueuedCommand, cause?: unknown) {
+		this.commands.delete(qc);
+		this.pending.delete(qc);
+		// spec §6.3: typed rejection, never the old bare string. Commands
+		// already written cannot be un-sent (protocol fact) — in practice
+		// `stop()` is only ever called from connection teardown, at which
+		// point there is no live socket left for an already-dispatched
+		// command's tagged response to arrive on anyway, so rejecting it
+		// here is the only way its promise ever settles.
+		qc.reject(
+			new ConnectionError("Connection closed while a command was pending", {
+				phase: "steady",
+				cause,
+			}),
+		);
+		this.emit("commandCanceled", qc.command);
 	}
 
 	public run() {
@@ -72,22 +135,22 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		this.running = true;
 		this.emit("start");
 		if (this.commands.size) {
-			for (const cmd of this.commands) {
-				this.dispatch(cmd);
+			for (const qc of this.commands) {
+				this.dispatch(qc);
 			}
 		} else {
 			this.emit("idle");
 		}
 	}
 
-	public stop() {
+	public stop(cause?: unknown) {
 		if (!this.running) {
 			return;
 		}
 
 		this.running = false;
-		for (const cmd of this.commands) {
-			this.remove(cmd);
+		for (const qc of this.commands) {
+			this.remove(qc, cause);
 		}
 	}
 
@@ -103,31 +166,33 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 
 		const toStart = [...this.pending];
 		this.pending.clear();
-		for (const cmd of toStart) {
-			this.startCommand(cmd);
+		for (const qc of toStart) {
+			this.startCommand(qc);
 		}
 	}
 
-	private dispatch(command: Command<any>) {
+	private dispatch(qc: QueuedCommand) {
 		if (this.isHeld()) {
-			this.pending.add(command);
+			this.pending.add(qc);
 			return;
 		}
 
-		this.startCommand(command);
+		this.startCommand(qc);
 	}
 
-	private startCommand(command: Command<any>) {
+	private startCommand(qc: QueuedCommand) {
 		if (!this.running) {
 			return;
 		}
 
-		this.emit("commandStart", command);
-		const cmdRun = command.run(this.connection);
-		cmdRun.finally(() => {
-			this.emit("commandDone", command);
-			this.commands.delete(command);
-			this.pending.delete(command);
+		this.emit("commandStart", qc.command);
+		const tag = this.nextTag();
+		const run = executeCommand(this.connection, qc.command, tag);
+		run.then(qc.resolve, qc.reject);
+		run.catch(() => undefined).finally(() => {
+			this.emit("commandDone", qc.command);
+			this.commands.delete(qc);
+			this.pending.delete(qc);
 			if (this.commands.size === 0) {
 				this.emit("idle");
 			}
@@ -138,6 +203,7 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	public queueContexts: AsyncQueueContext[];
 	private held: boolean;
+	private readonly tagGenerator = commandIdGenerator();
 
 	constructor(
 		public readonly connection: Connection,
@@ -147,6 +213,8 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		this.queueContexts = [];
 		this.held = false;
 	}
+
+	private nextTag = (): string => this.tagGenerator.next().value;
 
 	protected get activeContext(): AsyncQueueContext | void {
 		return this.queueContexts[0];
@@ -161,22 +229,38 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		return this.held;
 	}
 
-	add<T>(command: Command<T>) {
+	/**
+	 * Submits `command` per its declared `queueMode` (spec §6.1):
+	 * "pipeline" may share the current context (concurrent in flight with
+	 * other pipeline commands); "serial"/"isolated" both require a context
+	 * of their own. In this queue's architecture only ONE context is ever
+	 * "active" (running) at a time — a later context never starts before
+	 * the one ahead of it has fully drained (`removeQueueContext` only
+	 * promotes the next context once the current one goes idle) — so
+	 * "isolated"'s stronger §6.1 guarantee (drains ALL prior contexts,
+	 * doesn't start until no tagged response is outstanding and the write
+	 * buffer is flushed) already falls out of that structural invariant for
+	 * both modes; "isolated" is additionally the mode STARTTLS/etc. combine
+	 * with an explicit `hold()`/`release()` window for I-1's stronger
+	 * continuation-exclusivity guarantee.
+	 */
+	add<T>(command: Command<T>): Promise<T> {
+		const mode = command.queueMode;
 		if (
 			!this.waitingContext ||
 			this.waitingContext.isIsolated ||
-			(command.requiresOwnContext && this.waitingContext.size > 0)
+			(mode !== "pipeline" && this.waitingContext.size > 0)
 		) {
-			this.addQueueContext(command.requiresOwnContext);
+			this.addQueueContext(mode !== "pipeline");
 		}
 
 		// We just created it if it doesn't exist, so this is a safe add
-		(this.waitingContext as AsyncQueueContext).add(command);
+		return (this.waitingContext as AsyncQueueContext).add(command);
 	}
 
-	cancelAllRunningCommands() {
+	cancelAllRunningCommands(cause?: unknown) {
 		if (this.activeContext) {
-			this.activeContext.stop();
+			this.activeContext.stop(cause);
 		}
 	}
 
@@ -187,7 +271,9 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		}
 	}
 
-	stop() {
+	/** Stops the queue: every pending/in-flight command rejects with a
+	 *  `ConnectionError(phase:"steady")` carrying `cause` (spec §6.3). */
+	stop(cause?: unknown) {
 		this.running = false;
 		// Defensive hygiene (CRITICAL-2): a dead/erroring socket must never
 		// leave the queue permanently held. `stop()` is the one operation every
@@ -196,7 +282,7 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		// here — in addition to `release()` doing so on its own paths —
 		// guarantees a wedged hold can't survive past a torn-down connection.
 		this.held = false;
-		this.cancelAllRunningCommands();
+		this.cancelAllRunningCommands(cause);
 	}
 
 	/**
@@ -233,6 +319,7 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 			this.running && this.queueContexts.length === 0,
 			isIsolated,
 			() => this.held,
+			this.nextTag,
 		);
 		// remove it once the queue is idle
 		q.once("idle", () => this.removeQueueContext(q));

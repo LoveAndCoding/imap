@@ -1,6 +1,7 @@
-import { IDResponse, UntaggedResponse } from "../parser";
-import { Command, StandardResponseTypes } from "./base";
-import { createIMAPSafeString } from "./encoding";
+import { IDResponse } from "../parser";
+import { Command } from "./base";
+import type { ResponseCollector } from "./collector";
+import type { CommandWriter } from "./writer";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json lives outside rootDir, so ESM import isn't available under the current tsconfig
 const pkg = require("../../package.json");
@@ -86,10 +87,15 @@ export function sanitizeIdValues(values: IdCommandValues): IdCommandValues {
 	return result;
 }
 
+/** ID (RFC 2971). Claims the untagged ID response (default `claims()` —
+ *  verb "ID" claims type "ID"). */
 export class IdCommand extends Command<IdResponseMap> {
+	readonly verb = "ID";
+	readonly queueMode = "pipeline" as const;
+
 	/**
 	 * NOTE: unlike other Command subclasses (which surface failures only via
-	 * the `.run()` promise), this constructor throws `RangeError`
+	 * the queue's execution promise), this constructor throws `RangeError`
 	 * SYNCHRONOUSLY when the supplied values violate RFC 2971 §3.3's wire
 	 * limits — the command must never be constructible in a state that
 	 * cannot legally be sent. Pass config through `sanitizeIdValues()`
@@ -98,7 +104,7 @@ export class IdCommand extends Command<IdResponseMap> {
 	constructor(
 		protected readonly valuesToSend: IdCommandValues = DEFAULT_ID_OPTS,
 	) {
-		super("ID");
+		super();
 
 		// Enforce RFC 2971 §3.3 limits (I-12) at the command boundary: these
 		// are MUST NOT rules on what the client may put on the wire, so
@@ -129,30 +135,29 @@ export class IdCommand extends Command<IdResponseMap> {
 		}
 	}
 
-	protected getCommand(): string {
-		if (!this.valuesToSend || !Object.keys(this.valuesToSend).length) {
-			return this.type;
+	protected write(w: CommandWriter): void {
+		const entries = this.valuesToSend
+			? Object.entries(this.valuesToSend).filter(([key]) => key in IdCommandKeys)
+			: [];
+
+		if (!entries.length) {
+			// id_params_list ::= "(" #(string SPACE nstring) ")" / nil
+			w.nstring(null);
+			return;
 		}
 
-		const keyValPairs: string[] = [];
-		for (const [key, val] of Object.entries(this.valuesToSend)) {
-			if (key in IdCommandKeys) {
-				keyValPairs.push(createIMAPSafeString(key));
-				keyValPairs.push(createIMAPSafeString(val, true));
+		w.list((list) => {
+			for (const [key, val] of entries) {
+				list.quotedOrLiteral(key);
+				list.nstring(val ?? null);
 			}
-		}
-
-		return `${this.type} (${keyValPairs.join(" ")})`;
+		});
 	}
 
-	protected parseResponse(responses: StandardResponseTypes[]): IdResponseMap {
-		for (const resp of responses) {
-			if (
-				resp instanceof UntaggedResponse &&
-				resp.content instanceof IDResponse
-			) {
-				return resp.content.details;
-			}
+	protected accept(c: ResponseCollector): IdResponseMap {
+		const resp = c.first("ID");
+		if (resp && resp.content instanceof IDResponse) {
+			return resp.content.details;
 		}
 		return new Map();
 	}

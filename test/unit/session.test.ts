@@ -25,13 +25,13 @@ function makeFakeConnection(opts: {
 		capabilityRegistry.set(opts.preSet);
 	}
 	const runCommand = vi.fn(async (command: any) => {
-		if (command.type === "CAPABILITY") {
+		if (command.verb === "CAPABILITY") {
 			return opts.runCommandResult ?? fakeCaps(["IMAP4rev1"]);
 		}
-		if (command.type === "ID") {
+		if (command.verb === "ID") {
 			return new Map();
 		}
-		throw new Error(`unexpected command in test: ${command.type}`);
+		throw new Error(`unexpected command in test: ${command.verb}`);
 	});
 	return {
 		isActive: true,
@@ -87,7 +87,7 @@ describe("Session capability reconciliation (spec §10.4, I-2)", () => {
 		expect(session.capabilities).toBe(caps);
 		expect(fakeConnection.runCommand).toHaveBeenCalledTimes(1);
 		expect(fakeConnection.runCommand.mock.calls[0][0]).toMatchObject({
-			type: "CAPABILITY",
+			verb: "CAPABILITY",
 		});
 		// Session must have written its own fetch back into the registry so
 		// later readers (and a future re-entrant call) see it as current.
@@ -130,9 +130,9 @@ describe("Session.start() failure-path state hygiene (MEDIUM-11)", () => {
 		// stuck `true` while `started` alone got reset.
 		const caps = fakeCaps(["IMAP4rev1", "ID"]);
 		const runCommand = vi.fn(async (command: any) => {
-			if (command.type === "CAPABILITY") return caps;
-			if (command.type === "ID") throw new Error("simulated ID exchange failure");
-			throw new Error(`unexpected command in test: ${command.type}`);
+			if (command.verb === "CAPABILITY") return caps;
+			if (command.verb === "ID") throw new Error("simulated ID exchange failure");
+			throw new Error(`unexpected command in test: ${command.verb}`);
 		});
 		const fakeConnection = {
 			isActive: true,

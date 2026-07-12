@@ -9,7 +9,6 @@ import { IMAPError } from "../errors";
 import NewlineTranform from "../newline.transform";
 import Lexer from "../lexer";
 import Parser, {
-	AtomTextCode,
 	CapabilityList,
 	CapabilityTextCode,
 	ContinueResponse,
@@ -22,6 +21,7 @@ import type { IMAPLogMessage } from "../types";
 import { CapabilityRegistry } from "./capabilities";
 import { CRLF } from "./constants";
 import CommandQueue from "./queue";
+import { Router } from "./router";
 import {
 	IConnectionEvents,
 	IMAPConnectionConfiguration,
@@ -56,6 +56,11 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	protected lexer!: Lexer;
 	protected parser!: Parser;
 	protected processingPipeline!: NewlineTranform;
+
+	/** Response routing (spec §8): tag/claimant/continuation-owner
+	 *  attribution used by `runCommand()`'s queue-driven execution. Public
+	 *  so `connection/queue.ts`'s command execution helper can reach it. */
+	public router!: Router;
 
 	private options: IMAPConnectionConfiguration;
 	private commandQueue!: CommandQueue;
@@ -443,16 +448,38 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	}
 
 	public async runCommand<T>(command: Command<T>): Promise<T> {
-		this.commandQueue.add<T>(command);
-		return command.results;
+		return this.commandQueue.add<T>(command);
 	}
 
 	public send(toSend: string) {
 		this.socket!.write(toSend + CRLF, "utf8");
 	}
 
+	/**
+	 * Writes already-fully-serialized wire bytes directly to the socket, with
+	 * no CRLF/encoding applied — used exclusively by
+	 * `connection/execute-command.ts` to write `CommandWriter`'s byte-exact
+	 * segments (spec I-4: all client bytes go through `CommandWriter`; this
+	 * is the one place those bytes actually reach the wire).
+	 */
+	public writeBytes(buf: Buffer): void {
+		this.socket!.write(buf);
+	}
+
 	protected init() {
 		this.commandQueue = new CommandQueue(this, false);
+		this.router = new Router({
+			log: (info) => this.log(info),
+			isSecure: () => !!this.secure,
+			emitRawStatus: (resp) => this.rawStatusEvents.emit("status", resp),
+			emitUntagged: (resp) => this.emit("untaggedResponse", resp),
+			emitTagged: (resp) => this.emit("taggedResponse", resp),
+			emitContinue: (resp) => this.emit("continueResponse", resp),
+			emitUnknown: (resp) => this.emit("unknownResponse", resp),
+			emitResponse: (resp) => this.emit("response", resp),
+			emitServerStatus: (resp) => this.emit("serverStatus", resp),
+			emitUnhandled: (resp) => this.emit("unhandled", resp),
+		});
 
 		// Setup our Lexing/Parsing
 		this.processingPipeline = new NewlineTranform({ allowHalfOpen: true });
@@ -461,79 +488,23 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		// Pipe from our newline splitter to lexer to parser
 		this.processingPipeline.pipe(this.lexer).pipe(this.parser);
-		// Once we hit the parser, we want to (mostly) bubble events
+		// Once we hit the parser, everything is routed through the response
+		// router (spec §8) — which reproduces exactly the same public event
+		// fan-out (+ ALERT/hygiene handling) M0 always has, and additionally
+		// drives tag/claimant/continuation-owner attribution for
+		// `runCommand()`.
 		this.parser.on("untagged", (resp: UntaggedResponse) => {
-			if (resp.content instanceof StatusResponse) {
-				this.handleStatusResponse(resp);
-			} else {
-				this.emit("untaggedResponse", resp);
-				this.emit("response", resp);
-			}
+			this.router.routeUntagged(resp);
 		});
 		this.parser.on("tagged", (resp: TaggedResponse) => {
-			this.emit("taggedResponse", resp);
-			this.emit("response", resp);
+			this.router.routeTagged(resp);
 		});
 		this.parser.on("continue", (resp: ContinueResponse) => {
-			this.emit("continueResponse", resp);
-			this.emit("response", resp);
+			this.router.routeContinuation(resp);
 		});
 		this.parser.on("unknown", (resp: UnknownResponse | null) => {
-			this.emit("unknownResponse", resp);
-			this.emit("response", resp);
+			this.router.routeUnknown(resp);
 		});
-	}
-
-	/**
-	 * Fanout for every untagged status response (OK/NO/BAD/BYE/PREAUTH),
-	 * including the greeting itself (`awaitGreeting()` observes the very
-	 * first one via a one-shot listener registered before this handler ever
-	 * runs — both see the same event).
-	 *
-	 * ALERT carve-out (spec §10.6, I-7, RFC9051-11.3-2): a response-code
-	 * ALERT always reaches the logger at "warn" — that's the notification
-	 * channel this headless library has. When the transport is NOT yet
-	 * confidential (no TLS on the wire), the log entry is structurally
-	 * marked `trusted: false` and the response is NOT emitted as
-	 * `serverStatus` (an unauthenticated/unprotected peer's ALERT text is
-	 * never presented as a trusted event — RFC9051-11.3-2). Once
-	 * confidential, both the log AND the normal `serverStatus` emit happen.
-	 * Every other status (including BYE, which callers still need to see)
-	 * emits exactly as before.
-	 */
-	protected handleStatusResponse(resp: UntaggedResponse): void {
-		// CRITICAL-3: fire the internal, pre-suppression fanout for EVERY
-		// status response — including the greeting itself — before the
-		// ALERT consumer-facing gate below runs. `awaitGreeting()` listens
-		// here instead of on `serverStatus` so a legal `* OK [ALERT] ...` (or
-		// PREAUTH/BYE-with-ALERT) greeting still resolves the greeting wait
-		// even though it's never surfaced as a trusted `serverStatus` event
-		// pre-confidentiality — otherwise that suppression left
-		// `awaitGreeting()`'s ONLY resolution path (`once("serverStatus",
-		// ...)`) with nothing to ever fire, hanging every such connect() until
-		// the greeting timeout.
-		this.rawStatusEvents.emit("status", resp);
-
-		const status = resp.content as StatusResponse;
-		const code = status.text?.code;
-		const isAlert = code instanceof AtomTextCode && code.kind === "ALERT";
-
-		if (isAlert) {
-			const alertText = status.text?.content ?? "";
-			const confidential = !!this.secure;
-			this.log({
-				level: "warn",
-				message: alertText,
-				detail: { code: "ALERT", trusted: confidential },
-			});
-			if (!confidential) {
-				// Pre-confidentiality: logged above, but not surfaced as a
-				// trusted event (RFC9051-11.3-2).
-				return;
-			}
-		}
-
-		this.emit("serverStatus", resp);
 	}
 
 	/**

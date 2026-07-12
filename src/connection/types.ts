@@ -55,4 +55,15 @@ export interface IConnectionEvents {
 	taggedResponse: (response: TaggedResponse) => void;
 	unknownResponse: (response: UnknownResponse | null) => void;
 	untaggedResponse: (response: UntaggedResponse) => void;
+	/**
+	 * A response the router (spec §8) could neither attribute to any
+	 * in-flight command's `claims()` nor route through the state-tracker
+	 * lane (an unknown tagged-response tag, an unowned continuation, or
+	 * genuinely unclaimed/unknown data). Additive: nothing in M0 emitted
+	 * this, so adding it changes no existing observable behavior — it's a
+	 * new signal, not a replacement for any of the events above.
+	 */
+	unhandled: (
+		response: ContinueResponse | TaggedResponse | UnknownResponse | UntaggedResponse,
+	) => void;
 }
