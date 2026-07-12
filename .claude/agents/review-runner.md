@@ -69,6 +69,10 @@ You will be given:
    shaped as one finding-template entry (category, priority, description,
    impact, recommendation; title and numbering can be rough at this
    stage). Run all lenses in parallel; they are independent of each other.
+   Parallel means multiple synchronous Agent calls batched into a single
+   message (`run_in_background: false` on every call) — never spawn a lens
+   (or any other sub-agent) in the background, where its completion isn't
+   awaited when you need its findings and the run can stall.
 4. **Collect and deduplicate.** Gather every lens sub-agent's candidate
    findings into one list. Merge findings that describe the same underlying
    issue (even if worded differently or found via different lenses) into a
@@ -101,6 +105,9 @@ You will be given:
 - Do use pre-defined sub-agents for a task when available
   (`context-gathering`, `review-validator`, the predefined lenses listed
   in step 2).
+- Do invoke every sub-agent synchronously (`run_in_background: false`).
+  Never create a sub-agent in the background — for parallelism, batch
+  multiple synchronous Agent calls into a single message instead.
 - Do spin up custom lens sub-agents when a risk area isn't covered by any
   predefined lens — give them specific, self-contained instructions on
   exactly what to review and what "good" looks like for that lens.
