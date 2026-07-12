@@ -155,10 +155,16 @@ export class KindValueCapability implements ICapability {
 			);
 		}
 
+		// Classification (isExtension/isUnknown) must be case-insensitive
+		// per RFC3501-9-2/RFC9051-9-2 (capability atoms are keywords), so we
+		// canonicalize before comparing/looking up -- while `kind` itself
+		// keeps the server's original casing for display.
+		const canonicalKind = ciCanonicalize(kind);
+
 		// We mark this kind as unknown if we don't know about it in our list
 		// of standard defined values
-		this.isExtension = kind.startsWith("X");
-		this.isUnknown = !isKindValueStandardCapability(kind);
+		this.isExtension = canonicalKind.startsWith("X");
+		this.isUnknown = !isKindValueStandardCapability(canonicalKind);
 
 		this.kind = kind;
 		this.value = value;
@@ -235,7 +241,7 @@ export class CapabilityList {
 	public get supportedAuthSchemes(): string[] {
 		const authCaps: KindValueCapability[] = this.capabilities.filter(
 			(cap): cap is KindValueCapability =>
-				cap instanceof KindValueCapability && cap.kind === "AUTH",
+				cap instanceof KindValueCapability && ciEquals(cap.kind, "AUTH"),
 		);
 		return authCaps.map((cap) => cap.value);
 	}
@@ -246,12 +252,18 @@ export class CapabilityList {
 
 		if (!this.capabilityMap.has(normalCapStr)) {
 			let cap;
-			if (capabilityStr.includes("=")) {
+			// Classification below must be based on the canonicalized form
+			// (normalCapStr): capability atoms are case-insensitive keywords
+			// per RFC3501-9-2/RFC9051-9-2, so e.g. "starttls", "auth=plain",
+			// and "x-mycap" must classify the same as their uppercase
+			// spellings. The original-case `capabilityStr` is still what
+			// gets stored/displayed on the resulting capability object.
+			if (normalCapStr.includes("=")) {
 				cap = new KindValueCapability(capabilityStr);
-			} else if (capabilityStr.startsWith("X")) {
+			} else if (normalCapStr.startsWith("X")) {
 				cap = new ExtensionCapability(capabilityStr);
-			} else if (isStandardCapability(capabilityStr)) {
-				cap = new StandardCapability(capabilityStr);
+			} else if (isStandardCapability(normalCapStr)) {
+				cap = new StandardCapability(capabilityStr as StandardCapabilityNames);
 			} else {
 				cap = new UnknownCapability(capabilityStr);
 			}

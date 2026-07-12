@@ -5,8 +5,9 @@ import { matchesFormat, splitSpaceSeparatedList } from "../utility";
 class Quota {
 	constructor(
 		public readonly resource: string,
-		// RFC9051 §11.3 / RFC 9208: quota usage and limits are number64
-		// quantities. The lexer promotes values above MAX_ALLOWED_NUMBER (2^32)
+		// RFC 9051 Appendix D (formal syntax: number64) / RFC 9208 (QUOTA
+		// extension): quota usage and limits are number64 quantities. The
+		// lexer promotes values above MAX_ALLOWED_NUMBER (2^32)
 		// to a BigIntToken, so these surface as bigint only once they exceed
 		// the 32-bit range — matching the number-or-bigint pattern used for
 		// MODSEQ (src/parser/structure/fetch/modseq.ts).

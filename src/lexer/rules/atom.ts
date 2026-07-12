@@ -25,6 +25,15 @@ import { ILexerRule } from "../types";
 const RE_ATOM_MATCH = /^[^ (){\x00-\x1F%*"\\[\]]+/;
 const RE_BEGIN_LINE_CONTROL = /^[+*]/;
 
+// A single atom-continuation character (i.e. the same character class as
+// RE_ATOM_MATCH above, but matching exactly one char rather than a run of
+// them). Exported so other lexer rules that match a fixed-length keyword
+// prefix (e.g. NilRule matching "NIL") can check whether the character right
+// after their match would still be part of the same atom -- without which
+// something like "NILVANA" would wrongly be split into "NIL" + "VANA".
+// eslint-disable-next-line no-control-regex -- \x00-\x1F control range is intentional (IMAP atom char validation)
+export const RE_ATOM_CHAR = /^[^ (){\x00-\x1F%*"\\[\]]$/;
+
 export class AtomRule implements ILexerRule<string> {
 	public match(content: string, originalPos: number): null | AtomToken {
 		const matched = content.match(RE_ATOM_MATCH);

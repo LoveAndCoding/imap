@@ -67,4 +67,47 @@ describe("NilRule", () => {
 		expect(NilTokenMock.mock.instances).toHaveLength(1);
 		expect(NilTokenMock.mock.calls[0][0]).toBe(str);
 	});
+
+	// Regression coverage for MEDIUM-10: NilRule runs before AtomRule
+	// (order 40 vs 60), so without a word-boundary check an atom that
+	// merely *starts* with "nil" would be wrongly split into a NIL token
+	// followed by a fragment atom.
+	test("Does NOT match an atom that merely starts with 'NIL' (e.g. NILVANA)", () => {
+		// Arrange
+		const str = "NILVANA";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(match).toBeNull();
+		expect(NilTokenMock.mock.instances).toHaveLength(0);
+	});
+
+	test("Does NOT match an atom that merely starts with 'nil' (e.g. Nilsson)", () => {
+		// Arrange
+		const str = "Nilsson";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(match).toBeNull();
+		expect(NilTokenMock.mock.instances).toHaveLength(0);
+	});
+
+	test("Still matches 'NIL' immediately followed by an operator (e.g. '(')", () => {
+		// Arrange
+		const str = "NIL(";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		expect(NilTokenMock.mock.calls[0][0]).toBe("NIL");
+	});
 });

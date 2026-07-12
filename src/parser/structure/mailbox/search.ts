@@ -76,23 +76,35 @@ export class SearchResponse {
 	constructor(tokens: LexerTokenList) {
 		this.results = [];
 
-		// If we have a MODSEQ, slice it off the end and parse
+		// If we have a MODSEQ, slice it off the end and parse. Per RFC 7162
+		// §3.1.9/§7, the id list is *(SP nz-number) -- zero repetitions is
+		// valid (e.g. "SEARCH (MODSEQ 917162500)" with no ids), in which
+		// case the "(" immediately follows "SEARCH SP" and there is no
+		// leading SP token before the group to account for.
 		const modseqIndex = tokens.findIndex(
 			(t) => t.isType(TokenTypes.atom) && ciEquals(t.getTrueValue(), "MODSEQ"),
 		);
 		if (modseqIndex > 0) {
-			const modseqTokens = tokens.slice(modseqIndex - 2);
-			tokens = tokens.slice(0, modseqIndex - 2);
-			const shouldBeNumber = modseqTokens[4];
+			// The MODSEQ value always sits two tokens after the "MODSEQ"
+			// keyword itself ("MODSEQ" SP value), regardless of how many
+			// (if any) id tokens/SP precede the "(MODSEQ ...)" group.
+			const shouldBeNumber = tokens[modseqIndex + 2];
 			if (
 				!(
-					shouldBeNumber.isType(TokenTypes.number) ||
-					shouldBeNumber.isType(TokenTypes.bigint)
+					shouldBeNumber &&
+					(shouldBeNumber.isType(TokenTypes.number) ||
+						shouldBeNumber.isType(TokenTypes.bigint))
 				)
 			) {
 				throw new ParsingError("Invalid MODSEQ value provided", tokens);
 			}
 			this.modseq = shouldBeNumber.getTrueValue();
+
+			// Only slice off an id-list portion when one is actually
+			// present. If modseqIndex < 2 there's no leading SP "(" before
+			// "MODSEQ" (the "(" itself sits at index 0), meaning the id
+			// list is empty.
+			tokens = modseqIndex >= 2 ? tokens.slice(0, modseqIndex - 2) : [];
 		}
 
 		// Format is number SP, and we can skip the SP tokens

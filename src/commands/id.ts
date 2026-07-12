@@ -47,9 +47,15 @@ function truncateToOctets(value: string, max: number): string {
 	if (buf.byteLength <= max) {
 		return value;
 	}
-	const sliced = buf.subarray(0, max).toString("utf8");
-	// A cut mid-code-point decodes with a trailing U+FFFD; drop it.
-	return sliced.endsWith("�") ? sliced.slice(0, -1) : sliced;
+	const slice = buf.subarray(0, max);
+	const sliced = slice.toString("utf8");
+	// A cut mid-code-point decodes with a trailing U+FFFD. Distinguish that
+	// corruption from a value that legitimately ends in U+FFFD by
+	// re-encoding: an uncorrupted decode round-trips to the same bytes.
+	if (sliced.endsWith("�") && !Buffer.from(sliced, "utf8").equals(slice)) {
+		return sliced.slice(0, -1);
+	}
+	return sliced;
 }
 
 /**
@@ -81,6 +87,14 @@ export function sanitizeIdValues(values: IdCommandValues): IdCommandValues {
 }
 
 export class IdCommand extends Command<IdResponseMap> {
+	/**
+	 * NOTE: unlike other Command subclasses (which surface failures only via
+	 * the `.run()` promise), this constructor throws `RangeError`
+	 * SYNCHRONOUSLY when the supplied values violate RFC 2971 §3.3's wire
+	 * limits — the command must never be constructible in a state that
+	 * cannot legally be sent. Pass config through `sanitizeIdValues()`
+	 * first if you want oversized input coerced instead of rejected.
+	 */
 	constructor(
 		protected readonly valuesToSend: IdCommandValues = DEFAULT_ID_OPTS,
 	) {
