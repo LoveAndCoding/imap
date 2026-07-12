@@ -1,4 +1,9 @@
-import {CapabilityCommand, IdCommand, IdResponseMap} from "./commands";
+import {
+	CapabilityCommand,
+	IdCommand,
+	IdResponseMap,
+	sanitizeIdValues,
+} from "./commands";
 import Connection from "./connection";
 import { CapabilityList } from "./parser";
 import { IMAPLogMessage, IMAPConfiguration } from "./types";
@@ -79,7 +84,15 @@ export default class Session {
 			this.capabilityList = capabilityList;
 
 			if (capabilityList.has("ID")) {
-				const idCmd = new IdCommand(this.options.id);
+				// Consumer-supplied ID values are sanitized to RFC 2971 §3.3's
+				// syntax limits (I-12) rather than rejected: over-long values
+				// are truncated and over-long field names dropped, so the ID
+				// exchange still happens with a compliant command.
+				const idCmd = new IdCommand(
+					this.options.id
+						? sanitizeIdValues(this.options.id)
+						: undefined,
+				);
 				this.serverInfo = await this.connection.runCommand(idCmd);
 			} else {
 				this.serverInfo = new Map();
