@@ -3,7 +3,7 @@ import { OperatorToken } from "../../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { ciIncludes } from "../../../lexer/case-insensitive";
 import { utf7 } from "../../encoding";
-import { getAStringValue } from "../../utility";
+import { getAStringValue, getOriginalInput } from "../../utility";
 import { FlagList } from "../flag";
 
 export enum SpecialUse {
@@ -70,20 +70,46 @@ export class MailboxListing {
 			);
 		}
 
-		const nameTokens = tokens.slice(flagListEndIndex + 4);
+		const remainingTokens = tokens.slice(flagListEndIndex + 4);
+
+		// The mailbox name (an astring: a single string/atom-ish token, never
+		// containing a top-level space) may be followed by RFC 5258 extended
+		// list data, e.g. `("OLDNAME" ("OldMailbox"))` on a rename
+		// notification. Split off just the name -- the first top-level SP --
+		// and tolerate/capture whatever extension data follows it raw (spec
+		// §11.2/§11.5: extended LIST data items like OLDNAME/CHILDINFO are
+		// data, not a parse error) rather than feeding the whole remainder
+		// into getAStringValue, which cannot represent multiple tokens.
+		let nameEndIndex = remainingTokens.length;
+		for (let i = 0; i < remainingTokens.length; i++) {
+			if (remainingTokens[i].isType(TokenTypes.space)) {
+				nameEndIndex = i;
+				break;
+			}
+		}
+		const nameTokens = remainingTokens.slice(0, nameEndIndex);
 		const name = getAStringValue(nameTokens);
 
 		if (!name) {
 			throw new ParsingError("Mailbox listing name is empty");
 		}
 
-		return new MailboxListing(name, flags, separator);
+		const extendedTokens = remainingTokens.slice(nameEndIndex + 1);
+		const extendedData = extendedTokens.length
+			? getOriginalInput(extendedTokens)
+			: undefined;
+
+		return new MailboxListing(name, flags, separator, extendedData);
 	}
 
 	constructor(
 		name: string,
 		public readonly flags: FlagList,
 		public readonly separator: null | string,
+		// Raw, uninterpreted RFC 5258 extended list data (e.g. OLDNAME,
+		// CHILDINFO) trailing the mailbox name. Captured now per §11.5;
+		// typed accessors land with the verbs/extensions that need them.
+		public readonly extendedData?: string,
 	) {
 		this.name = utf7.decode(name);
 	}

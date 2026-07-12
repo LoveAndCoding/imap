@@ -516,7 +516,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.9-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts the extended untagged SORT response with a trailing (MODSEQ n)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

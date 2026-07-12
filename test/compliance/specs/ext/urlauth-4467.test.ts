@@ -154,7 +154,6 @@ complianceTest(
 		reqs: ["RFC4467-8-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* GENURLAUTH <url-full>' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -206,7 +205,6 @@ complianceTest(
 		reqs: ["RFC4467-8-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* URLFETCH <url-full> <literal-body>' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -257,7 +255,6 @@ complianceTest(
 		reqs: ["RFC5524-3.2-1", "RFC5524-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an extended '* URLFETCH <url-full> (BINARY <literal8>)' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

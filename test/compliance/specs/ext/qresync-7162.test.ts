@@ -443,7 +443,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.10.1-1", "RFC7162-3.2.5.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a VANISHED (EARLIER) response carrying an expunged-UID set",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -503,7 +502,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.7-2", "RFC7162-3.2.10.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a bare VANISHED response reporting expunged messages in lieu of EXPUNGE",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

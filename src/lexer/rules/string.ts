@@ -29,9 +29,13 @@ export class StringRule implements ILexerRule<string> {
 			return new QuotedStringToken(string);
 		}
 
-		const literalMatch = content.match(/^\{(\d+)\}\r\n/);
+		// A literal8 (RFC 3516, e.g. used by URLFETCH/APPEND BINARY) is a
+		// literal that may contain NUL octets, framed as "~{n}\r\n" instead
+		// of plain "{n}\r\n". Aside from the leading "~" the framing and
+		// octet-count semantics are identical, so both share this branch.
+		const literalMatch = content.match(/^(~)?\{(\d+)\}\r\n/);
 		if (literalMatch) {
-			const [prefix, lengthStr] = literalMatch;
+			const [prefix, , lengthStr] = literalMatch;
 			const lengthOfLiteral = parseInt(lengthStr);
 			if (
 				Number.isNaN(lengthOfLiteral) ||

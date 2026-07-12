@@ -513,7 +513,6 @@ complianceTest(
 		reqs: ["RFC5267-4.3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client surfaces BOTH ADDTO items of a single ESEARCH response, in order",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -696,7 +695,6 @@ complianceTest(
 		reqs: ["RFC5267-4.3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged NO with the NOUPDATE response code and quoted tag argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

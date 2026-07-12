@@ -7,6 +7,7 @@
 //
 // Many of these examples are pulled directly from the IMAP specification.
 import { NumberToken } from "../../../src/lexer/tokens";
+import { ESearchReturnData } from "../../../src/parser/structure/mailbox/search";
 import {
 	CRLF,
 	// Helper FNs
@@ -523,7 +524,7 @@ const simpleSet: TestSpec[] = [
 			],
 			parser: {
 				content: {
-					data: new Map(),
+					data: new ESearchReturnData(),
 					isUID: true,
 					count: 5,
 					results: {
@@ -574,7 +575,7 @@ const simpleSet: TestSpec[] = [
 			],
 			parser: {
 				content: {
-					data: new Map(),
+					data: new ESearchReturnData(),
 					isUID: true,
 					count: 5,
 					results: {
@@ -612,7 +613,7 @@ const simpleSet: TestSpec[] = [
 			],
 			parser: {
 				content: {
-					data: new Map(),
+					data: new ESearchReturnData(),
 					isUID: false,
 					count: 1,
 					results: {
@@ -651,7 +652,7 @@ const simpleSet: TestSpec[] = [
 			],
 			parser: {
 				content: {
-					data: new Map(),
+					data: new ESearchReturnData(),
 					isUID: true,
 					min: 7,
 					max: 3800,

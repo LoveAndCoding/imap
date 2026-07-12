@@ -22,6 +22,7 @@ type AdditionalExtensionData =
 	| string
 	| number
 	| bigint
+	| null
 	| AdditionalExtensionData[];
 
 type Disposition = {
@@ -60,6 +61,19 @@ export class MessageBodyStructure {
 	public readonly additionalExtensionData?: AdditionalExtensionData;
 
 	// From spec: body-fld-dsp    = "(" string SP body-fld-param ")" / nil
+	//
+	// `disposition` here is the raw token group for this field AS RETURNED
+	// by the outer split (i.e. it still carries its own wrapping parens,
+	// e.g. `("ATTACHMENT" ("FILENAME" "foo.txt"))`), the same shape
+	// `parseParamList` below is handed for the plain param-list field. The
+	// previous `disposition.length !== 2` guard compared the RAW token
+	// count (always > 2 for any real, non-NIL disposition, since even the
+	// simplest case is at least 5 tokens: "(", string, SP, NIL/list, ")")
+	// against the number of SPLIT fields, so it threw on every real
+	// disposition value -- splitSpaceSeparatedList (which already strips
+	// the wrapping parens and respects nested groups, just as it does for
+	// parseParamList) is what actually produces the 2-field [type, params]
+	// shape we want to validate.
 	public static parseDisposition(
 		disposition: LexerTokenList,
 	): Disposition | null | undefined {
@@ -69,29 +83,23 @@ export class MessageBodyStructure {
 				disposition[0].isType(TokenTypes.nil)
 			) {
 				return null;
-			} else if (disposition.length !== 2) {
-				throw new ParsingError(
-					"Incorrectly formated body structure disposition",
-					disposition,
-				);
-			} else {
-				const [dispType, dispParams] = splitSpaceSeparatedList(
-					disposition,
-				);
-				if (
-					dispType.length !== 1 ||
-					!dispType[0].isType(TokenTypes.string)
-				) {
-					throw new ParsingError(
-						"Invalid body structure disposition type",
-						disposition,
-					);
-				}
-				return {
-					type: dispType[0].getTrueValue(),
-					attributes: MessageBodyStructure.parseParamList(dispParams),
-				};
 			}
+
+			const [dispType, dispParams] = splitSpaceSeparatedList(disposition);
+			if (
+				!dispType ||
+				dispType.length !== 1 ||
+				!dispType[0].isType(TokenTypes.string)
+			) {
+				throw new ParsingError(
+					"Invalid body structure disposition type",
+					disposition,
+				);
+			}
+			return {
+				type: dispType[0].getTrueValue(),
+				attributes: MessageBodyStructure.parseParamList(dispParams),
+			};
 		}
 	}
 
@@ -117,6 +125,11 @@ export class MessageBodyStructure {
 		}
 	}
 
+	// From spec: body-extension can be "zero or more NILs, strings, numbers,
+	// or potentially nested parenthesized lists" of future extension data
+	// (§7.4.2) -- so a bare NIL token (distinct from a NIL/empty PARAM
+	// list, which is handled elsewhere) is valid here and must be tolerated
+	// rather than treated as a parse error.
 	public static parseAdditionalExtensionData(
 		tokens: LexerTokenList[],
 	): AdditionalExtensionData {
@@ -132,6 +145,8 @@ export class MessageBodyStructure {
 					token.isType(TokenTypes.bigint)
 				) {
 					data.push(token.getTrueValue());
+				} else if (token.isType(TokenTypes.nil)) {
+					data.push(null);
 				} else {
 					throw new ParsingError(
 						"Invalid multipart body structure extension data",

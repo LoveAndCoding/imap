@@ -12,6 +12,8 @@ import { QuotaResponse, QuotaRootResponse } from "./quota";
 import { SortResponse } from "./sort";
 import { StatusResponse } from "./status";
 import { ThreadResponse } from "./thread";
+import { UnknownContent } from "./unknown";
+import { VanishedResponse } from "./vanished";
 
 type ContentType =
 	| CapabilityList
@@ -24,6 +26,8 @@ type ContentType =
 	| SortResponse
 	| StatusResponse
 	| ThreadResponse
+	| UnknownContent
+	| VanishedResponse
 	| MailboxData.ContentType;
 
 // From spec:
@@ -83,16 +87,28 @@ export default class UntaggedResponse {
 				QuotaResponse,
 				SortResponse,
 				ThreadResponse,
+				VanishedResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {
-				const matched = check.match(contentTokens);
-				if (matched) {
-					this.content = matched;
-					if ("commandType" in check) {
-						this.type = check.commandType;
+				// Tolerance backstop (spec §11.2, invariant I-6): a checker
+				// that recognizes this keyword but fails to parse its
+				// content (a malformed/not-yet-fully-modeled variant) must
+				// not throw out of the constructor and kill the parser
+				// Transform stream -- fall through to the next checker (and
+				// ultimately to the raw/unknown content backstop below)
+				// instead of propagating the error.
+				try {
+					const matched = check.match(contentTokens);
+					if (matched) {
+						this.content = matched;
+						if ("commandType" in check) {
+							this.type = check.commandType;
+						}
+						break;
 					}
-					break;
+				} catch {
+					// See comment above -- deliberately swallowed.
 				}
 			}
 		} else if (contentTypeToken.isType(TokenTypes.number)) {
@@ -105,20 +121,42 @@ export default class UntaggedResponse {
 				MailboxData.RecentCount,
 			];
 			for (const check of toCheckList) {
-				const matched = check.match(contentTokens);
-				if (matched) {
-					this.content = matched;
-					this.type = check.commandType;
-					break;
+				try {
+					const matched = check.match(contentTokens);
+					if (matched) {
+						this.content = matched;
+						this.type = check.commandType;
+						break;
+					}
+				} catch {
+					// See comment in the atom branch above.
 				}
 			}
+
+			if (!this.content) {
+				// "number SP atom ..." (message-data) is the conventional
+				// numbered shape (spec §7.3.1); surface the atom keyword
+				// (canonicalized) as `type` when present so a consumer can
+				// still distinguish future numbered response kinds even
+				// though the content itself is only tolerated raw data.
+				const secondToken = contentTokens[1];
+				this.type =
+					secondToken && secondToken.isType(TokenTypes.atom)
+						? ciCanonicalize(secondToken.getTrueValue())
+						: "UNKNOWN";
+			}
+		} else {
+			this.type = "UNKNOWN";
 		}
 
 		if (!this.content) {
-			throw new ParsingError(
-				`Parsing for response is not yet supported`,
-				tokens,
-			);
+			// Tolerance backstop (spec §11.2, invariant I-6): an untagged
+			// response whose content doesn't match (or fails to parse via)
+			// any known mailbox-data/message-data/capability-data structure
+			// is still valid IMAP framing. Surface it as data on `.content`
+			// -- never throw a ParsingError here, since that would kill the
+			// parser Transform stream for the rest of the connection.
+			this.content = new UnknownContent(contentTokens);
 		}
 	}
 }

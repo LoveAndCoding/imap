@@ -112,6 +112,50 @@ export class SearchResponse {
 // It's turtles all the way down...
 type ESearchComplexValue = string | string[] | ESearchComplexValue[];
 
+// ESEARCH return-data pairs are NOT guaranteed unique by modifier name: RFC
+// 5267 §4.3.2 requires ADDTO/REMOVEFROM update items to be processed "in the
+// order they appear, including those within a single ESEARCH response" --
+// which the RFC's own example shows can carry the SAME modifier name twice
+// (`ADDTO (1 2733) ADDTO (1 2731:2732)`). A plain `Map<string, V>` can only
+// ever hold one entry per key, so a second same-named item would silently
+// clobber the first. This keeps every pair, in wire order, while retaining
+// a Map-like read surface (`entries()`/`get()`/`has()`/`size`) for consumers.
+export class ESearchReturnData<V> {
+	private readonly pairs: Array<[string, V]> = [];
+
+	public set(key: string, value: V): void {
+		this.pairs.push([key, value]);
+	}
+
+	// Most-recently-set value wins for single-valued lookups. Callers that
+	// need every occurrence of a repeatable modifier (e.g. ADDTO) must use
+	// `entries()` instead, which preserves all of them in order.
+	public get(key: string): V | undefined {
+		for (let i = this.pairs.length - 1; i >= 0; i--) {
+			if (this.pairs[i][0] === key) {
+				return this.pairs[i][1];
+			}
+		}
+		return undefined;
+	}
+
+	public has(key: string): boolean {
+		return this.pairs.some(([k]) => k === key);
+	}
+
+	public get size(): number {
+		return this.pairs.length;
+	}
+
+	public entries(): IterableIterator<[string, V]> {
+		return this.pairs.slice()[Symbol.iterator]();
+	}
+
+	public [Symbol.iterator](): IterableIterator<[string, V]> {
+		return this.entries();
+	}
+}
+
 export class ExtendedSearchResponse {
 	// Min/Max/Count/All/ModSeq defined in RFC 4731
 	public readonly count?: number;
@@ -120,7 +164,7 @@ export class ExtendedSearchResponse {
 	public readonly modSequenceValue?: number | bigint;
 	public readonly results?: UIDSet;
 
-	public readonly data: Map<string, UIDSet | number | ESearchComplexValue>;
+	public readonly data: ESearchReturnData<UIDSet | number | ESearchComplexValue>;
 
 	public readonly isUID: boolean;
 	public readonly tag?: Tag;
@@ -188,7 +232,7 @@ export class ExtendedSearchResponse {
 		};
 
 		// Now we just have key value pairs
-		this.data = new Map();
+		this.data = new ESearchReturnData();
 		const kvPairs = esearchKeyValuePairGenerator(workingTokenList);
 		for (const [key, value] of kvPairs) {
 			const uKey = key.toUpperCase();
