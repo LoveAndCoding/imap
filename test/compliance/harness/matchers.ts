@@ -89,17 +89,23 @@ export function command(
 			}
 
 			if (typeof verb === "string" && verb.includes(" ")) {
-				// Multi-token verb: consume that many tokens from afterTag.
+				// Multi-token verb: consume that many tokens from afterTag,
+				// separated by exactly one SP each (RFC 3501/9051 grammar) —
+				// collapsing runs of whitespace here would absorb framing
+				// violations (e.g. 'UID  FETCH') and corrupt args spacing.
 				const verbTokens = verb.split(/\s+/);
-				const lineTokens = afterTag.split(/\s+/);
-				if (lineTokens.length < verbTokens.length) {
+				const phraseRe = new RegExp(
+					`^(\\S+(?: \\S+){${verbTokens.length - 1}})(?: (.+))?$`,
+				);
+				const pm = phraseRe.exec(afterTag);
+				if (!pm) {
 					return {
 						ok: false,
 						reason: `expected ${verbDesc}, got '${afterTag}'`,
 						tag,
 					};
 				}
-				const gotTokens = lineTokens.slice(0, verbTokens.length);
+				const gotTokens = pm[1].split(" ");
 				const verbOk = verbTokens.every(
 					(t, i) => t.toUpperCase() === gotTokens[i].toUpperCase(),
 				);
@@ -112,8 +118,8 @@ export function command(
 						verb: canonicalVerb,
 					};
 				}
-				// Everything after the verb tokens is args.
-				const rest = lineTokens.slice(verbTokens.length).join(" ");
+				// Everything after the verb tokens is args, spacing preserved.
+				const rest = pm[2] ?? "";
 				if (opts.args === null && rest !== "") {
 					return { ok: false, reason: `expected no arguments, got '${rest}'`, tag, args: rest, verb: canonicalVerb };
 				}

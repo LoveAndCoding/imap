@@ -128,5 +128,16 @@ describe("ComplianceReporter run-completeness guards", () => {
 
 		expect(fs.existsSync(path.join(outDir, "compliance.json"))).toBe(true);
 		expect(fs.existsSync(path.join(outDir, "COMPLIANCE.md"))).toBe(true);
+
+		// This fake run scored no real requirement, so the untested-testable
+		// guard must have flagged every testable one as a problem — proving
+		// the headline "untested-testable = 0" invariant is enforced, not
+		// merely remembered by catalog authors.
+		const data = JSON.parse(
+			fs.readFileSync(path.join(outDir, "compliance.json"), "utf8"),
+		) as { problems: string[] };
+		expect(
+			data.problems.some((p) => p.startsWith("untested-testable:")),
+		).toBe(true);
 	});
 });

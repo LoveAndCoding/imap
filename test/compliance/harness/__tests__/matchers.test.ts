@@ -123,4 +123,43 @@ describe("multi-token verb matching", () => {
 		const r = command("UID FETCH").match("a1 UID FETCH ");
 		expect(r.ok).toBe(false);
 	});
+
+	test("rejects doubled SP between verb tokens (framing violation)", () => {
+		// The grammar requires exactly one SP between tokens; collapsing runs
+		// of whitespace would hide a UID-prefixed framing bug.
+		const r = command("UID FETCH").match("a1 UID  FETCH 1:* (FLAGS)");
+		expect(r.ok).toBe(false);
+	});
+
+	test("preserves args spacing after a multi-token verb", () => {
+		// The matcher must not rebuild args by re-joining tokens: a doubled SP
+		// inside args must survive so exact-string args matching can catch it.
+		const r = command("UID FETCH").match("a1 UID FETCH 1:*  (FLAGS)");
+		expect(r.ok).toBe(true);
+		expect(r.args).toBe("1:*  (FLAGS)");
+	});
+});
+
+describe("exact-string args matching", () => {
+	test("accepts an exact args match (single-token verb)", () => {
+		const r = command("LOGIN", { args: "user pass" }).match("a1 LOGIN user pass");
+		expect(r.ok).toBe(true);
+		expect(r.args).toBe("user pass");
+	});
+
+	test("rejects an inexact args match (single-token verb)", () => {
+		const r = command("LOGIN", { args: "user pass" }).match("a1 LOGIN user  pass");
+		expect(r.ok).toBe(false);
+		expect(r.reason).toContain("user pass");
+	});
+
+	test("accepts an exact args match (multi-token verb)", () => {
+		const r = command("UID EXPUNGE", { args: "1:3" }).match("a1 UID EXPUNGE 1:3");
+		expect(r.ok).toBe(true);
+	});
+
+	test("rejects an inexact args match (multi-token verb)", () => {
+		const r = command("UID EXPUNGE", { args: "1:3" }).match("a1 UID EXPUNGE 1:4");
+		expect(r.ok).toBe(false);
+	});
 });

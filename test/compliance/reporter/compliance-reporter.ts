@@ -90,6 +90,22 @@ export default class ComplianceReporter implements Reporter {
 
 		const data = aggregate(allCatalogModules, records);
 
+		// Guard 3 (headline invariant): on a complete run every testable
+		// requirement must have been scored — an untested-testable cell means a
+		// catalog author forgot to write (or wire up) the test. Surface each as
+		// an explicit problem instead of trusting authors to remember.
+		for (const rr of data.requirements) {
+			if (rr.req.testability !== "testable") continue;
+			for (const [profile, pr] of Object.entries(rr.byProfile)) {
+				if (pr?.status === "untested") {
+					data.problems.push(
+						`untested-testable: ${rr.req.id} (${profile}) was not scored by any test in a full run`,
+					);
+				}
+			}
+		}
+		data.problems.sort();
+
 		// Fix 5: print console summary FIRST so results are visible even if file writes fail.
 		// eslint-disable-next-line no-console
 		console.log(renderConsole(data));

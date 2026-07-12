@@ -62,6 +62,9 @@ test("LITERAL+ non-sync literal needs no continuation", async () => {
 	expect(server.commandLines[0].args).toBe("{4+} pass");
 	expect(server.commandLines[0].literals[0].toString("utf8")).toBe("user");
 	expect(server.commandLines[0].nonSync).toEqual([true]);
+	// The defining property of a non-sync literal: the harness must NOT have
+	// sent a continuation request for it.
+	expect(server.transcript.format()).not.toContain("+ Ready");
 });
 
 test("literal octet count is honored exactly (CRLF inside literal preserved)", async () => {

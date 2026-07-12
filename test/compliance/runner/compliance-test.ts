@@ -1,7 +1,6 @@
-import { test, type TestContext } from "vitest";
-
 import type { Profile } from "../catalog/types";
-import { classifyFailure, type FailureKind } from "./meta";
+import type { FailureKind } from "./meta";
+import { registerCompliance, type ComplianceContext } from "./register";
 
 export interface ComplianceTestInfo {
 	reqs: string[];
@@ -16,26 +15,22 @@ export interface ComplianceTestInfo {
 	timeout?: number;
 }
 
-export type ComplianceContext = TestContext & { profile: Profile };
+export type { ComplianceContext };
 
 export function complianceTest(
 	info: ComplianceTestInfo,
 	fn: (ctx: ComplianceContext) => Promise<void>,
 ): void {
 	for (const profile of info.profiles) {
-		const title = `[${info.reqs.join(" ")}] [${profile}] ${info.title}`;
-		test(title, async (tctx) => {
-			tctx.task.meta.compliance = {
-				reqs: [...info.reqs],
+		registerCompliance(
+			{
+				reqs: info.reqs,
 				profile,
-				...(info.expectFailure !== undefined ? { expectFailure: info.expectFailure } : {}),
-			};
-			try {
-				await fn(Object.assign(tctx, { profile }) as ComplianceContext);
-			} catch (err) {
-				tctx.task.meta.compliance.failureKind = classifyFailure(err);
-				throw err;
-			}
-		}, info.timeout);
+				title: info.title,
+				expectFailure: info.expectFailure,
+				timeout: info.timeout,
+			},
+			fn,
+		);
 	}
 }
