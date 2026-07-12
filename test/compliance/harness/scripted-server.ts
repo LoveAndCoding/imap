@@ -132,21 +132,25 @@ class ConnectionRunner {
 		}
 
 		const idx = this.buffer.indexOf("\r\n");
+		// A bare LF without CR is a protocol violation worth failing fast on.
+		// Check for one BEFORE the first CRLF too — a bare-LF line arriving in
+		// the same chunk as a later, valid CRLF line must still be flagged,
+		// not silently absorbed into that line's segment.
+		const lf = this.buffer.indexOf("\n");
+		if (lf !== -1 && (idx === -1 || lf < idx)) {
+			const w = this.waiting;
+			this.waiting = undefined;
+			clearTimeout(w.timer);
+			w.rejectLine(
+				new Error(
+					`client sent a line terminated by bare LF (commands MUST end with CRLF): '${this.buffer
+						.toString("latin1")
+						.slice(0, lf)}'`,
+				),
+			);
+			return;
+		}
 		if (idx === -1) {
-			// A bare LF without CR is a protocol violation worth failing fast on.
-			const lf = this.buffer.indexOf("\n");
-			if (lf !== -1) {
-				const w = this.waiting;
-				this.waiting = undefined;
-				clearTimeout(w.timer);
-				w.rejectLine(
-					new Error(
-						`client sent a line terminated by bare LF (commands MUST end with CRLF): '${this.buffer
-							.toString("latin1")
-							.slice(0, lf)}'`,
-					),
-				);
-			}
 			return;
 		}
 
