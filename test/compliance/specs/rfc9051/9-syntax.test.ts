@@ -94,19 +94,17 @@ complianceTest(
 );
 
 // Server status tokens ("ok") in lowercase are equally valid per §9-2.
-// The client's status-token dispatch is case-sensitive UNIFORMLY (a plain
-// case-sensitive includes() over ["OK","NO","BAD","PREAUTH","BYE"] shared by
-// the greeting and tagged/untagged response paths — src/parser/structure/
-// status.ts), so the lowercase "* ok" greeting itself never parses as a
-// status response and connect() hangs until the test timeout. Genuine
-// case-insensitivity violation (same parser defect class as the rev1
-// RFC3501-9-2 finding — uniform, not path-specific).
+// FIXED (M0.4): the status-token dispatch (src/parser/structure/status.ts,
+// shared by the greeting and tagged/untagged response paths) now compares
+// ["OK","NO","BAD","PREAUTH","BYE"] case-insensitively, so a lowercase
+// "* ok" greeting parses as a status response instead of hanging until the
+// test timeout (same fix as the rev1 RFC3501-9-2 case -- uniform, not
+// path-specific).
 complianceTest(
 	{
 		reqs: ["RFC9051-9-2"],
 		profiles: ["rev2"],
 		title: "client accepts response type tokens in mixed case",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

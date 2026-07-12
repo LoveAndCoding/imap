@@ -1,4 +1,5 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
+import { ciEquals } from "../../../lexer/case-insensitive";
 import { matchesFormat } from "../../utility";
 import { FlagList } from "../flag";
 
@@ -39,8 +40,10 @@ export function match(
 	]);
 
 	if (isGMsgThrdMatch) {
-		const type = tokens[0].getTrueValue();
-		const ExtClass = type === "X-GM-THRID" ? GmailThreadId : GmailMessageId;
+		const type = tokens[0].getTrueValue() as string;
+		const ExtClass = ciEquals(type, "X-GM-THRID")
+			? GmailThreadId
+			: GmailMessageId;
 
 		return {
 			match: new ExtClass(tokens[2].getTrueValue() as number | bigint),

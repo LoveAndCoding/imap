@@ -1,6 +1,7 @@
 import { ParsingError } from "../../../errors";
 import { OperatorToken } from "../../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
+import { ciIncludes } from "../../../lexer/case-insensitive";
 import { utf7 } from "../../encoding";
 import { getAStringValue } from "../../utility";
 import { FlagList } from "../flag";
@@ -25,9 +26,9 @@ export class MailboxListing {
 
 	public static match(tokens: LexerTokenList) {
 		const isMatch =
-			tokens[0]?.value === "LIST" ||
-			tokens[0]?.value === "LSUB" ||
-			tokens[0]?.value === "XLIST";
+			tokens[0] &&
+			tokens[0].isType(TokenTypes.atom) &&
+			ciIncludes(["LIST", "LSUB", "XLIST"], tokens[0].value);
 		if (isMatch) {
 			return MailboxListing.fromListing(tokens.slice(2));
 		}

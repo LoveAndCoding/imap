@@ -689,7 +689,7 @@ const simpleSet: TestSpec[] = [
 						hasWildcard: false,
 						flagMap: new Map([
 							[
-								"\\Noselect",
+								"\\NOSELECT",
 								{
 									name: "\\Noselect",
 									isWildcard: false,
@@ -730,7 +730,7 @@ const simpleSet: TestSpec[] = [
 						hasWildcard: false,
 						flagMap: new Map([
 							[
-								"\\Noselect",
+								"\\NOSELECT",
 								{
 									name: "\\Noselect",
 									isWildcard: false,
@@ -777,7 +777,7 @@ const simpleSet: TestSpec[] = [
 						hasWildcard: false,
 						flagMap: new Map([
 							[
-								"\\HasNoChildren",
+								"\\HASNOCHILDREN",
 								{
 									name: "\\HasNoChildren",
 									isWildcard: false,
@@ -785,7 +785,7 @@ const simpleSet: TestSpec[] = [
 								},
 							],
 							[
-								"\\All",
+								"\\ALL",
 								{
 									name: "\\All",
 									isWildcard: false,

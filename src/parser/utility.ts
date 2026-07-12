@@ -1,5 +1,6 @@
 import { ParsingError } from "../errors";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../lexer/types";
+import { ciEquals } from "../lexer/case-insensitive";
 
 export function* pairedArrayLoopGenerator<T>(arr: T[]): Generator<[T, T]> {
 	for (let i = 0; i < arr.length; i += 2) {
@@ -246,8 +247,18 @@ export function matchesFormat(
 		if (format.type !== undefined && !token.isType(format.type)) {
 			return false;
 		}
-		if ("value" in format && token.value !== format.value) {
-			return false;
+		if ("value" in format) {
+			// Atom-typed values are protocol keywords (e.g. "FETCH", "FLAGS",
+			// "QUOTA") which RFC3501-9-2/RFC9051-9-2/RFC9208-7-1 require us to
+			// accept case-insensitively. Non-atom values here are operator
+			// punctuation ("(", "[", ...) where case doesn't apply.
+			const matches =
+				format.type === TokenTypes.atom
+					? ciEquals(token.value, format.value)
+					: token.value === format.value;
+			if (!matches) {
+				return false;
+			}
 		}
 	}
 

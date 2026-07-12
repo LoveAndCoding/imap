@@ -37,10 +37,10 @@ describe("NilRule", () => {
 		expect(NilTokenMock.mock.calls[0][0]).toBe("NIL");
 	});
 
-	// The spec doesn't quite specify it MUST be uppercase so far
-	// as I could find, but every instance and use of it is. If
-	// we discover that's wrong in practice, it's easy to change.
-	test("No match for a lowercase nil", () => {
+	// RFC3501-9-2/RFC9051-9-2: alphabetic tokens (including the special
+	// "NIL" atom) are case-insensitive, so a server sending "nil" MUST be
+	// accepted the same as "NIL".
+	test("Matches a lowercase nil", () => {
 		// Arrange
 		const str = "nil";
 		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
@@ -49,7 +49,22 @@ describe("NilRule", () => {
 		const match = rule.match(str);
 
 		// Assert
-		expect(NilTokenMock.mock.instances).toHaveLength(0);
-		expect(match).toBeNull();
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		// Original casing is preserved in the token value; only the *match*
+		// is case-insensitive.
+		expect(NilTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	test("Matches a mixed-case NiL", () => {
+		// Arrange
+		const str = "NiL";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		expect(NilTokenMock.mock.calls[0][0]).toBe(str);
 	});
 });

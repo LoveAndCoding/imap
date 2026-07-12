@@ -1,4 +1,5 @@
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
+import { ciCanonicalize, ciEquals, ciIncludes } from "../../lexer/case-insensitive";
 import { getAStringValue, splitSpaceSeparatedList } from "../utility";
 
 const KNOWN_FLAG_NAMES = [
@@ -28,8 +29,11 @@ export class Flag {
 	public readonly isWildcard: boolean;
 
 	constructor(public readonly name: string) {
-		this.isKnownName = KNOWN_FLAG_NAMES.includes(name);
-		this.isWildcard = name === WILDCARD_FLAG_NAME;
+		// Flags preserve their original casing for display (`name` above),
+		// but comparisons/lookups are canonical (case-insensitive) per
+		// spec §11.1.
+		this.isKnownName = ciIncludes(KNOWN_FLAG_NAMES, name);
+		this.isWildcard = ciEquals(name, WILDCARD_FLAG_NAME);
 	}
 }
 
@@ -42,7 +46,7 @@ export class FlagList {
 		if (
 			firstToken &&
 			firstToken.isType(TokenTypes.atom) &&
-			firstToken.getTrueValue() === "FLAGS"
+			ciEquals(firstToken.getTrueValue(), "FLAGS")
 		) {
 			return new FlagList(tokens.slice(1), false);
 		}
@@ -74,11 +78,13 @@ export class FlagList {
 
 	protected add(flagStr: string) {
 		const flag = new Flag(flagStr);
-		this.flagMap.set(flagStr, flag);
+		// Store under the canonical key so lookups (has()) are
+		// case-insensitive while `flag.name` keeps the original casing.
+		this.flagMap.set(ciCanonicalize(flagStr), flag);
 		this.hasWildcard = this.hasWildcard || flag.isWildcard;
 	}
 
 	public has(flag: string) {
-		return this.flagMap.has(flag);
+		return this.flagMap.has(ciCanonicalize(flag));
 	}
 }

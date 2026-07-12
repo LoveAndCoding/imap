@@ -11,7 +11,8 @@
  *                  *** REAL SIGNAL — genuine pass ***
  *   RFC9585-5-1  Client (implicit) MUST accept INPROGRESS and its embedded
  *                literals case-insensitively.
- *                  *** REAL SIGNAL — genuine VIOLATION ***
+ *                  *** REAL SIGNAL — genuine pass (M0.4 fixed the parser's
+ *                  keyword-case-folding gap; see the test below) ***
  *
  * Untestable ids NOT cited (per the catalog's own testability tags, all
  * internal-decision/user-intent-policy — the client attaches no consumer
@@ -38,21 +39,16 @@
  * parenthesized argument, mis-slotted an element, or choked on any of the
  * four shapes would fail this assertion.
  *
- * RFC9585-5-1 REAL VIOLATION (probed empirically before writing, via a
- * throwaway harness script): src/parser/structure/text.code.ts's `match()`
- * reads `const kind = matchedTokens[1]?.value` — the lexer AtomToken's raw,
- * UN-case-folded wire value (src/lexer/tokens/atom.ts's getTrueValue() is a
- * verbatim passthrough) — and AtomTextCode's constructor stores that exact
- * string as `.kind` with no normalization. A scripted
- * '* OK [inprogress ("A001" 175 NIL)] ...' (lowercase keyword) was confirmed
- * live to produce a parsed serverStatus event with
- * `content.text.code.kind === "inprogress"` (lowercase, verbatim), NOT
- * "INPROGRESS" — the client does not fold the resp-text-code keyword to a
- * case-insensitive canonical form as RFC9585-5-1 (and RFC 9051's own
- * formal-syntax case-insensitivity preamble) requires. This is a genuine,
- * non-vacuous wire-observable defect distinct from RFC9585-4-1's uppercase-
- * input pass: a client that DID fold case would report kind === "INPROGRESS"
- * for this same lowercase input and pass; this one does not.
+ * RFC9585-5-1 FIXED (M0.4 — spec §11.1 parser case-insensitivity):
+ * src/parser/structure/text.code.ts's `match()` used to key its resp-code
+ * switch off the lexer AtomToken's raw, un-case-folded wire value, and
+ * AtomTextCode's constructor stored that exact string as `.kind` with no
+ * normalization, so a scripted '* OK [inprogress ("A001" 175 NIL)] ...'
+ * (lowercase keyword) produced `content.text.code.kind === "inprogress"`
+ * instead of "INPROGRESS". `match()` now canonicalizes the resp-code kind
+ * (via src/lexer/case-insensitive.ts's `ciCanonicalize`) before dispatch, so
+ * the lowercase wire form is recognized and reported as "INPROGRESS", same
+ * as RFC9585-4-1's uppercase-input case.
  */
 import { expect } from "vitest";
 
@@ -205,22 +201,20 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC9585-5-1 — case-insensitive acceptance of the INPROGRESS keyword
-// (HONEST VIOLATION)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5's formal-syntax preamble: "all alphabetic characters are case-
 // insensitive... Implementations MUST accept these strings in a case-
 // insensitive fashion." A lowercase '* OK [inprogress ("A001" 175 NIL)]' is
 // exactly the same resp-text-code semantically; a compliant client must
 // surface the same normalized kind it would for the canonical uppercase
-// spelling. PROBED: text.code.ts's match() keys its kind switch off the raw,
-// un-folded lexer token value with no case-normalization step, so the
-// resulting AtomTextCode.kind is the literal lowercase wire string.
+// spelling. FIXED (M0.4): text.code.ts's match() now canonicalizes the
+// resp-code kind before dispatch, so the resulting AtomTextCode.kind is the
+// canonical uppercase spelling regardless of wire casing.
 complianceTest(
 	{
 		reqs: ["RFC9585-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a lower-case `* OK [inprogress (...)]` resp-text-code case-insensitively",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -233,13 +227,10 @@ complianceTest(
 		const content = (statusEvent!.detail as { content?: ParsedStatusContent }).content;
 		// SPEC: RFC9585-5-1 requires case-insensitive acceptance — the parsed
 		// kind must be recognized as INPROGRESS regardless of wire casing.
-		// PROBED: the client currently surfaces the raw, un-folded wire string
-		// ("inprogress", lowercase) instead of the canonical "INPROGRESS".
 		expect(
 			content?.text?.code?.kind,
 			"a lower-case 'inprogress' resp-text-code must be recognized as INPROGRESS " +
-				"(RFC 9585 §5's case-insensitivity MUST) — the client currently surfaces " +
-				"the raw un-folded wire-case string instead",
+				"(RFC 9585 §5's case-insensitivity MUST)",
 		).toBe("INPROGRESS");
 		// The tuple contents themselves are unaffected by keyword casing — still
 		// recoverable — confirming this is specifically a kind-normalization gap,

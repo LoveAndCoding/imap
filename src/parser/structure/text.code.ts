@@ -1,5 +1,6 @@
 import { ParsingError } from "../../errors";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../lexer/types";
+import { ciCanonicalize } from "../../lexer/case-insensitive";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 import { CapabilityList } from "./capability";
 import { FlagList } from "./flag";
@@ -193,8 +194,11 @@ export function match(
 	}
 
 	if (isCloseToken(matchedTokens[matchedTokens.length - 1])) {
-		// We found a full text code so get the right class and return
-		const kind = matchedTokens[1]?.value;
+		// We found a full text code so get the right class and return.
+		// Resp-code names are case-insensitive keywords (spec §11.1), so
+		// dispatch on the canonical (uppercase) spelling.
+		const rawKind = matchedTokens[1]?.value;
+		const kind = rawKind === undefined ? rawKind : ciCanonicalize(rawKind);
 		const contents = matchedTokens.slice(2, -1);
 		if (contents[0] && contents[0].isType(TokenTypes.space)) {
 			contents.shift();
