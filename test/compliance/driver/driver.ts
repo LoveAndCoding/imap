@@ -1,7 +1,13 @@
 import * as tls from "node:tls";
 
-// The ONLY allowed client import in the entire compliance suite:
-import { Connection, Session } from "../../../src/index";
+// The ONLY allowed client imports in the entire compliance suite: the
+// package's own public subpath surfaces (spec §1.1) — "." (this repo's
+// `src/index`) and "./sasl" (`src/sasl`). No other `src/**` path may be
+// imported from anywhere under test/compliance/specs or test/compliance/driver.
+import { Connection, ImapClient } from "../../../src/index";
+import type { ImapClientConfig } from "../../../src/index";
+import { createMechanism } from "../../../src/sasl";
+import type { SaslContext, SaslMechanism } from "../../../src/sasl";
 
 import { NotImplementedError } from "./errors";
 
@@ -15,6 +21,21 @@ export interface DriverConnectOptions {
 	timeoutMs?: number;
 	/** ID field/value pairs the consumer wants to send (RFC 2971). */
 	id?: Record<string, string>;
+	/**
+	 * Spec §10.3 (RFC 8314) credential policy: whether `driver.login()`/
+	 * `driver.authenticate()` may proceed over a non-confidential transport.
+	 * Defaults to `true` — the overwhelming convention across this suite is
+	 * `connectPlain()` + `driver.login()`/`driver.authenticate()` to reach an
+	 * authenticated state so some UNRELATED requirement can be exercised; the
+	 * §10.3 policy itself is a distinct, dedicated concern with its own
+	 * catalog family (RFC 8314, RFC 2595) tested through different
+	 * observables (STARTTLS sequencing, transcript absence of credentials
+	 * pre-TLS — see `tls-8314.test.ts`/`tls-2595.test.ts`), never by asserting
+	 * that `driver.login()`/`driver.authenticate()` itself throws. Pass
+	 * `false` explicitly for the rare test that wants the client's OWN
+	 * default policy (spec default `allowInsecureAuth: false`) exercised.
+	 */
+	allowInsecureAuth?: boolean;
 }
 
 export interface ObservedEvent {
@@ -78,6 +99,52 @@ export interface StoreOptions {
 }
 
 /**
+ * Fixed identity `driver.authenticate()` presents to `ImapClient.authenticate()`
+ * (spec §9.3) for every mechanism the driver drives. The compliance scripts
+ * never assert on the exact credential bytes (only on wire FORM — base64
+ * framing, GS2/SASL kvpair shape, etc. — see e.g. `sasl-plain-4616.test.ts`'s
+ * `plainMessage()` matcher, which pins these exact strings), so one fixed
+ * identity is honest and sufficient for every mechanism family exercised
+ * today (PLAIN/OAUTHBEARER/XOAUTH2). A real caller would supply its own via
+ * `ImapClientConfig.auth`; the driver's job is only to exercise the client's
+ * public surface, not to simulate a credential store.
+ */
+const DEFAULT_AUTH_USER = "user@example.com";
+const DEFAULT_AUTH_PASS = "s3cret";
+const DEFAULT_AUTH_TOKEN = "compliance-suite-access-token";
+
+/**
+ * Wraps a real, registry-produced `SaslMechanism` so its `SaslContext` carries
+ * a caller-supplied `authzid` (RFC 4422 §3.4.1) without inventing any new
+ * protocol behavior: `start`/`step`/`finish` all delegate to `inner`
+ * unchanged, just with `authzid` merged into the context object each sees.
+ * `undefined` is a pass-through (no wrapping needed).
+ *
+ * A `initialResponse` string containing an embedded NUL is deliberately NOT
+ * treated as an authzid override here: several compliance tests pass the
+ * FULL expected wire message (e.g. `"\x00user@example.com\x00s3cret"` for
+ * PLAIN) purely as inline documentation of what the real exchange looks like
+ * — RFC 4616 §2 forbids a NUL inside any PLAIN field, so feeding that whole
+ * string in as `authzid` would make the real mechanism legitimately throw.
+ * Callers filter that case out before calling `withAuthzid` (see
+ * `authenticate()` below); this function only ever sees a plausible bare
+ * authzid or `undefined`.
+ */
+function withAuthzid(inner: SaslMechanism, authzid: string | undefined): SaslMechanism {
+	if (authzid === undefined) {
+		return inner;
+	}
+	const merge = (ctx: SaslContext): SaslContext => ({ ...ctx, authzid });
+	return {
+		name: inner.name,
+		requiresSecureTransport: inner.requiresSecureTransport,
+		start: (ctx) => inner.start(merge(ctx)),
+		step: (challenge, ctx) => inner.step(challenge, merge(ctx)),
+		finish: (data, ctx) => inner.finish(data, merge(ctx)),
+	};
+}
+
+/**
  * Thin adapter between compliance tests and the client's public API.
  * RULE: zero protocol logic — translate calls and observations only.
  */
@@ -87,12 +154,31 @@ export class ComplianceDriver {
 	/** Messages the client emitted through its public logger config. */
 	public readonly logs: Array<{ level: string; message: string; detail?: unknown }> = [];
 
-	private session?: Session;
+	private client?: ImapClient;
 	private connection?: Connection;
 
 	public async connect(opts: DriverConnectOptions): Promise<boolean> {
-		this.session = new Session(this.toConfig(opts));
-		return this.withConnectBackstop("connect", opts, this.session.start());
+		const client = new ImapClient(this.toClientConfig(opts));
+		this.client = client;
+		this.wireClientEvents(client);
+		this.wireRawConnectionEvents(client.connection);
+		try {
+			await this.withConnectBackstop("connect", opts, client.connect());
+			return true;
+		} catch (err) {
+			// Historical parity with the pre-ImapClient driver (`Session.start()`
+			// used to log this exact message on a failed connect — see
+			// `driver/__tests__/driver.test.ts`): `ImapClient` itself only
+			// rejects the promise, it doesn't separately log a summary line, so
+			// the driver records one itself rather than losing this observable
+			// for consumers that poll `driver.logs`.
+			this.logs.push({
+				level: "error",
+				message: "Unable to connect to the server",
+				detail: err,
+			});
+			return false;
+		}
 	}
 
 	/**
@@ -100,22 +186,10 @@ export class ComplianceDriver {
 	 * events for observation-based tests (e.g., unsolicited data handling).
 	 */
 	public async connectLow(opts: DriverConnectOptions): Promise<boolean> {
-		this.connection = new Connection(this.toConfig(opts));
-		for (const ev of [
-			"ready",
-			"disconnected",
-			"connectionError",
-			"serverStatus",
-			"untaggedResponse",
-			"taggedResponse",
-			"continueResponse",
-			"unknownResponse",
-		] as const) {
-			this.connection.on(ev as never, ((detail: unknown) => {
-				this.events.push({ type: ev, detail });
-			}) as never);
-		}
-		return this.withConnectBackstop("connectLow", opts, this.connection.connect());
+		const connection = new Connection(this.toConnectionConfig(opts));
+		this.connection = connection;
+		this.wireRawConnectionEvents(connection);
+		return this.withConnectBackstop("connectLow", opts, connection.connect());
 	}
 
 	/**
@@ -142,11 +216,11 @@ export class ComplianceDriver {
 					timer = setTimeout(() => {
 						// Best-effort teardown — the hung connect may ignore it,
 						// so don't await; just make sure end() won't block on it.
-						const session = this.session;
+						const client = this.client;
 						const connection = this.connection;
-						this.session = undefined;
+						this.client = undefined;
 						this.connection = undefined;
-						void Promise.resolve(session?.end()).catch(() => undefined);
+						void Promise.resolve(client?.close({ force: true })).catch(() => undefined);
 						void Promise.resolve(connection?.disconnect()).catch(() => undefined);
 						reject(
 							new Error(
@@ -164,61 +238,143 @@ export class ComplianceDriver {
 	}
 
 	public async end(): Promise<void> {
-		await this.session?.end();
+		await this.client?.close({ force: true });
 		await this.connection?.disconnect();
-		this.session = undefined;
+		this.client = undefined;
 		this.connection = undefined;
 	}
 
 	public get active(): boolean {
-		return this.session?.active ?? this.connection?.isActive ?? false;
+		if (this.client) {
+			return this.client.state !== "disconnected";
+		}
+		return this.connection?.isActive ?? false;
 	}
 
 	public get authenticated(): boolean {
-		return this.session?.authenticated ?? false;
+		if (!this.client) {
+			return false;
+		}
+		return this.client.state === "authenticated" || this.client.state === "selected";
 	}
 
 	/**
-	 * Only meaningful after connectLow() — Session does not expose its inner
-	 * Connection, so on the connect() path this is always false. Tests
-	 * asserting TLS state must use the connectLow path.
+	 * `connectLow()` has no TLS concept of its own beyond the raw socket, so
+	 * this reads `Connection.isSecure` directly there; on the `connect()`
+	 * path it reads the client's own `secure` getter (spec §3.2).
 	 */
 	public get secure(): boolean {
+		if (this.client) {
+			return this.client.secure;
+		}
 		return this.connection?.isSecure ?? false;
 	}
 
-	/** Session-path only (connect()); always false after connectLow(). */
+	/** `connect()`-path only (`ImapClient.supports`); always false after
+	 *  `connectLow()` — Layer 1 has no capability registry of its own that
+	 *  the driver surfaces here. */
 	public hasCapability(name: string): boolean {
-		const caps = this.session?.capabilities;
-		return caps ? caps.has(name) : false;
+		return this.client?.supports(name) ?? false;
 	}
 
-	/** Session-path only (connect()); always null after connectLow(). */
+	/** `connect()`-path only (`ImapClient.serverId`); always null after
+	 *  `connectLow()`. */
 	public serverInfo(): ReadonlyMap<string, string | null> | null {
-		return this.session?.server ?? null;
+		return this.client?.serverId ?? null;
+	}
+
+	// ---- Verbs wired to the public client (M1.9) ---------------------------
+
+	public async noop(): Promise<void> {
+		await this.requireClient().noop();
+	}
+
+	/**
+	 * LOGIN (RFC 3501/9051 §6.2.3). Maps to `ImapClient.authenticate({user,
+	 * pass, mechanisms: []})` — an EXPLICIT empty mechanisms list, not an
+	 * omitted one. `performAuthSelection` (spec §9.3) only substitutes its
+	 * own default SASL candidate order when `mechanisms` is `undefined`
+	 * (`auth.mechanisms ?? defaultCandidates(auth)`); a present-but-empty
+	 * array survives that check as `[]`, so the selection loop tries zero
+	 * SASL mechanisms and falls straight through to step 4 (LOGIN). This
+	 * makes `driver.login()` deterministically drive the LOGIN command
+	 * itself — never AUTHENTICATE — regardless of what `AUTH=` mechanisms a
+	 * given script's CAPABILITY also happens to advertise (some scripts
+	 * advertise `AUTH=PLAIN` alongside a plain `driver.login()` call, e.g.
+	 * to also exercise a LATER `driver.authenticate()` on the same
+	 * connection — an earlier version of this mapping omitted `mechanisms`
+	 * entirely and let the full preference order run, which sent
+	 * AUTHENTICATE instead of the LOGIN such scripts expect). Step 4 still
+	 * enforces everything it always does: `LOGINDISABLED` prohibition
+	 * (`performAuthSelection` rejects with `AuthError`, zero bytes) and the
+	 * §10.3 credential policy — this mapping does not bypass either.
+	 */
+	public async login(user: string, pass: string): Promise<void> {
+		await this.requireClient().authenticate({ user, pass, mechanisms: [] });
+	}
+
+	/**
+	 * AUTHENTICATE (RFC 3501/9051 §6.2.2). Drives EXACTLY the named
+	 * mechanism (never the full preference-ordered selection algorithm a
+	 * plain `authenticate()` call would run) by handing
+	 * `ImapClient.authenticate()` a single-element `mechanisms` array
+	 * containing that one mechanism instance — this still goes through the
+	 * real public method (state transition, credential policy §10.3,
+	 * capability-advertisement filtering, capability-epoch refresh, all of
+	 * it), it just pins the choice so the scripted server sees the mechanism
+	 * the test asked for.
+	 *
+	 * A mechanism name the registry doesn't recognize (GSSAPI — never on
+	 * this library's roadmap; CRAM-MD5, SCRAM-SHA-1/256, ANONYMOUS, EXTERNAL
+	 * — not shipped until M5) throws `NotImplementedError` directly, with zero
+	 * bytes written: `createMechanism()` returning `undefined` is a
+	 * capability gap in the CLIENT, not a protocol decision, so the driver
+	 * surfaces it as the same "no public API for this" signal every other
+	 * unwired verb uses, rather than letting it fall through to
+	 * `performAuthSelection`'s generic `AuthError` (which exists for a
+	 * different case: every CANDIDATE excluded after a real attempt).
+	 *
+	 * `initialResponse`, when supplied, is treated as an authzid override
+	 * (RFC 4422 §3.4.1) for mechanisms that accept one (PLAIN, EXTERNAL) —
+	 * see `withAuthzid()` — UNLESS it contains an embedded NUL, in which
+	 * case it is documentation-only (see `withAuthzid`'s doc comment) and
+	 * the mechanism runs with its default (absent) authzid instead.
+	 */
+	public async authenticate(mechanism: string, initialResponse?: string): Promise<void> {
+		const client = this.requireClient();
+		const base = createMechanism(mechanism);
+		if (!base) {
+			throw new NotImplementedError(`AUTHENTICATE ${mechanism}`);
+		}
+		const authzid =
+			initialResponse !== undefined && !initialResponse.includes("\0")
+				? initialResponse
+				: undefined;
+		await client.authenticate({
+			user: DEFAULT_AUTH_USER,
+			pass: DEFAULT_AUTH_PASS,
+			accessToken: DEFAULT_AUTH_TOKEN,
+			mechanisms: [withAuthzid(base, authzid)],
+		});
+	}
+
+	public async logout(): Promise<void> {
+		await this.requireClient().logout();
+	}
+
+	public async enable(capabilities: string[]): Promise<string[]> {
+		return this.requireClient().enableExtensions(capabilities);
 	}
 
 	// ---- Verbs with no public API surface (yet) ----------------------------
 	// Each throws NotImplementedError so compliance tests fail with the
 	// 'unimplemented' annotation rather than a compile/type error.
 
-	public async noop(): Promise<never> {
-		throw new NotImplementedError("NOOP");
-	}
-	public async login(_user: string, _pass: string): Promise<never> {
-		throw new NotImplementedError("LOGIN");
-	}
-	public async authenticate(_mechanism: string, _initialResponse?: string): Promise<never> {
-		throw new NotImplementedError("AUTHENTICATE");
-	}
 	public async unauthenticate(): Promise<never> {
 		throw new NotImplementedError("UNAUTHENTICATE");
 	}
 	public async compress(): Promise<never> {
 		throw new NotImplementedError("COMPRESS");
-	}
-	public async logout(): Promise<never> {
-		throw new NotImplementedError("LOGOUT");
 	}
 	public async select(_mailbox: string, _opts?: SelectOptions): Promise<never> {
 		throw new NotImplementedError("SELECT");
@@ -327,9 +483,6 @@ export class ComplianceDriver {
 	}
 	public async unselect(): Promise<never> {
 		throw new NotImplementedError("UNSELECT");
-	}
-	public async enable(_capabilities: string[]): Promise<never> {
-		throw new NotImplementedError("ENABLE");
 	}
 	public async namespace(): Promise<never> {
 		throw new NotImplementedError("NAMESPACE");
@@ -487,7 +640,86 @@ export class ComplianceDriver {
 
 	// ------------------------------------------------------------------------
 
-	private toConfig(opts: DriverConnectOptions) {
+	private requireClient(): ImapClient {
+		if (!this.client) {
+			throw new Error(
+				"ComplianceDriver: connect() must be called before issuing a Layer-3 verb",
+			);
+		}
+		return this.client;
+	}
+
+	/** Bridges every event the pre-`ImapClient` driver bridged from a bare
+	 *  `Connection` (used by `connectLow()`) — additively also wired for the
+	 *  `connect()` path, sourced from `client.connection` (public, spec
+	 *  §3.2's Layer 1 escape hatch), so scripts that poll `driver.events` for
+	 *  raw wire-level types (`untaggedResponse`, `serverStatus`, …) keep
+	 *  working whether they drove the connection via `connect()` or
+	 *  `connectLow()`. */
+	private wireRawConnectionEvents(connection: Connection): void {
+		for (const ev of [
+			"ready",
+			"disconnected",
+			"connectionError",
+			"serverStatus",
+			"untaggedResponse",
+			"taggedResponse",
+			"continueResponse",
+			"unknownResponse",
+		] as const) {
+			connection.on(ev as never, ((detail: unknown) => {
+				this.events.push({ type: ev, detail });
+			}) as never);
+		}
+	}
+
+	/** Additively bridges `ImapClient`'s OWN events (distinct type strings
+	 *  from the raw `Connection` ones above — `close`/`error` here never
+	 *  collide with `disconnected`/`connectionError` above) — this is the
+	 *  client-level ("Layer 3") observation surface, e.g. `unhandled` for
+	 *  the router's tolerance channel (spec §8 step 3c / invariant I-6). */
+	private wireClientEvents(client: ImapClient): void {
+		client.on("stateChange", (state, prev) => {
+			this.events.push({ type: "stateChange", detail: { state, prev } });
+		});
+		client.on("alert", (text, meta) => {
+			this.events.push({ type: "alert", detail: { text, meta } });
+		});
+		client.on("capabilitiesChanged", (caps) => {
+			this.events.push({ type: "capabilitiesChanged", detail: caps });
+		});
+		client.on("unhandled", (resp) => {
+			this.events.push({ type: "unhandled", detail: resp });
+		});
+		client.on("close", (info) => {
+			this.events.push({ type: "close", detail: info });
+		});
+		client.on("error", (err) => {
+			this.events.push({ type: "error", detail: err });
+		});
+	}
+
+	private toClientConfig(opts: DriverConnectOptions): ImapClientConfig {
+		const tlsSetting =
+			opts.security === "implicit" ? "on" : opts.security === "starttls" ? "starttls" : "off";
+		const tlsOptions: tls.ConnectionOptions | undefined = opts.ca
+			? { ca: [opts.ca] }
+			: undefined;
+		return {
+			host: opts.host,
+			port: opts.port,
+			tls: tlsSetting,
+			tlsOptions,
+			timeouts: { connect: opts.timeoutMs ?? 3000 },
+			id: opts.id,
+			allowInsecureAuth: opts.allowInsecureAuth ?? true,
+			logger: (info) => {
+				this.logs.push(info);
+			},
+		};
+	}
+
+	private toConnectionConfig(opts: DriverConnectOptions) {
 		const tlsSetting =
 			opts.security === "implicit" ? "on" : opts.security === "starttls" ? "starttls" : "off";
 		const tlsOptions: tls.ConnectionOptions | undefined = opts.ca

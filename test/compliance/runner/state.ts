@@ -10,10 +10,37 @@ import type { Profile } from "../catalog/types";
  *   S: <tag> OK/NO AUTHENTICATE completed/failed
  *
  * opts.result defaults to "OK".
+ *
+ * `opts.capsAfter`: RFC3501/9051-6.2.2-4 obliges the client to re-issue
+ * CAPABILITY after a successful security-layer AUTHENTICATE UNLESS the
+ * tagged OK itself already carries a `[CAPABILITY ...]` code (spec §3.3
+ * step 5: "Refresh capabilities from tagged-OK [CAPABILITY] else round
+ * trip"). Passing the capability list here folds it into the SAME tagged
+ * OK (exactly as a real, capability-conscious server would) so a script
+ * that doesn't care about the re-issue duty itself doesn't need a second,
+ * separate CAPABILITY round trip just to avoid stalling the client's own
+ * mandatory refresh. Tests that DO exercise the re-issue duty itself
+ * (RFC3501-6.2.2-4/RFC9051 equivalent) omit this and script the follow-up
+ * CAPABILITY exchange explicitly instead — passing both would mean the
+ * client never needs the round trip, so the explicitly-scripted one would
+ * never be consumed.
+ *
+ * A "NO" result carries `[AUTHENTICATIONFAILED]` (RFC 5530): spec §9.3 step
+ * 3 only treats a NO as "credentials wrong, do not fall through to another
+ * mechanism/LOGIN" when it carries that specific code — a bare "NO" without
+ * it reads as a mechanism-negotiation failure instead, so `authenticate()`
+ * would silently fall through to a LOGIN attempt the script never expects.
  */
-export function authPlainExchange(opts: { result?: "OK" | "NO" } = {}): ScriptStep[] {
+export function authPlainExchange(
+	opts: { result?: "OK" | "NO"; capsAfter?: string[] } = {},
+): ScriptStep[] {
 	const result = opts.result ?? "OK";
-	const suffix = result === "OK" ? "OK AUTHENTICATE completed" : "NO AUTHENTICATE failed";
+	const suffix =
+		result === "OK"
+			? opts.capsAfter
+				? `OK [CAPABILITY ${opts.capsAfter.join(" ")}] AUTHENTICATE completed`
+				: "OK AUTHENTICATE completed"
+			: "NO [AUTHENTICATIONFAILED] AUTHENTICATE failed";
 	return [
 		expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
 		send("+ \r\n"),
@@ -46,12 +73,45 @@ export function capabilityExchange(caps: string[]): ScriptStep[] {
 	];
 }
 
-/** Expect a LOGIN command (any credentials); reply OK. */
-export function loginExchange(): ScriptStep[] {
-	return [expectLine(command("LOGIN")), reply("OK LOGIN completed")];
+/**
+ * Expect a LOGIN command (any credentials); reply OK.
+ *
+ * `capsAfter`, when given, folds a `[CAPABILITY ...]` code into the SAME
+ * tagged OK (see `authPlainExchange`'s doc comment for the full rationale):
+ * `ImapClient.authenticate()` (spec §3.3 step 5) re-issues CAPABILITY after
+ * ANY successful LOGIN/AUTHENTICATE whose tagged OK didn't already carry
+ * one, so a script that doesn't itself care about that duty needs this to
+ * avoid stalling on an unscripted round trip. `sessionPrelude` always
+ * supplies its own resolved capability list here so every one of its many
+ * callers gets this for free.
+ */
+export function loginExchange(capsAfter?: string[]): ScriptStep[] {
+	const suffix = capsAfter
+		? `OK [CAPABILITY ${capsAfter.join(" ")}] LOGIN completed`
+		: "OK LOGIN completed";
+	return [expectLine(command("LOGIN")), reply(suffix)];
 }
 
-/** greet + capabilityExchange (+ optional loginExchange) — the standard session-establishment prelude. */
+/**
+ * greet + capabilityExchange (+ optional loginExchange) — the standard
+ * session-establishment prelude.
+ *
+ * Deliberately sends a BARE greeting (no inline `[CAPABILITY ...]` code),
+ * even for `profile: "rev2"` — unlike `greet({ profile: "rev2" })` used
+ * standalone, which DOES attach one (RFC 9051 §6.3.2's documented server
+ * norm; exercised by tests that specifically want that scenario, e.g. the
+ * capability-round-trip-skip behavior). This helper's very next step is
+ * ALWAYS `capabilityExchange(resolvedCaps)` — an unconditional round trip —
+ * so an inline-capability greeting here would satisfy `ensureCapabilities()`
+ * (spec §3.3 step 4: registry already valid+non-empty) before the client
+ * ever reaches that step, leaving it permanently unconsumed and the
+ * harness blocked on it (or worse, mismatched against whatever the client
+ * sends next) for EVERY subsequent scripted exchange. A bare greeting
+ * guarantees the round trip this helper always scripts is the one that
+ * actually happens, so the registry ends up with exactly `resolvedCaps` —
+ * matching every caller's intent (e.g. AUTH=/LOGINDISABLED/ENABLE probes
+ * that a hardcoded rev2 greeting could never carry anyway).
+ */
 export function sessionPrelude(
 	caps?: string[],
 	opts: { login?: boolean; profile?: Profile } = {},
@@ -60,9 +120,9 @@ export function sessionPrelude(
 	const defaultCaps = opts.profile === "rev2" ? ["IMAP4rev2", "LITERAL-"] : ["IMAP4rev1"];
 	const resolvedCaps = caps ?? defaultCaps;
 	return [
-		...greet({ profile: opts.profile }),
+		send("* OK ready\r\n"),
 		...capabilityExchange(resolvedCaps),
-		...(opts.login ? loginExchange() : []),
+		...(opts.login ? loginExchange(resolvedCaps) : []),
 	];
 }
 

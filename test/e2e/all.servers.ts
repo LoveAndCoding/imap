@@ -1,36 +1,32 @@
-import { Session } from "../../src";
+import { ImapClient } from "../../src";
 
 export const describeAllServers = (host: string, port: number) => {
-	let session: Session;
+	let client: ImapClient;
 	describe("Unauthenticated state", () => {
 		afterEach(async () => {
-			if (session) {
+			if (client) {
 				try {
-					await session.end();
+					await client.close({ force: true });
 				} catch (_) {
 					// Intentionally ignored: best-effort cleanup between tests
 				}
-				session = undefined as any;
+				client = undefined as any;
 			}
 		});
 
 		it("grabs server info and capabilities on connection and clears them after", async () => {
-			session = new Session({
+			client = new ImapClient({
 				host,
 				port,
 			});
-			expect(session.active).toBe(false);
-			expect(session.authenticated).toBe(false);
-			await session.start();
-			expect(session.active).toBe(true);
-			expect(session.authenticated).toBe(false);
-			expect(session.capabilities?.capabilities).not.toHaveLength(0);
-			expect(session.server).toBeInstanceOf(Map);
-			await session.end();
-			expect(session.active).toBe(false);
-			expect(session.authenticated).toBe(false);
-			expect(session.capabilities).toBeFalsy();
-			expect(session.server).toBeFalsy();
+			expect(client.state).toBe("disconnected");
+			await client.connect();
+			expect(client.state).toBe("not-authenticated");
+			expect(client.capabilities.all().size).not.toBe(0);
+			expect(client.serverId).toBeInstanceOf(Map);
+			await client.close({ force: true });
+			expect(client.state).toBe("disconnected");
+			expect(client.capabilities.all().size).toBe(0);
 		});
 	});
 };

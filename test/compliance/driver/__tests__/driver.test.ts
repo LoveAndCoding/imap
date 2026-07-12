@@ -15,7 +15,7 @@ afterEach(async () => {
 	driver = undefined;
 });
 
-test("connect() drives Session.start against the scripted server", async () => {
+test("connect() drives ImapClient.connect() against the scripted server", async () => {
 	server = await ScriptedServer.start();
 	server.arm([
 		[
@@ -35,10 +35,52 @@ test("connect() drives Session.start against the scripted server", async () => {
 	await server.assertCompleted();
 });
 
-test("unimplemented verbs throw NotImplementedError", async () => {
+test("noop/login/logout are wired to the public ImapClient (M1.9)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+			expectLine(command("LOGOUT", { args: null })),
+			reply("OK LOGOUT completed", ["* BYE logging out"]),
+		],
+	]);
 	driver = new ComplianceDriver();
-	await expect(driver.noop()).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.login("u", "p")).rejects.toBeInstanceOf(NotImplementedError);
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	expect(driver.authenticated).toBe(true);
+	await driver.noop();
+	await driver.logout();
+	await server.assertCompleted();
+});
+
+test("enable() is wired to the public ImapClient (M1.9)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 ENABLE CONDSTORE"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("ENABLE", { args: /^CONDSTORE$/ })),
+			reply("OK ENABLE completed", ["* ENABLED CONDSTORE"]),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	await expect(driver.enable(["CONDSTORE"])).resolves.toEqual(["CONDSTORE"]);
+	await server.assertCompleted();
+});
+
+test("select() remains unimplemented", async () => {
+	driver = new ComplianceDriver();
 	await expect(driver.select("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
 });
 
@@ -48,12 +90,42 @@ test("Phase 3 verbs (unauthenticate, compress) throw NotImplementedError", async
 	await expect(driver.compress()).rejects.toBeInstanceOf(NotImplementedError);
 });
 
-test("widened authenticate(mechanism, initialResponse?) still throws NotImplementedError", async () => {
+test("authenticate() with a mechanism the registry doesn't know throws NotImplementedError", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 AUTH=GSSAPI"]),
+		],
+	]);
 	driver = new ComplianceDriver();
-	await expect(driver.authenticate("PLAIN")).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.authenticate("PLAIN", "AGZvbwBiYXI=")).rejects.toBeInstanceOf(
-		NotImplementedError,
-	);
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	// GSSAPI is not (and will never be) a registered mechanism — zero bytes
+	// written, NotImplementedError rather than falling through to AuthError.
+	await expect(driver.authenticate("GSSAPI")).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+test("authenticate(mechanism) drives exactly that mechanism against the scripted server", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
+			expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+			send("+ \r\n"),
+			expectLine({
+				description: "base64 SASL response",
+				match: (line: string) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: "" }),
+			}),
+			reply("OK AUTHENTICATE completed"),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.authenticate("PLAIN");
+	await server.assertCompleted();
 });
 
 test("Phase 4 verbs throw NotImplementedError", async () => {

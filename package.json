@@ -8,6 +8,20 @@
 	"description": "A TypeScript port and modernization of the node IMAP module that makes communicating with IMAP servers easy",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./commands": {
+			"types": "./dist/commands/index.d.ts",
+			"default": "./dist/commands/index.js"
+		},
+		"./sasl": {
+			"types": "./dist/sasl/index.d.ts",
+			"default": "./dist/sasl/index.js"
+		}
+	},
 	"dependencies": {
 		"tiny-typed-emitter": "2.1.0",
 		"utf7": "git+https://github.com/LoveAndCoding/utf7.git"

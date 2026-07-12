@@ -387,7 +387,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `client.enabled` and also returned directly.
 	 */
 	public async enableExtensions(caps: string[]): Promise<string[]> {
-		const advertised = caps.filter((cap) => this.capabilityRegistry.view.has(cap));
+		const advertised = caps.filter((cap) => this.isEnableAdvertised(cap));
 		if (advertised.length === 0) {
 			return [];
 		}
@@ -396,6 +396,24 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			this._enabled.add(cap);
 		}
 		return enabled;
+	}
+
+	/**
+	 * Whether the server's advertisement permits ENABLEing `cap`. Almost
+	 * always a straight capability check, with one RFC 6855 §3 wrinkle: a
+	 * server advertising UTF8=ONLY does not separately advertise
+	 * UTF8=ACCEPT, yet the client's required reaction is exactly
+	 * `ENABLE UTF8=ACCEPT` (UTF8=ONLY means "you MUST enable acceptance to
+	 * proceed") -- so UTF8=ONLY counts as advertising UTF8=ACCEPT. The
+	 * client never sends `ENABLE UTF8=ONLY` (it is not an enableable
+	 * capability name).
+	 */
+	private isEnableAdvertised(cap: string): boolean {
+		const view = this.capabilityRegistry.view;
+		if (view.has(cap)) {
+			return true;
+		}
+		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
 	// -- Layer 2 escape hatch --------------------------------------------------
