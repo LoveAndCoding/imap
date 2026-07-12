@@ -65,6 +65,33 @@ test("fails the script when an unexpected line arrives", async () => {
 	sock.destroy();
 });
 
+test("fails the script when a line is terminated by a bare LF", async () => {
+	server = await ScriptedServer.start();
+	server.arm([[send("* OK ready\r\n"), expectLine(command("CAPABILITY"))]]);
+	const sock = await rawConnect(server.port);
+	sock.write("a1 CAPABILITY\n");
+	const outcome = await server.outcome();
+	expect(outcome.ok).toBe(false);
+	expect(outcome.reason).toContain("bare LF");
+	sock.destroy();
+});
+
+test("flags a bare-LF line even when a CRLF-terminated line follows in the same chunk", async () => {
+	// Regression guard: the bare-LF check used to run only when the buffer
+	// contained NO CRLF at all, so `foo\n` arriving together with a later
+	// valid `bar\r\n` was silently absorbed into one logical line instead of
+	// failing the framing requirement the framing spec files rely on.
+	server = await ScriptedServer.start();
+	server.arm([[send("* OK ready\r\n"), expectLine(command("NOOP"))]]);
+	const sock = await rawConnect(server.port);
+	sock.write("a1 NOOP\na2 NOOP\r\n");
+	const outcome = await server.outcome();
+	expect(outcome.ok).toBe(false);
+	expect(outcome.reason).toContain("bare LF");
+	expect(outcome.reason).toContain("a1 NOOP");
+	sock.destroy();
+});
+
 test("fails with timeout when expected line never arrives", async () => {
 	server = await ScriptedServer.start({ stepTimeoutMs: 200 });
 	server.arm([[send("* OK ready\r\n"), expectLine(command("CAPABILITY"))]]);
