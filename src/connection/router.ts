@@ -61,6 +61,14 @@ export interface RouterHost {
 	emitResponse(resp: StandardResponse): void;
 	emitServerStatus(resp: UntaggedResponse): void;
 	emitUnhandled(resp: ContinueResponse | TaggedResponse | UnknownResponse | UntaggedResponse): void;
+	/**
+	 * ADDITIVE (spec I-7/§10.6, `ImapClient`'s `alert` event): fired for
+	 * EVERY ALERT resp-code, regardless of confidentiality — unlike
+	 * `emitServerStatus`, which never surfaces an ALERT-carrying response
+	 * pre-confidentiality at all (see `handleStatusResponse` below). Nothing
+	 * in M0 emitted this; adding it changes no existing observable behavior.
+	 */
+	emitAlert(text: string, meta: { trusted: boolean }): void;
 }
 
 /** An in-flight command's claim function + the sink its claimed responses
@@ -244,6 +252,11 @@ export class Router {
 				message: alertText,
 				detail: { code: "ALERT", trusted: confidential },
 			});
+			// ADDITIVE, and deliberately BEFORE the pre-confidentiality
+			// early-return below: `ImapClient`'s `alert` event (spec I-7) must
+			// fire regardless of confidentiality (with `trusted` reflecting
+			// it), unlike `serverStatus`, which stays suppressed pre-TLS.
+			this.host.emitAlert(alertText, { trusted: confidential });
 			if (!confidential) {
 				return;
 			}

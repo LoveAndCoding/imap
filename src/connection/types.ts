@@ -56,6 +56,13 @@ export interface IConnectionEvents {
 	unknownResponse: (response: UnknownResponse | null) => void;
 	untaggedResponse: (response: UntaggedResponse) => void;
 	/**
+	 * ADDITIVE (spec I-7/§10.6): fired for every ALERT resp-code regardless
+	 * of confidentiality, `trusted` reflecting whether TLS was active when it
+	 * arrived. `ImapClient` bridges this straight to its own public `alert`
+	 * event. Nothing in M0 emitted this — see `Router.handleStatusResponse`.
+	 */
+	alert: (text: string, meta: { trusted: boolean }) => void;
+	/**
 	 * A response the router (spec §8) could neither attribute to any
 	 * in-flight command's `claims()` nor route through the state-tracker
 	 * lane (an unknown tagged-response tag, an unowned continuation, or

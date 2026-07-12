@@ -49,7 +49,17 @@ export class CapabilityTextCode {
 	public readonly capabilities: CapabilityList;
 
 	constructor(tokens: LexerTokenList) {
-		this.capabilities = new CapabilityList(tokens);
+		// `tokens` here is the resp-text-code's `capability-data` payload
+		// (e.g. "IMAP4rev1 ID" from `[CAPABILITY IMAP4rev1 ID]`) — a bare,
+		// unparenthesized space-separated list, with the leading "CAPABILITY"
+		// keyword ITSELF already stripped by `match()`'s dispatcher above.
+		// `CapabilityList`'s constructor defaults `isWrappedInParens` to
+		// `true` (its usual callers parse a parenthesized list), which
+		// silently produced an EMPTY capability set here (`splitSpaceSeparatedList`
+		// found no leading "(" to anchor on) — `false` matches
+		// `CapabilityList.match()`'s own handling of the untagged `*
+		// CAPABILITY ...` response, whose data has the exact same shape.
+		this.capabilities = new CapabilityList(tokens, false);
 	}
 }
 
@@ -232,7 +242,18 @@ export function match(
 			case "BADCHARSET":
 				code = new BadCharsetTextCode(contents);
 				break;
-			case "CAPABILITIES":
+			case "CAPABILITY":
+				// The wire resp-text-code keyword is "CAPABILITY" (singular;
+				// RFC3501/9051 §7.1: `"CAPABILITY" SP capability-data`) — this
+				// case label previously read "CAPABILITIES" (matching this
+				// class's own display-label `.kind` field rather than the
+				// actual keyword), so a `[CAPABILITY ...]` code always fell
+				// through to the generic `AtomTextCode` branch below instead of
+				// becoming a `CapabilityTextCode`. That silently defeated every
+				// consumer keyed on `instanceof CapabilityTextCode` (the
+				// greeting/tagged-OK capability fast paths in
+				// `Connection.starttls()`, `CapabilityCommand.accept()`, and
+				// `ImapClient`'s capability bridging).
 				code = new CapabilityTextCode(contents);
 				break;
 			case "COPYUID":

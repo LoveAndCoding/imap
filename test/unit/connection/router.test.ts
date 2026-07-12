@@ -26,6 +26,7 @@ function makeHost() {
 		serverStatus: [],
 		unhandled: [],
 		rawStatus: [],
+		alert: [],
 	};
 	let secure = false;
 	return {
@@ -44,6 +45,7 @@ function makeHost() {
 			emitResponse: (r: unknown) => calls.response.push(r),
 			emitServerStatus: (r: unknown) => calls.serverStatus.push(r),
 			emitUnhandled: (r: unknown) => calls.unhandled.push(r),
+			emitAlert: (text: string, meta: unknown) => calls.alert.push({ text, meta }),
 		},
 	};
 }

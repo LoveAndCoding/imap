@@ -479,6 +479,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			emitResponse: (resp) => this.emit("response", resp),
 			emitServerStatus: (resp) => this.emit("serverStatus", resp),
 			emitUnhandled: (resp) => this.emit("unhandled", resp),
+			emitAlert: (text, meta) => this.emit("alert", text, meta),
 		});
 
 		// Setup our Lexing/Parsing
