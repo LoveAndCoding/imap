@@ -125,14 +125,14 @@ complianceTest(
 
 // Also: server sends the response-code token "OK" / status token in different
 // cases — the client must still complete successfully.
-// Observed: client times out on lowercase "ok" response (does not recognize it).
-// This is a genuine client violation of RFC 3501 §9 case-insensitivity.
+// FIXED (M0.4): StatusResponse now compares "OK"/"NO"/"BAD"/"PREAUTH"/"BYE"
+// case-insensitively (src/parser/structure/status.ts), so a lowercase "ok"
+// greeting/status is recognized instead of hanging until timeout.
 complianceTest(
 	{
 		reqs: ["RFC3501-9-2"],
 		profiles: ["rev1"],
 		title: "client accepts response type tokens in mixed case",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

@@ -13,6 +13,7 @@
 //                   ; standards-track
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
+import { ciCanonicalize, ciEquals } from "../../lexer/case-insensitive";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 
 export interface ICapability {
@@ -206,7 +207,7 @@ export class CapabilityList {
 		if (
 			firstToken &&
 			firstToken.isType(TokenTypes.atom) &&
-			firstToken.getTrueValue() === "CAPABILITY"
+			ciEquals(firstToken.getTrueValue(), "CAPABILITY")
 		) {
 			return new CapabilityList(tokens.slice(1), false);
 		}
@@ -241,7 +242,7 @@ export class CapabilityList {
 
 	protected add(capabilityStr: string) {
 		// Normalize the string for storage purposes
-		const normalCapStr = capabilityStr.toUpperCase();
+		const normalCapStr = ciCanonicalize(capabilityStr);
 
 		if (!this.capabilityMap.has(normalCapStr)) {
 			let cap;
@@ -261,7 +262,7 @@ export class CapabilityList {
 	}
 
 	public has(capability: string) {
-		return this.capabilityMap.has(capability.toUpperCase());
+		return this.capabilityMap.has(ciCanonicalize(capability));
 	}
 
 	// Some sugar

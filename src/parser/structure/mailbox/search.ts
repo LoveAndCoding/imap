@@ -1,5 +1,6 @@
 import { ParsingError } from "../../../errors";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
+import { ciEquals } from "../../../lexer/case-insensitive";
 import {
 	getAStringValue,
 	matchesFormat,
@@ -67,7 +68,7 @@ export class SearchResponse {
 	//   "SEARCH" *(SP nz-number) [SP "(" "MODSEQ" SP mod-sequence-value ")"]
 	//
 	public static match(tokens: LexerTokenList) {
-		if (tokens[0]?.value === "SEARCH") {
+		if (ciEquals(tokens[0]?.value, "SEARCH")) {
 			return new SearchResponse(tokens.slice(2));
 		}
 	}
@@ -77,7 +78,7 @@ export class SearchResponse {
 
 		// If we have a MODSEQ, slice it off the end and parse
 		const modseqIndex = tokens.findIndex(
-			(t) => t.isType(TokenTypes.atom) && t.getTrueValue() === "MODSEQ",
+			(t) => t.isType(TokenTypes.atom) && ciEquals(t.getTrueValue(), "MODSEQ"),
 		);
 		if (modseqIndex > 0) {
 			const modseqTokens = tokens.slice(modseqIndex - 2);
@@ -144,7 +145,7 @@ export class ExtendedSearchResponse {
 	// In summary, it should look something like this
 	//    ESEARCH (Tag string)? UID? [atom astring|number|sequence ...]
 	public static match(tokens: LexerTokenList) {
-		if (tokens[0]?.value === "ESEARCH") {
+		if (ciEquals(tokens[0]?.value, "ESEARCH")) {
 			return new ExtendedSearchResponse(tokens.slice(2));
 		}
 	}

@@ -493,7 +493,7 @@ const fetchSet: TestSpec[] = [
 					flags: {
 						flagMap: new Map([
 							[
-								"\\Seen",
+								"\\SEEN",
 								{
 									isKnownName: true,
 									isWildcard: false,
@@ -773,7 +773,7 @@ signature" data-smartmail=3D"gmail_signature" style=3D""><br></div><div><br=\r
 					flags: {
 						flagMap: new Map([
 							[
-								"Seen",
+								"SEEN",
 								{
 									isKnownName: false,
 									isWildcard: false,
@@ -1190,7 +1190,7 @@ ding-right:0 !important;padding-left:0 !important;"/></body></html>\r
 								labels: {
 									flagMap: new Map([
 										[
-											"\\Inbox",
+											"\\INBOX",
 											{
 												name: "\\Inbox",
 												isKnownName: false,
@@ -1198,7 +1198,7 @@ ding-right:0 !important;padding-left:0 !important;"/></body></html>\r
 											},
 										],
 										[
-											"\\Sent",
+											"\\SENT",
 											{
 												name: "\\Sent",
 												isKnownName: true,
@@ -1206,7 +1206,7 @@ ding-right:0 !important;padding-left:0 !important;"/></body></html>\r
 											},
 										],
 										[
-											"Important",
+											"IMPORTANT",
 											{
 												name: "Important",
 												isKnownName: false,
@@ -1214,7 +1214,7 @@ ding-right:0 !important;padding-left:0 !important;"/></body></html>\r
 											},
 										],
 										[
-											"Muy Importante",
+											"MUY IMPORTANTE",
 											{
 												name: "Muy Importante",
 												isKnownName: false,

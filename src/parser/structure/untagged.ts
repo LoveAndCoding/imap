@@ -1,4 +1,5 @@
 import { OperatorToken } from "../../lexer/tokens";
+import { ciCanonicalize } from "../../lexer/case-insensitive";
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { CapabilityList } from "./capability";
@@ -63,8 +64,15 @@ export default class UntaggedResponse {
 
 		if (contentTypeToken.isType(TokenTypes.atom)) {
 			// We have an Atom token, which means we want to search for
-			// the matching command for that atom
-			this.type = contentTypeToken.getTrueValue();
+			// the matching command for that atom. This atom is itself a
+			// protocol keyword (e.g. "CAPABILITY", "LIST", "QUOTA"), so
+			// -- per spec §11.1 -- we store/compare it canonically. Not
+			// every matched response type overrides `this.type` below
+			// (only ones with a static `commandType`), so this is the
+			// only place some response types get canonicalized; consumers
+			// (e.g. untaggedResponse listeners) compare against the
+			// canonical uppercase spelling regardless of wire casing.
+			this.type = ciCanonicalize(contentTypeToken.getTrueValue());
 
 			const toCheckList = [
 				StatusResponse,
