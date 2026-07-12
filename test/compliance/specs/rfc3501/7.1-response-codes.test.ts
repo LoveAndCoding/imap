@@ -296,17 +296,14 @@ complianceTest(
 // user-facing notification channel is IMAPConfiguration.logger; compliance is
 // satisfied when the alert text is emitted through that channel.
 //
-// Expected honest outcome today: FAIL (violation). src/ contains no ALERT
-// handling; the only logger call is the connect-failure message. The exchange
-// itself completes (the CAPABILITY round-trip succeeds), but driver.logs will
-// not contain the alert text.  expectFailure: "violation" records that measurement.
+// M0.3: Connection now surfaces any ALERT response code through the configured
+// `logger` at "warn" (spec I-7/§10.6) — driver.logs carries the alert text.
 complianceTest(
 	{
 		reqs: ["RFC3501-7.1-1"],
 		profiles: ["rev1"],
 		title:
 			"client surfaces ALERT response-code text through its logger notification channel",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

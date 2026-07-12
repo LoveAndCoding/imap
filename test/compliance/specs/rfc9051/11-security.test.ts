@@ -407,15 +407,16 @@ complianceTest(
 //
 // Genuineness: the injected ALERT text is a unique sentinel, and only the
 // injected response (not the greeting) carries it — so a surfaced-ALERT match
-// is non-vacuous. The current client emits serverStatus for ALL status
-// responses indiscriminately, with no pre-TLS ALERT suppression → the sentinel
-// surfaces (violation). Cross-references RFC9051-7.1-1 (§7 ALERT-presentation).
+// is non-vacuous.
+//
+// M0.3: Connection's status-response handler now special-cases ALERT: it is
+// still logged (see RFC9051-7.1-2/-3), but is no longer emitted as a
+// `serverStatus` event while the transport is not yet confidential.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.3-2"],
 		profiles: ["rev2"],
 		title: "client ignores a pre-TLS ALERT response code (does not surface it as a status event)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

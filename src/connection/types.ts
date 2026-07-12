@@ -6,6 +6,7 @@ import {
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
+import type { IMAPLogMessage } from "../types";
 import { ConnectionErrors } from "./errors";
 
 export enum TLSSetting {
@@ -21,6 +22,14 @@ export type IMAPConnectionConfiguration = {
 	tls?: TLSSetting;
 	tlsOptions?: tls.ConnectionOptions;
 	timeout?: number;
+	/**
+	 * Optional notification channel (spec I-7/§10.6): Connection uses this to
+	 * surface things like ALERT response-code text. Defaults to a no-op so
+	 * Connection can always call it unconditionally. `Session`/`IMAPConfiguration`
+	 * carry their own copy of this same shape — the compliance driver's single
+	 * config object flows the identical function to both.
+	 */
+	logger?: (info: IMAPLogMessage) => void;
 };
 
 export interface IConnectionEvents {

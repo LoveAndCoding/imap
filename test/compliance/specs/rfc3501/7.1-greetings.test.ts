@@ -62,7 +62,6 @@ complianceTest(
 		reqs: ["RFC3501-7.1.4-1"],
 		profiles: ["rev1"],
 		title: "PREAUTH greeting puts the session in authenticated state",
-		expectFailure: "violation",
 	},
 	async () => {
 		const server = await f.startServer();

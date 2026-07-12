@@ -8,6 +8,7 @@ import { IMAPError } from "../errors";
 import NewlineTranform from "../newline.transform";
 import Lexer from "../lexer";
 import Parser, {
+	AtomTextCode,
 	CapabilityList,
 	CapabilityTextCode,
 	ContinueResponse,
@@ -16,6 +17,7 @@ import Parser, {
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
+import type { IMAPLogMessage } from "../types";
 import { CapabilityRegistry } from "./capabilities";
 import { CRLF } from "./constants";
 import CommandQueue from "./queue";
@@ -26,6 +28,24 @@ import {
 } from "./types";
 import { ConnectionTimeout, TLSSocketError } from "./errors";
 import { openTls } from "./tls";
+
+// NOTE on scope (spec §10.6 pre-confidentiality/state hygiene lane): this
+// milestone does NOT implement a blanket "suppress LIST/FLAGS/EXISTS/etc.
+// before authenticated/selected state" gate. A large number of ALREADY
+// PASSING compliance rows (RFC3501-7-2/7.2.6-1/7.3.1-1/7.3.2-1/7.4.1-1,
+// RFC9051-7-2/7.3.5-1/7.4.1-1/7.5.1-1, RFC3348-3-3, and others) observe
+// exactly these response types via `connectLow()` with no way to reach
+// authenticated/selected state — because LOGIN/SELECT don't exist yet
+// (M1). Every one of those rows is indistinguishable, on the wire, from
+// RFC9051-11.3-1/-3's scripts (same types, same "never authenticated,
+// never selected" state, same connectLow() harness) — a blanket type-based
+// suppression gate would silently flip 10+ passing rows to violations to
+// win 2. That trade is not taken here; RFC9051-11.3-1/-3 are left
+// unflipped and documented as a follow-up for the M1 router/state machine,
+// where genuine authenticate()/select() transitions let the older tests
+// and the new ones be told apart by real state instead of by coincidence.
+// The ALERT-specific carve-out (RFC9051-11.3-2) has no such conflict — see
+// `handleStatusResponse()` below — and IS implemented.
 
 const DEFAULT_TIMEOUT = 10000;
 
@@ -40,6 +60,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	private commandQueue!: CommandQueue;
 	private connected: boolean;
 	private secure?: boolean;
+
+	/**
+	 * Set once a PREAUTH greeting is accepted (spec §10.5, I-8): the
+	 * connection is already authenticated by external means. `Session`
+	 * consults this (via the `authenticated` getter) to mark itself
+	 * authenticated without ever issuing LOGIN/AUTHENTICATE. Reset on
+	 * every socket close so a later `connect()` on the same instance
+	 * starts from a clean slate.
+	 */
+	private preauthed = false;
 
 	/**
 	 * Precursor to the spec §3.5 `CapabilityRegistry` (I-2): the STARTTLS
@@ -80,6 +110,23 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 	get isSecure(): boolean {
 		return !!(this.connected && this.secure);
+	}
+
+	/**
+	 * `true` once a PREAUTH greeting has been accepted (spec §10.5). This is
+	 * the only way this milestone's `Connection` ever becomes authenticated
+	 * — there is no LOGIN/AUTHENTICATE yet (M1).
+	 */
+	get authenticated(): boolean {
+		return this.preauthed;
+	}
+
+	/**
+	 * Notification channel (spec I-7/§10.6). Always safe to call — defaults
+	 * to a no-op when the caller didn't configure a `logger`.
+	 */
+	protected log(info: IMAPLogMessage): void {
+		this.options.logger?.(info);
 	}
 
 	public async connect(): Promise<boolean> {
@@ -189,13 +236,30 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// queue's own "may I write" state needs to be live this early.
 		this.commandQueue.start();
 
+		// Every connect path — plain, implicit TLS, and STARTTLS — waits for
+		// the greeting here, exactly once, before anything else runs. This
+		// resolves BYE/PREAUTH/policy checks (§10.5, I-8) up front instead of
+		// only inside starttls(); the STARTTLS path below reuses this same
+		// already-resolved greeting rather than waiting for a second one.
+		let greeting: StatusResponse;
+		try {
+			greeting = await this.awaitGreeting();
+		} catch (err) {
+			this.socket?.destroy();
+			this.socket = undefined;
+			this.secure = undefined;
+			this.connected = false;
+			throw err;
+		}
+
 		if (
 			!this.isSecure &&
+			!this.preauthed &&
 			(tlsSetting === TLSSetting.STARTTLS ||
 				tlsSetting === TLSSetting.STARTTLS_OPTIONAL)
 		) {
 			try {
-				connected = await this.starttls();
+				connected = await this.starttls(greeting);
 			} catch (err) {
 				// A failed STARTTLS upgrade leaves the connection dead — never
 				// continue cleartext after a failed handshake. Tear down so a
@@ -261,8 +325,10 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// A closed connection can't have "current" capabilities — a later
 		// connect() on this same Connection instance must not let a
 		// previous session's (possibly post-TLS) capability data leak into
-		// the new one.
+		// the new one. Same reasoning for `preauthed`: a fresh connect() on
+		// this instance starts from Not Authenticated again.
 		this.capabilityRegistry.invalidate();
+		this.preauthed = false;
 		this.emit("disconnected", !hadErr);
 	};
 	protected onSocketEnd = () => {
@@ -302,7 +368,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// Once we hit the parser, we want to (mostly) bubble events
 		this.parser.on("untagged", (resp: UntaggedResponse) => {
 			if (resp.content instanceof StatusResponse) {
-				this.emit("serverStatus", resp);
+				this.handleStatusResponse(resp);
 			} else {
 				this.emit("untaggedResponse", resp);
 				this.emit("response", resp);
@@ -322,20 +388,68 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		});
 	}
 
-	protected async starttls(): Promise<boolean> {
-		// NOTE: this is invoked from connect() before `this.connected` is
-		// set (that assignment happens after this whole STARTTLS step, once
-		// the overall connect() ritual has resolved) — so this guard must
-		// not depend on it. A live `this.socket` is the correct signal for
-		// "there is a transport to upgrade"; `this.isSecure` (also gated on
-		// `this.connected`) is likewise never true here in practice, but is
-		// kept for safety in case a future public starttls() entry point
-		// calls this post-connect.
-		if (!this.socket || this.isSecure) {
-			// Don't need to (or can't) do TLS in this case
-			return this.connected;
+	/**
+	 * Fanout for every untagged status response (OK/NO/BAD/BYE/PREAUTH),
+	 * including the greeting itself (`awaitGreeting()` observes the very
+	 * first one via a one-shot listener registered before this handler ever
+	 * runs — both see the same event).
+	 *
+	 * ALERT carve-out (spec §10.6, I-7, RFC9051-11.3-2): a response-code
+	 * ALERT always reaches the logger at "warn" — that's the notification
+	 * channel this headless library has. When the transport is NOT yet
+	 * confidential (no TLS on the wire), the log entry is structurally
+	 * marked `trusted: false` and the response is NOT emitted as
+	 * `serverStatus` (an unauthenticated/unprotected peer's ALERT text is
+	 * never presented as a trusted event — RFC9051-11.3-2). Once
+	 * confidential, both the log AND the normal `serverStatus` emit happen.
+	 * Every other status (including BYE, which callers still need to see)
+	 * emits exactly as before.
+	 */
+	protected handleStatusResponse(resp: UntaggedResponse): void {
+		const status = resp.content as StatusResponse;
+		const code = status.text?.code;
+		const isAlert = code instanceof AtomTextCode && code.kind === "ALERT";
+
+		if (isAlert) {
+			const alertText = status.text?.content ?? "";
+			const confidential = !!this.secure;
+			this.log({
+				level: "warn",
+				message: alertText,
+				detail: { code: "ALERT", trusted: confidential },
+			});
+			if (!confidential) {
+				// Pre-confidentiality: logged above, but not surfaced as a
+				// trusted event (RFC9051-11.3-2).
+				return;
+			}
 		}
 
+		this.emit("serverStatus", resp);
+	}
+
+	/**
+	 * Waits for the server's greeting — the first untagged status response
+	 * of the connection — and applies spec §10.5's PREAUTH policy. Used by
+	 * EVERY connect() path (plain, implicit TLS, STARTTLS) exactly once;
+	 * the STARTTLS path is handed the resolved value instead of waiting for
+	 * a second one.
+	 *
+	 * Resolves with the greeting's `StatusResponse` (status OK or PREAUTH).
+	 * Rejects:
+	 *  - on a BYE greeting (`IMAPError`, carrying the server's text);
+	 *  - on timeout (`ConnectionTimeout`, phase "Greeting");
+	 *  - on a PREAUTH greeting received over a cleartext socket while
+	 *    `tls: "starttls"` (mandatory TLS) is configured: PREAUTH forecloses
+	 *    STARTTLS-before-auth (STARTTLS is only legal in Not Authenticated
+	 *    state, and PREAUTH means the connection is already authenticated),
+	 *    so there is no longer any path to the confidentiality the config
+	 *    demands — rejects `TLSSocketError(..., "policy")`. `tls:
+	 *    "opportunistic"` tolerates cleartext PREAUTH (documented residual
+	 *    risk, spec §10.5); implicit TLS/an already-secure socket is fine
+	 *    either way.
+	 */
+	protected async awaitGreeting(): Promise<StatusResponse> {
 		const greeting = await new Promise<UntaggedResponse>(
 			(resolve, reject) => {
 				const greetingTimeoutAmount =
@@ -361,14 +475,51 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			);
 		}
 
+		const status = greeting.content;
+
+		if (status.status === "BYE") {
+			throw new IMAPError(
+				`Server rejected the connection with a BYE greeting: ${
+					status.text?.content ?? ""
+				}`,
+			);
+		}
+
+		if (status.status === "PREAUTH") {
+			this.preauthed = true;
+			if (!this.secure && this.options.tls === TLSSetting.STARTTLS) {
+				throw new TLSSocketError(
+					"Server sent a PREAUTH greeting over a cleartext connection while STARTTLS was mandatory; PREAUTH forecloses STARTTLS-before-auth (spec §10.5)",
+					"policy",
+				);
+			}
+		}
+
+		return status;
+	}
+
+	protected async starttls(greeting: StatusResponse): Promise<boolean> {
+		// NOTE: this is invoked from connect() before `this.connected` is
+		// set (that assignment happens after this whole STARTTLS step, once
+		// the overall connect() ritual has resolved) — so this guard must
+		// not depend on it. A live `this.socket` is the correct signal for
+		// "there is a transport to upgrade"; `this.isSecure` (also gated on
+		// `this.connected`) is likewise never true here in practice, but is
+		// kept for safety in case a future public starttls() entry point
+		// calls this post-connect.
+		if (!this.socket || this.isSecure) {
+			// Don't need to (or can't) do TLS in this case
+			return this.connected;
+		}
+
 		let capabilities: CapabilityList;
-		if (greeting.content.text?.code instanceof CapabilityTextCode) {
+		if (greeting.text?.code instanceof CapabilityTextCode) {
 			// We have a capability list already! Yay. This is ONLY used
 			// locally to decide whether STARTTLS is worth attempting — it is
 			// never written into `capabilityRegistry`, so there's nothing to
 			// discard post-upgrade (I-2): pre-TLS capability data was never
 			// exposed as "current" to begin with.
-			capabilities = greeting.content.text.code.capabilities;
+			capabilities = greeting.text.code.capabilities;
 		} else {
 			// We need to retrieve the capabilities. Goes through the queue
 			// (not a bare `cmd.run(this)`) so it participates in the same

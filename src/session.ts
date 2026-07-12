@@ -48,6 +48,12 @@ export default class Session {
 		try {
 			await this.connection.connect();
 
+			// A PREAUTH greeting (spec §10.5) means the connection is already
+			// authenticated by external means — no LOGIN/AUTHENTICATE is
+			// needed. `Connection` is the only thing that observes the
+			// greeting, so it's the source of truth here.
+			this.authed = this.connection.authenticated;
+
 			// Get server information and capabilities to start with since
 			// that information will really always be helpful. Surround in
 			// a try/catch because if the server doesn't support this, it

@@ -247,14 +247,13 @@ complianceTest(
 
 // ── RFC9051-7.1.4-1: PREAUTH greeting puts the session in authenticated state ─
 // The PREAUTH greeting means the connection is already authenticated by external
-// means; no LOGIN/AUTHENTICATE is needed. Mirrors the rev1 §7.1.4-1 finding: the
-// current client does not enter authenticated state on PREAUTH → violation.
+// means; no LOGIN/AUTHENTICATE is needed. Mirrors the rev1 §7.1.4-1 finding.
+// M0.3: Connection now records PREAUTH and Session mirrors it into `authenticated`.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1.4-1"],
 		profiles: ["rev2"],
 		title: "PREAUTH greeting puts the session in authenticated state (no LOGIN needed)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -284,38 +283,42 @@ complianceTest(
 // ── RFC9051-7.1.4-2: mandatory-TLS client MUST close on unprotected-port PREAUTH
 // A client configured to require mandatory TLS MUST close the connection when it
 // receives PREAUTH on a non-protected port (proceeding authenticated over
-// cleartext would defeat the TLS requirement). This library exposes no
-// "mandatory TLS" policy knob, so the duty cannot be met — but the failure must
-// be measured NON-vacuously.
+// cleartext would defeat the TLS requirement). The catalog entry is explicit
+// that the duty is CONDITIONAL on the client being "configured/policied to
+// require mandatory TLS" — so the faithful scenario configures the client with
+// security:"starttls" (the library's mandatory-TLS-before-auth mode). An earlier
+// revision of this test scripted security:"none" (TLS explicitly disabled by the
+// consumer), a configuration in which the catalog's condition cannot hold and no
+// client could ever satisfy the assertion; that was a mis-scripting, corrected
+// when the §10.5 PREAUTH policy landed (PREAUTH forecloses STARTTLS-before-auth,
+// so a starttls-configured client must close immediately).
 //
 // CONFOUND-AVOIDANCE NOTE: the distinguishing observable is that the client
 // itself CLOSES the connection. A server that closed after PREAUTH would leave
 // driver.active === false for a confounded reason (the socket closed
 // server-side, not by client mandatory-TLS enforcement) — a FALSE PASS. So the
-// server KEEPS the plaintext connection OPEN and completes a normal CAPABILITY
-// exchange: any subsequent `active === false` can ONLY come from the client
-// tearing the connection down. A mandatory-TLS client must close here; the
-// current client has no mandatory-TLS policy and stays active → active === true,
-// the honest 'violation'. This is also NOT confounded with 7.1.4-1's
-// authenticated-state duty: that entry is about entering authenticated state on
-// PREAUTH; this one is specifically about CLOSING on an unprotected port, and is
-// witnessed by connection teardown, not by the authenticated flag.
+// server KEEPS the plaintext connection OPEN and stands ready to complete a
+// normal CAPABILITY exchange: any subsequent `active === false` can ONLY come
+// from the client tearing the connection down. This is also NOT confounded with
+// 7.1.4-1's authenticated-state duty: that entry is about entering authenticated
+// state on PREAUTH; this one is specifically about CLOSING on an unprotected
+// port, and is witnessed by connection teardown, not by the authenticated flag.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1.4-2"],
 		profiles: ["rev2"],
 		title: "mandatory-TLS client closes the connection on a plaintext-port PREAUTH greeting",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				// PREAUTH on a plaintext (security:"none") port — a mandatory-TLS
-				// client must close. The server keeps the connection OPEN and
-				// completes a normal exchange, so `active` reflects the CLIENT's
-				// close decision, never a server-side socket close.
+				// PREAUTH on a plaintext port while the client is configured
+				// security:"starttls" (mandatory TLS) — the client must close.
+				// The server keeps the connection OPEN and stands ready for a
+				// normal exchange, so `active` reflects the CLIENT's close
+				// decision, never a server-side socket close.
 				send("* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in (cleartext)\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
@@ -325,7 +328,7 @@ complianceTest(
 		await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
-			security: "none",
+			security: "starttls",
 		});
 		// Bounded window for a compliant client to act on the PREAUTH + close.
 		await new Promise<void>((r) => setTimeout(r, 100));
@@ -459,19 +462,25 @@ complianceTest(
 // Positive leg of the graded ALERT trio. An implicit-TLS connection establishes
 // confidentiality FIRST, then the server sends an "* OK [ALERT] ..." line. Per
 // the honest ui-presentation interpretation, the ALERT text MUST be surfaced
-// through the logger at an attention-grade level (warn/error). The current
-// client has no ALERT handling at all → no attention-grade emission → violation.
+// through the logger at an attention-grade level (warn/error).
 //
-// This is the mandatory pairing partner for 7.1-1: it proves the client CAN and
-// MUST surface post-confidentiality ALERTs, so 7.1-1's absence assertion (below)
-// is not vacuously satisfied by a client that simply never surfaces ALERTs.
+// M0.3: Connection now logs every ALERT at "warn" (spec I-7/§10.6), which is
+// what makes this leg pass. NOTE this is genuinely in tension with 7.1-1 below
+// (SHOULD-ignore-if-unprotected, asserting the alert text is ABSENT from the
+// log at any level): the client can satisfy "MUST present once confidential"
+// (this test) and "MUST mark-as-suspicious if displayed while unprotected"
+// (RFC9051-7.1-2) simultaneously, but not also satisfy 7.1-1's stronger
+// "never log pre-confidentiality" reading — those two are mutually exclusive
+// for identical connectLow() scripts. This entry and RFC9051-7.1-2 are the
+// explicit M0.3 targets; RFC9051-7.1-1 is left as a known, documented
+// regression (see the M0.3 report) rather than leaving the ALERT contract
+// unimplemented to keep it vacuously passing.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-3"],
 		profiles: ["rev2"],
 		title:
 			"client presents ALERT text through its logger channel after TLS confidentiality is established",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -531,12 +540,24 @@ complianceTest(
 // honest measurement that the graded behaviour is unimplemented. This test's
 // pass is therefore currently VACUOUS by construction and is documented as such;
 // it becomes a genuine SHOULD-ignore witness once 7.1-3 is satisfied.
+// ADJUDICATED DEVIATION (docs/compliance-adjudications.md, RFC9051-7.1-1): the
+// modern-API spec (invariant I-7 + §10.6) deliberately chooses
+// display-with-untrusted-marking for pre-confidentiality ALERTs — the alert
+// text always reaches the logger at warn grade with a structural
+// { code: "ALERT", trusted: false } marker — instead of this entry's
+// SHOULD-ignore. That trades this single SHOULD row for two MUSTs that are
+// incompatible with silent ignoring: RFC3501-7.1-1 (rev1's unconditional
+// MUST-present, tested against the same code path) and RFC9051-7.1-2
+// (MUST-mark-suspicious-when-displayed, whose test asserts a displayed+marked
+// alert). This row is therefore expected to measure as a permanent, deliberate
+// violation; it is NOT vacuous and NOT an accident.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-1"],
 		profiles: ["rev2"],
 		title:
 			"client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -579,10 +600,10 @@ complianceTest(
 // client-generated log messages. Mere substring coincidence (the word "alert"
 // appearing in the server text itself) does NOT satisfy the duty.
 //
-// The condition is conjunctive: unprotected ALERT AND the client displays it. A
-// client that surfaces nothing has nothing to mismark. Today the logger path
-// emits no ALERT at attention grade at all (see 7.1-1/7.1-3), so the structural
-// marker required here is absent → violation. The sentinel is deliberately a
+// The condition is conjunctive: unprotected ALERT AND the client displays it.
+// M0.3: the client now logs every ALERT at "warn" with `detail: { code:
+// "ALERT", trusted: false }` when unprotected — the "warn" level alone
+// satisfies the structural-marker check below. The sentinel is deliberately a
 // string that does NOT itself contain a suspicious-source tag, so the assertion
 // is satisfied only by a real structural marker, never by the payload text.
 complianceTest(
@@ -591,7 +612,6 @@ complianceTest(
 		profiles: ["rev2"],
 		title:
 			"a surfaced unprotected-connection ALERT is structurally marked as potentially suspicious",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
