@@ -152,7 +152,7 @@ export function buildSearchQuery(
 					searchargs += modifier + criteria + " " + args[0];
 					break;
 				case "LARGER":
-				case "SMALLER":
+				case "SMALLER": {
 					if (!args || args.length !== 1) {
 						throw new IMAPError(
 							"Incorrect number of arguments for search option: " +
@@ -167,6 +167,7 @@ export function buildSearchQuery(
 					}
 					searchargs += modifier + criteria + " " + args[0];
 					break;
+				}
 				case "HEADER":
 					if (!args || args.length !== 2) {
 						throw new IMAPError(
@@ -266,7 +267,7 @@ export function buildSearchQuery(
 					}
 					searchargs += modifier + criteria + " " + args[0];
 					break;
-				default:
+				default: {
 					// last hope it's a seqno set
 					// http://tools.ietf.org/html/rfc3501#section-6.4.4
 					const seqnos = args ? [criteria].concat(args) : [criteria];
@@ -280,6 +281,7 @@ export function buildSearchQuery(
 							"Unexpected search option: " + criteria,
 						);
 					}
+				}
 			}
 		}
 		if (isOrChild) {

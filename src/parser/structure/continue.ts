@@ -5,7 +5,7 @@ import { ResponseText } from "./text";
 
 const CONTENT_TOKENS_START_INDEX = 2;
 
-const RE_BASE64_MATCH = /^(?:[A-Z0-9\+\/]{4})+([A-Z0-9\+\/]{2}==|[A-Z0-9\+\/]{3}=)?$/;
+const RE_BASE64_MATCH = /^(?:[A-Z0-9+/]{4})+([A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/;
 
 export default class ContinueResponse {
 	public readonly text: ResponseText;

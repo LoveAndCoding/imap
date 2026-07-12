@@ -155,7 +155,7 @@ export function decodeWords(str: string, state?: IState) {
 	let seq: ISequence;
 	const replaces: ISequence[] = [];
 	let replaceMatch: ISequence;
-	let lastReplace: any = {};
+	let lastReplace: any;
 
 	// join consecutive q-encoded words that have the same charset first
 	while ((regexMatch = RE_ENCWORD.exec(str))) {
@@ -185,7 +185,6 @@ export function decodeWords(str: string, state?: IState) {
 			lastReplace.chunk += seq.chunk;
 		} else {
 			replaces.push(seq);
-			lastReplace = seq;
 		}
 		pendoffset = regexMatch.index + regexMatch[0].length;
 	}
@@ -231,7 +230,7 @@ export function decodeWords(str: string, state?: IState) {
 
 	// perform the actual replacements
 	for (i = state.replaces.length - 1; i >= 0; --i) {
-		let rpl = state.replaces[i];
+		const rpl = state.replaces[i];
 		if (Array.isArray(rpl)) {
 			for (j = 0, lenj = rpl.length; j < lenj; ++j) {
 				str =

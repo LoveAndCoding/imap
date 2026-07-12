@@ -32,6 +32,7 @@ interface IParserEvents {
 	error: (err: Error) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 declare interface Parser extends Transform {
 	addListener<E extends keyof IParserEvents>(
 		event: E,
@@ -67,6 +68,7 @@ declare interface Parser extends Transform {
 	read(): ResponseType;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 class Parser extends Transform {
 	constructor() {
 		super({

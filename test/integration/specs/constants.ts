@@ -1,7 +1,7 @@
 import * as tokens from "../../../src/lexer/tokens";
 
-export const CR: "\r" = "\r";
-export const LF: "\n" = "\n";
+export const CR = "\r" as const;
+export const LF = "\n" as const;
 export const CRLF: "\r\n" = (CR + LF) as any;
 
 // Init some common tokens for easy reuse; Reusing won't affect test checks

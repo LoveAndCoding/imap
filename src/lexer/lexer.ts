@@ -33,6 +33,7 @@ interface ILexerEvents {
 	error: (err: Error) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 declare interface Lexer extends Transform {
 	addListener<E extends keyof ILexerEvents>(
 		event: E,
@@ -65,6 +66,7 @@ declare interface Lexer extends Transform {
 	read(): LexerTokenList;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 class Lexer extends Transform {
 	public static readonly defaultRules: PrioritizedRule[] = [
 		{ order: 0, rule: new SPRule() },

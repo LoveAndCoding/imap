@@ -189,7 +189,7 @@ function scramClientFirstMessage(expected: { username: string; expectFlag: "n" |
 		description: `SCRAM client-first-message (gs2-cbind-flag '${expected.expectFlag}', n=${expected.username})`,
 		match: (line: string) => {
 			// RFC5802-5-1 / RFC5802-7-1: leading gs2-cbind-flag byte MUST be n/y/p.
-			const flagMatch = /^(n|y|p=[A-Za-z0-9.\-]+),([^,]*),(.*)$/.exec(line);
+			const flagMatch = /^(n|y|p=[A-Za-z0-9.-]+),([^,]*),(.*)$/.exec(line);
 			if (!flagMatch) {
 				return {
 					ok: false,
@@ -405,7 +405,7 @@ complianceTest(
 		const captureNonce = {
 			description: "capture r= nonce from client-first-message",
 			match: (line: string) => {
-				const m = /^(?:n|y|p=[A-Za-z0-9.\-]+),[^,]*,n=[^,]*,r=([^,]*)$/.exec(line);
+				const m = /^(?:n|y|p=[A-Za-z0-9.-]+),[^,]*,n=[^,]*,r=([^,]*)$/.exec(line);
 				if (m) capturedNonces.push(m[1]);
 				return scramClientFirstMessage({ username: v.username, expectFlag: "n" }).match(line);
 			},
@@ -859,7 +859,7 @@ complianceTest(
 			description: `SCRAM client-first-message with escaped authzid 'a=${expectedEscapedAuthzid}'`,
 			match: (line: string) => {
 				// gs2-header = gs2-cbind-flag "," [ "a=" authzid ] ","
-				const m = /^(n|y|p=[A-Za-z0-9.\-]+),a=([^,]*),n=([^,]*),r=([^,]*)$/.exec(line);
+				const m = /^(n|y|p=[A-Za-z0-9.-]+),a=([^,]*),n=([^,]*),r=([^,]*)$/.exec(line);
 				if (!m) {
 					return {
 						ok: false,
@@ -942,7 +942,7 @@ complianceTest(
 		const notRawNonAscii = {
 			description: "SCRAM client-first-message 'n=' is NOT the raw, unprepared non-ASCII username",
 			match: (line: string) => {
-				const m = /^(?:n|y|p=[A-Za-z0-9.\-]+),(?:a=[^,]*,)?n=([^,]*),r=(.*)$/.exec(line);
+				const m = /^(?:n|y|p=[A-Za-z0-9.-]+),(?:a=[^,]*,)?n=([^,]*),r=(.*)$/.exec(line);
 				if (!m) {
 					return { ok: false, reason: `not a well-formed client-first-message-bare: '${line}'` };
 				}
@@ -1297,7 +1297,7 @@ complianceTest(
 		const tlsUniqueFlag = {
 			description: "SCRAM client-first-message with gs2-cbind-flag 'p=tls-unique'",
 			match: (line: string) => {
-				const m = /^p=([A-Za-z0-9.\-]+),/.exec(line);
+				const m = /^p=([A-Za-z0-9.-]+),/.exec(line);
 				if (!m) {
 					return { ok: false, reason: `expected a 'p=<cb-name>' gs2-cbind-flag, got: '${line}'` };
 				}

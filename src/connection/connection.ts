@@ -45,7 +45,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.options = Object.assign({}, options);
 
 		// Set TLS setting to default if it is unset or invalid
-		let { tls } = this.options;
+		const { tls } = this.options;
 		if (
 			!tls ||
 			!(
@@ -55,7 +55,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				tls === TLSSetting.FORCE_OFF
 			)
 		) {
-			this.options.tls = tls = TLSSetting.DEFAULT;
+			this.options.tls = TLSSetting.DEFAULT;
 		}
 
 		this.connected = false;
@@ -357,7 +357,6 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				previousSocket.destroy(tmrErr);
 				reject(tmrErr);
 			}, timeoutWait);
-			let tlsSock: tls.TLSSocket;
 			const clearTimer = (connected) => {
 				return () => {
 					if (timeout) {
@@ -371,7 +370,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			const clearTimerGood = clearTimer(true);
 			const clearTimerBad = clearTimer(false);
 
-			tlsSock = tls.connect(tlsOptions, clearTimerGood);
+			const tlsSock = tls.connect(tlsOptions, clearTimerGood);
 			this.socket = tlsSock;
 			this.secure = true;
 

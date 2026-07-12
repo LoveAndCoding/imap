@@ -68,7 +68,9 @@ export default class Session {
 			// Try and destroy the connection
 			try {
 				this.connection.disconnect();
-			} catch (_) {}
+			} catch (_) {
+				// Intentionally ignored: we're already handling a connection error
+			}
 			// Log the error
 			this.logger({
 				level: "error",

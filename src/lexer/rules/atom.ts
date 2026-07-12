@@ -21,8 +21,9 @@ import { ILexerRule } from "../types";
 // We also exclude "[" even though it is not on the atom-specials
 // list because most of the time this will be an operator, and it
 // is easy enough to merge back in in the cases it is not
-const RE_ATOM_MATCH = /^[^ \(\)\{\x00-\x1F%\*"\\\[\]]+/;
-const RE_BEGIN_LINE_CONTROL = /^[\+\*]/;
+// eslint-disable-next-line no-control-regex -- \x00-\x1F control range is intentional (IMAP atom char validation)
+const RE_ATOM_MATCH = /^[^ (){\x00-\x1F%*"\\[\]]+/;
+const RE_BEGIN_LINE_CONTROL = /^[+*]/;
 
 export class AtomRule implements ILexerRule<string> {
 	public match(content: string, originalPos: number): null | AtomToken {

@@ -23,9 +23,6 @@ export function validateUIDList(
 		const uid = uids[i];
 		if (typeof uid === "string") {
 			if (uid === "*" || uid === "*:*") {
-				if (len > 1) {
-					uids = ["*"];
-				}
 				break;
 			} else if (RE_NUM_RANGE.test(uid)) {
 				continue;

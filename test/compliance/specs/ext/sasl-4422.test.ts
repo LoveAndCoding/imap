@@ -197,6 +197,7 @@ complianceTest(
 						}
 						const decoded = Buffer.from(line, "base64").toString("latin1");
 						// PLAIN = [authzid] NUL authcid NUL passwd → exactly two NULs.
+						// eslint-disable-next-line no-control-regex -- \x00 NUL delimiter is intentional (SASL PLAIN wire format)
 						const nulCount = (decoded.match(/\x00/g) ?? []).length;
 						return {
 							ok: nulCount === 2,

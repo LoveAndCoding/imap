@@ -28,7 +28,7 @@ export function* esearchKeyValuePairGenerator(tokens: LexerTokenList) {
 			key += tkn.value;
 		}
 		// Make sure we match the right format
-		if (!key || !key.match(/[a-z\-_\.][a-z\=_\.0-9:]+/i)) {
+		if (!key || !key.match(/[a-z\-_.][a-z=_.0-9:]+/i)) {
 			throw new ParsingError("Invalid ESEARCH key", key);
 		}
 		pair = [key, []];
@@ -180,7 +180,7 @@ export class ExtendedSearchResponse {
 			const isValidOp = (t: ILexerToken<unknown>) => {
 				return (
 					t.isType(TokenTypes.operator) &&
-					t.getTrueValue().match(/[\*:,]/)
+					t.getTrueValue().match(/[*:,]/)
 				);
 			};
 			return tkns.every((t) => isNum(t) || isValidOp(t));

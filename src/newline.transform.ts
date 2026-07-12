@@ -23,6 +23,7 @@ interface INewlineTranformEvents {
 	error: (err: Error) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 declare interface NewlineTranform {
 	addListener<E extends keyof INewlineTranformEvents>(
 		event: E,
@@ -57,6 +58,7 @@ declare interface NewlineTranform {
 	push(chunk: Buffer): boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 class NewlineTranform extends Transform {
 	private currentLine: Buffer | undefined;
 	private maxLineLength: number;

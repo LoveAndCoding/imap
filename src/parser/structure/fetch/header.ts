@@ -51,7 +51,7 @@ export class MessageHeader {
 		}
 
 		for (const line of lines) {
-			let [field, ...contentsArr] = line.split(":");
+			const [field, ...contentsArr] = line.split(":");
 
 			let contents = contentsArr.join(":").trim();
 			if (decode) {

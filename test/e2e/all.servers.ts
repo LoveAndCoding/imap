@@ -7,7 +7,9 @@ export const describeAllServers = (host: string, port: number) => {
 			if (session) {
 				try {
 					await session.end();
-				} catch (_) {}
+				} catch (_) {
+					// Intentionally ignored: best-effort cleanup between tests
+				}
 				session = undefined as any;
 			}
 		});

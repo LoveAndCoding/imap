@@ -958,8 +958,8 @@ ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc
          iMxQ==\r
 ARC-Authentication-Results: i=1; mx.google.com;\r
        dkim=pass header.i=@mail.hbomax.com header.s=s1 header.b=qFzFx0nv;\r
-       dkim=pass header.i=@sendgrid.info header.s=smtpapi header.b=\"o5/9nKa+\";\r
-       spf=pass (google.com: domain of bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com designates 168.245.15.50 as permitted sender) smtp.mailfrom=\"bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com\";\r
+       dkim=pass header.i=@sendgrid.info header.s=smtpapi header.b="o5/9nKa+";\r
+       spf=pass (google.com: domain of bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com designates 168.245.15.50 as permitted sender) smtp.mailfrom="bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com";\r
        dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=hbomax.com\r
 Return-Path: <bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com>\r
 Received: from o3346.abmail.service.hbomax.com (o3346.abmail.service.hbomax.com. [168.245.15.50])\r
@@ -970,8 +970,8 @@ Received: from o3346.abmail.service.hbomax.com (o3346.abmail.service.hbomax.com.
 Received-SPF: pass (google.com: domain of bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com designates 168.245.15.50 as permitted sender) client-ip=168.245.15.50;\r
 Authentication-Results: mx.google.com;\r
        dkim=pass header.i=@mail.hbomax.com header.s=s1 header.b=qFzFx0nv;\r
-       dkim=pass header.i=@sendgrid.info header.s=smtpapi header.b=\"o5/9nKa+\";\r
-       spf=pass (google.com: domain of bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com designates 168.245.15.50 as permitted sender) smtp.mailfrom=\"bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com\";\r
+       dkim=pass header.i=@sendgrid.info header.s=smtpapi header.b="o5/9nKa+";\r
+       spf=pass (google.com: domain of bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com designates 168.245.15.50 as permitted sender) smtp.mailfrom="bounces+6146175-70a1-lovelyinbox=gmail.com@abmail.mail.hbomax.com";\r
        dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=hbomax.com\r
 DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=mail.hbomax.com;\r
 \th=content-type:from:mime-version:subject:reply-to:x-feedback-id:to;\r
@@ -1036,10 +1036,10 @@ Content-Transfer-Encoding: quoted-printable\r
 Content-Type: text/html; charset=us-ascii\r
 Mime-Version: 1.0\r
 \r
-<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\" \"http://www.w=\r
-3.org/TR/REC-html40/loose.dtd\">\r
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w=\r
+3.org/TR/REC-html40/loose.dtd">\r
 <html><body><p>This template is used by integration tests only.</p><img src=\r
-=3D\"http://ablink.mail.hbomax.com/wf/open?upn=3DsY2vLsEKqW55viRwL1eH0gXPF1M=\r
+=3D"http://ablink.mail.hbomax.com/wf/open?upn=3DsY2vLsEKqW55viRwL1eH0gXPF1M=\r
 9nSwfP2RKOAZR-2B1Jx7UVFhjqhNz4tPaLuo1srtCdSsNplg3swKpB6xh6-2FEEqznlXsKimPcI=\r
 UFa3NaCkWn5lhbxuL6Bd3x1mO3Zxefpv7uAOjEgdGa6gJc0h-2BRq04Vw15QnyExT3hsyuCYcuh=\r
 9-2F2JlIptiPcyoyQGeo0PlNxRt4swn4E-2BdQFU-2FbMUrVHx2lyvihTwmKOWvGwPiJe7zfP9H=\r
@@ -1050,11 +1050,11 @@ EI7q-2BCjTByrEVo70pe0qScwZBvkYYuPZmgfDmkzZjK0ugyhVqS9Vk02xk5m5O4Ft1PMRq07pD=\r
 -2FnFSK4f46yW1Rf12lD9l2ImqZ4MWNwosOyNP1kQfXwhR8ZoDjzfqV92KPDT9vnLiyPMqFd5du=\r
 4xCDLOuujaYWvL8ArD-2FlkVJ8wXahNKK-2BNDGj7LOj8Oo38GxnI4ePGqQE0b6aHFutxGDfZMo=\r
 h1CQ8yep88A88xcQEgdA4Jg77j6YeVNs3cdniTN-2BeGgvUb-2FxFbZ2A-2FZ8S-2FqUwOIRODc=\r
-uuvhyiDNBCxk-3D\" alt=3D\"\" width=3D\"1\" height=3D\"1\" border=3D\"0\" style=3D\"he=\r
+uuvhyiDNBCxk-3D" alt=3D"" width=3D"1" height=3D"1" border=3D"0" style=3D"he=\r
 ight:1px !important;width:1px !important;border-width:0 !important;margin-t=\r
 op:0 !important;margin-bottom:0 !important;margin-right:0 !important;margin=\r
 -left:0 !important;padding-top:0 !important;padding-bottom:0 !important;pad=\r
-ding-right:0 !important;padding-left:0 !important;\"/></body></html>\r
+ding-right:0 !important;padding-left:0 !important;"/></body></html>\r
 \r
 --8f0685aa36495a8e169ac9645c24b03a421cd1021d3b4f2d2fb186785a3a--\r
 `),

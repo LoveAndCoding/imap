@@ -2,6 +2,7 @@ import { IDResponse, UntaggedResponse } from "../parser";
 import { Command, StandardResponseTypes } from "./base";
 import { createIMAPSafeString } from "./encoding";
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- package.json lives outside rootDir, so ESM import isn't available under the current tsconfig
 const pkg = require("../../package.json");
 
 enum IdCommandKeys {

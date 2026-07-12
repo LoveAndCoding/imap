@@ -94,7 +94,9 @@ class ConnectionRunner {
 					}
 				} catch (stepErr) {
 					const msg = stepErr instanceof Error ? stepErr.message : String(stepErr);
-					throw new Error(`step #${i + 1} (${step.kind}): ${msg}`);
+					throw new Error(`step #${i + 1} (${step.kind}): ${msg}`, {
+						cause: stepErr,
+					});
 				}
 			}
 			this.server.scriptFinished();

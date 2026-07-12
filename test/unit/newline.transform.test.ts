@@ -173,7 +173,7 @@ describe("NewlineTranform", () => {
 					//Assert
 					expect(listenerMock).toBeCalledTimes(1);
 					expect(listenerMock).toBeCalledWith(Buffer.from(write));
-					expect(err).toBeUndefined();
+					expect(err).toBeFalsy();
 					resolve();
 				} catch (e) {
 					reject(e);

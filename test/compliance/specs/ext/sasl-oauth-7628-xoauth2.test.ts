@@ -64,10 +64,12 @@ function oauthbearerResponse() {
 			const decoded = Buffer.from(line, "base64").toString("utf8");
 			// RFC7628-3.1-1: GS2 header ('n,'/'y,'/'p=..,' then optional authzid + ',') .
 			// Minimal conformant shape: "n,a=<authzid>," or "n,," then ^A kvpairs ^A^A.
+			// eslint-disable-next-line no-control-regex -- \x01 (^A) separator is intentional (SASL XOAUTH2/OAUTHBEARER wire format)
 			const m = /^([ynp][^,]*,[^,]*,)\x01(.*)\x01\x01$/.exec(decoded);
 			if (!m) {
 				return {
 					ok: false,
+					// eslint-disable-next-line no-control-regex -- \x01 (^A) separator is intentional (SASL wire format)
 					reason: `not a gs2-header + ^A kvpairs ^A^A response: '${decoded.replace(/\x01/g, "^A")}'`,
 				};
 			}
@@ -75,6 +77,7 @@ function oauthbearerResponse() {
 			// RFC7628-3.1-2: the REQUIRED 'auth' key carries "Bearer <token>".
 			const authPair = kvpairs.find((p) => p.startsWith("auth="));
 			if (!authPair) {
+				// eslint-disable-next-line no-control-regex -- \x01 (^A) separator is intentional (SASL wire format)
 				return { ok: false, reason: `missing REQUIRED 'auth' key: '${decoded.replace(/\x01/g, "^A")}'` };
 			}
 			if (!authPair.startsWith("auth=Bearer ")) {
@@ -95,10 +98,12 @@ function xoauth2Response(user: string) {
 			}
 			const decoded = Buffer.from(line, "base64").toString("utf8");
 			// XOAUTH2-format-1: exact "user=" User ^A "auth=Bearer " Token ^A ^A.
+			// eslint-disable-next-line no-control-regex -- \x01 (^A) separator is intentional (SASL XOAUTH2 wire format)
 			const m = /^user=([^\x01]*)\x01auth=Bearer ([^\x01]*)\x01\x01$/.exec(decoded);
 			if (!m) {
 				return {
 					ok: false,
+					// eslint-disable-next-line no-control-regex -- \x01 (^A) separator is intentional (SASL wire format)
 					reason: `not 'user=..^Aauth=Bearer ..^A^A': '${decoded.replace(/\x01/g, "^A")}'`,
 				};
 			}

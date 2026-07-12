@@ -66,7 +66,6 @@ export default class ComplianceReporter implements Reporter {
 		const ranFiles = new Set(testModules.map((m) => path.resolve(m.moduleId)));
 		const missing = this.listSpecTestFiles().filter((f) => !ranFiles.has(f));
 		if (reason === "interrupted" || missing.length > 0) {
-			// eslint-disable-next-line no-console
 			console.error(
 				`compliance-reporter: partial run detected (${
 					reason === "interrupted" ? "interrupted; " : ""
@@ -80,7 +79,6 @@ export default class ComplianceReporter implements Reporter {
 		// least one compliance-annotated record; zero means the meta plumbing
 		// broke, and writing would report every requirement as untested.
 		if (!records.some((r) => r.meta)) {
-			// eslint-disable-next-line no-console
 			console.error(
 				`compliance-reporter: full run produced no compliance-annotated test records — ` +
 					`this indicates broken suite machinery; ${this.outDir} was NOT rewritten.`,
@@ -107,7 +105,6 @@ export default class ComplianceReporter implements Reporter {
 		data.problems.sort();
 
 		// Fix 5: print console summary FIRST so results are visible even if file writes fail.
-		// eslint-disable-next-line no-console
 		console.log(renderConsole(data));
 
 		// Fix 5: wrap file writes in try/catch to log a clear one-line error on failure.
@@ -119,7 +116,6 @@ export default class ComplianceReporter implements Reporter {
 			);
 			fs.writeFileSync(path.join(this.outDir, "COMPLIANCE.md"), renderMarkdown(data));
 		} catch (err) {
-			// eslint-disable-next-line no-console
 			console.error(
 				`compliance-reporter: failed to write reports to ${this.outDir}: ${err instanceof Error ? err.message : String(err)}`,
 			);
