@@ -1,0 +1,18 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"outDir": null,
+		"types": ["node"],
+		// import.meta requires an ES-module target. ES2020 (not ES2022+) keeps
+		// useDefineForClassFields=false, matching the root build's semantics for
+		// the src/ files this project pulls in.
+		"module": "es2020",
+		"moduleResolution": "node",
+		// Third-party .d.ts (vitest/vite/rollup) target newer TypeScript and lib
+		// versions than the repo pins; only this suite's own files need checking.
+		// (`node:` specifiers are covered by types/node-prefixed-modules.d.ts
+		// until @types/node is bumped past v12.)
+		"skipLibCheck": true
+	},
+	"include": ["./**/*"]
+}

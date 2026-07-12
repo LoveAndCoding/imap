@@ -17,7 +17,9 @@
 		"test": "jest",
 		"test:all": "test && test:e2e && test:old",
 		"test:e2e": "jest --testMatch=\"**/test/e2e/**/*.test.ts\"",
-		"test:old": "node test/test.js"
+		"test:old": "node test/test.js",
+		"test:compliance": "vitest run --config test/compliance/vitest.config.ts",
+		"typecheck:compliance": "tsc -p test/compliance/tsconfig.json --noEmit"
 	},
 	"engines": {
 		"node": ">=14.0.0"
@@ -48,7 +50,8 @@
 		"eslint-config-prettier": "^8.3.0",
 		"jest": "^27.0.4",
 		"ts-jest": "^27.0.3",
-		"typescript": "^4.3.2"
+		"typescript": "^4.3.2",
+		"vitest": "4.1.8"
 	},
 	"bugs": {
 		"url": "https://github.com/LoveAndCoding/imap/issues"
@@ -58,5 +61,8 @@
 		"lib": "src",
 		"test": "test"
 	},
-	"license": "MIT"
+	"license": "MIT",
+	"resolutions": {
+		"vite": "^6.0.0"
+	}
 }
