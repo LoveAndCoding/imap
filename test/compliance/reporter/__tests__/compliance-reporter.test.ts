@@ -68,7 +68,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.restoreAllMocks();
 	for (const dir of tmpDirs.splice(0)) {
-		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmdirSync(dir, { recursive: true });
 	}
 });
 

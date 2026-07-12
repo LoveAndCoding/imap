@@ -149,7 +149,7 @@ export class ComplianceDriver {
 	}
 
 	/** Session-path only (connect()); always null after connectLow(). */
-	public serverInfo(): Map<string, string> | null {
+	public serverInfo(): ReadonlyMap<string, string> | null {
 		return this.session?.server ?? null;
 	}
 
