@@ -39,12 +39,19 @@ defineAcceptanceTable({
 	],
 	async execute(row) {
 		const server = await f.startServer();
+		// Spec §3.3: a greeting carrying a [CAPABILITY ...] resp-code makes the client
+		// skip the CAPABILITY round trip entirely. That row's witness is the consumed
+		// capability set, not a scripted CAPABILITY exchange (which would never be sent
+		// and would stall the test forever).
+		const greetingHasCapabilityCode = row.greeting.includes("[CAPABILITY");
 		server.arm([
-			[
-				send(row.greeting, row.chunks ? { chunks: row.chunks } : {}),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK done", ["* CAPABILITY IMAP4rev1"]),
-			],
+			greetingHasCapabilityCode
+				? [send(row.greeting, row.chunks ? { chunks: row.chunks } : {})]
+				: [
+						send(row.greeting, row.chunks ? { chunks: row.chunks } : {}),
+						expectLine(command("CAPABILITY", { args: null })),
+						reply("OK done", ["* CAPABILITY IMAP4rev1"]),
+					],
 		]);
 		const driver = f.newDriver();
 		const ok = await driver.connect({
@@ -53,6 +60,10 @@ defineAcceptanceTable({
 			security: "none",
 		});
 		expect(ok).toBe(true);
+		if (greetingHasCapabilityCode) {
+			// Witness: the greeting's own capability code was consumed directly.
+			expect(driver.hasCapability("IMAP4rev1")).toBe(true);
+		}
 		await server.assertCompleted();
 	},
 });

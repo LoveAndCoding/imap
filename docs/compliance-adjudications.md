@@ -37,3 +37,37 @@ Display-with-untrusted-marking satisfies both MUSTs and loses only this
 SHOULD. The catalog entry itself notes its baseline pass was "vacuous by
 construction" (no ALERT handling existed at all); the deviation is the first
 non-vacuous measurement of this row.
+
+---
+
+## RFC9051-A-1 — deviate (permanent, MUST-level)
+
+**Requirement:** "If both IMAP4rev1 and IMAP4rev2 are advertised, an IMAP
+client that wants to use IMAP4rev2 MUST issue an \"ENABLE IMAP4rev2\"
+command."
+
+**Decision:** Do not auto-issue `ENABLE IMAP4rev2`. The client's `connect()`
+ritual's ENABLE step (§3.4, "auto" default) permanently excludes
+`IMAP4rev2` from its understood-enable set (`AUTO_ENABLE_SET` in
+`src/client/client.ts`), so no `ENABLE IMAP4rev2` is ever issued
+automatically when both revisions are advertised. `ImapClient.enableExtensions()`
+itself has no special-case block for the name — an explicit, out-of-band
+caller request would still be filtered only by advertisement and would
+reach the wire — but there is no "I want IMAP4rev2" signal the `connect()`
+ritual can act on today (that would require the not-yet-implemented
+`profile:"rev2"` config), so the automatic behavior this MUST is really
+about never fires.
+
+**Rationale:** The modern-API spec §3.4 settled this decision explicitly:
+"`IMAP4rev2` — **excluded**: rev2 enablement is a profile decision, only
+ENABLEd when config `profile:"rev2"` is added (deferred; not 1.0 — the
+client speaks rev1-compatible syntax to rev2 servers, which is legal)."
+RFC 9051 itself permits this: a client that never ENABLEs IMAP4rev2 simply
+continues to interact with the server using IMAP4rev1-compatible syntax
+(the RFC 9051 Appendix A backward-compatibility contract this catalog
+family covers), which is explicitly legal per the RFC. Implementing
+automatic ENABLE IMAP4rev2 today would require inventing the `profile`
+config surface ahead of its planned milestone; the deviation is scoped to
+exactly the automatic-connect-time behavior, not to whether the verb can be
+driven at all (it can, via `enableExtensions()`, once a real profile-intent
+signal exists).

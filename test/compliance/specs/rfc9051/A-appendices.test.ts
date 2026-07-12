@@ -17,19 +17,19 @@
  * RFC9051-D-1:  Client implementations have to expect 63-bit-long body part /
  *               message sizes.
  *
- * A-1 CLASSIFICATION (unimplemented, not violation): the client has no
- * ENABLE surface. Session.start issues only CAPABILITY + ID during connect(),
- * and driver.enable() throws NotImplementedError. CAPABILITY and ID are
- * revision-agnostic (valid in both rev1 and rev2), so the current wire trace
- * does not itself exercise any rev2-only behavior — the MUST's trigger ("wants
- * to use IMAP4rev2 ... before relying on rev2-only behavior") is not met by a
- * client that only speaks the revision-agnostic prelude. There is therefore no
- * wire-observable violation today; the honest classification, consistent with
- * every other absent-verb duty in this suite, is "unimplemented": the driver
- * cannot make the client enable. Once a rev2-only feature path exists, the
- * falsifiable assertion becomes "ENABLE IMAP4rev2 precedes the first rev2-only
- * command"; this test drives that path via driver.enable() and, as a
- * belt-and-braces observable, asserts no ENABLE has leaked onto the wire yet.
+ * A-1 CLASSIFICATION (ADJUDICATED DEVIATION, expectFailure: "violation" —
+ * see docs/compliance-adjudications.md): `driver.enable()` IS implemented
+ * (`ImapClient.enableExtensions`), but the modern-API spec's §3.4 settled
+ * decision permanently excludes IMAP4rev2 from the `connect()` ritual's
+ * auto-ENABLE set (src/client/client.ts's `AUTO_ENABLE_SET` comment: "rev2
+ * enablement is a profile decision... deferred; not 1.0") — there is no
+ * "I want IMAP4rev2" signal the connect() ritual can act on today, so the
+ * client never auto-issues ENABLE IMAP4rev2 at the point this MUST cares
+ * about (before relying on rev2-only behavior). This is a deliberate,
+ * permanent deviation from the letter of RFC9051-A-1, not a gap that will
+ * close as more of the client lands — see the adjudications doc for the
+ * full rationale (the client speaks rev1-compatible syntax to rev2 servers,
+ * which RFC 9051 permits).
  *
  * A-4/A-5/A-7/A-8 are conditional on the client CONSTRUCTING an international
  * (or embedded-"&") mailbox name while intending IMAP4rev1-server
@@ -62,39 +62,53 @@ function contentOf<T>(ev: ObservedEvent): T {
 }
 
 // ── RFC9051-A-1: ENABLE IMAP4rev2 when both revisions advertised ──────────
-// The server greeting advertises BOTH IMAP4rev1 and IMAP4rev2. A client that
-// "wants to use IMAP4rev2" MUST issue "ENABLE IMAP4rev2" before relying on
-// rev2-only behavior. The client has no enable path (Session.start does only
-// CAPABILITY + ID; driver.enable() throws NotImplementedError), so this fails
-// "unimplemented". See the file header for the full classification rationale.
+// The server greeting/CAPABILITY advertises BOTH IMAP4rev1 and IMAP4rev2. A
+// client that "wants to use IMAP4rev2" MUST issue "ENABLE IMAP4rev2" before
+// relying on rev2-only behavior. ADJUDICATED DEVIATION (see the file header
+// note and docs/compliance-adjudications.md): the modern-API spec §3.4
+// deliberately excludes IMAP4rev2 from the client's auto-ENABLE set, so the
+// connect() ritual never issues it — a genuine, permanent violation of this
+// MUST, not an unimplemented gap.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-1"],
 		profiles: ["rev2"],
 		title: "client issues ENABLE IMAP4rev2 when both IMAP4rev1 and IMAP4rev2 are advertised",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): a greeting-carried
+		// capability code would make the client skip the CAPABILITY round trip
+		// entirely (spec §3.3) and stall the scripted exchange below forever.
 		server.arm([
 			[
-				// Greeting advertises BOTH revisions (the conditional trigger).
-				send("* OK [CAPABILITY IMAP4rev1 IMAP4rev2] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1 IMAP4rev2"]),
-				// A conformant client enables rev2 before relying on rev2-only behavior.
-				expectLine(command("ENABLE", { args: /^IMAP4rev2$/i })),
-				reply("OK ENABLE completed", ["* ENABLED IMAP4rev2"]),
+				// A conformant client would enable rev2 before relying on rev2-only
+				// behavior — but see the ADJUDICATED DEVIATION note above: this is
+				// deliberately never scripted as a requirement here.
 			],
 		]);
-		const driver = await f.connectPlain(server);
-		// driver.enable() is unimplemented (no ENABLE surface in the public API).
-		await driver.enable(["IMAP4rev2"]);
+		await f.connectPlain(server);
+		// driver.enable() IS implemented (ImapClient.enableExtensions), but the
+		// client's `connect()` ritual never calls it automatically for
+		// IMAP4rev2 (src/client/client.ts's AUTO_ENABLE_SET permanently
+		// excludes it — see the ADJUDICATED DEVIATION note above): there is no
+		// "I want IMAP4rev2" signal the connect() ritual can act on today,
+		// so no ENABLE IMAP4rev2 is ever issued at the point the catalog
+		// requirement cares about (before relying on rev2-only behavior).
 		await server.assertCompleted();
-		// Belt-and-braces observable: today the client proceeds with only the
-		// revision-agnostic prelude (CAPABILITY [+ ID]); no ENABLE has been sent.
-		expect(server.commandLines.some((l) => l.verb === "ENABLE")).toBe(false);
+		// The genuine catalog duty — the client MUST issue ENABLE IMAP4rev2 here —
+		// is asserted directly (the positive requirement, not its absence): this
+		// fails today, honestly recording the adjudicated deviation as a real
+		// violation rather than a vacuous "absence of the unimplemented verb" pass.
+		expect(
+			server.commandLines.some((l) => l.verb === "ENABLE" && /IMAP4rev2/i.test(l.args)),
+			"the client MUST issue ENABLE IMAP4rev2 when both revisions are advertised — adjudicated deviation, see docs/compliance-adjudications.md",
+		).toBe(true);
 	},
 );
 

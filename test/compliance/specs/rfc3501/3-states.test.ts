@@ -15,10 +15,9 @@
  *   first, but the assertion still documents the correct protocol expectation.
  *   Annotated unimplemented.
  *
- * RFC3501-3.1-1: The normal connect() path already exercises this — the client
- *   supplies credentials (via the Session.start() LOGIN sequence) before doing
- *   anything else. We assert that a successful connect() always triggered a
- *   LOGIN command, i.e., the client did supply credentials.
+ * RFC3501-3.1-1: connect() then driver.login() drives ImapClient.authenticate()
+ *   with an empty mechanisms list, which falls through to LOGIN (spec §9.3
+ *   step 4). We assert the scripted LOGIN exchange completes.
  *
  * RFC3501-3.2-1: The client must not issue message-affecting commands (FETCH,
  *   STORE, SEARCH, COPY …) while in Authenticated state (no mailbox selected).
@@ -55,7 +54,6 @@ complianceTest(
 		reqs: ["RFC3501-3.1-1"],
 		profiles: ["rev1"],
 		title: "client sends LOGIN credentials to transition to Authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -65,14 +63,11 @@ complianceTest(
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
 			],
 		]);
-		const driver = f.newDriver();
-		// driver.login() is not yet implemented in the public API.
-		// Session.start() only runs CAPABILITY (and ID) — it does not login.
-		// When login() is implemented, the test verifies it sends credentials.
+		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await server.assertCompleted();
-		// The script's expectLine(command("LOGIN")) + loginExchange() steps already
-		// verify that a well-formed LOGIN was sent once implemented.
+		// The script's expectLine(command("LOGIN")) + loginExchange() steps
+		// verify that a well-formed LOGIN was sent.
 		// No additional assertions needed here — script completion is the assertion.
 	},
 );

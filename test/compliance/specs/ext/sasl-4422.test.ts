@@ -37,7 +37,6 @@ import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { close, destroy, expectLine, reply, send } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -132,50 +131,82 @@ complianceTest(
 // ── RFC4422-3.4-1 / RFC4422-3.5-1: respond-or-abort on a challenge ─────────
 // After a mid-exchange challenge the client's only two legal moves are to send
 // a valid response OR abort (3.4-1). The abort's IMAP realization is a single
-// '*' continuation line (3.5-1). This exercise supplies the abort leg: the
-// script offers a challenge and accepts EITHER a base64 response OR the '*'
-// abort line — never a bare CRLF, another command, or silence.
+// '*' continuation line (3.5-1).
+//
+// GENUINE ABORT SCENARIO: PLAIN's entire exchange is client-first — its whole
+// response IS the initial response, sent in reply to the FIRST continuation
+// (`start()`). PLAIN's `step()` (src/sasl/plain.ts) always throws — a second
+// server challenge is a protocol violation PLAIN has no way to answer — and
+// `execute-command.ts` maps any `step()` throw to the '*' abort line (spec
+// §9.1). So a server that sends a SECOND, superfluous continuation after
+// PLAIN's initial response forces the one scenario where the client's only
+// legal move is abort: this witnesses 3.5-1 directly (a real '*' on the wire)
+// rather than merely documenting that a base64 response would also be legal.
+//
+// A prior version of this test offered only ONE continuation (which PLAIN
+// always answers, never aborts) and tried to prove the abort leg was never
+// exercised improperly via a regex over the raw per-write transcript text —
+// but AUTHENTICATE's tag+verb+args and its trailing CRLF are recorded as
+// separate transcript entries, so that regex false-matched the command
+// line's own split-off terminator as a bogus "bare CRLF continuation" (a
+// harness artifact, not a client bug). Capturing the actual reassembled
+// continuation line via the matcher below (harness/scripted-server.ts's
+// `drainLines()` already reassembles split writes into logical lines)
+// sidesteps that confound entirely.
 complianceTest(
 	{
 		reqs: ["RFC4422-3.4-1", "RFC4422-3.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client reacts to a challenge only by responding or by sending the '*' abort line",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
+		const seenLines: string[] = [];
+		const captureLine = (description: string, ok: (line: string) => boolean) => ({
+			match: (line: string) => {
+				seenLines.push(line);
+				return { ok: ok(line), reason: `unexpected continuation line: '${line}'` };
+			},
+			description,
+		});
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=PLAIN"]),
 				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
 				send("+ \r\n"),
-				// Legal continuation is a base64 response OR the bare '*' abort.
-				expectLine({
-					match: (line) => ({
-						ok: line === "*" || /^[A-Za-z0-9+/=]+$/.test(line),
-						reason: `expected base64 response or '*' abort, got: '${line}'`,
-					}),
-					description: "base64 response or '*' abort",
-				}),
-				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE cancelled"),
+				// Leg 1: PLAIN answers the first (expected) challenge with its
+				// initial response — the "respond" leg of 3.4-1.
+				expectLine(
+					captureLine("base64 initial response", (line) => /^[A-Za-z0-9+/=]+$/.test(line)),
+				),
+				// A second, superfluous challenge: PLAIN's step() has no legal
+				// answer for this and must abort.
+				send("+ \r\n"),
+				// Leg 2: the ONLY legal continuation now is the bare '*' abort —
+				// this is the genuine 3.5-1 witness.
+				expectLine(captureLine("'*' abort line", (line) => line === "*")),
+				// AUTHENTICATIONFAILED (RFC 5530), not a bare BAD: spec §9.3 step 3
+				// only treats a failure as "credentials wrong, stop" with this code —
+				// a bare BAD reads as mechanism-negotiation failure and would make
+				// `authenticate()`'s selection algorithm fall through to a LOGIN
+				// attempt this script never scripts, hanging the test forever.
+				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE aborted"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// The server declines with NO regardless of what the client sent — the
-		// duty under test is the WIRE FORM of the continuation reply, not
-		// whether authentication succeeds. authenticate() rejects accordingly.
 		let authError: unknown;
 		try {
 			await driver.authenticate("PLAIN");
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "a declined AUTHENTICATE must reject authenticate()").toBeDefined();
+		expect(authError, "an aborted AUTHENTICATE must reject authenticate()").toBeDefined();
 		await server.assertCompleted();
-		// The client's continuation line is never a bare CRLF or an out-of-band
-		// command; the transcript shows only a response or '*'.
-		expect(server.transcript.clientLines()).not.toMatch(/C: \\r\\n$/m);
+		// Exactly two continuation lines were sent: a legal base64 response to
+		// the first challenge, then the '*' abort to the illegal second one —
+		// never a bare CRLF, another command, or silence.
+		expect(seenLines).toEqual([expect.stringMatching(/^[A-Za-z0-9+/=]+$/), "*"]);
 	},
 );
 

@@ -689,7 +689,6 @@ complianceTest(
 		reqs: ["RFC5255-4.7-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits COMPARATOR before authentication",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -698,11 +697,11 @@ complianceTest(
 				? ["IMAP4rev2", "LITERAL-", "I18NLEVEL=2"]
 				: ["IMAP4rev1", "I18NLEVEL=2"];
 		const server = await f.startServer();
-		server.arm([[...sessionPrelude(caps, { profile: ctx.profile })]]);
+		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
 		// No COMPARATOR verb exists on the driver surface; there is nothing to
-		// drive that could emit it pre-auth. login() throws NotImplementedError
-		// today, driving the honest unimplemented classification.
+		// drive that could emit it pre-auth. driver.login() drives the scripted
+		// LOGIN exchange above; the transcript guard below is the real assertion.
 		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(

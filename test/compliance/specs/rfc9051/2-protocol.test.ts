@@ -81,14 +81,19 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
+		// The greeting's own [CAPABILITY ...] resp-code (spec §3.3) makes the
+		// client skip the CAPABILITY round trip entirely, so scripting one here
+		// would stall forever waiting for a command the client never sends. The
+		// witness for "assembled the chunked greeting into one logical line" is
+		// instead that the capability code itself was correctly parsed out of
+		// the reassembled line — if line assembly failed, `[CAPABILITY ...]`
+		// would not parse cleanly and this capability would not be recognized.
 		server.arm([
 			[
 				// rev2 greeting split across 4 TCP packets (3 chunks + remainder).
 				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n", {
 					chunks: [5, 9, 13],
 				}),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -99,6 +104,8 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		expect(driver.active).toBe(true);
+		expect(driver.hasCapability("IMAP4rev2")).toBe(true);
+		expect(driver.hasCapability("LITERAL-")).toBe(true);
 		await server.assertCompleted();
 	},
 );
@@ -367,18 +374,16 @@ complianceTest(
 		reqs: ["RFC9051-3.1-1"],
 		profiles: ["rev2"],
 		title: "client sends LOGIN credentials to transition to Authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(undefined, { login: true, profile: "rev2" })]]);
-		const driver = f.newDriver();
-		// driver.login() is not yet implemented in the public API.
+		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await server.assertCompleted();
 		// The script's expectLine(command("LOGIN")) step verifies a well-formed
-		// LOGIN once implemented — script completion is the assertion.
+		// LOGIN.
 	},
 );
 

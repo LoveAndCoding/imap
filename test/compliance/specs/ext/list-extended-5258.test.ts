@@ -255,7 +255,6 @@ complianceTest(
 		reqs: ["RFC5258-3.4-1"],
 		profiles: ["rev1"],
 		title: "client treats \\NoInferiors as implying \\HasNoChildren (no child-expansion follow-up)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -270,7 +269,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["CHILDREN"] });
@@ -278,7 +277,13 @@ complianceTest(
 			err = e;
 		}
 		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		await server.assertCompleted();
+		// list() throws NotImplementedError WITHOUT touching the wire, so the
+		// scripted LIST step above is never satisfied — deliberately do NOT call
+		// server.assertCompleted() here (unlike the login-only siblings above,
+		// which never arm a LIST step at all): doing so would time out waiting for
+		// a command list() can never send, surfacing as a spurious violation
+		// instead of the honest "unimplemented" outcome (see RFC5258-3-4 above,
+		// which uses the same no-assertCompleted() pattern for the same reason).
 		// When implemented: exactly one LIST reaches the server — \NoInferiors implies
 		// \HasNoChildren, so no child-expansion follow-up (which a childful mailbox
 		// would drive) is emitted.

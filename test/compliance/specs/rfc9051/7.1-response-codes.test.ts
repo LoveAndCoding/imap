@@ -113,9 +113,14 @@ defineAcceptanceTable({
 	],
 	async execute(row) {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): this test is about
+		// tolerating unsolicited data mid-command, not about greeting-code
+		// handling, so it needs the normal CAPABILITY round trip to happen — a
+		// greeting-carried capability code would make the client skip that round
+		// trip entirely (spec §3.3) and the scripted expectLine would stall forever.
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				// The unsolicited line arrives BEFORE the requested data — truly
 				// mid-command, never asked for by the client.
@@ -183,10 +188,17 @@ defineAcceptanceTable({
 		const server = await f.startServer();
 		const untagged = ["* CAPABILITY IMAP4rev2 LITERAL-"];
 		if (row.untagged) untagged.unshift(row.untagged);
+		// Rows that don't script their own greeting default to a BARE greeting
+		// (not an inline [CAPABILITY ...] code): the two greeting-variant rows
+		// above script an unrecognized-code greeting directly (not a CAPABILITY
+		// code, so it never triggers the client's round-trip-skip path), but a
+		// CAPABILITY-carrying default here would make the client skip the
+		// CAPABILITY round trip entirely (spec §3.3) and stall the other rows'
+		// scripted expectLine forever.
 		server.arm([
 			[
 				send(
-					row.greeting ?? "* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n",
+					row.greeting ?? "* OK ready\r\n",
 					row.chunks ? { chunks: row.chunks } : {},
 				),
 				expectLine(command("CAPABILITY", { args: null })),
@@ -221,13 +233,11 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
-		server.arm([
-			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n"),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
-			],
-		]);
+		// The greeting's own [CAPABILITY ...] resp-code (spec §3.3) makes the
+		// client skip the CAPABILITY round trip entirely, so scripting one here
+		// would stall forever. The witness for "accepted the greeting" is the
+		// consumed capability set plus the Not-Authenticated state below.
+		server.arm([[send("* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n")]]);
 		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
@@ -236,6 +246,7 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		expect(driver.active).toBe(true);
+		expect(driver.hasCapability("IMAP4rev2")).toBe(true);
 		// Not Authenticated: the OK greeting does not authenticate the session.
 		expect(
 			driver.authenticated,
@@ -386,9 +397,13 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): this test is about
+		// continuing to read after a mid-exchange BYE, not about greeting-code
+		// handling, so it needs the normal CAPABILITY round trip in order to have
+		// somewhere to inject the BYE + trailing tagged OK.
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				// BYE mid-exchange; the server does NOT close the connection.
 				send("* BYE server going down for maintenance in 10 minutes\r\n"),

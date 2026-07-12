@@ -539,7 +539,6 @@ complianceTest(
 		reqs: ["RFC2221-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not auto-follow more than 10 levels of chained referral without consulting the user",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -547,8 +546,9 @@ complianceTest(
 		// 11 LOGIN attempts, each replying with a tagged NO [REFERRAL <urlN>]
 		// pointing at the next hop; assert the client stops auto-following
 		// after the 10th and does not itself issue an unconsulted 12th LOGIN.
-		// Today, LOGIN throws NotImplementedError on the very first attempt,
-		// before any referral URL is even recovered — self-actualizing.
+		// Today, driver.login() sends a real LOGIN and rejects on the tagged
+		// NO [REFERRAL ...] — no referral-following exists to recover and chase
+		// the URL, so there is only ever this one LOGIN attempt — self-actualizing.
 		const server = await f.startServer();
 		server.arm([
 			[
@@ -558,8 +558,21 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.login("user", "pass");
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "LOGIN rejected with a REFERRAL must surface as an error").toBeDefined();
 		await server.assertCompleted();
+		// No referral-following surface exists: only the single scripted LOGIN
+		// was ever sent — certainly not an unconsulted 12th attempt.
+		const loginCommands = server.commandLines.filter((l) => l.verb === "LOGIN");
+		expect(
+			loginCommands.length,
+			"no referral-following surface exists yet — exactly one LOGIN attempt",
+		).toBe(1);
 	},
 );
 

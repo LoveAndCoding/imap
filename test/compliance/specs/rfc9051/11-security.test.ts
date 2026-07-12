@@ -57,8 +57,13 @@ const localhost = loadCertFixture("localhost");
 const wrongHost = loadCertFixture("wrong-host");
 
 // A minimal secure prelude the client drives after an implicit-TLS handshake.
+// Bare greeting (no inline [CAPABILITY ...] code): these tests are about TLS
+// handshake negotiation, not greeting-code handling, so they need the normal
+// CAPABILITY round trip scripted below to actually happen — a greeting-carried
+// capability code would make the client skip it entirely (spec §3.3) and
+// stall every test that reuses this prelude forever.
 const secureGreetAndCaps = [
-	send("* OK [CAPABILITY IMAP4rev2 LITERAL-] secure ready\r\n"),
+	send("* OK secure ready\r\n"),
 	expectLine(command("CAPABILITY", { args: null })),
 	reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
 ] as const;
@@ -416,12 +421,17 @@ complianceTest(
 			surfacedAsUnhandled,
 			"the injected pre-auth LIST must be observable only via the 'unhandled' tolerance channel",
 		).toBe(true);
-		// No application-level consequence: it must never be mistaken for a
-		// capability change, a client-level error, or an authentication event.
+		// No application-level consequence: a `capabilitiesChanged` event fires
+		// exactly ONCE per connect() — from the greeting's own inline
+		// `[CAPABILITY ...]` code being consumed (spec §3.3), nothing to do with
+		// the injected LIST. The LIST itself must not cause a SECOND one.
+		const capabilitiesChangedCount = driver.events.filter(
+			(e) => e.type === "capabilitiesChanged",
+		).length;
 		expect(
-			driver.events.some((e) => e.type === "capabilitiesChanged"),
-			"an injected LIST must not be mistaken for a capability change",
-		).toBe(false);
+			capabilitiesChangedCount,
+			"an injected LIST must not cause an additional capability change beyond the greeting's own",
+		).toBe(1);
 		expect(
 			driver.events.some((e) => e.type === "error"),
 			"an injected pre-auth LIST must not surface as a client-level error",
@@ -548,12 +558,18 @@ complianceTest(
 			surfacedAsUnhandled,
 			"the out-of-selected-state EXISTS must be observable only via the 'unhandled' tolerance channel",
 		).toBe(true);
-		// No application-level consequence: no capability change, no client-level
-		// error, and (M1 has no mailbox/exists surface yet) no state change at all.
+		// No application-level consequence: a `capabilitiesChanged` event fires
+		// exactly ONCE per connect() — from the greeting's own inline
+		// `[CAPABILITY ...]` code being consumed (spec §3.3), nothing to do with
+		// the injected EXISTS. The EXISTS itself must not cause a SECOND one, and
+		// (M1 has no mailbox/exists surface yet) no state change at all.
+		const capabilitiesChangedCount = driver.events.filter(
+			(e) => e.type === "capabilitiesChanged",
+		).length;
 		expect(
-			driver.events.some((e) => e.type === "capabilitiesChanged"),
-			"an injected EXISTS must not be mistaken for a capability change",
-		).toBe(false);
+			capabilitiesChangedCount,
+			"an injected EXISTS must not cause an additional capability change beyond the greeting's own",
+		).toBe(1);
 		expect(
 			driver.events.some((e) => e.type === "error"),
 			"an out-of-selected-state EXISTS must not surface as a client-level error",
