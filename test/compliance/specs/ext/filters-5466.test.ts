@@ -199,7 +199,6 @@ complianceTest(
 		reqs: ["RFC5466-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "the UNDEFINED-FILTER resp-code exposes the offending filter-name argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

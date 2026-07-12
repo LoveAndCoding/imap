@@ -107,8 +107,17 @@ export class AtomTextCode {
 
 	constructor(public readonly kind: string, tokens: LexerTokenList) {
 		if (tokens && tokens.length) {
-			this.contents = splitSpaceSeparatedList(tokens).map((tkn): string =>
-				getOriginalInput(tkn),
+			// Most resp-code arguments handled here (e.g. BADCOMPARATOR,
+			// UNDEFINED-FILTER, REFERRAL, NOUPDATE, MAXCONVERTMESSAGES/PARTS)
+			// are BARE per their RFCs' ABNF -- not surrounded by parens like
+			// e.g. APPENDUID's uid-set. splitSpaceSeparatedList's default
+			// "(" / ")" delimiters would never "start" on such an argument
+			// list, silently dropping it (contents === []); passing null/null
+			// treats the whole token list as already "in" the list so bare,
+			// top-level-space-separated arguments are preserved in order
+			// (spec §11.2/I-6: resp-code arguments are data, not discarded).
+			this.contents = splitSpaceSeparatedList(tokens, null, null).map(
+				(tkn): string => getOriginalInput(tkn),
 			);
 		}
 	}

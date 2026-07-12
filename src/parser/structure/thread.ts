@@ -49,7 +49,7 @@ class ThreadMessage {
 	}
 
 	public get children() {
-		return this.children;
+		return this._children;
 	}
 }
 

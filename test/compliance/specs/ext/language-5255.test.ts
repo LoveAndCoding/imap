@@ -155,7 +155,6 @@ complianceTest(
 		reqs: ["RFC5255-3.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* LANGUAGE (DE)' single-tag response as an active-language change",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -208,7 +207,6 @@ complianceTest(
 		reqs: ["RFC5255-3.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* LANGUAGE (EN DE IT i-default)' multi-tag response as an enumeration",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -317,7 +315,6 @@ complianceTest(
 		reqs: ["RFC5255-4.9-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client parses a tagged NO [BADCOMPARATOR US-ASCII] response code WITH its trailing argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -372,7 +369,6 @@ complianceTest(
 		reqs: ["RFC5255-4.8-1", "RFC5255-4.8-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* COMPARATOR i;basic' one-field response and parses the active comparator name",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -422,7 +418,6 @@ complianceTest(
 		reqs: ["RFC5255-4.8-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* COMPARATOR i;basic (i;basic i;unicode-casemap)' two-field response with a match list",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

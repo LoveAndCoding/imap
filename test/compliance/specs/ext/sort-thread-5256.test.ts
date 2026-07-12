@@ -280,7 +280,6 @@ complianceTest(
 		profiles: ["rev1", "rev2"],
 		title:
 			"client delivers the parsed thread structure (parent/child chains, sub-thread splits, missing-parent siblings)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

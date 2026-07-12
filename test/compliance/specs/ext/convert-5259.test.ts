@@ -168,7 +168,6 @@ complianceTest(
 		reqs: ["RFC5259-8.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'client accepts an untagged \'* CONVERTED (TAG "a1") TEXT ("Hello, World")\' response',
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -220,7 +219,6 @@ complianceTest(
 		reqs: ["RFC5259-5.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'client accepts an untagged \'* CONVERSION "text/plain" "text/html" ("CHARSET")\' response',
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -318,7 +316,6 @@ complianceTest(
 		reqs: ["RFC5259-9-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client parses a tagged NO [MAXCONVERTMESSAGES 5] response code WITH its numeric argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -362,7 +359,6 @@ complianceTest(
 		reqs: ["RFC5259-9-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client parses a tagged NO [MAXCONVERTPARTS 3] response code WITH its numeric argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

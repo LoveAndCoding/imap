@@ -191,7 +191,6 @@ complianceTest(
 		reqs: ["RFC2221-4.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO to LOGIN exposes the referral URL argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -332,7 +331,6 @@ complianceTest(
 		reqs: ["RFC2193-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO exposes every listed URL, in order, when multiple replicas are given",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -398,7 +396,6 @@ complianceTest(
 		reqs: ["RFC2193-4.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO to RENAME exposes the old-name/new-name URL pair, positionally",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

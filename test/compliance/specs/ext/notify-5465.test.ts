@@ -410,7 +410,6 @@ complianceTest(
 		reqs: ["RFC5465-5.4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts the extended LIST response carrying the OLDNAME data item",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

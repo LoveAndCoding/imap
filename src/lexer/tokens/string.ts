@@ -35,6 +35,10 @@ export class QuotedStringToken
  * > brace ("{"), the number of octets, close brace ("}"), and CRLF.
  * > In the case of literals transmitted from server to client, the
  * > CRLF is immediately followed by the octet data.
+ *
+ * Also covers literal8 (RFC 3516: "~{NUMBER}\r\nSTRING"), a literal that
+ * may contain NUL octets (e.g. URLFETCH/APPEND BINARY payloads) -- framing
+ * and semantics are otherwise identical, so both share this token class.
  */
 export class LiteralStringToken
 	extends BaseToken<string>
@@ -44,9 +48,10 @@ export class LiteralStringToken
 	}
 
 	getTrueValue(): string {
-		// A literal value is of the form `{NUMBER}\r\nSTRING` where `NUMBER`
-		// is the number of octets. By this point, we already have the right
-		// length string, so we just need to strip out the first part
-		return this.value.replace(/^\{\d+\}\r\n/, "");
+		// A literal value is of the form `{NUMBER}\r\nSTRING` (or
+		// `~{NUMBER}\r\nSTRING` for literal8) where `NUMBER` is the number
+		// of octets. By this point, we already have the right length
+		// string, so we just need to strip out the prefix.
+		return this.value.replace(/^~?\{\d+\}\r\n/, "");
 	}
 }

@@ -27,6 +27,32 @@ describe("LiteralStringToken", () => {
 		// Assert
 		expect(trueValue).toBe("this");
 	});
+
+	// literal8 (RFC 3516 "~{n}\r\n...", e.g. URLFETCH/APPEND BINARY payloads
+	// that may contain NUL octets) is the same token class with an extra
+	// leading "~" to strip.
+	test("True value strips the literal8 '~' prefix", () => {
+		// Arrange
+		const token = new LiteralStringToken("~{4}\r\nthis");
+
+		// Act
+		const trueValue = token.getTrueValue();
+
+		// Assert
+		expect(trueValue).toBe("this");
+	});
+
+	test("True value preserves embedded NUL octets from a literal8 payload", () => {
+		// Arrange
+		const token = new LiteralStringToken("~{4}\r\nhi\x00!");
+
+		// Act
+		const trueValue = token.getTrueValue();
+
+		// Assert
+		expect(trueValue).toBe("hi\x00!");
+		expect(trueValue.length).toBe(4);
+	});
 });
 
 describe("QuotedStringToken", () => {

@@ -120,6 +120,54 @@ describe("StringRule", () => {
 		);
 	});
 
+	// literal8 (RFC 3516: "~{n}\r\n...") is a literal that may carry NUL
+	// octets (e.g. URLFETCH/APPEND BINARY payloads) -- same framing/token
+	// class as a plain literal, just with a leading "~".
+	test("Matches a literal8 ('~{n}') string value", () => {
+		// Arrange
+		const str = "~{4}\r\nTest";
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+			typeof LiteralStringToken
+		>;
+
+		// Act
+		rule.match(str);
+
+		// Assert
+		expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+		expect(LiteralStringTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	test("Matches a literal8 value carrying an embedded NUL octet", () => {
+		// Arrange
+		const str = "~{4}\r\nhi\x00!";
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+			typeof LiteralStringToken
+		>;
+
+		// Act
+		rule.match(str);
+
+		// Assert
+		expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+		expect(LiteralStringTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	test("Partial match for a literal8 value followed by trailing content", () => {
+		// Arrange
+		const str = "~{4}\r\nhi\x00!)\r\n";
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+			typeof LiteralStringToken
+		>;
+
+		// Act
+		rule.match(str);
+
+		// Assert
+		expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+		expect(LiteralStringTokenMock.mock.calls[0][0]).toBe("~{4}\r\nhi\x00!");
+	});
+
 	test("Throws with invalid size of literal", () => {
 		// Arrange
 		const str = "{20000000000000000000000000000000000000}\r\n";
