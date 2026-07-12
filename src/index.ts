@@ -24,6 +24,11 @@ export type { ClientState } from "./client/state";
 
 export type { CapabilityView } from "./client/capabilities";
 
+export { MailboxSession } from "./client/mailbox";
+export type { MailboxClosedReason, MailboxSessionEvents } from "./client/mailbox";
+
+export type { SelectOptions, SelectResult } from "./commands/select";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,

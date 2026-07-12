@@ -79,9 +79,50 @@ test("enable() is wired to the public ImapClient (M1.9)", async () => {
 	await server.assertCompleted();
 });
 
-test("select() remains unimplemented", async () => {
+test("select()/examine() are wired to the public ImapClient (M2.2)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 3 EXISTS",
+				"* 0 RECENT",
+				"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)",
+				"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited",
+				"* OK [UIDVALIDITY 1] UIDs valid",
+				"* OK [UIDNEXT 4] Predicted next UID",
+			]),
+			expectLine(command("EXAMINE", { args: /^INBOX$/i })),
+			reply("OK [READ-ONLY] EXAMINE completed", ["* 3 EXISTS", "* 0 RECENT"]),
+		],
+	]);
 	driver = new ComplianceDriver();
-	await expect(driver.select("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	const session = await driver.select("INBOX");
+	expect(session.name).toBe("INBOX");
+	expect(session.readOnly).toBe(false);
+	expect(session.exists).toBe(3);
+	expect(session.canCreateKeywords).toBe(true);
+	// Reselecting via EXAMINE: the same driver call, now forced read-only.
+	const examined = await driver.examine("INBOX");
+	expect(examined.readOnly).toBe(true);
+	await server.assertCompleted();
+});
+
+test("select()/examine() translate CONDSTORE/QRESYNC options to NotImplementedError (M4 carry-forward)", async () => {
+	driver = new ComplianceDriver();
+	await expect(
+		driver.select("INBOX", { condstore: true }),
+	).rejects.toBeInstanceOf(NotImplementedError);
+	await expect(
+		driver.examine("INBOX", { qresync: { uidvalidity: 1, modseq: 1n } }),
+	).rejects.toBeInstanceOf(NotImplementedError);
 });
 
 test("Phase 3 verbs (unauthenticate, compress) throw NotImplementedError", async () => {

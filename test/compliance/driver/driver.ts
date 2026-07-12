@@ -5,7 +5,7 @@ import * as tls from "node:tls";
 // `src/index`) and "./sasl" (`src/sasl`). No other `src/**` path may be
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
 import { Connection, ImapClient } from "../../../src/index";
-import type { ImapClientConfig } from "../../../src/index";
+import type { ImapClientConfig, MailboxSession } from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
 
@@ -74,6 +74,16 @@ export interface SearchOptions {
  * Options carried by SELECT/EXAMINE (RFC 7162 CONDSTORE/QRESYNC parameters).
  *  - `condstore`: append the `(CONDSTORE)` select parameter.
  *  - `qresync`: append `(QRESYNC (uidvalidity modseq [known-uids]))`.
+ *
+ * Deliberately kept as its own ad hoc shape (rather than importing the real
+ * `src/commands/select.ts` `SelectOptions`) even though both are wired to the
+ * public client now: this interface's field names (`uidvalidity`/`modseq`,
+ * lower/mixed-case) mirror the RFC 7162 §3.2.6 QRESYNC wire grammar the
+ * scripted-server tests reason about, not the real type's camelCase
+ * (`uidValidity`/`highestModSeq`) public surface -- see `driver.select()`'s
+ * doc comment for why no translation between the two is ever needed in
+ * practice (every caller of this field throws `NotImplementedError` before
+ * the real type would be constructed).
  */
 export interface SelectOptions {
 	condstore?: boolean;
@@ -376,11 +386,40 @@ export class ComplianceDriver {
 	public async compress(): Promise<never> {
 		throw new NotImplementedError("COMPRESS");
 	}
-	public async select(_mailbox: string, _opts?: SelectOptions): Promise<never> {
-		throw new NotImplementedError("SELECT");
+	/**
+	 * SELECT (RFC 3501/9051 §6.3.1/§6.3.2). Delegates straight to
+	 * `ImapClient.select()` -- zero protocol logic lives here, per this
+	 * milestone's driver-wiring rule (I-4: every byte through
+	 * `CommandWriter`, never a parallel wire-writer in the driver).
+	 *
+	 * `opts.condstore`/`opts.qresync` are the one deliberate exception: the
+	 * real `SelectCommand`/`ExamineCommand` throw `CapabilityError` for
+	 * these (M2.2 plan: `SelectOptions` lands type-complete but functionally
+	 * inert until M4's CONDSTORE/QRESYNC land) -- and `CapabilityError` is a
+	 * real `ImapError`, which the compliance harness's `classifyFailure`
+	 * would misclassify as an honest `"violation"` rather than
+	 * `"unimplemented"` (only `NotImplementedError` classifies as the
+	 * latter). Translating "this feature is not implemented yet" into
+	 * `NotImplementedError` at the driver boundary is exactly the kind of
+	 * failure-kind translation the driver is allowed to do (it is not wire
+	 * protocol logic); the CONDSTORE/QRESYNC-parameter compliance tests stay
+	 * annotated `expectFailure: "unimplemented"` and this keeps that
+	 * annotation honest once SELECT itself is wired.
+	 */
+	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+		if (opts?.condstore || opts?.qresync) {
+			throw new NotImplementedError("SELECT (CONDSTORE/QRESYNC select parameters)");
+		}
+		return this.requireClient().select(mailbox);
 	}
-	public async examine(_mailbox: string, _opts?: SelectOptions): Promise<never> {
-		throw new NotImplementedError("EXAMINE");
+
+	/** EXAMINE (RFC 3501/9051 §6.3.2/§6.3.3) -- same shape/rationale as
+	 *  `select()` above. */
+	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+		if (opts?.condstore || opts?.qresync) {
+			throw new NotImplementedError("EXAMINE (CONDSTORE/QRESYNC select parameters)");
+		}
+		return this.requireClient().examine(mailbox);
 	}
 	public async create(
 		_mailbox: string,

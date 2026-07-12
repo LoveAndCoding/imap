@@ -27,14 +27,16 @@
  * RFC9051-6.4.9-3: FETCH responses caused by UID commands implicitly include the
  *                  UID data item.
  *
- * Genuineness note: driver.select() / examine() / unselect() / closeMailbox() /
- * move() / uidFetch() / uidSearch() are all unimplemented today (they throw
- * NotImplementedError), so every test is annotated `unimplemented`: the driver
- * call rejects before any forbidden command could be emitted or any scripted
- * response processed. The prohibition tests (6.4.1-1 no-CLOSE, 6.4.2-1
- * no-CLOSE/no-EXPUNGE, 6.4.8-2 no-seq-command-mid-MOVE) are self-actualizing —
- * the missing expectLine plus transcript guards catch a violation once the verbs
- * land. This is disclosed rather than hidden behind a vacuous pass.
+ * Genuineness note: driver.examine() / unselect() / closeMailbox() / move() /
+ * uidFetch() / uidSearch() are all unimplemented today (they throw
+ * NotImplementedError), so those tests are annotated `unimplemented`: the
+ * driver call rejects before any forbidden command could be emitted or any
+ * scripted response processed. RFC9051-6.4.1-1 is the exception (M2.2):
+ * driver.select() is wired to the real client, so that prohibition test is a
+ * REAL pass, not self-actualizing. The remaining prohibition tests (6.4.2-1
+ * no-CLOSE/no-EXPUNGE, 6.4.8-2 no-seq-command-mid-MOVE) stay self-actualizing —
+ * the missing expectLine plus transcript guards catch a violation once those
+ * verbs land. This is disclosed rather than hidden behind a vacuous pass.
  *
  * Note on driver surface: there is no dedicated uidMove() verb; the MOVE duties
  * here are exercised through move() (the §6.4.8 REQUIRED-COPYUID-in-untagged-OK
@@ -56,13 +58,14 @@ const f = useComplianceFixture();
 // command MAY be issued without previously issuing a CLOSE command." PERMISSION
 // test: script SELECT INBOX → SELECT Sent with NO CLOSE step between them. Any
 // CLOSE the client emits is unscripted (script failure); the transcript guard
-// confirms none appeared. driver.select() is unimplemented today → unimplemented.
+// confirms none appeared. REAL SIGNAL (M2.2): driver.select() is wired; a
+// reselect (SELECT while already selected) transitions through "authenticated"
+// client-side (spec §3.1) without ever sending CLOSE.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.1-1"],
 		profiles: ["rev2"],
 		title: "client MAY switch mailboxes with SELECT without issuing a prior CLOSE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

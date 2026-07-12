@@ -115,7 +115,6 @@ complianceTest(
 		reqs: ["RFC9051-5.1-2"],
 		profiles: ["rev2"],
 		title: "client treats 'inbox' (any case) as the reserved INBOX mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -130,8 +129,11 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		// Consumer-supplied lowercase name — same reserved mailbox.
-		await driver.select("inbox");
+		const session = await driver.select("inbox");
 		await server.assertCompleted();
+		// The session's own name is canonicalized to "INBOX", not echoed back
+		// as the lowercase spelling the caller happened to pass.
+		expect(session.name).toBe("INBOX");
 		const selectLine = server.commandLines.find((l) => l.verb === "SELECT");
 		expect(selectLine).toBeDefined();
 		expect(selectLine!.verb).toBe("SELECT");

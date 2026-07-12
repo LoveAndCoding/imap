@@ -21,37 +21,39 @@
  *
  * RFC3501-6.3.1-1: Script a SELECT exchange that OMITS the optional untagged data
  *   (no UNSEEN, no PERMANENTFLAGS — only EXISTS, RECENT, FLAGS). The client must not
- *   error or disconnect on receiving a minimal SELECT response. driver.select() is
- *   unimplemented today (annotated unimplemented). Once implemented: the client must
- *   not hang or throw on the missing optional responses; default assumptions apply
- *   (PERMANENTFLAGS: all defined flags; UNSEEN: unknown; UIDNEXT: unknown).
+ *   error or disconnect on receiving a minimal SELECT response. REAL SIGNAL (M2.2):
+ *   driver.select() is wired to `ImapClient.select()`; the missing optional responses
+ *   apply their documented defaults (`MailboxSession.permanentFlags` stays `null`,
+ *   `uidNext` stays `null`) without throwing.
  *
  * RFC3501-6.3.1-2: Script SELECT → tagged NO (mailbox does not exist). The client
- *   must not treat this as if a mailbox were selected. Future observable: after the
- *   failed SELECT, the client must refuse selected-state commands (e.g., FETCH).
- *   driver.select() is unimplemented today.
+ *   must not treat this as if a mailbox were selected. REAL SIGNAL (M2.2):
+ *   select() rejects `ServerNoError`; the client stays "authenticated" (never a
+ *   half-selected state) — see this file's own test body for the observable.
  *
  * RFC3501-6.3.2-1: selectExchange with verb EXAMINE and readOnly:true produces a
- *   tagged OK [READ-ONLY]. driver.examine() is unimplemented today. When implemented:
- *   the client must parse and accept the [READ-ONLY] code to know it is in read-only
- *   Selected state.
+ *   tagged OK [READ-ONLY]. REAL SIGNAL (M2.2): driver.examine() is wired; the
+ *   returned `MailboxSession.readOnly` is `true` (forced unconditionally for EXAMINE,
+ *   not merely inferred from the tagged OK's code).
  *
  * RFC3501-6.3.9-1: Script LIST + LSUB for the same mailbox with deliberately different
  *   flag sets (LSUB omits \HasNoChildren which LIST has). driver.list()/lsub() are
- *   unimplemented. When implemented: the client must prefer the LIST flags over the
- *   LSUB flags. Observable: the driver's returned flag set for the mailbox must match
- *   the LIST response, not the LSUB response.
+ *   unimplemented (M2.7/M2.8). When implemented: the client must prefer the LIST flags
+ *   over the LSUB flags. Observable: the driver's returned flag set for the mailbox
+ *   must match the LIST response, not the LSUB response.
  *
  * RFC3501-6.3.10-1 / RFC3501-6.3.10-2: PROHIBITION tests. After a scripted SELECT,
  *   driver.status() is called on the SAME mailbox. A compliant client must NOT send
  *   STATUS to the wire. The script contains NO expectLine step for STATUS — any STATUS
  *   command from the client produces an unscripted command (script failure). The
  *   transcript guard `not.toMatch(...)` on client lines (C: prefixed) adds an
- *   independent signal. driver.status() is unimplemented today (both fail
- *   unimplemented; when implemented, a compliant client must refuse or the test
- *   catches the violation through the unscripted-command failure). The two tests are
- *   intentionally separate: 6.3.10-1 is SHOULD NOT (anti-pattern) and 6.3.10-2 is
- *   MUST NOT (explicit prohibition of the new-message-check use case).
+ *   independent signal. REAL SIGNAL for the SELECT half (M2.2): driver.select() now
+ *   really selects the mailbox; driver.status() still throws `NotImplementedError`
+ *   (M2.9), which the prohibition assertion (`expect(statusError).toBeDefined()`)
+ *   accepts either way — the transcript guard is what actually proves the prohibition
+ *   once STATUS itself lands. The two tests are intentionally separate: 6.3.10-1 is
+ *   SHOULD NOT (anti-pattern) and 6.3.10-2 is MUST NOT (explicit prohibition of the
+ *   new-message-check use case).
  *
  * RFC3501-6.3.11-1: driver.append() with a proper RFC-2822 message (header block +
  *   CRLF separator + body). The harness literal machinery records the literal payload;
@@ -82,7 +84,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.1-1"],
 		profiles: ["rev1"],
 		title: "client handles a SELECT response that omits optional UNSEEN and PERMANENTFLAGS data",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -123,13 +124,16 @@ complianceTest(
 // ── RFC3501-6.3.1-2: failed SELECT leaves no mailbox selected ─────────────────
 // Script SELECT → tagged NO (non-existent mailbox). The client MUST behave as if
 // no mailbox is selected after this failure (state-machine invariant).
-// driver.select() is unimplemented today.
+// REAL SIGNAL (M2.2): driver.select() is now wired to `ImapClient.select()`,
+// which rejects `ServerNoError` on a tagged NO and leaves the client
+// "authenticated" (never a half-selected state) -- the trailing NOOP proves
+// the connection is still live and usable afterward (any selected-state
+// command would be unscripted/misrouted if the client thought otherwise).
 complianceTest(
 	{
 		reqs: ["RFC3501-6.3.1-2"],
 		profiles: ["rev1"],
 		title: "client treats a failed SELECT (NO response) as leaving no mailbox selected",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -149,19 +153,24 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// When select() is implemented: the NO response must cause select() to
-		// reject (non-NotImplementedError), leaving the driver's selected-mailbox
-		// state as "none". The client must NOT act as if a mailbox is selected.
-		// select() throws NotImplementedError today WITHOUT touching the wire (the
-		// scripted SELECT step is never satisfied) — deliberately let it propagate
-		// uncaught rather than following up with driver.noop(): a follow-up wire
-		// call here would race the harness (still waiting on the SELECT step it
-		// never received) and surface as a spurious ConnectionError "violation"
-		// instead of the honest "unimplemented" outcome. Once select() is
-		// implemented, this call also becomes the observable assertion: it must
-		// reject on the tagged NO, and the script's trailing NOOP step exists to
-		// verify (post-implementation) that the connection is still usable.
-		await driver.select("DoesNotExist");
+		let selectError: unknown;
+		try {
+			await driver.select("DoesNotExist");
+		} catch (err) {
+			selectError = err;
+		}
+		// The NO response must cause select() to reject -- specifically a
+		// ServerNoError (tagged NO, not BAD/a generic failure) -- never resolve
+		// as if a mailbox were selected.
+		expect(selectError, "select() must reject on a tagged NO").toBeInstanceOf(Error);
+		expect(
+			(selectError as Error).name,
+			"the rejection must be a ServerNoError (tagged NO)",
+		).toBe("ServerNoError");
+		// The connection must remain usable, still in "authenticated" (never a
+		// half-selected state) -- NOOP (legal in any state) proves this.
+		await driver.noop();
+		await server.assertCompleted();
 	},
 );
 
@@ -173,7 +182,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.2-1"],
 		profiles: ["rev1"],
 		title: "client issues EXAMINE and accepts [READ-ONLY] in the tagged OK response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -263,7 +271,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.10-1"],
 		profiles: ["rev1"],
 		title: "client SHOULD NOT send STATUS against the currently selected mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -314,7 +321,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.10-2"],
 		profiles: ["rev1"],
 		title: "client MUST NOT send STATUS on the selected mailbox as a new-message check",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

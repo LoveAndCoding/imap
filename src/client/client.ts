@@ -5,13 +5,16 @@ import { TypedEmitter } from "tiny-typed-emitter";
 import {
 	CapabilityCommand,
 	EnableCommand,
+	ExamineCommand,
 	IdCommand,
 	LogoutCommand,
 	NoopCommand,
+	SelectCommand,
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
 import type { IdResponseMap } from "../commands/id";
+import type { SelectOptions, SelectResult } from "../commands/select";
 import Connection from "../connection";
 import { ConnectionTimeout, TLSSocketError } from "../connection/errors";
 import { TLSSetting } from "../connection/types";
@@ -26,16 +29,24 @@ import {
 import {
 	CapabilityList,
 	CapabilityTextCode,
+	ExistsCount,
+	Expunge,
+	Fetch,
+	NumberTextCode,
+	RecentCount,
 	StatusResponse,
 	TaggedResponse,
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
+import type { TextCode } from "../parser";
+import { decodeMailboxName } from "../protocol/mailbox-name";
 import { performAuthSelection } from "./auth";
 import { CapabilityRegistry } from "./capabilities";
 import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
 import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
+import { MailboxSession } from "./mailbox";
 import { ClientStateMachine } from "./state";
 import type { ClientState } from "./state";
 
@@ -115,6 +126,13 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  consumed (and cleared) by the very next `disconnected` bridge so the
 	 *  resulting `close` event can report it — see `wireConnectionEvents()`. */
 	private _lastConnectionError: ImapError | undefined;
+
+	/** The currently selected mailbox, if any (spec §3.2's `readonly mailbox`
+	 *  property) -- `null` whenever `state !== "selected"`. Cleared to `null`
+	 *  the instant a reselect/deselect BEGINS (see `selectOrExamine()`), not
+	 *  only once it completes, so this never points at a stale/half-built
+	 *  session. */
+	private _mailboxSession: MailboxSession | null = null;
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -416,6 +434,85 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
+	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession) -----------
+
+	/** The currently selected mailbox, if any (spec §3.2). */
+	public get mailbox(): MailboxSession | null {
+		return this._mailboxSession;
+	}
+
+	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See
+	 *  `selectOrExamine()` for the shared choreography. */
+	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+		return this.selectOrExamine(mailbox, new SelectCommand(mailbox, opts));
+	}
+
+	/** EXAMINE (spec §3.2/§3.1, RFC 3501/9051 §6.3.2/§6.3.3): identical
+	 *  choreography to `select()`; the returned session's `readOnly` is
+	 *  always `true` (enforced by `ExamineCommand.accept()`). */
+	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+		return this.selectOrExamine(mailbox, new ExamineCommand(mailbox, opts));
+	}
+
+	/**
+	 * Shared SELECT/EXAMINE choreography (spec §3.1's state table + §3.2's
+	 * `mailbox` property):
+	 *
+	 * 1. The command is constructed BEFORE anything else here runs, so a
+	 *    `condstore`/`qresync` option throws `CapabilityError` (from
+	 *    `SelectCommand`/`ExamineCommand`'s constructor) with zero bytes
+	 *    written and the current selection completely undisturbed (spec I-9).
+	 * 2. Reselect choreography: if a mailbox is already selected, this is a
+	 *    CLIENT-DRIVEN transition -- "select of another mailbox begins" is
+	 *    its own trigger in the §3.1 table, distinct from (though normally
+	 *    accompanied by) the server's RFC 7162/9051 CLOSED resp-code. The
+	 *    client transitions `selected -> authenticated`, clears `mailbox` to
+	 *    `null`, and closes the OLD session with reason `"reselected"`
+	 *    IMMEDIATELY -- before the new command is even submitted, not after
+	 *    a `[CLOSED]` code is observed on the wire. This is deliberately NOT
+	 *    contingent on the server actually echoing CLOSED: RFC 7162 §3.2.11
+	 *    only ever sends CLOSED in response to exactly this situation, so by
+	 *    the time it would arrive (as part of the NEW command's own untagged
+	 *    data) the client already knows everything CLOSED would tell it.
+	 *    `handleServerStatus()`'s CLOSED handling exists purely as an inert
+	 *    defensive backstop for a non-conformant server (see its own doc
+	 *    comment) -- it is not the primary mechanism.
+	 * 3. `run(command)` submits the real wire command. A failure (tagged
+	 *    NO/BAD) propagates as-is (`ServerNoError`/`ServerBadError`, per
+	 *    `Command`'s default `onError`): state stays/returns to
+	 *    "authenticated" (already transitioned in step 2, or never left it),
+	 *    `mailbox` stays `null` (already cleared in step 2, or was already
+	 *    null).
+	 * 4. On success, build the new `MailboxSession` from the command's typed
+	 *    `SelectResult`, publish it as `mailbox`, and transition
+	 *    `authenticated -> selected`.
+	 */
+	private async selectOrExamine(
+		mailbox: string,
+		command: Command<SelectResult>,
+	): Promise<MailboxSession> {
+		const previous = this._mailboxSession;
+		if (this.stateMachine.current === "selected") {
+			this._mailboxSession = null;
+			this.stateMachine.transition("authenticated");
+			if (previous) {
+				MailboxSession.markClosed(previous, "reselected");
+			}
+		}
+		const result = await this.run(command);
+
+		// Decode duty (M2 shared design note): mailbox-name decode is a
+		// Layer-2 concern applied by each command's caller, not the parser.
+		// `utf8Accepted: true` here means ONLY INBOX canonicalization runs --
+		// `mailbox` is already the caller's plain Unicode string (never mUTF-7
+		// wire bytes), so no mUTF-7 decode step is appropriate.
+		const name = decodeMailboxName(mailbox, { utf8Accepted: true });
+		const session = new MailboxSession(name, result);
+		this._mailboxSession = session;
+		this.stateMachine.transition("selected");
+		return session;
+	}
+
 	// -- Layer 2 escape hatch --------------------------------------------------
 
 	/**
@@ -574,6 +671,58 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		if (code instanceof CapabilityTextCode) {
 			this.capabilityRegistry.set(code.capabilities);
 		}
+		this.applyMailboxStatusCode(code);
+	}
+
+	/**
+	 * State-tracker lane, mailbox half (spec §8.3) -- status-response side:
+	 * live UIDVALIDITY changes, plus the RFC 7162/9051 CLOSED resp-code's
+	 * defensive backstop. Only ever mutates a LIVE session
+	 * (`this._mailboxSession` non-null): `selectOrExamine()` clears
+	 * `_mailboxSession` to `null` BEFORE its own SELECT/EXAMINE command is
+	 * even submitted, so the identical "* OK [UIDVALIDITY ...]"/"* OK
+	 * [CLOSED]" lines that arrive as part of that command's OWN response
+	 * (already claimed and folded into its `SelectResult` by
+	 * `SelectCommand`/`ExamineCommand`) are harmlessly no-ops here -- this
+	 * lane only fires for genuinely LATER, unsolicited status lines against
+	 * an already-established session.
+	 */
+	private applyMailboxStatusCode(code: TextCode | undefined | null): void {
+		const session = this._mailboxSession;
+		if (!session || session.closed || !code) {
+			return;
+		}
+		const kind = (code as { kind?: unknown }).kind;
+		if (kind === "UIDVALIDITY" && code instanceof NumberTextCode) {
+			const next = code.value as number;
+			if (next !== session.uidValidity) {
+				const prev = session.uidValidity;
+				MailboxSession.applyUidValidity(session, next);
+				this.config.logger?.({
+					level: "warn",
+					message:
+						`UIDVALIDITY changed for mailbox "${session.name}": ` +
+						`${prev} -> ${next} (client MUST treat cached UIDs as invalid)`,
+					detail: { code: "UIDVALIDITYCHANGED", mailbox: session.name, prev, next },
+				});
+			}
+			return;
+		}
+		if (kind === "CLOSED") {
+			// Defensive backstop only (see this method's own doc comment): under
+			// normal operation `selectOrExamine()`'s client-driven reselect
+			// choreography has already closed the previous session and
+			// transitioned to "authenticated" by the time this could ever fire
+			// against a non-null `_mailboxSession`, making this dead code for a
+			// conformant server. Kept for a server that (contrary to RFC 7162
+			// §3.2.11) emits CLOSED without the client having initiated a new
+			// SELECT/EXAMINE at all.
+			MailboxSession.markClosed(session, "reselected");
+			this._mailboxSession = null;
+			if (this.stateMachine.current === "selected") {
+				this.stateMachine.transition("authenticated");
+			}
+		}
 	}
 
 	/** Bridges untagged `* CAPABILITY ...` responses (e.g. the STARTTLS
@@ -584,6 +733,51 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	private handleUntaggedResponse(resp: UntaggedResponse): void {
 		if (resp.content instanceof CapabilityList) {
 			this.capabilityRegistry.set(resp.content);
+			return;
+		}
+		this.applyMailboxLiveUpdate(resp);
+	}
+
+	/**
+	 * State-tracker lane, mailbox half (spec §8.3) -- live-update side:
+	 * EXISTS/RECENT/EXPUNGE/FETCH-flag untagged responses arriving while a
+	 * mailbox is selected mutate that session's snapshot IN ARRIVAL ORDER
+	 * (the router/connection fan these out synchronously and in wire order,
+	 * so a synchronous handler here preserves that ordering for free), then
+	 * emit its events. VANISHED (QRESYNC) is deliberately out of scope until
+	 * M4 (the M2 plan's `MailboxSession` skeleton note). Guarded identically
+	 * to `applyMailboxStatusCode` above: only fires against a LIVE session,
+	 * so the EXISTS/RECENT lines that are part of an in-flight SELECT's own
+	 * response (already claimed + folded into its `SelectResult`) are
+	 * naturally ignored here too.
+	 */
+	private applyMailboxLiveUpdate(resp: UntaggedResponse): void {
+		const session = this._mailboxSession;
+		if (!session || session.closed) {
+			return;
+		}
+		const content = resp.content;
+		if (content instanceof ExistsCount) {
+			MailboxSession.applyExists(session, content.count);
+		} else if (content instanceof RecentCount) {
+			MailboxSession.applyRecent(session, content.count);
+		} else if (content instanceof Expunge) {
+			MailboxSession.applyExpunge(session, content.sequenceNumber);
+		} else if (content instanceof Fetch && content.flags) {
+			const uid = content.uid?.id;
+			MailboxSession.applyFlagsUpdate(session, {
+				seq: content.sequenceNumber,
+				...(typeof uid === "number" ? { uid } : {}),
+				flags: new Set(content.flags.flags.map((f) => f.name)),
+				...(content.modseq !== undefined
+					? {
+							modSeq:
+								typeof content.modseq === "bigint"
+									? content.modseq
+									: BigInt(content.modseq),
+						}
+					: {}),
+			});
 		}
 	}
 

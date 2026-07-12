@@ -346,23 +346,30 @@ complianceTest(
 // ── RFC9051-3-1: no commands in an inappropriate state ────────────────────
 // Attempt SELECT while still in Not Authenticated state. The script has no
 // expect step for SELECT — a client that sent it would fail the script.
+// REAL SIGNAL (M2.2): driver.select() rejects `StateError` before any wire
+// bytes are sent.
 complianceTest(
 	{
 		reqs: ["RFC9051-3-1"],
 		profiles: ["rev2"],
 		title: "client does not send state-restricted commands in an inappropriate state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(undefined, { profile: "rev2" })]]);
 		const driver = await f.connectPlain(server);
-		// Attempt select() while unauthenticated (Not Authenticated state).
-		// Today: NotImplementedError fires before any wire bytes are sent.
-		// Once implemented: a conformant client must refuse locally or the
-		// script fails because SELECT would be an unexpected command.
-		await driver.select("INBOX");
+		// Attempt select() while unauthenticated (Not Authenticated state). A
+		// conformant client refuses locally, zero bytes written.
+		let selectError: unknown;
+		try {
+			await driver.select("INBOX");
+		} catch (err) {
+			selectError = err;
+		}
+		expect(selectError, "select() must reject when not authenticated").toMatchObject({
+			name: "StateError",
+		});
 		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
 		await server.assertCompleted();
 	},

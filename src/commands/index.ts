@@ -7,5 +7,6 @@ export * from "./id";
 export * from "./login";
 export * from "./logout";
 export * from "./noop";
+export * from "./select";
 export * from "./starttls";
 export * from "./writer";

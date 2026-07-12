@@ -2,6 +2,7 @@ import {
 	AtomTextCode,
 	CapabilityTextCode,
 	NumberTextCode,
+	PermanentFlagsTextCode,
 	TaggedResponse,
 	UntaggedResponse,
 } from "../parser";
@@ -10,15 +11,17 @@ import type { TypedResponseCode } from "../protocol/response-codes";
 
 /**
  * Converts one of the parser's internal `TextCode` variants into the public
- * `TypedResponseCode` shape (spec §5.5). §5.5's full discriminated union
- * (one variant per known code, with typed argument shapes) lands with the
- * router/parser milestone that owns it; until then every code surfaces
- * through the open `{ name, args }` fallback shape the placeholder already
- * defines, rendered from whatever structured data each `TextCode` class
- * happens to carry today. This is intentionally conservative: codes this
- * function doesn't know how to render args for still surface (by name),
- * they just carry `args: null` rather than a guessed-at string — never an
- * error, per the tolerance invariant (I-6).
+ * `TypedResponseCode` shape (spec §5.5). The full discriminated union (one
+ * variant per known code, with typed argument shapes) accretes as each
+ * command needs its own codes -- M2.2 (SELECT/EXAMINE) is the first
+ * consumer, adding CLOSED/PERMANENTFLAGS/UIDVALIDITY/UIDNEXT/HIGHESTMODSEQ/
+ * NOMODSEQ/UIDNOTSTICKY/MAILBOXID. Everything else still surfaces through
+ * the open `{ name, args }` fallback shape, rendered from whatever
+ * structured data each `TextCode` class happens to carry. This is
+ * intentionally conservative: codes this function doesn't know how to
+ * render args for still surface (by name), they just carry `args: null`
+ * rather than a guessed-at string — never an error, per the tolerance
+ * invariant (I-6).
  */
 export function toTypedResponseCode(
 	code: TextCode | undefined | null,
@@ -27,14 +30,42 @@ export function toTypedResponseCode(
 		return null;
 	}
 	const name = String((code as { kind: unknown }).kind).toUpperCase();
-	if (code instanceof AtomTextCode) {
-		return {
-			name,
-			args: code.contents && code.contents.length ? code.contents.join(" ") : null,
-		};
+	if (code instanceof PermanentFlagsTextCode) {
+		return { name: "PERMANENTFLAGS", flags: code.flags.flags.map((f) => f.name) };
 	}
 	if (code instanceof NumberTextCode) {
-		return { name, args: String(code.value) };
+		switch (name) {
+			case "UIDVALIDITY":
+				return { name: "UIDVALIDITY", value: code.value as number };
+			case "UIDNEXT":
+				return { name: "UIDNEXT", value: code.value as number };
+			case "HIGHESTMODSEQ":
+				return {
+					name: "HIGHESTMODSEQ",
+					value: typeof code.value === "bigint" ? code.value : BigInt(code.value),
+				};
+			default:
+				// UNSEEN and any future NumberTextCode kind: no dedicated
+				// variant yet -- open fallback, rendered as a plain string.
+				return { name, args: String(code.value) };
+		}
+	}
+	if (code instanceof AtomTextCode) {
+		switch (name) {
+			case "CLOSED":
+				return { name: "CLOSED" };
+			case "NOMODSEQ":
+				return { name: "NOMODSEQ" };
+			case "UIDNOTSTICKY":
+				return { name: "UIDNOTSTICKY" };
+			case "MAILBOXID":
+				return { name: "MAILBOXID", value: code.contents?.[0] ?? null };
+			default:
+				return {
+					name,
+					args: code.contents && code.contents.length ? code.contents.join(" ") : null,
+				};
+		}
 	}
 	if (code instanceof CapabilityTextCode) {
 		return {
@@ -42,11 +73,11 @@ export function toTypedResponseCode(
 			args: code.capabilities.capabilities.map((cap) => cap.fullValue).join(" "),
 		};
 	}
-	// Every other known TextCode variant (APPENDUID/COPYUID/MODIFIED/
-	// PERMANENTFLAGS) carries its own structured payload rather than a flat
-	// string; a full typed union (spec §5.5) is future work. Surface the
-	// code's name with no rendered args rather than guessing at a string
-	// representation.
+	// Every other known TextCode variant (APPENDUID/COPYUID/MODIFIED) carries
+	// its own structured payload rather than a flat string; a typed variant
+	// for each (spec §5.5) is future work, landing with the command that
+	// first needs it. Surface the code's name with no rendered args rather
+	// than guessing at a string representation.
 	return { name, args: null };
 }
 

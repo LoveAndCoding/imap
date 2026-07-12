@@ -103,7 +103,7 @@ export class ModifiedTextCode {
 	}
 }
 
-export class PermentantFlagsTextCode {
+export class PermanentFlagsTextCode {
 	public readonly kind = "PERMANENTFLAGS";
 	public readonly flags: FlagList;
 
@@ -190,7 +190,7 @@ export type TextCode =
 	| CapabilityTextCode
 	| CopyUIDTextCode
 	| ModifiedTextCode
-	| PermentantFlagsTextCode
+	| PermanentFlagsTextCode
 	| NumberTextCode;
 
 function isOpenToken(token: ILexerToken<unknown>) {
@@ -262,8 +262,21 @@ export function match(
 			case "MODIFIED":
 				code = new ModifiedTextCode(contents);
 				break;
-			case "PERMENANTFLAGS":
-				code = new PermentantFlagsTextCode(contents);
+			case "PERMANENTFLAGS":
+				// Historical note: this case label used to be misspelled
+				// "PERMENANTFLAGS" (missing the "A" before "NENT"), which never
+				// matched the actual wire keyword "PERMANENTFLAGS" (`ciCanonicalize`
+				// only ever produces the correctly-spelled uppercase form) -- every
+				// real `[PERMANENTFLAGS (...)]` resp-code silently fell through to
+				// the generic `AtomTextCode` default branch below instead of
+				// becoming a `PermanentFlagsTextCode`. It happened to still yield
+				// usable (if messier) data there, because PERMANENTFLAGS's payload
+				// is parenthesized and `AtomTextCode`'s default parenthesized-list
+				// handling produces a plausible `contents` array, which is exactly
+				// why this went unnoticed -- but it bypassed `FlagList`'s
+				// case-insensitive flag/`\*` handling entirely. Fixed as part of
+				// M2.2 (SELECT's `PERMANENTFLAGS` handling depends on this class).
+				code = new PermanentFlagsTextCode(contents);
 				break;
 			case "HIGHESTMODSEQ":
 			case "UIDNEXT":

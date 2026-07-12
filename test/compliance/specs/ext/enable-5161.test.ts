@@ -35,7 +35,6 @@ import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { selectExchange, sessionPrelude } from "../../runner/state";
@@ -46,17 +45,19 @@ const f = useComplianceFixture();
 // PROHIBITION test — never expectLine the forbidden command. Script a SELECT
 // exchange in the authenticated state, then NO ENABLE expectation afterward. A
 // conformant client must not issue ENABLE once a mailbox has been selected.
-// driver.select() and driver.enable() are both unimplemented today, so the
-// select() call rejects first → annotated 'unimplemented'. When both verbs land,
-// an ENABLE after SELECT is an unscripted command (server-script failure) AND
-// the transcript guard catches it independently. rev1-only (rev2-core duplicate
-// scored via RFC9051-6.3.1-2). Runs against a rev1 CAPABILITY advertising ENABLE.
+// REAL SIGNAL (M2.2): driver.select()/enable() are both wired -- the CAPABILITY
+// set here already advertises CONDSTORE (so ENABLE isn't vacuously filtered to
+// an empty request, see RFC9051-6.3.1-2's sibling test for that trap), and
+// `EnableCommand.states = ["authenticated"]` makes `run()` reject with
+// `StateError` once the client is "selected" -- zero bytes written (I-9), so
+// the transcript guard never has anything to catch in a conformant client
+// (which is exactly the point: the prohibition is enforced BEFORE the wire).
+// rev1-only (rev2-core duplicate scored via RFC9051-6.3.1-2).
 complianceTest(
 	{
 		reqs: ["RFC5161-3.1-2"],
 		profiles: ["rev1"],
 		title: "client MUST NOT issue ENABLE once a mailbox has been SELECTed",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -69,8 +70,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		// Reach selected state first (unimplemented today — rejects here).
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		// A conformant client must refuse to ENABLE post-SELECT. Any ENABLE that
 		// reaches the wire is an unscripted-command failure.
@@ -80,9 +80,10 @@ complianceTest(
 		} catch (err) {
 			enableError = err;
 		}
-		expect(enableError, "driver.enable() after SELECT must throw").toBeInstanceOf(
-			NotImplementedError,
-		);
+		expect(
+			enableError,
+			"driver.enable() after SELECT must throw a StateError (zero bytes written)",
+		).toMatchObject({ name: "StateError" });
 		await server.assertCompleted();
 		// Transcript guard: no ENABLE command in client-sent lines.
 		expect(

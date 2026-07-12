@@ -48,7 +48,19 @@ export class FlagList {
 			firstToken.isType(TokenTypes.atom) &&
 			ciEquals(firstToken.getTrueValue(), "FLAGS")
 		) {
-			return new FlagList(tokens.slice(1), false);
+			// `tokens.slice(1)` strips only the "FLAGS" keyword, leaving the SP
+			// and the parenthesized flag-list intact (e.g. " (\Answered \Seen)").
+			// `isWrappedInParens` MUST stay `true` (the default) here so the
+			// constructor's `splitSpaceSeparatedList` uses "("/")" as anchors and
+			// strips them -- passing `false` (as this line used to) tells it there
+			// is no surrounding paren to strip, so with no SP between "(" and the
+			// first flag (or between the last flag and ")"), those literal
+			// parenthesis characters get glued onto the first/last flag names
+			// instead of being discarded (e.g. "\Answered" comes out as
+			// "(\Answered", and "\Draft" as "\Draft)") -- corrupting every
+			// mailbox-level untagged "* FLAGS (...)" response's flag names, the
+			// exact data `MailboxSession.flags` (spec §5b) is built from.
+			return new FlagList(tokens.slice(1));
 		}
 
 		return null;

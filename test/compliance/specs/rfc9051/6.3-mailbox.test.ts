@@ -67,31 +67,33 @@ const f = useComplianceFixture();
 // ── RFC9051-6.3.1-2: MUST NOT issue ENABLE after SELECT/EXAMINE ────────────
 // PROHIBITION test (never expectLine the forbidden command). Script a SELECT
 // exchange; there is NO ENABLE expectation afterward. A conformant client must
-// not send ENABLE once a mailbox has been selected. driver.select() and
-// driver.enable() are both unimplemented today → the select() call rejects
-// first, so this is annotated `unimplemented`; when both land, an ENABLE after
-// SELECT is an unscripted command (script failure) and the transcript guard
-// catches it independently.
+// not send ENABLE once a mailbox has been selected. REAL SIGNAL (M2.2):
+// driver.select()/enable() are both wired. The CAPABILITY set MUST actually
+// advertise CONDSTORE here -- `ImapClient.enableExtensions()` filters its
+// request down to only advertised capabilities BEFORE ever submitting a real
+// `EnableCommand` (spec §3.4), so requesting an UNADVERTISED capability would
+// resolve `[]` vacuously without ever reaching the "selected" state check this
+// requirement is actually about; advertising CONDSTORE makes the prohibition
+// genuinely exercised (EnableCommand.states = ["authenticated"] rejects it
+// with StateError once the client is "selected").
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.1-2"],
 		profiles: ["rev2"],
 		title: "client MUST NOT issue ENABLE after a mailbox has been SELECTed",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(undefined, { profile: "rev2", login: true }),
+				...sessionPrelude(["IMAP4rev2", "LITERAL-", "CONDSTORE"], { profile: "rev2", login: true }),
 				...selectExchange("INBOX", { profile: "rev2", exists: 3 }),
 				// No ENABLE expectation — any ENABLE after SELECT is unscripted.
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// Select first (unimplemented today — rejects here).
 		await driver.select("INBOX");
 		// A conformant client must refuse to ENABLE post-SELECT. Any ENABLE that
 		// reaches the wire is an unscripted-command failure.
@@ -115,14 +117,15 @@ complianceTest(
 // Script a rev2 SELECT response that OMITS the [PERMANENTFLAGS ...] response
 // code (only EXISTS, UIDVALIDITY, UIDNEXT, FLAGS, LIST). The client must accept
 // this minimal-but-valid response without erroring; per §6.3.2 it should then
-// assume all flags can be changed permanently. driver.select() is unimplemented
-// today → annotated unimplemented.
+// assume all flags can be changed permanently. REAL SIGNAL (M2.2):
+// driver.select() is wired; asserts `permanentFlags === null` (the documented
+// wire truth) -- see `MailboxSession.canCreateKeywords`'s doc comment for the
+// narrower reading this milestone applies to keyword-creation specifically.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.2-1"],
 		profiles: ["rev2"],
 		title: "client handles a rev2 SELECT response that omits the PERMANENTFLAGS code",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -147,24 +150,26 @@ complianceTest(
 		await driver.login("user", "pass");
 		// Client must accept the response without throwing on the missing
 		// PERMANENTFLAGS code (default: assume all flags are permanent).
-		await driver.select("INBOX");
+		const session = await driver.select("INBOX");
 		await server.assertCompleted();
 		const selectLine = server.commandLines.find((l) => l.verb === "SELECT");
 		expect(selectLine, "a SELECT command must have been sent").toBeDefined();
 		expect(selectLine!.verb).toBe("SELECT");
+		expect(session.permanentFlags, "PERMANENTFLAGS omitted -> null (wire truth)").toBeNull();
+		expect(session.canCreateKeywords).toBe(false);
 	},
 );
 
 // ── RFC9051-6.3.2-2: failed SELECT leaves no mailbox selected ──────────────
 // Script SELECT for a non-existent mailbox → tagged NO. After the failure the
 // client must behave as if no mailbox is selected (it must not issue
-// selected-state commands). driver.select() is unimplemented today.
+// selected-state commands). REAL SIGNAL (M2.2): driver.select() is now wired;
+// see the rev1 sibling test (RFC3501-6.3.1-2) for the identical rationale.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.2-2"],
 		profiles: ["rev2"],
 		title: "client treats a failed SELECT (NO response) as leaving no mailbox selected",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -182,16 +187,19 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// select() throws NotImplementedError today WITHOUT touching the wire (the
-		// scripted SELECT step is never satisfied) — deliberately let it propagate
-		// uncaught rather than following up with driver.noop(): a follow-up wire
-		// call here would race the harness (still waiting on the SELECT step it
-		// never received) and surface as a spurious ConnectionError "violation"
-		// instead of the honest "unimplemented" outcome. Once select() is
-		// implemented, this call also becomes the observable assertion: it must
-		// reject on the tagged NO, and the script's trailing NOOP step exists to
-		// verify (post-implementation) that the connection is still usable.
-		await driver.select("DoesNotExist");
+		let selectError: unknown;
+		try {
+			await driver.select("DoesNotExist");
+		} catch (err) {
+			selectError = err;
+		}
+		expect(selectError, "select() must reject on a tagged NO").toBeInstanceOf(Error);
+		expect(
+			(selectError as Error).name,
+			"the rejection must be a ServerNoError (tagged NO)",
+		).toBe("ServerNoError");
+		await driver.noop();
+		await server.assertCompleted();
 	},
 );
 
@@ -201,13 +209,12 @@ complianceTest(
 // treat it as authoritative state and must not fail/error on the unexpected
 // response. Script a SELECT whose untagged data includes a deprecated
 // "* 0 RECENT" line; the client must complete the SELECT normally.
-// driver.select() is unimplemented today → annotated unimplemented.
+// REAL SIGNAL (M2.2): driver.select() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.2-3"],
 		profiles: ["rev2"],
 		title: "pure IMAP4rev2 client ignores a deprecated untagged RECENT response during SELECT",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -246,13 +253,13 @@ complianceTest(
 // EXAMINE returns the same data set as SELECT but the tagged OK MUST begin with
 // [READ-ONLY]. selectExchange with verb EXAMINE + readOnly:true under the rev2
 // preset emits the rev2 data set with a tagged OK [READ-ONLY].
-// driver.examine() is unimplemented today → annotated unimplemented.
+// REAL SIGNAL (M2.2): driver.examine() is wired; the returned session's
+// `readOnly` is asserted `true` (forced unconditionally for EXAMINE).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.3-1"],
 		profiles: ["rev2"],
 		title: "client issues EXAMINE and accepts [READ-ONLY] in the tagged OK response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -270,11 +277,12 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.examine("INBOX");
+		const session = await driver.examine("INBOX");
 		await server.assertCompleted();
 		const examineLine = server.commandLines.find((l) => l.verb === "EXAMINE");
 		expect(examineLine, "an EXAMINE command must have been sent").toBeDefined();
 		expect(examineLine!.verb).toBe("EXAMINE");
+		expect(session.readOnly).toBe(true);
 	},
 );
 
@@ -323,16 +331,15 @@ complianceTest(
 // ── RFC9051-6.3.11-1: SHOULD NOT use STATUS on the selected mailbox ────────
 // PROHIBITION test. After SELECT INBOX, the client SHOULD NOT send STATUS
 // against that same mailbox (the info is available by other means). No STATUS
-// expectation is scripted — any STATUS is unscripted. driver.select() and
-// driver.status() are unimplemented today → the select() call rejects first, so
-// this is annotated `unimplemented`; when both land, a STATUS is caught by the
-// missing expectLine and the transcript guard.
+// expectation is scripted — any STATUS is unscripted. REAL SIGNAL for the
+// SELECT half (M2.2): driver.select() now really selects the mailbox;
+// driver.status() still throws NotImplementedError (M2.9) -- the transcript
+// guard is what actually proves the prohibition once STATUS itself lands.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.11-1"],
 		profiles: ["rev2"],
 		title: "client SHOULD NOT send STATUS against the currently selected mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -366,13 +373,13 @@ complianceTest(
 // Stronger prohibition: the client MUST NOT poll the selected mailbox for new
 // messages via STATUS. The correct mechanism is unsolicited EXISTS or NOOP.
 // PROHIBITION design mirrors 6.3.11-1 (no STATUS expectation; a NOOP models the
-// correct path). driver.select() and driver.status() are unimplemented today.
+// correct path). REAL SIGNAL for the SELECT half (M2.2): driver.select()/
+// noop() are wired; driver.status() still throws NotImplementedError (M2.9).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.11-2"],
 		profiles: ["rev2"],
 		title: "client MUST NOT send STATUS on the selected mailbox as a new-message check",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

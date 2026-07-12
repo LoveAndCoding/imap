@@ -11,9 +11,9 @@
  *
  * RFC3501-3-1: The client must never send a state-restricted command while in
  *   the wrong state.  The most accessible surface: try driver.select() while
- *   still in Not Authenticated state (no login yet). NotImplementedError fires
- *   first, but the assertion still documents the correct protocol expectation.
- *   Annotated unimplemented.
+ *   still in Not Authenticated state (no login yet). REAL SIGNAL (M2.2):
+ *   `SelectCommand.states = ["authenticated","selected"]` makes `run()`
+ *   reject with `StateError` before a single byte is written (spec I-9/I-11).
  *
  * RFC3501-3.1-1: connect() then driver.login() drives ImapClient.authenticate()
  *   with an empty mechanisms list, which falls through to LOGIN (spec §9.3
@@ -75,15 +75,13 @@ complianceTest(
 // ── RFC3501-3-1: client does not attempt commands in an inappropriate state ─
 // Most accessible surface: attempt SELECT (a Selected-state command) while the
 // driver is only connected (Not Authenticated state, since Session.start()
-// doesn't login). driver.select() throws NotImplementedError before the wire.
-// The test documents the correct expectation: when select() is implemented,
-// it MUST NOT be called unless the client is in Authenticated state.
+// doesn't login). REAL SIGNAL (M2.2): driver.select() rejects `StateError`
+// before any wire bytes are sent.
 complianceTest(
 	{
 		reqs: ["RFC3501-3-1"],
 		profiles: ["rev1"],
 		title: "client does not send state-restricted commands in an inappropriate state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -97,16 +95,19 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Attempt select() while unauthenticated (Not Authenticated state).
-		// Today: NotImplementedError fires before any wire bytes are sent (correct).
-		// Once implemented: a conformant client must refuse locally or the script
-		// will fail because SELECT would be an unexpected command.
-		await driver.select("INBOX");
-		// The assertions below are unreachable today (select() throws above),
-		// but become active once select() is implemented. Only the CAPABILITY
-		// command should have been sent (index 0); a SELECT would be index 1+.
-		// This assertion enforces the spec: only the scripted CAPABILITY exchange
-		// may have produced a command line.
+		// Attempt select() while unauthenticated (Not Authenticated state). A
+		// conformant client refuses locally, zero bytes written.
+		let selectError: unknown;
+		try {
+			await driver.select("INBOX");
+		} catch (err) {
+			selectError = err;
+		}
+		expect(selectError, "select() must reject when not authenticated").toMatchObject({
+			name: "StateError",
+		});
+		// Only the CAPABILITY command should have been sent (index 0); SELECT
+		// never reached the wire.
 		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
 		await server.assertCompleted();
 	},

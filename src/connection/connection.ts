@@ -614,6 +614,32 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.parser.on("unknown", (resp: UnknownResponse | null) => {
 			this.router.routeUnknown(resp);
 		});
+
+		// `Parser` is a `Transform` (objectMode): every parsed response is
+		// BOTH emitted as one of the custom events above AND `push()`-ed onto
+		// its own Readable side (`parser.ts`'s `_transform`). Nothing has ever
+		// consumed that Readable side directly -- all routing goes through the
+		// custom events -- so those pushed objects accumulate, unconsumed,
+		// forever. That's latent and harmless for a short session, but once
+		// enough responses cross the stream's `highWaterMark` (16 objects,
+		// objectMode's default), `Readable.push()` starts returning `false`;
+		// `.pipe()` (lexer -> parser) honors that backpressure signal and
+		// pauses its source, which cascades all the way back to the
+		// `processingPipeline -> lexer` and `socket -> processingPipeline`
+		// pipes -- silently stalling ALL further response parsing for the
+		// rest of the connection's lifetime (no error, no close, just a
+		// permanent hang partway through whatever multi-line response happens
+		// to cross the threshold). A session that issues enough commands in a
+		// row (SELECT's ~6-8-line response family made this newly reachable:
+		// two SELECTs in one connection is enough) hits this every time,
+		// deterministically, once the cumulative response count crosses 16 --
+		// this was previously unreachable simply because no prior milestone's
+		// tests chained enough commands on one connection to cross it.
+		// `.resume()` puts the Readable side in flowing mode with no 'data'
+		// listener, which per Node's stream docs discards the data as fast as
+		// it arrives -- exactly right here, since the custom events above are
+		// the only consumer that matters.
+		this.parser.resume();
 	}
 
 	/**

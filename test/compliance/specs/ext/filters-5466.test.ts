@@ -273,14 +273,15 @@ complianceTest(
 // tagged BAD [BADCHARSET], so the client MUST NOT emit the combination. The
 // caller asks for FILTER with CHARSET ISO-8859-1; the client must refuse
 // locally, drop, or correct the charset — the forbidden pairing may never hit
-// the wire. login()/select() are un-caught so this cannot pass vacuously on
-// inability today.
+// the wire. REAL SIGNAL for the SELECT half (M2.2): driver.select() now
+// really selects the mailbox; driver.search() itself still throws
+// NotImplementedError (M3, swallowed below) -- the transcript guard is what
+// actually proves the prohibition once SEARCH lands.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client never pairs the FILTER key with an explicit non-UTF-8/US-ASCII CHARSET",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -295,7 +296,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		// The caller asks for the forbidden combination; a compliant client may
 		// throw locally instead of emitting it, so the call itself is caught.

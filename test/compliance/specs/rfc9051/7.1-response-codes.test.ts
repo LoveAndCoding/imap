@@ -681,18 +681,14 @@ complianceTest(
 // The PERMANENTFLAGS list below is deliberately RESTRICTED: it lacks \* and omits
 // \Answered/\Flagged/\Draft, which appear in FLAGS. Per §7.1 those omitted flags
 // "cannot be set permanently" — the client must respect this to avoid silently
-// losing flag state. driver.select() is unimplemented today (throws
-// NotImplementedError) → annotated unimplemented. When select()/store() land the
-// future observable is that the client records the permanent set {\Deleted,
-// \Seen} and does not treat a STORE of \Flagged as durable (no \* ⇒ no new
-// keywords either). Today the minimal binding observable is that the restricted
-// list is parsed and the SELECT exchange completes.
+// losing flag state. REAL SIGNAL (M2.2): driver.select() returns the real
+// `MailboxSession`; asserts `permanentFlags` is EXACTLY {\Deleted, \Seen} (not
+// the full FLAGS set) and `canCreateKeywords` is `false` (no \*).
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-4"],
 		profiles: ["rev2"],
 		title: "client records the restricted PERMANENTFLAGS list from a rev2 SELECT response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -716,10 +712,16 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server, { security: "none" });
 		await driver.login("user", "pass");
-		// Unimplemented today; when implemented the client must parse and record the
-		// restricted permanent set without error.
-		await driver.select("INBOX");
+		const session = await driver.select("INBOX");
 		await server.assertCompleted();
+		expect(new Set(session.permanentFlags), "permanentFlags must be exactly {\\Deleted, \\Seen}").toEqual(
+			new Set(["\\Deleted", "\\Seen"]),
+		);
+		expect(
+			session.permanentFlags?.has("\\Flagged"),
+			"\\Flagged is in FLAGS but NOT in PERMANENTFLAGS -- must not be treated as durable",
+		).toBe(false);
+		expect(session.canCreateKeywords, "no \\* means new keywords cannot be created").toBe(false);
 	},
 );
 
@@ -778,15 +780,16 @@ complianceTest(
 // "OK [CLOSED]" as a boundary: responses BEFORE it relate to the old mailbox,
 // responses AFTER it to the new one. The client must attribute state across this
 // boundary correctly (e.g. not carry mailbox A's EXISTS/flags into B's session
-// state). driver.select() is unimplemented today → annotated unimplemented. When
-// select() lands, the two scripted SELECTs (A then B, with CLOSED marking the
-// switch) plus per-mailbox state accessors self-actualize the attribution check.
+// state). REAL SIGNAL (M2.2): driver.select() is wired; the reselect
+// choreography (spec §3.1) closes mailbox A's session (reason "reselected")
+// client-side the moment the second SELECT begins -- independent of whether
+// the wire even echoes CLOSED -- so this asserts BOTH the attribution (B's
+// session carries only B's data) and A's session ending up `closed`.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-9"],
 		profiles: ["rev2"],
 		title: "client honours the CLOSED response-code boundary across an implicit mailbox switch",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -820,12 +823,20 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server, { security: "none" });
 		await driver.login("user", "pass");
-		// Select A, then switch to B. Unimplemented today — select() rejects on A.
-		await driver.select("A");
-		await driver.select("B");
+		const sessionA = await driver.select("A");
+		const sessionB = await driver.select("B");
 		await server.assertCompleted();
 		// Self-actualising: CAPABILITY=0, LOGIN=1, SELECT A=2, SELECT B=3.
 		expect(server.commandLines[2]?.args).toMatch(/^(?:A|"A")$/);
 		expect(server.commandLines[3]?.args).toMatch(/^(?:B|"B")$/);
+		// Attribution: B's session carries only B's data (2 messages, UIDVALIDITY
+		// 200), never A's (5 messages, UIDVALIDITY 100) -- proving responses after
+		// CLOSED were not folded into the wrong mailbox's state.
+		expect(sessionB.name).toBe("B");
+		expect(sessionB.exists).toBe(2);
+		expect(sessionB.uidValidity).toBe(200);
+		// A's session is closed the moment the reselect began (client-driven,
+		// spec §3.1) -- independent of the wire CLOSED code.
+		expect(sessionA.closed).toBe(true);
 	},
 );
