@@ -24,12 +24,14 @@
  * policy — user-intent-policy), and RFC4422-6.1.5-1 (blind-allocation — an
  * internal memory strategy). See the catalog module for their rationales.
  *
- * SELF-ACTUALIZATION: the client exposes NO SASL/AUTHENTICATE surface — the
- * driver's authenticate() throws NotImplementedError. Every duty below therefore
- * fails as 'unimplemented': the assert-the-negative call (driver.authenticate)
- * throws first, classifyFailure returns "unimplemented", and the scripted server
- * exchange + post-throw assertions document the exact wire check that becomes the
- * genuine assertion once an AUTHENTICATE surface exists. NEVER a vacuous pass.
+ * SELF-ACTUALIZATION: driver.authenticate() is implemented for the PLAIN
+ * mechanism, so the PLAIN-driven duties below (RFC4422-3.1-1/3.3-1,
+ * RFC4422-3.4.1-1) now exercise the real wire form via the scripted server
+ * exchange. Duties that depend on a mechanism the registry doesn't recognize
+ * (CRAM-MD5, GSSAPI) or on a negotiated SASL security layer still throw
+ * NotImplementedError and remain annotated 'unimplemented'; their post-throw
+ * assertions document the exact wire check that becomes genuine once those
+ * surfaces exist. NEVER a vacuous pass.
  */
 import { expect } from "vitest";
 
@@ -46,13 +48,12 @@ const f = useComplianceFixture();
 // The client initiates SASL by naming the chosen mechanism on the AUTHENTICATE
 // command line (3.3-1); that name MUST match the SASL mechanism-name grammar
 // 1*20(UPPER-ALPHA / DIGIT / HYPHEN / UNDERSCORE) (3.1-1). Scripted here for
-// AUTHENTICATE PLAIN advertised in CAPABILITY. authenticate() throws today.
+// AUTHENTICATE PLAIN advertised in CAPABILITY.
 complianceTest(
 	{
 		reqs: ["RFC4422-3.1-1", "RFC4422-3.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client initiates AUTHENTICATE by naming a grammar-valid SASL mechanism",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -70,14 +71,14 @@ complianceTest(
 					}),
 					description: "base64 SASL response",
 				}),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.authenticate("PLAIN"); // throws NotImplementedError today
+		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
-		// When implemented: the mechanism token the client places on the wire is
-		// drawn from the CAPABILITY AUTH= list and matches the mechanism-name ABNF.
+		// The mechanism token the client places on the wire is drawn from the
+		// CAPABILITY AUTH= list and matches the mechanism-name ABNF.
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
 		expect(authLine!.args).toMatch(/^[A-Z0-9_-]{1,20}$/);
@@ -157,14 +158,23 @@ complianceTest(
 					}),
 					description: "base64 response or '*' abort",
 				}),
-				reply("NO AUTHENTICATE cancelled"),
+				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE cancelled"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.authenticate("PLAIN"); // throws NotImplementedError today
+		// The server declines with NO regardless of what the client sent — the
+		// duty under test is the WIRE FORM of the continuation reply, not
+		// whether authentication succeeds. authenticate() rejects accordingly.
+		let authError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			authError = err;
+		}
+		expect(authError, "a declined AUTHENTICATE must reject authenticate()").toBeDefined();
 		await server.assertCompleted();
-		// When implemented: the client's continuation line is never a bare CRLF or
-		// an out-of-band command; the transcript shows only a response or '*'.
+		// The client's continuation line is never a bare CRLF or an out-of-band
+		// command; the transcript shows only a response or '*'.
 		expect(server.transcript.clientLines()).not.toMatch(/C: \\r\\n$/m);
 	},
 );
@@ -173,14 +183,13 @@ complianceTest(
 // The authorization-identity string a client constructs MUST NOT contain NUL
 // (U+0000), and an absent authzid is equivalent to an empty one. PLAIN's
 // authzid field is where this is observable. We supply a benign authzid and
-// assert (once implemented) the decoded PLAIN message never carries a third
-// NUL inside the authzid segment. authenticate() throws today.
+// assert the decoded PLAIN message never carries a third NUL inside the
+// authzid segment.
 complianceTest(
 	{
 		reqs: ["RFC4422-3.4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "authorization-identity the client sends contains no NUL octet",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -206,13 +215,13 @@ complianceTest(
 					},
 					description: "PLAIN message with exactly two structural NUL delimiters",
 				}),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		// A caller-supplied authzid with no NUL — the constructed authzid segment
 		// must remain NUL-free (the two NULs are the structural delimiters only).
-		await driver.authenticate("PLAIN", "admin"); // throws NotImplementedError today
+		await driver.authenticate("PLAIN", "admin");
 		await server.assertCompleted();
 	},
 );

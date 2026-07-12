@@ -45,7 +45,7 @@ import { expect } from "vitest";
 
 import type { ComplianceDriver, ObservedEvent } from "../../driver/driver";
 import { command } from "../../harness/matchers";
-import { capabilityExchange, greet, sessionPrelude } from "../../runner/state";
+import { capabilityExchange, sessionPrelude } from "../../runner/state";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
@@ -368,7 +368,11 @@ complianceTest(
 		const baseCap = ctx.profile === "rev2" ? "IMAP4rev2" : "IMAP4rev1";
 		server.arm([
 			[
-				...greet({ profile: ctx.profile }),
+				// Bare greeting (no inline CAPABILITY code): for rev2 in particular,
+				// an inline greeting capability would let `connect()` skip the
+				// round trip below, so the client would never learn the lowercase
+				// 'move' atom this test exists to check.
+				send("* OK ready\r\n"),
 				// Advertise the MOVE capability atom in lowercase.
 				...capabilityExchange([baseCap, "move"]),
 				close(),

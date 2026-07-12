@@ -26,13 +26,12 @@
  *   fires first, but we document the obligation.  Annotated unimplemented.
  *
  * RFC3501-3.4-1: Client must read tagged OK before closing after LOGOUT.
- *   Observable: driver.logout() → NotImplementedError today. Annotated.
+ *   Observable: driver.logout() sends LOGOUT and waits for the tagged OK.
  *
  * RFC3501-3.4-2: Client SHOULD NOT unilaterally close; SHOULD issue LOGOUT.
  *   The positive side is observable: when the client does an orderly teardown
  *   it SHOULD send LOGOUT. The driver's end() is the closest verb.  Drive
  *   a connect then end() and check whether LOGOUT was sent.
- *   Annotated unimplemented (driver.logout() not implemented).
  */
 import { expect } from "vitest";
 
@@ -156,8 +155,8 @@ complianceTest(
 );
 
 // ── RFC3501-3.4-1: client reads tagged OK after LOGOUT before closing ──────
-// driver.logout() is not yet implemented. The test encodes the correct
-// exchange: after LOGOUT, the server sends BYE + tagged OK, and the client
+// The test encodes the correct exchange: after LOGOUT, the server sends BYE
+// + tagged OK, and the client
 // MUST read the tagged OK before closing. No loginExchange needed —
 // LOGOUT can be tested from any connected state (including Not Authenticated
 // if the server accepts it, which it does in the scripted harness).
@@ -166,7 +165,6 @@ complianceTest(
 		reqs: ["RFC3501-3.4-1"],
 		profiles: ["rev1"],
 		title: "client reads tagged OK response to LOGOUT before closing connection",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -181,7 +179,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented, this sends LOGOUT and waits for the tagged OK.
+		// Sends LOGOUT and waits for the tagged OK.
 		await driver.logout();
 		await server.assertCompleted();
 	},
@@ -194,7 +192,6 @@ complianceTest(
 		reqs: ["RFC3501-3.4-2"],
 		profiles: ["rev1"],
 		title: "client issues LOGOUT rather than closing the connection unilaterally",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -209,10 +206,9 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		// Orderly teardown SHOULD send LOGOUT.
-		// driver.logout() is not yet implemented.
 		await driver.logout();
 		await server.assertCompleted();
-		// If logout() is implemented, the script completed means LOGOUT was sent.
+		// The script completed means LOGOUT was sent.
 		expect(server.commandLines.length).toBeGreaterThanOrEqual(1);
 	},
 );

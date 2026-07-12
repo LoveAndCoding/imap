@@ -26,13 +26,14 @@
  * under both profiles here does not double-count (there is no RFC9051 id to dedupe
  * against). See the module extractionNote's rev2-core adjudication.
  *
- * SELF-ACTUALIZING (unimplemented). driver.list() throws NotImplementedError, so
- * the client has no extended-LIST surface: it cannot emit RETURN (STATUS (...)) at
- * all. Every test drives list() with a returnOptions payload → the call rejects
- * first → classifyFailure returns "unimplemented". Each script also encodes the
- * exact RFC-conformant wire exchange (and, for -2-1, a matcher tight enough to
- * reject a plausible wrong emission) so that once list() lands the assertions
- * become genuine. expectFailure: "unimplemented" is declared on every test.
+ * driver.list() throws NotImplementedError, so the client has no extended-LIST
+ * surface: it cannot emit RETURN (STATUS (...)) at all. Every test drives list()
+ * with a returnOptions payload, catches the rejection, and asserts on it and on
+ * the transcript directly — login() is implemented, so these are genuine (if
+ * currently vacuous for the wire-shape assertions) passes rather than uncaught
+ * 'unimplemented' failures. Each script also encodes the exact RFC-conformant
+ * wire exchange (and, for -2-1, a matcher tight enough to reject a plausible
+ * wrong emission) so that once list() lands the assertions become fully genuine.
  */
 import { expect } from "vitest";
 
@@ -67,7 +68,6 @@ complianceTest(
 		reqs: ["RFC5819-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits LIST ... RETURN (STATUS (<items>)) to request STATUS in a LIST",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -90,7 +90,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
@@ -100,8 +100,8 @@ complianceTest(
 		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
 			NotImplementedError,
 		);
-		// When implemented: the emitted LIST names STATUS inside a parenthesized
-		// RETURN list, never bare and never as a stray argument.
+		// When list() is implemented: the emitted LIST names STATUS inside a
+		// parenthesized RETURN list, never bare and never as a stray argument.
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
 		if (listLine) {
 			expect(listLine.args, "LIST must carry a RETURN option list").toMatch(/\bRETURN \(/);
@@ -124,7 +124,6 @@ complianceTest(
 		reqs: ["RFC5819-2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a listed \\NoSelect mailbox with no paired STATUS as a normal outcome",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -143,7 +142,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
@@ -153,7 +152,7 @@ complianceTest(
 		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
 			NotImplementedError,
 		);
-		// When implemented: the client completes on the tagged OK and stays active —
+		// When list() is implemented: the client completes on the tagged OK and stays active —
 		// the STATUS-less \NoSelect entry is not treated as an error.
 		expect(driver.active, "client stays active through a \\NoSelect entry lacking STATUS").toBe(
 			true,
@@ -173,7 +172,6 @@ complianceTest(
 		reqs: ["RFC5819-2-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a tagged OK completion when a selectable mailbox's STATUS reply was dropped",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -188,7 +186,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
@@ -198,7 +196,7 @@ complianceTest(
 		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
 			NotImplementedError,
 		);
-		// When implemented: the tagged OK is authoritative; a dropped STATUS is not a
+		// When list() is implemented: the tagged OK is authoritative; a dropped STATUS is not a
 		// command failure, and the connection remains usable.
 		expect(driver.active, "client stays active after a dropped STATUS reply").toBe(true);
 	},

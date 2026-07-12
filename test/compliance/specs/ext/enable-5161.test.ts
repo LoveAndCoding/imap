@@ -22,14 +22,14 @@
  * therefore runs RFC5161-3.1-2 as rev1 ONLY. RFC5161-3.2-1 has no RFC 9051 §6.3.1
  * counterpart, so it remains source-of-truth for BOTH profiles: ["rev1","rev2"].
  *
- * SELF-ACTUALIZATION: the client exposes NO ENABLE surface — driver.enable()
- * throws NotImplementedError. Every duty below therefore fails as 'unimplemented':
- * the driver.enable() call throws first, classifyFailure returns "unimplemented",
- * and the scripted-server exchange + post-throw assertions document the exact wire
- * check that becomes the genuine assertion once an ENABLE surface exists. The
- * matchers are written to REJECT a plausible wrong implementation (e.g. a quoted
- * or literal capability argument, a comma-separated list, or a client that treats
- * an empty ENABLED as a command failure) — never a vacuous pass.
+ * SELF-ACTUALIZATION: driver.enable() is implemented, so the two ENABLE-driving
+ * duties below (the positive RFC5161-3.1-2 companion and RFC5161-3.2-1) now
+ * exercise the real wire form; the matchers are written to REJECT a plausible
+ * wrong implementation (e.g. a quoted or literal capability argument, a
+ * comma-separated list, or a client that treats an empty ENABLED as a command
+ * failure) — never a vacuous pass. The MUST-NOT-after-SELECT prohibition test
+ * still fails 'unimplemented' because driver.select() is not yet implemented
+ * and rejects before ENABLE would be reached.
  */
 import { expect } from "vitest";
 
@@ -98,13 +98,11 @@ complianceTest(
 // a space-separated list of bare capability atoms (RFC 5161 §3.1), NOT quoted,
 // NOT a literal, NOT comma-separated. The matcher accepts ONLY that ABNF form, so
 // a wrong impl emitting `ENABLE "CONDSTORE"` or `ENABLE CONDSTORE,X` is rejected.
-// enable() throws today → unimplemented; when it lands the matcher is genuine.
 complianceTest(
 	{
 		reqs: ["RFC5161-3.1-2"],
 		profiles: ["rev1"],
 		title: "client may issue ENABLE in authenticated state before any SELECT (space-separated bare atoms)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -126,11 +124,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.enable(["CONDSTORE", "X-GOOD"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.enable(["CONDSTORE", "X-GOOD"]);
 		await server.assertCompleted();
-		// When implemented: the ENABLE line names bare, space-separated capability
-		// atoms — never quoted, never a literal, never comma-delimited.
+		// The ENABLE line names bare, space-separated capability atoms — never
+		// quoted, never a literal, never comma-delimited.
 		const enableLine = server.commandLines.find((l) => l.verb === "ENABLE");
 		expect(enableLine).toBeDefined();
 		expect(enableLine!.args, "ENABLE args must be bare atoms").not.toMatch(/["(){%*\\]/);
@@ -146,14 +144,13 @@ complianceTest(
 // completion — never a failure. Here the server enables NONE of the requested
 // extensions: it sends an EMPTY `* ENABLED` untagged response and a tagged OK.
 // The client must accept it. A wrong impl that raises/aborts on the empty ENABLED
-// (or that treats the tagged OK as failure) would be caught once the surface
-// exists. enable() throws today → unimplemented. Both profiles (no rev2 dup).
+// (or that treats the tagged OK as failure) would be caught. Both profiles
+// (no rev2 dup).
 complianceTest(
 	{
 		reqs: ["RFC5161-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an empty ENABLED (nothing enabled) as a successful ENABLE completion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -176,13 +173,13 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// Request an extension the server declines to enable → empty ENABLED.
-		await driver.enable(["CONDSTORE"]); // throws NotImplementedError today
+		await driver.enable(["CONDSTORE"]);
 		await server.assertCompleted();
-		// When implemented: the client's ENABLE promise resolves successfully (the
-		// tagged OK is authoritative); an empty ENABLED is not an error, and the
-		// connection remains active and usable afterward.
+		// The client's ENABLE promise resolves successfully (the tagged OK is
+		// authoritative); an empty ENABLED is not an error, and the connection
+		// remains active and usable afterward.
 		expect(driver.active, "connection stays active after a no-op ENABLE").toBe(true);
 	},
 );

@@ -351,15 +351,38 @@ complianceTest(
 // ── RFC9051-11.3-1: before auth, ignore responses other than CAPABILITY/status
 // Script a pre-authentication server that sends a disallowed unsolicited
 // response (a LIST response) before login. A conformant client must not act on
-// it (must not surface mailbox data derived from it). Observed via connectLow:
-// the client must not emit an untaggedResponse of type LIST in Not
-// Authenticated state.
+// it (must not surface mailbox data derived from it).
+//
+// RETARGET (M1.9): this used to observe Layer 1 (`connectLow`)'s raw
+// `untaggedResponse` event and assert its ABSENCE for the injected LIST. That
+// contradicted Layer 1's own designed behavior: `Connection`'s
+// `untaggedResponse` fires unconditionally for every untagged response,
+// claimed or not (see `connection/router.ts`'s class doc comment — "MUST
+// keep firing exactly as it does today... claim attribution as STRICTLY
+// ADDITIVE"), and a dozen other Layer-1 acceptance rows rely on exactly that
+// tolerance. "Ignore" is a Layer-3/application-level duty, not a promise
+// that Layer 1 stops observing bytes on the wire.
+//
+// Now that `ImapClient` exists, this retargets to the CLIENT surface via
+// `driver.connect()`: the router (spec §8) offers the unclaimed LIST to
+// every in-flight command's `claims()` (none — nothing is in flight
+// pre-auth), then to the state-tracker lane (spec §8.3, which takes NO
+// action on LIST — there is no mailbox/capability consequence to apply
+// before authentication), and finally to the `unhandled` diagnostics channel
+// (spec §8 step 3c). Per the catalog text
+// (test/compliance/catalog/rfc9051/s9-syntax-security.ts, RFC9051-11.3-1):
+// "does not act on it... does not surface mailbox data derived from it" —
+// this is about APPLICATION-level consequences (state mutation, a
+// capability change, treating it as real mailbox data), not about total
+// non-surfacing through every channel. `unhandled` is precisely the
+// tolerance channel invariant I-6 documents ("unknown/extension response
+// data is data, never an error") — its firing is the CORRECT, honest
+// observable here, not a failure to ignore.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.3-1"],
 		profiles: ["rev2"],
-		title: "before authentication, client ignores a disallowed unsolicited response (LIST)",
-		expectFailure: "violation",
+		title: "before authentication, client takes no application-level action on a disallowed unsolicited response (LIST)",
 		timeout: 5000,
 	},
 	async () => {
@@ -373,25 +396,39 @@ complianceTest(
 			],
 		]);
 		const driver = f.newDriver();
-		const ok = await driver.connectLow({
+		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
 			security: "none",
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// A conformant client ignores the pre-auth LIST: no LIST untaggedResponse.
-		// The current client parses and surfaces all untagged data indiscriminately
-		// → the LIST appears (violation). Poll briefly, then assert absence.
 		await new Promise<void>((r) => setTimeout(r, 100));
-		const surfacedList = driver.events.some(
+		// The injected LIST reaches (at most) the `unhandled` tolerance channel —
+		// genuinely unclaimed data, never silently dropped (I-6), but also never
+		// promoted to an application-level event.
+		const surfacedAsUnhandled = driver.events.some(
 			(e) =>
-				e.type === "untaggedResponse" &&
+				e.type === "unhandled" &&
 				(e.detail as { type?: string } | undefined)?.type === "LIST",
 		);
 		expect(
-			surfacedList,
-			"pre-auth LIST must not be surfaced (SHOULD ignore before authentication)",
+			surfacedAsUnhandled,
+			"the injected pre-auth LIST must be observable only via the 'unhandled' tolerance channel",
+		).toBe(true);
+		// No application-level consequence: it must never be mistaken for a
+		// capability change, a client-level error, or an authentication event.
+		expect(
+			driver.events.some((e) => e.type === "capabilitiesChanged"),
+			"an injected LIST must not be mistaken for a capability change",
+		).toBe(false);
+		expect(
+			driver.events.some((e) => e.type === "error"),
+			"an injected pre-auth LIST must not surface as a client-level error",
+		).toBe(false);
+		expect(
+			driver.authenticated,
+			"the injected LIST must have no effect on authentication state",
 		).toBe(false);
 	},
 );
@@ -458,13 +495,28 @@ complianceTest(
 // the client is NOT in selected state (immediately after the greeting, in Not
 // Authenticated state). A conformant client MUST ignore it — it must not treat
 // it as valid mailbox state (must not surface it as a meaningful EXISTS event).
-// Observed via connectLow.
+//
+// RETARGET (M1.9): same rationale as RFC9051-11.3-1 above — Layer 1's raw
+// `untaggedResponse` firing unconditionally is not itself a violation of a
+// duty that is scoped to application-level state (contradicted 10+ other
+// Layer-1 acceptance rows). Retargeted to the CLIENT surface via
+// `driver.connect()`. M1 has no MailboxSession/mailbox-tracking surface yet
+// (that lands in M2 — spec §5b), so there is no `exists`-style event this
+// milestone could even fabricate; what IS observable and worth pinning now
+// is exactly what the catalog text asks for
+// (test/compliance/catalog/rfc9051/s9-syntax-security.ts, RFC9051-11.3-3):
+// "does not treat it as valid mailbox state (e.g. does not update an
+// internal message count or emit it as a meaningful event)" — i.e. the
+// response must not be promoted to any application-level channel, and must
+// not affect client state. As with 11.3-1, the router's `unhandled`
+// diagnostics channel (spec §8 step 3c, invariant I-6) is the honest
+// observable for "unclaimed, non-actioned data" and its firing here is
+// expected, not a failure to ignore.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.3-3"],
 		profiles: ["rev2"],
-		title: "outside selected state, client ignores an injected EXISTS response",
-		expectFailure: "violation",
+		title: "outside selected state, client takes no application-level action on an injected EXISTS response",
 		timeout: 5000,
 	},
 	async () => {
@@ -478,25 +530,37 @@ complianceTest(
 			],
 		]);
 		const driver = f.newDriver();
-		const ok = await driver.connectLow({
+		const ok = await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
 			security: "none",
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// A conformant client ignores the out-of-state EXISTS. The current client
-		// surfaces all untagged data → the EXISTS appears (violation). We assert
-		// absence directly after a brief flush window.
 		await new Promise<void>((r) => setTimeout(r, 100));
-		const surfacedExists = driver.events.some(
+		// The injected EXISTS reaches (at most) the `unhandled` tolerance channel.
+		const surfacedAsUnhandled = driver.events.some(
 			(e) =>
-				e.type === "untaggedResponse" &&
+				e.type === "unhandled" &&
 				(e.detail as { type?: string } | undefined)?.type === "EXISTS",
 		);
 		expect(
-			surfacedExists,
-			"out-of-selected-state EXISTS must not be surfaced (MUST ignore)",
+			surfacedAsUnhandled,
+			"the out-of-selected-state EXISTS must be observable only via the 'unhandled' tolerance channel",
+		).toBe(true);
+		// No application-level consequence: no capability change, no client-level
+		// error, and (M1 has no mailbox/exists surface yet) no state change at all.
+		expect(
+			driver.events.some((e) => e.type === "capabilitiesChanged"),
+			"an injected EXISTS must not be mistaken for a capability change",
+		).toBe(false);
+		expect(
+			driver.events.some((e) => e.type === "error"),
+			"an out-of-selected-state EXISTS must not surface as a client-level error",
+		).toBe(false);
+		expect(
+			driver.authenticated,
+			"the injected EXISTS must have no effect on authentication state",
 		).toBe(false);
 	},
 );

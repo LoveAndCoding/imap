@@ -39,7 +39,7 @@ import { command, isValidTag } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -117,7 +117,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -153,7 +153,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				// args: null fails the script on any trailing space or argument
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
@@ -183,7 +183,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -219,7 +219,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Unrequested data the client never asked for, before completion:
 				reply("OK done", [
@@ -417,7 +417,6 @@ complianceTest(
 		reqs: ["RFC9051-3.4-1"],
 		profiles: ["rev2"],
 		title: "client reads tagged OK response to LOGOUT before closing connection",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -444,7 +443,6 @@ complianceTest(
 		reqs: ["RFC9051-3.4-2"],
 		profiles: ["rev2"],
 		title: "client issues LOGOUT rather than closing the connection unilaterally",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -458,7 +456,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Orderly teardown SHOULD send LOGOUT; driver.logout() is unimplemented.
+		// Orderly teardown SHOULD send LOGOUT.
 		await driver.logout();
 		await server.assertCompleted();
 		expect(server.commandLines.length).toBeGreaterThanOrEqual(1);

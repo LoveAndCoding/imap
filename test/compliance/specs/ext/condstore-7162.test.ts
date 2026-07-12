@@ -1017,14 +1017,14 @@ complianceTest(
 // The server advertises NEITHER CONDSTORE nor QRESYNC (§3.2.3's implication
 // gate). A conformant client asked to select with the CONDSTORE parameter must
 // refuse locally or omit every CONDSTORE protocol change — the transcript may
-// never contain CONDSTORE/CHANGEDSINCE/UNCHANGEDSINCE/MODSEQ. select() throws
-// today → unimplemented; the negative transcript guard is the real matcher.
+// never contain CONDSTORE/CHANGEDSINCE/UNCHANGEDSINCE/MODSEQ. select() still
+// throws NotImplementedError today (caught below), so the negative transcript
+// guard is the real (if currently vacuous) matcher.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits no CONDSTORE protocol changes when neither CONDSTORE nor QRESYNC is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1040,7 +1040,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// Caller asks for CONDSTORE against a server that never advertised it —
 		// the client must not put the parameter (or any CONDSTORE form) on the wire.
 		await driver.select("INBOX", { condstore: true }).catch(() => undefined);

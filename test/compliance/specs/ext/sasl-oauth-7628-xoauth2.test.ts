@@ -30,11 +30,11 @@
  *       => dXNlcj11c2VyQGV4YW1wbGUuY29tAWF1dGg9QmVhcmVyIHZGOWRmdDRxbVRjMk52YjNSbGNrQmhiSFJoZG1semRHRXVZMjl0Q2c9PQEB
  *   Failure dummy response (single %x01):  "\x01"  =>  AQ==   (RFC 7628 §4.3)
  *
- * SELF-ACTUALIZATION: no AUTHENTICATE surface — driver.authenticate() throws
- * NotImplementedError, so every duty fails 'unimplemented'. The scripted server
- * decodes and structurally validates the OAuth initial responses (gs2 framing,
- * ^A separators, auth=Bearer payload) so once an AUTHENTICATE surface exists the
- * matchers ARE the genuine assertions.
+ * SELF-ACTUALIZATION: the mechanism registry recognizes OAUTHBEARER and
+ * XOAUTH2, so driver.authenticate() drives the real AUTHENTICATE exchange for
+ * every duty below. The scripted server decodes and structurally validates
+ * the OAuth initial responses (gs2 framing, ^A separators, auth=Bearer
+ * payload), making the matchers genuine assertions.
  */
 import { expect } from "vitest";
 
@@ -51,7 +51,6 @@ const f = useComplianceFixture();
 const localhost = loadCertFixture("localhost");
 
 const USER = "user@example.com";
-const TOKEN = "vF9dft4qmTc2Nvb3RlckBhbHRhdmlzdGEuY29tCg==";
 
 /** OAUTHBEARER initial response: gs2 header + ^A-separated kvpairs, ^A^A terminated. */
 function oauthbearerResponse() {
@@ -88,6 +87,23 @@ function oauthbearerResponse() {
 	};
 }
 
+/**
+ * Extracts the inline SASL-IR argument from an AUTHENTICATE command line
+ * (e.g. `"OAUTHBEARER <base64>"` → `"<base64>"`). This client always sends
+ * the initial response inline when the server advertises SASL-IR (the
+ * common, efficient, spec-legal choice — RFC 4959 §3) rather than deferring
+ * to a challenge-response round trip, so the scripts below expect that one
+ * concrete form instead of trying to script a branch the harness (a linear
+ * script, not a state machine) cannot conditionally accommodate.
+ */
+function inlineIrArg(authLine: { args: string }, mechanism: string): string {
+	const m = new RegExp(`^${mechanism}\\s+(\\S+)$`, "i").exec(authLine.args);
+	if (!m) {
+		throw new Error(`AUTHENTICATE ${mechanism} line carried no inline IR argument: '${authLine.args}'`);
+	}
+	return m[1];
+}
+
 /** XOAUTH2 initial response: "user=<user>^Aauth=Bearer <token>^A^A". */
 function xoauth2Response(user: string) {
 	return {
@@ -119,13 +135,12 @@ function xoauth2Response(user: string) {
 // OAUTHBEARER MUST run over TLS (3-1). The initial client response is a gs2
 // header followed by ^A-separated kvpairs (3.1-1) including the REQUIRED 'auth'
 // key carrying "Bearer <token>" (3.1-2). The matcher decodes and structurally
-// validates all three. authenticate() throws today → unimplemented.
+// validates all three.
 complianceTest(
 	{
 		reqs: ["RFC7628-3-1", "RFC7628-3.1-1", "RFC7628-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "OAUTHBEARER over TLS sends a gs2-framed initial response with auth=Bearer",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -133,16 +148,12 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=OAUTHBEARER", "SASL-IR"]),
-				// SASL-IR path (client-first mechanism): the initial response rides
-				// inline, or arrives on a continuation line. Accept either.
-				expectLine({
-					description: "AUTHENTICATE OAUTHBEARER (with or without inline IR)",
-					match: (line) =>
-						command("AUTHENTICATE", { args: /^OAUTHBEARER(?: [A-Za-z0-9+/=]+)?$/i }).match(line),
-				}),
-				send("+ \r\n"),
-				expectLine(oauthbearerResponse()),
-				reply("OK AUTHENTICATE completed"),
+				// SASL-IR advertised: the client sends the initial response inline
+				// on the AUTHENTICATE line itself (RFC 4959 §3) — no continuation
+				// round trip. The gs2/kvpair content is validated below, after the
+				// exchange completes, against the inline argument directly.
+				expectLine(command("AUTHENTICATE", { args: /^OAUTHBEARER [A-Za-z0-9+/=]+$/i })),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=OAUTHBEARER SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -153,10 +164,12 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("OAUTHBEARER", `n,a=${USER},\x01auth=Bearer ${TOKEN}\x01\x01`); // throws today
+		await driver.authenticate("OAUTHBEARER");
 		await server.assertCompleted();
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
+		const result = oauthbearerResponse().match(inlineIrArg(authLine!, "OAUTHBEARER"));
+		expect(result.ok, result.reason).toBe(true);
 	},
 );
 
@@ -165,14 +178,12 @@ complianceTest(
 // client MUST send an additional message to let the server finish (3-2). That
 // message's required shape is a single %x01 ("AQ==") dummy response or a SASL
 // abort ('*') (3.2.3-1); a single-kvsep response is valid ONLY in this failure
-// context (3.1-3). The matcher accepts exactly "AQ==" or "*". authenticate()
-// throws today → unimplemented.
+// context (3.1-3). The matcher accepts exactly "AQ==" or "*".
 complianceTest(
 	{
 		reqs: ["RFC7628-3-2", "RFC7628-3.1-3", "RFC7628-3.2.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "OAUTHBEARER failure: client sends the %x01 dummy ('AQ==') or a '*' abort, not new credentials",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -180,13 +191,10 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=OAUTHBEARER", "SASL-IR"]),
-				expectLine({
-					description: "AUTHENTICATE OAUTHBEARER (with or without inline IR)",
-					match: (line) =>
-						command("AUTHENTICATE", { args: /^OAUTHBEARER(?: [A-Za-z0-9+/=]+)?$/i }).match(line),
-				}),
-				send("+ \r\n"),
-				expectLine(oauthbearerResponse()),
+				// Inline SASL-IR (see the test above) — the initial response already
+				// rode on the AUTHENTICATE line, so the server's error challenge is
+				// the FIRST continuation of this exchange, not a second round trip.
+				expectLine(command("AUTHENTICATE", { args: /^OAUTHBEARER [A-Za-z0-9+/=]+$/i })),
 				// Server rejects with a base64 JSON error object on a continuation.
 				send("+ eyJzdGF0dXMiOiJpbnZhbGlkX3Rva2VuIn0=\r\n"),
 				// RFC7628-3.2.3-1: the client's next line is exactly AQ== or '*'.
@@ -197,7 +205,7 @@ complianceTest(
 						reason: `expected 'AQ==' or '*', got: '${line}'`,
 					}),
 				}),
-				reply("NO AUTHENTICATE failed"),
+				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -208,7 +216,13 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("OAUTHBEARER", `n,a=${USER},\x01auth=Bearer ${TOKEN}\x01\x01`); // throws today
+		let authError: unknown;
+		try {
+			await driver.authenticate("OAUTHBEARER");
+		} catch (err) {
+			authError = err;
+		}
+		expect(authError, "a rejected OAUTHBEARER attempt must reject authenticate()").toBeDefined();
 		await server.assertCompleted();
 		// When implemented: the failure-slot line does not resend credentials.
 		expect(server.transcript.clientLines()).not.toMatch(/auth=Bearer/);
@@ -220,13 +234,12 @@ complianceTest(
 // "user=<user>^Aauth=Bearer <token>^A^A" (format-1), delivered by invoking
 // AUTHENTICATE with mechanism XOAUTH2 and that response (exchange-1); SASL-IR
 // permits the single-round-trip inline form (exchange-2). The matcher decodes
-// and validates the exact byte layout. authenticate() throws today.
+// and validates the exact byte layout.
 complianceTest(
 	{
 		reqs: ["XOAUTH2-format-1", "XOAUTH2-format-2", "XOAUTH2-exchange-1", "XOAUTH2-exchange-2"],
 		profiles: ["rev1", "rev2"],
 		title: "XOAUTH2 sends AUTHENTICATE XOAUTH2 with base64('user=..^Aauth=Bearer ..^A^A')",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -234,16 +247,12 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=XOAUTH2", "SASL-IR"]),
-				// exchange-1: mechanism keyword XOAUTH2. exchange-2 (SASL-IR): the
-				// initial response MAY ride inline. Accept inline IR or continuation.
-				expectLine({
-					description: "AUTHENTICATE XOAUTH2 (with or without inline IR)",
-					match: (line) =>
-						command("AUTHENTICATE", { args: /^XOAUTH2(?: [A-Za-z0-9+/=]+)?$/i }).match(line),
-				}),
-				send("+ \r\n"),
-				expectLine(xoauth2Response(USER)),
-				reply("OK AUTHENTICATE completed"),
+				// exchange-1: mechanism keyword XOAUTH2. exchange-2 (SASL-IR): with
+				// SASL-IR advertised, the client sends the initial response inline
+				// (see the OAUTHBEARER test above for why no continuation round
+				// trip is scripted).
+				expectLine(command("AUTHENTICATE", { args: /^XOAUTH2 [A-Za-z0-9+/=]+$/i })),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=XOAUTH2 SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -254,9 +263,11 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("XOAUTH2", `user=${USER}\x01auth=Bearer ${TOKEN}\x01\x01`); // throws today
+		await driver.authenticate("XOAUTH2");
 		await server.assertCompleted();
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
+		const result = xoauth2Response(USER).match(inlineIrArg(authLine!, "XOAUTH2"));
+		expect(result.ok, result.reason).toBe(true);
 	},
 );

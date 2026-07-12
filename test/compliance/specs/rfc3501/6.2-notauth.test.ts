@@ -14,9 +14,8 @@
  * Design notes per requirement:
  *
  * RFC3501-6.2.2-1: The client must be able to issue the AUTHENTICATE command.
- *   driver.authenticate() is unimplemented; we script the complete PLAIN exchange
- *   and annotate unimplemented. Self-actualizing: when authenticate() is
- *   implemented, the expectLine steps enforce the correct wire form.
+ *   We script the complete PLAIN exchange and drive driver.authenticate() for
+ *   real; the expectLine steps enforce the correct wire form.
  *
  * RFC3501-6.2.2-2: Cancel protocol — "a line consisting of a single '*'".
  *   Script: server sends a base64 challenge; harness expects the client to send
@@ -27,12 +26,10 @@
  *   MUST re-issue CAPABILITY (SASL requirement, incorporated by reference).
  *   Script: AUTHENTICATE OK includes no CAPABILITY code (forcing a re-issue);
  *   harness expects a subsequent CAPABILITY command.
- *   driver.authenticate() is unimplemented; annotated unimplemented.
  *
  * RFC3501-6.2.2-5: After AUTHENTICATE NO, the client MAY retry with another
  *   mechanism or fall back to LOGIN. We script a two-attempt exchange to verify
  *   the client can handle a NO response and continue the session.
- *   driver.authenticate() is unimplemented; annotated unimplemented.
  *
  * RFC3501-6.2.3-1 / RFC3501-7.2.1-1: PROHIBITION test — the client MUST NOT
  *   send LOGIN when LOGINDISABLED is advertised.
@@ -64,14 +61,12 @@ const f = useComplianceFixture();
 // ── RFC3501-6.2.2-1: client MUST implement AUTHENTICATE ──────────────────
 // The client must be able to send AUTHENTICATE <mechanism>. We script the
 // full PLAIN exchange (capability advertisement → AUTHENTICATE PLAIN →
-// server challenge → client credentials → OK). driver.authenticate()
-// is unimplemented today; annotated unimplemented.
+// server challenge → client credentials → OK).
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-1"],
 		profiles: ["rev1"],
 		title: "client issues AUTHENTICATE command when authenticate() is called",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -81,11 +76,10 @@ complianceTest(
 				...greet(),
 				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
 				// Complete SASL PLAIN exchange: AUTHENTICATE PLAIN → challenge → credentials → OK.
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: ["IMAP4rev1", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.authenticate() is not yet implemented.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},
@@ -141,13 +135,12 @@ complianceTest(
 // the CAPABILITY command rather than relying on any capability code in the
 // tagged OK response.
 // Script: AUTHENTICATE OK reply includes no CAPABILITY code → client must
-// issue a fresh CAPABILITY command. driver.authenticate() is unimplemented.
+// issue a fresh CAPABILITY command.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-4"],
 		profiles: ["rev1"],
 		title: "client re-issues CAPABILITY after a security-layer AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -165,8 +158,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: authenticate() must complete the PLAIN exchange and then
-		// re-issue CAPABILITY because the OK carried no CAPABILITY code.
+		// authenticate() must complete the PLAIN exchange and then re-issue
+		// CAPABILITY because the OK carried no CAPABILITY code.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},
@@ -177,13 +170,11 @@ complianceTest(
 // mechanism or fall back to LOGIN. We script a two-attempt exchange:
 // first attempt → NO; second attempt → OK. The client must handle the NO
 // response gracefully and, when retrying, issue a new AUTHENTICATE command.
-// driver.authenticate() is unimplemented; annotated unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-5"],
 		profiles: ["rev1"],
 		title: "client MAY retry authentication after receiving a NO response to AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -196,13 +187,13 @@ complianceTest(
 				// Session remains active after NO; client MAY retry.
 				...authPlainExchange({ result: "NO" }),
 				// Second AUTHENTICATE attempt — server accepts with OK.
-				...authPlainExchange({ result: "OK" }),
+				...authPlainExchange({ result: "OK", capsAfter: ["IMAP4rev1", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// First attempt: expected to fail with NO once implemented (today: NotImplementedError).
-		// Rethrow NotImplementedError so the test stays annotated unimplemented until
-		// authenticate() is implemented; swallow any other error (the NO rejection).
+		// First attempt: rejected with NO. Rethrow NotImplementedError (should not
+		// occur; authenticate() is implemented) so a real regression is not masked;
+		// swallow any other error (the expected NO rejection).
 		let firstError: unknown;
 		try {
 			await driver.authenticate("PLAIN");
@@ -210,7 +201,7 @@ complianceTest(
 			firstError = err;
 			if (err instanceof NotImplementedError) throw err;
 		}
-		// The first attempt must have thrown (NO rejection once implemented).
+		// The first attempt must have thrown (NO rejection).
 		expect(firstError).toBeDefined();
 		// Second attempt — client retries after the NO response.
 		await driver.authenticate("PLAIN");

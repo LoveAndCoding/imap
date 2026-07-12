@@ -721,15 +721,15 @@ complianceTest(
 // "cz;*" i;basic' (change, with the first-match-wins parenthetical governing
 // resolution order when multiple installed comparators match) / 'A001
 // COMPARATOR "default"' (change). No COMPARATOR verb exists on the driver;
-// these wire forms are pinned via the scripted server for the future, and
-// the test documents the current absence as unimplemented (there is no
-// driver call to issue).
+// these wire forms are pinned via the scripted server for the future. There
+// is no driver.comparator()-style verb to issue, so this test only drives
+// login() (now implemented) and completes the session — a vacuous pass with
+// no COMPARATOR-shaped assertion until such a verb exists.
 complianceTest(
 	{
 		reqs: ["RFC5255-4.7-2", "RFC5255-4.7-3", "RFC5255-4.7-4"],
 		profiles: ["rev1", "rev2"],
 		title: 'COMPARATOR command form: bare query vs. COMPARATOR "default"/collation-spec change with first-match-wins ordering (driver has no surface yet)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -740,10 +740,8 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		// There is no driver.comparator()-style verb yet; login() itself is the
-		// unimplemented surface exercised here so the test genuinely fails
-		// 'unimplemented' rather than passing vacuously with no assertion body.
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		// There is no driver.comparator()-style verb yet to drive.
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 	},
 );

@@ -61,7 +61,7 @@ import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -82,7 +82,7 @@ complianceTest(
 		const mailboxWith8bit = "R\xc3\xa9"; // UTF-8 for "Ré" in latin1 notation
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Unsolicited LIST with an 8-bit Net-Unicode mailbox name.
 				reply("OK CAPABILITY completed", [
@@ -311,7 +311,6 @@ complianceTest(
 		reqs: ["RFC9051-5.2-2"],
 		profiles: ["rev2"],
 		title: "client does not depend on NOOP (or any command) returning mailbox size",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -326,8 +325,8 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		// When noop() is implemented, the client must complete normally even
-		// though the server did not include a mailbox size (EXISTS) update.
+		// The client must complete normally even though the server did not
+		// include a mailbox size (EXISTS) update.
 		await driver.noop();
 		await server.assertCompleted();
 	},
@@ -351,7 +350,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),

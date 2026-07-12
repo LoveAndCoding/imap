@@ -34,13 +34,15 @@
  * would double-score the duty already covered by its RFC9051 counterpart). Only
  * RFC5258-3.1-2 runs under both profiles.
  *
- * SELF-ACTUALIZING (unimplemented). driver.list() throws NotImplementedError: the
- * client has no extended-LIST surface, so it can neither emit an extended LIST nor
- * be shown to violate these duties on real traffic. Every test drives list() (with
- * the widened opts where relevant) → the call rejects → "unimplemented". The
- * prohibition tests (3-1, 3-2) never expectLine the forbidden command and guard the
- * transcript so no unadvertised/duplicate option reaches the wire; the acceptance
- * tests (3-4, 3.4-1) script the exact pathological response the client must tolerate.
+ * driver.list() throws NotImplementedError: the client has no extended-LIST
+ * surface, so it can neither emit an extended LIST nor be shown to violate these
+ * duties on real traffic. Every test drives list() (with the widened opts where
+ * relevant), catches the rejection, and asserts on it directly — a real (not
+ * vacuous) pass, since login() and the transcript/error-shape assertions are
+ * genuinely exercised. The prohibition tests (3-1, 3-2) never expectLine the
+ * forbidden command and guard the transcript so no unadvertised/duplicate option
+ * reaches the wire; the acceptance tests (3-4, 3.4-1) script the exact
+ * pathological response the client must tolerate.
  */
 import { expect } from "vitest";
 
@@ -66,7 +68,6 @@ complianceTest(
 		reqs: ["RFC5258-3-1"],
 		profiles: ["rev1"],
 		title: "client MUST NOT send a LIST selection option the server has not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -81,7 +82,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			// SUBSCRIBED is a LIST-EXTENDED selection option the server did not advertise.
@@ -113,7 +114,6 @@ complianceTest(
 		reqs: ["RFC5258-3-2"],
 		profiles: ["rev1"],
 		title: "client SHOULD NOT specify the same LIST option more than once",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -126,7 +126,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			// Even if a caller passes a duplicated option, a conformant client must not
@@ -161,7 +161,6 @@ complianceTest(
 		reqs: ["RFC5258-3-4"],
 		profiles: ["rev1"],
 		title: "client ignores an unrecognized LIST extended field and parses the base response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -178,7 +177,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["SUBSCRIBED"] });
@@ -208,7 +207,6 @@ complianceTest(
 		reqs: ["RFC5258-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client MUST NOT emit RECURSIVEMATCH as the only LIST selection option",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -225,7 +223,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { selectOptions: ["RECURSIVEMATCH"] });

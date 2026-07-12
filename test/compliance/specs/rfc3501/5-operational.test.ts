@@ -54,8 +54,8 @@
  * RFC3501-5.2-2: MUST NOT assume subsequent commands return mailbox size.
  *   Best observable: after a scripted connect that does NOT include a second
  *   EXISTS in the NOOP response, the client must still be active (no hang,
- *   no error expecting an EXISTS). driver.noop() is unimplemented; the test
- *   scripts the NOOP exchange explicitly and annotates unimplemented.
+ *   no error expecting an EXISTS). The test scripts the NOOP exchange
+ *   explicitly and drives driver.noop() for real.
  *
  * RFC3501-5.5-1: Client MAY pipeline. Observable today via Session.start():
  *   the client sends CAPABILITY, and if the server advertises ID, it sends
@@ -426,13 +426,11 @@ complianceTest(
 // server does NOT include an EXISTS response in the NOOP reply. A conformant
 // client must not hang or error waiting for a size response that the server
 // didn't send. The client must complete successfully.
-// driver.noop() is unimplemented today.
 complianceTest(
 	{
 		reqs: ["RFC3501-5.2-2"],
 		profiles: ["rev1"],
 		title: "client does not depend on NOOP (or any command) returning mailbox size",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -447,8 +445,8 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// When noop() is implemented, the client must complete normally even
-		// though the server did not include a mailbox size (EXISTS) update.
+		// The client must complete normally even though the server did not
+		// include a mailbox size (EXISTS) update.
 		await driver.noop();
 		await server.assertCompleted();
 	},

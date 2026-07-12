@@ -180,13 +180,11 @@ function enableQresyncExchange() {
 // The wire form is 'ENABLE ... QRESYNC ...' — QRESYNC must appear among the
 // bare capability atoms (a quoted string or a comma list fails the matcher; an
 // ENABLE naming only CONDSTORE does NOT enable QRESYNC and fails too).
-// driver.enable() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.2.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues ENABLE with QRESYNC among its arguments after authentication",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -198,7 +196,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await server.assertCompleted();
 		const enable = server.commandLines.find((l) => l.verb === "ENABLE");
@@ -223,7 +221,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits no QRESYNC select param or VANISHED modifier after a negative (empty) ENABLED",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -240,7 +237,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		// The caller asks for QRESYNC despite the negative ENABLED — the client
 		// must refuse locally or fall back to a parameterless SELECT.

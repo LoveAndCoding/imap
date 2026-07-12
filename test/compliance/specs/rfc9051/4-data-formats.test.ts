@@ -36,11 +36,11 @@
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -309,7 +309,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -448,7 +448,7 @@ defineAcceptanceTable({
 		const utf8OnWire = Buffer.from(row.value, "utf8").toString("latin1");
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),

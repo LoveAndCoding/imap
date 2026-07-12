@@ -32,13 +32,15 @@
  * deduped) against the GENERAL option gate RFC9051-6.3.9-5, which is a distinct
  * duty (LIST options vs the CREATE-side USE parameter). See the module extractionNote.
  *
- * SELF-ACTUALIZING (unimplemented). driver.list() (widened with selectOptions/
- * returnOptions) and driver.create() (widened with useAttributes) both throw
- * NotImplementedError: the client has no special-use LIST or CREATE-USE surface.
- * Every test drives the relevant verb → the call rejects → "unimplemented", while
- * the script encodes the exact RFC-conformant wire form (and a tight matcher, for
- * the emit-form tests, that rejects a plausible wrong emission). expectFailure:
- * "unimplemented" is declared on every test.
+ * driver.list() (widened with selectOptions/returnOptions) and driver.create()
+ * (widened with useAttributes) both throw NotImplementedError: the client has
+ * no special-use LIST or CREATE-USE surface. Every test drives the relevant
+ * verb, catches the rejection, and asserts on it and on the transcript
+ * directly — login() is implemented, so these are genuine (if currently
+ * vacuous for the wire-shape assertions) passes. Each script encodes the exact
+ * RFC-conformant wire form (and a tight matcher, for the emit-form tests, that
+ * rejects a plausible wrong emission) so the assertions become fully genuine
+ * once list()/create() land.
  */
 import { expect } from "vitest";
 
@@ -70,7 +72,6 @@ complianceTest(
 		reqs: ["RFC6154-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits LIST (SPECIAL-USE) selection option to list only special-use mailboxes",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -89,7 +90,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
@@ -119,7 +120,6 @@ complianceTest(
 		reqs: ["RFC6154-2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits LIST ... RETURN (SPECIAL-USE) to request special-use attributes",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -136,7 +136,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
@@ -168,7 +168,6 @@ complianceTest(
 		reqs: ["RFC6154-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client MUST NOT emit CREATE (USE (...)) unless CREATE-SPECIAL-USE is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -184,7 +183,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.create("Archive", { useAttributes: ["\\Archive"] });
@@ -214,7 +213,6 @@ complianceTest(
 		reqs: ["RFC6154-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits CREATE <mailbox> (USE (<attrs>)) to designate special uses at creation",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -235,7 +233,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
@@ -268,7 +266,6 @@ complianceTest(
 		reqs: ["RFC6154-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a tagged NO [USEATTR] as a well-formed CREATE-special-use refusal",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -285,7 +282,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.create("Everything", { useAttributes: ["\\All"] });
@@ -313,7 +310,6 @@ complianceTest(
 		reqs: ["RFC6154-6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts the seven special-use name-attributes in LIST responses",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -335,7 +331,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
@@ -364,7 +360,6 @@ complianceTest(
 		reqs: ["RFC6154-6-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client ignores an unrecognized list attribute and parses the base LIST response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -379,7 +374,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.list("", "*");

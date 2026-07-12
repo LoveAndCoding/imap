@@ -382,13 +382,12 @@ complianceTest(
 // A compliant client never emits GENURLAUTH/URLFETCH/RESETKEY against a
 // server that omitted URLAUTH from CAPABILITY. genurlauth()/urlfetch()/
 // resetkey() throw NotImplementedError today; the negative transcript guard
-// documents the duty. login() drives the honest 'unimplemented' outcome.
+// documents the duty (none of the three are called here, so it holds trivially).
 complianceTest(
 	{
 		reqs: ["RFC4467-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits GENURLAUTH/URLFETCH/RESETKEY without the URLAUTH capability",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -396,7 +395,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -540,14 +539,13 @@ complianceTest(
 		reqs: ["RFC4467-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client never constructs a GENURLAUTH request for a whole-mailbox URL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(urlauthCaps(ctx.profile), { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// A whole-mailbox URL (no ;uid=/;section= component) — MUST NOT be used.
 		await driver
 			.genurlauth([
@@ -675,7 +673,6 @@ complianceTest(
 		reqs: ["RFC5524-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits an extended (parameterized) URLFETCH without the URLAUTH=BINARY capability",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -684,7 +681,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -747,14 +744,13 @@ complianceTest(
 		reqs: ["RFC5524-3.1-2", "RFC5524-3.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits an extended URLFETCH with BINARY+BODY together, or a repeated parameter",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(urlauthCaps(ctx.profile), { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.urlfetch([SAMPLE_AUTHORIZED_URL]).catch(() => undefined);
 		const clientLines = server.transcript.clientLines();
 		expect(

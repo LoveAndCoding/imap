@@ -97,13 +97,11 @@ complianceTest(
 // UNAUTHENTICATE, a conformant client must not issue it. PROHIBITION test — no
 // UNAUTHENTICATE expectation is scripted; any UNAUTHENTICATE on the wire is an
 // unscripted-command failure, and a transcript guard catches it independently.
-// unauthenticate() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC8437-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not issue UNAUTHENTICATE when the server has not advertised it",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -117,7 +115,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.unauthenticate();
@@ -204,7 +202,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile }),
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: caps }),
 				expectLine(unauthenticateLine),
 				reply("OK UNAUTHENTICATE completed"),
 			],

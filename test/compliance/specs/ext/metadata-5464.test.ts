@@ -382,13 +382,12 @@ complianceTest(
 // The unsolicited "* METADATA <mailbox> <entry> <entry> ..." form carries entry
 // names only (no values). A parser handling only the "(entry value ...)" branch
 // would choke. Delivered as unsolicited data via a NOOP-adjacent stream; the
-// client must accept it. driver.noop() throws today → unimplemented.
+// client must accept it.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a value-less unsolicited METADATA response (entry names only)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -403,7 +402,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.noop(); // throws NotImplementedError today
+		await driver.noop();
 		await server.assertCompleted();
 	},
 );

@@ -23,13 +23,12 @@
  *   RFC 4616 §4 example: authzid absent, authcid="tim", passwd="tanstaaftanstaaf":
  *     "\x00tim\x00tanstaaftanstaaf"  =>  AHRpbQB0YW5zdGFhZnRhbnN0YWFm
  *
- * SELF-ACTUALIZATION: no AUTHENTICATE surface — driver.authenticate() throws
- * NotImplementedError, so every message-format duty fails 'unimplemented'. The
- * scripted server decodes and structurally validates the PLAIN bytes so that
- * once an AUTHENTICATE surface exists the expectLine matcher IS the genuine,
- * non-vacuous assertion. The security-posture duties (1-1 / 5-1) are observable
- * today via whether PLAIN is offered on a plaintext vs TLS channel and are
- * annotated accordingly.
+ * SELF-ACTUALIZATION: driver.authenticate("PLAIN") is implemented, so every
+ * message-format duty below drives the real AUTHENTICATE PLAIN exchange. The
+ * scripted server decodes and structurally validates the PLAIN bytes, making
+ * the expectLine matcher the genuine, non-vacuous assertion. The
+ * security-posture duties (1-1 / 5-1) are observable via whether PLAIN is
+ * offered on a plaintext vs TLS channel and are annotated accordingly.
  */
 import { expect } from "vitest";
 
@@ -81,13 +80,12 @@ function plainMessage(expected: { authzid: string; authcid: string; passwd: stri
 // identity. The matcher decodes the client's continuation line as UTF-8, splits
 // on NUL, and asserts exactly [empty] NUL authcid NUL passwd — covering the
 // format (2-1), UTF-8 transfer (2-2), and NUL-only-as-delimiter (2-3) duties in
-// one non-vacuous check. authenticate() throws today → unimplemented.
+// one non-vacuous check.
 complianceTest(
 	{
 		reqs: ["RFC4616-2-1", "RFC4616-2-2", "RFC4616-2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE PLAIN message is [authzid] NUL authcid NUL passwd, UTF-8, no interior NUL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -99,7 +97,7 @@ complianceTest(
 				send("+ \r\n"),
 				// Expected base64: AHVzZXJAZXhhbXBsZS5jb20AczNjcmV0
 				expectLine(plainMessage({ authzid: "", authcid: "user@example.com", passwd: "s3cret" })),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -111,7 +109,7 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		// authzid omitted → absent (equivalent to empty per RFC 4422 §3.4.1).
-		await driver.authenticate("PLAIN"); // throws NotImplementedError today
+		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
@@ -121,13 +119,12 @@ complianceTest(
 // ── RFC4616-2-1: PLAIN message format with a non-empty authorization identity ─
 // When the caller supplies an authzid, the PLAIN message carries it in the
 // first field: authzid NUL authcid NUL passwd. Expected base64:
-// YWRtaW4AdXNlckBleGFtcGxlLmNvbQBzM2NyZXQ=. authenticate() throws today.
+// YWRtaW4AdXNlckBleGFtcGxlLmNvbQBzM2NyZXQ=.
 complianceTest(
 	{
 		reqs: ["RFC4616-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE PLAIN carries a supplied authorization identity in the first field",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -138,7 +135,7 @@ complianceTest(
 				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
 				send("+ \r\n"),
 				expectLine(plainMessage({ authzid: "admin", authcid: "user@example.com", passwd: "s3cret" })),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -149,7 +146,7 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("PLAIN", "admin"); // throws NotImplementedError today
+		await driver.authenticate("PLAIN", "admin");
 		await server.assertCompleted();
 	},
 );
@@ -159,13 +156,12 @@ complianceTest(
 // AUTHENTICATE second argument (one round trip) instead of on a separate
 // continuation line. This matcher accepts EITHER delivery path — an inline
 // base64 IR argument OR the two-line continuation form — and validates the
-// decoded message either way. authenticate() throws today → unimplemented.
+// decoded message either way.
 complianceTest(
 	{
 		reqs: ["RFC4616-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "PLAIN message may be delivered as a SASL-IR initial response or via continuation",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -182,7 +178,7 @@ complianceTest(
 				// If the client used SASL-IR, no continuation is needed; but a
 				// non-IR client expects a challenge. Offer one either way; a
 				// SASL-IR client that already sent its IR will complete on OK.
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -193,10 +189,10 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("PLAIN", "admin"); // throws NotImplementedError today
+		await driver.authenticate("PLAIN", "admin");
 		await server.assertCompleted();
-		// When implemented: if an inline IR argument is present it base64-decodes
-		// to a well-formed PLAIN message; otherwise the continuation line does.
+		// If an inline IR argument is present it base64-decodes to a well-formed
+		// PLAIN message; otherwise the continuation line does.
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine).toBeDefined();
 	},
@@ -204,19 +200,22 @@ complianceTest(
 
 // ── RFC4616-1-1 / RFC4616-5-1: adequate data security before PLAIN ─────────
 // By default a client SHOULD (1-1) / SHOULD NOT otherwise (5-1) advertise or
-// use PLAIN unless adequate data security is in place — i.e. under TLS. This is
-// observable TODAY at the capability layer: the negative demonstration arms a
-// PLAINTEXT server that offers AUTH=PLAIN and asserts the client, offered PLAIN
-// in the clear, does not send it without protection. The client has no
-// AUTHENTICATE surface, so it never sends PLAIN at all — a conformant outcome
-// here — but the duty as a whole cannot be positively demonstrated without an
-// auth surface, so it self-actualizes as unimplemented.
+// use PLAIN unless adequate data security is in place — i.e. under TLS.
+//
+// `ComplianceDriver.authenticate()` defaults `allowInsecureAuth: true` (see
+// its doc comment) precisely so the REST of this suite can exercise
+// AUTHENTICATE wire mechanics over plaintext without spec §10.3's policy
+// gate getting in the way — but that means this is the one test that must
+// explicitly ask for the client's OWN default (`allowInsecureAuth: false`)
+// to observe the policy itself. With that override, `authenticate()` refuses
+// locally before a single byte is written (spec §10.3/RFC 8314 §5) — a
+// stronger, genuinely positive demonstration than PLAIN's own
+// `requiresSecureTransport` filter alone.
 complianceTest(
 	{
 		reqs: ["RFC4616-1-1", "RFC4616-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not use PLAIN over a plaintext channel lacking data security",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -225,10 +224,19 @@ complianceTest(
 		// PLAIN here (no adequate data security); the exchange never reaches an
 		// AUTHENTICATE PLAIN line.
 		server.arm([[...sessionPrelude(["IMAP4rev1", "AUTH=PLAIN"])]]);
-		const driver = await f.connectPlain(server);
-		await driver.authenticate("PLAIN"); // throws NotImplementedError today
+		const driver = await f.connectPlain(server, { allowInsecureAuth: false });
+		let authError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			authError = err;
+		}
+		expect(
+			authError,
+			"authenticate() must refuse locally over cleartext (allowInsecureAuth defaults to false)",
+		).toBeDefined();
 		await server.assertCompleted();
-		// When implemented: no AUTHENTICATE PLAIN reached the server over cleartext.
+		// No AUTHENTICATE PLAIN reached the server over cleartext.
 		expect(
 			server.transcript.clientLines(),
 			"PLAIN must not be sent over an unprotected channel",

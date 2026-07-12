@@ -806,14 +806,14 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §6.1/§8: 'Only one of them can be specified in a NOTIFY command.' The caller
 // asks for BOTH; the client must refuse locally or drop one — the transcript
-// may never carry event-groups naming both. login() is un-caught so this
-// cannot pass vacuously today.
+// may never carry event-groups naming both. notify() still throws
+// NotImplementedError (caught below), so the transcript guard is the real
+// (if currently vacuous) check.
 complianceTest(
 	{
 		reqs: ["RFC5465-6.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits both SELECTED and SELECTED-DELAYED groups in one NOTIFY",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -827,7 +827,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver
 			.notify({
 				set: [
@@ -857,7 +857,6 @@ complianceTest(
 		reqs: ["RFC5465-6.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client never pairs non-message events with the SELECTED/SELECTED-DELAYED selector",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -870,7 +869,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver
 			.notify({
 				set: [
@@ -903,7 +902,6 @@ complianceTest(
 		reqs: ["RFC5465-8-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never attaches MessageNew fetch-atts inside a non-SELECTED event group",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -916,7 +914,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver
 			.notify({
 				set: [

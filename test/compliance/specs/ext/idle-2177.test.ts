@@ -316,16 +316,16 @@ complianceTest(
 // conformant client asked to idle refuses locally: the transcript may never
 // contain an IDLE command. Dual-profile per the catalog (2177-only wording —
 // no rfc9051 entry exists to score the gate for a rev2-capable client facing
-// this pre-rev2 server). login() is deliberately un-caught so the test fails
-// honestly as unimplemented today instead of passing vacuously on the
-// client's inability to idle at all (catalog note); the positive-capability
-// counterpart is the RFC2177-3-3 flow test above.
+// this pre-rev2 server). idle() is left un-caught by the driver call below
+// only for the disallowed idle() attempt further down; login() itself now
+// succeeds (implemented), so the assertion rests entirely on the negative
+// transcript guard — the positive-capability counterpart is the RFC2177-3-3
+// flow test above.
 complianceTest(
 	{
 		reqs: ["RFC2177-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits IDLE when neither IDLE nor IMAP4rev2 is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -334,9 +334,11 @@ complianceTest(
 		// server that advertises only IMAP4rev1 (no IDLE, no IMAP4rev2).
 		server.arm([[...sessionPrelude(["IMAP4rev1"], { login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// Caller asks for an idle against the non-advertising server — the client
-		// must refuse locally (poll instead), never emitting IDLE.
+		// must refuse locally (poll instead), never emitting IDLE. idle() itself
+		// still throws NotImplementedError today; caught here so the assertion
+		// below is the genuine (non-vacuous) check.
 		await driver.idle().catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
