@@ -174,7 +174,10 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		const i = this.queueContexts.findIndex(
 			(check) => check === fromContext,
 		);
-		if (i > 0) {
+		// Remove the context wherever it sits — including index 0. Leaving a
+		// completed active context in place would pin the queue: the next
+		// context could never become active, so its commands would never run.
+		if (i > -1) {
 			this.queueContexts.splice(i, 1);
 		}
 
