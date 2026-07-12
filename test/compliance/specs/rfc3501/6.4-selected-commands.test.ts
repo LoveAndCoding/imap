@@ -492,7 +492,7 @@ complianceTest(
 				// BODY[MIME] (no numeric prefix) would fail this matcher.
 				expectLine(command("FETCH", { args: /^1\s+\(?BODY\[\d+(?:\.\d+)*\.MIME\]\)?$/i })),
 				reply("OK FETCH completed", [
-					"* 1 FETCH (BODY[1.MIME] {42}\r\nContent-Type: text/plain; charset=us-ascii\r\n)",
+					"* 1 FETCH (BODY[1.MIME] {44}\r\nContent-Type: text/plain; charset=us-ascii\r\n)",
 				]),
 			],
 		]);
