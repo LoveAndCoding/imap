@@ -41,6 +41,36 @@ describe("NumberRule", () => {
 		expect(BigIntTokenMock.mock.calls[0][0]).toBe(str);
 	});
 
+	test("Routes 2^64-1 (max 64-bit unsigned value) to BigIntToken", () => {
+		// Arrange
+		const str = "18446744073709551615";
+		const BigIntTokenMock = BigIntToken as MockedClass<
+			typeof BigIntToken
+		>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(BigIntTokenMock.mock.instances).toHaveLength(1);
+		expect(BigIntTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	test("Routes 2^53+1 (beyond Number.MAX_SAFE_INTEGER) to BigIntToken", () => {
+		// Arrange
+		const str = "9007199254740993";
+		const BigIntTokenMock = BigIntToken as MockedClass<
+			typeof BigIntToken
+		>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(BigIntTokenMock.mock.instances).toHaveLength(1);
+		expect(BigIntTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
 	test("Partial match to a number with other characters", () => {
 		// Arrange
 		const str = "10abc";

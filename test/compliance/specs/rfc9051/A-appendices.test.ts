@@ -44,6 +44,7 @@
  */
 import { expect } from "vitest";
 
+import type { ObservedEvent } from "../../driver/driver";
 import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -52,6 +53,13 @@ import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
+
+interface ParsedFetchSize {
+	size?: number | bigint;
+}
+function contentOf<T>(ev: ObservedEvent): T {
+	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as T;
+}
 
 // ── RFC9051-A-1: ENABLE IMAP4rev2 when both revisions advertised ──────────
 // The server greeting advertises BOTH IMAP4rev1 and IMAP4rev2. A client that
@@ -268,23 +276,18 @@ complianceTest(
 // within a 63-bit range and exact as a JS number). The client MUST surface the
 // parsed FETCH event without truncating, overflowing, or erroring.
 //
-// HONEST OUTCOME — genuine VIOLATION (transcript-verified, not a pass):
-// the client's lexer (src/lexer/rules/number.ts) emits a BigIntToken
-// (TokenTypes.bigint) for any value above MAX_ALLOWED_NUMBER (2^32), but the
-// RFC822.SIZE msg-att matcher (src/parser/structure/fetch/rfc822.ts) only
-// accepts TokenTypes.number. So the 63-bit size fails to match, the FETCH
-// msg-att list does not parse, and no FETCH untaggedResponse is ever surfaced
-// — waitForUntagged times out. This is exactly the interoperability failure
-// D-1 warns about: the client does NOT expect 63-bit sizes today. Annotated
-// expectFailure: "violation" (client-side parse limitation, not a missing
-// verb). The test becomes a pass once the RFC822.SIZE matcher (and any other
-// size-bearing msg-att) accepts a bigint-typed count.
+// FIXED (M0.6, §11.3): the RFC822.SIZE msg-att matcher
+// (src/parser/structure/fetch/rfc822.ts) now accepts a TokenTypes.bigint
+// value in addition to TokenTypes.number — the lexer (src/lexer/rules/
+// number.ts) already emits a BigIntToken for any value above
+// MAX_ALLOWED_NUMBER (2^32), so the 63-bit size now matches, the FETCH
+// msg-att list parses, and the FETCH untaggedResponse is surfaced with the
+// exact size (as a bigint). Genuine pass, not self-actualizing.
 complianceTest(
 	{
 		reqs: ["RFC9051-D-1"],
 		profiles: ["rev2"],
 		title: "client surfaces an unsolicited FETCH with a 63-bit RFC822.SIZE without breaking",
-		expectFailure: "violation",
 	},
 	async () => {
 		const server = await f.startServer();
@@ -308,5 +311,9 @@ complianceTest(
 		// it processed the 63-bit size rather than choking on it.
 		const ev = await waitForUntagged(driver, "FETCH");
 		expect(ev).toBeDefined();
+		// Non-vacuous: the size must round-trip EXACTLY as a bigint, not be
+		// truncated, coerced through a lossy JS number, or dropped.
+		const content = contentOf<ParsedFetchSize>(ev);
+		expect(content.size).toBe(5000000000n);
 	},
 );

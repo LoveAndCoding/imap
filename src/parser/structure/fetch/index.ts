@@ -88,7 +88,7 @@ export class Fetch {
 	public readonly extensions?: Map<string, ExtensionsSupported>;
 	public readonly flags?: FlagList;
 	public readonly modseq?: number | bigint;
-	public readonly size?: number;
+	public readonly size?: number | bigint;
 	public readonly uid?: UID;
 
 	public static match(tokens: LexerTokenList) {

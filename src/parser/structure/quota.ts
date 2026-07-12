@@ -5,8 +5,13 @@ import { matchesFormat, splitSpaceSeparatedList } from "../utility";
 class Quota {
 	constructor(
 		public readonly resource: string,
-		public readonly current: number,
-		public readonly limit: number,
+		// RFC9051 §11.3 / RFC 9208: quota usage and limits are number64
+		// quantities. The lexer promotes values above MAX_ALLOWED_NUMBER (2^32)
+		// to a BigIntToken, so these surface as bigint only once they exceed
+		// the 32-bit range — matching the number-or-bigint pattern used for
+		// MODSEQ (src/parser/structure/fetch/modseq.ts).
+		public readonly current: number | bigint,
+		public readonly limit: number | bigint,
 	) {}
 }
 
@@ -57,8 +62,14 @@ export class QuotaResponse {
 			) {
 				throw new ParsingError("Invalid QUOTA resource name", tokens);
 			} else if (
-				!currentToken.isType(TokenTypes.number) ||
-				!limitToken.isType(TokenTypes.number)
+				!(
+					currentToken.isType(TokenTypes.number) ||
+					currentToken.isType(TokenTypes.bigint)
+				) ||
+				!(
+					limitToken.isType(TokenTypes.number) ||
+					limitToken.isType(TokenTypes.bigint)
+				)
 			) {
 				throw new ParsingError("Invalid QUOTA resource values", tokens);
 			}
@@ -66,8 +77,8 @@ export class QuotaResponse {
 			this.quotas.push(
 				new Quota(
 					resourceToken.getTrueValue(),
-					currentToken.getTrueValue(),
-					limitToken.getTrueValue(),
+					currentToken.getTrueValue() as number | bigint,
+					limitToken.getTrueValue() as number | bigint,
 				),
 			);
 		}
