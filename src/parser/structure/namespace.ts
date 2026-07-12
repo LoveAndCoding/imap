@@ -11,8 +11,8 @@ import {
 // list formats. As such, we have to do some special parsing here to
 // get this to work like we want it to.
 function splitNamespaceResponseLists(tokens: LexerTokenList) {
-	const blocks = [];
-	let currentBlock = [];
+	const blocks: LexerTokenList[] = [];
+	let currentBlock: LexerTokenList = [];
 	blocks.push(currentBlock);
 	let openParenCount = 0;
 
@@ -90,7 +90,7 @@ class Namespace {
 			const prefix = prefixTokens[0].getTrueValue();
 			const delimeter = delimeterTokens[0].getTrueValue();
 
-			const exts = [];
+			const exts: NamespaceExtension[] = [];
 			for (const [
 				extItemTokens,
 				extValuesTokens,

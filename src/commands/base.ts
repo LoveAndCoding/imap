@@ -3,7 +3,12 @@ import { EventEmitter } from "events";
 import { IMAPError, NotImplementedError } from "../errors";
 
 import Connection from "../connection";
-import { ContinueResponse, TaggedResponse, UntaggedResponse } from "../parser";
+import {
+	ContinueResponse,
+	TaggedResponse,
+	UnknownResponse,
+	UntaggedResponse,
+} from "../parser";
 
 // General commands
 type GeneralCommandTypes = "CAPABILITY" | "ID" | "IDLE" | "NOOP";
@@ -45,7 +50,12 @@ export type CommandType =
 export type StandardResponseTypes =
 	| ContinueResponse
 	| TaggedResponse
-	| UntaggedResponse;
+	| UnknownResponse
+	| UntaggedResponse
+	// `null` accommodates the connection's `response` event, which can
+	// fire with `null` for a malformed/too-short token list (see the
+	// flag comment on Parser#parseTokens).
+	| null;
 
 const MAX_TAG_ALPHA_LENGTH = 400;
 
@@ -154,7 +164,7 @@ export abstract class Command<T = string> extends EventEmitter {
 
 	protected parseNonOKResponse(
 		responses: StandardResponseTypes[],
-	): IMAPError {
+	): IMAPError | undefined {
 		const taggedResponse = responses[responses.length - 1];
 
 		if (taggedResponse && taggedResponse instanceof TaggedResponse) {
@@ -166,7 +176,7 @@ export abstract class Command<T = string> extends EventEmitter {
 		}
 	}
 
-	protected parseResponse(responses: StandardResponseTypes[]): T {
+	protected parseResponse(responses: StandardResponseTypes[]): T | undefined {
 		throw new NotImplementedError(
 			"Response parsing has not be implemented for this command",
 		);

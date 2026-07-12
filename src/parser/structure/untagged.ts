@@ -36,8 +36,11 @@ type ContentType =
 //   CapabilityResponse === capability-data
 //   Expunge            === message-data.Expunge
 export default class UntaggedResponse {
-	public readonly content: ContentType;
-	public readonly type: string;
+	// Both of these are guaranteed to be set by the end of the
+	// constructor -- if a match is never found, we throw before
+	// the constructor completes (see the `!this.content` check below).
+	public readonly content!: ContentType;
+	public readonly type!: string;
 
 	constructor(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
@@ -75,8 +78,9 @@ export default class UntaggedResponse {
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {
-				this.content = check.match(contentTokens);
-				if (this.content) {
+				const matched = check.match(contentTokens);
+				if (matched) {
+					this.content = matched;
 					if ("commandType" in check) {
 						this.type = check.commandType;
 					}
@@ -93,8 +97,9 @@ export default class UntaggedResponse {
 				MailboxData.RecentCount,
 			];
 			for (const check of toCheckList) {
-				this.content = check.match(contentTokens);
-				if (this.content) {
+				const matched = check.match(contentTokens);
+				if (matched) {
+					this.content = matched;
 					this.type = check.commandType;
 					break;
 				}

@@ -14,8 +14,6 @@ import { BaseToken } from "./base";
 export class QuotedStringToken
 	extends BaseToken<string>
 	implements ILexerToken<string> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: string) {
 		super(TokenTypes.string);
 	}
@@ -41,8 +39,6 @@ export class QuotedStringToken
 export class LiteralStringToken
 	extends BaseToken<string>
 	implements ILexerToken<string> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: string) {
 		super(TokenTypes.string);
 	}

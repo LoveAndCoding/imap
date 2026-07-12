@@ -36,7 +36,7 @@ export function buildSearchQuery(
 	let val;
 	for (let i = 0, len = options.length; i < len; ++i) {
 		let criteria = isOrChild ? options : options[i];
-		let args = null;
+		let args: any[] | null = null;
 		let modifier = isOrChild ? "" : " ";
 		if (typeof criteria === "string") {
 			criteria = criteria.toUpperCase();
@@ -55,7 +55,7 @@ export function buildSearchQuery(
 			);
 		}
 		if (criteria === "OR") {
-			if (args.length !== 2) {
+			if (!args || args.length !== 2) {
 				throw new IMAPError("OR must have exactly two arguments");
 			}
 			if (isOrChild) {

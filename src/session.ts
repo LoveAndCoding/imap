@@ -5,7 +5,7 @@ import { IMAPLogMessage, IMAPConfiguration } from "./types";
 
 export default class Session {
 	protected authed: boolean;
-	protected capabilityList: CapabilityList;
+	protected capabilityList: CapabilityList | null;
 	protected connection: Connection;
 	protected logger: (info: IMAPLogMessage) => void;
 	protected options: IMAPConfiguration;
@@ -19,6 +19,8 @@ export default class Session {
 
 		this.authed = false;
 		this.started = false;
+		this.capabilityList = null;
+		this.serverInfo = null;
 	}
 
 	public get active() {
@@ -51,9 +53,12 @@ export default class Session {
 			// a try/catch because if the server doesn't support this, it
 			// is unlikely to have support for other things we need.
 			const capsCmd = new CapabilityCommand();
-			this.capabilityList = await this.connection.runCommand(capsCmd);
+			const capabilityList: CapabilityList = await this.connection.runCommand(
+				capsCmd,
+			);
+			this.capabilityList = capabilityList;
 
-			if (this.capabilityList.has("ID")) {
+			if (capabilityList.has("ID")) {
 				const idCmd = new IdCommand(this.options.id);
 				this.serverInfo = await this.connection.runCommand(idCmd);
 			} else {

@@ -8,9 +8,9 @@ export function* pairedArrayLoopGenerator<T>(arr: T[]): Generator<[T, T]> {
 }
 
 export function splitSpaceSeparatedList(
-	listTokens: LexerTokenList,
-	startTokenValue = "(",
-	endTokenValue = ")",
+	listTokens: LexerTokenList | null | undefined,
+	startTokenValue: string | null = "(",
+	endTokenValue: string | null = ")",
 ): LexerTokenList[] {
 	// Safety check to skip a null value here
 	if (!listTokens) {
@@ -18,7 +18,7 @@ export function splitSpaceSeparatedList(
 	}
 
 	const blocks: LexerTokenList[] = [];
-	let currBlock: LexerTokenList;
+	let currBlock: LexerTokenList | undefined;
 
 	// Mark the list as started if we don't have a token marking the
 	// starting point (i.e. consider us in the list already)
@@ -82,7 +82,7 @@ export function splitSpaceSeparatedList(
 
 export function splitUnseparatedListofLists(tokens: LexerTokenList) {
 	const lists: LexerTokenList[] = [];
-	let currList: LexerTokenList;
+	let currList: LexerTokenList | null = null;
 	let openParenCount = 0;
 
 	for (const tkn of tokens) {
@@ -176,7 +176,7 @@ export function getSpaceSeparatedStringList(
 	tokens: LexerTokenList,
 	allowEmpty = false,
 ): string[] {
-	const list = [];
+	const list: string[] = [];
 	const splitTokens = splitSpaceSeparatedList(tokens);
 	for (const [shouldBeString, ...shouldBeEmpty] of splitTokens) {
 		if (!shouldBeString.isType(TokenTypes.string) || shouldBeEmpty.length) {
@@ -243,7 +243,7 @@ export function matchesFormat(
 		) {
 			return false;
 		}
-		if ("type" in format && !token.isType(format.type)) {
+		if (format.type !== undefined && !token.isType(format.type)) {
 			return false;
 		}
 		if ("value" in format && token.value !== format.value) {

@@ -13,7 +13,7 @@ export class CapabilityCommand extends Command<CapabilityList> {
 
 	protected parseResponse(
 		responses: StandardResponseTypes[],
-	): CapabilityList {
+	): CapabilityList | undefined {
 		for (const resp of responses) {
 			if (
 				resp instanceof UntaggedResponse &&

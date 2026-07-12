@@ -58,7 +58,7 @@ declare interface NewlineTranform {
 }
 
 class NewlineTranform extends Transform {
-	private currentLine: Buffer;
+	private currentLine: Buffer | undefined;
 	private maxLineLength: number;
 
 	constructor(options?: NewlineTranformOptions) {

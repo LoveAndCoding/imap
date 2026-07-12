@@ -9,7 +9,7 @@ export class MessageBodySection {
 			{ type: TokenTypes.operator, value: "[" },
 			{ type: TokenTypes.atom },
 		]);
-		let type: string;
+		let type: string | undefined;
 		if (hasType) {
 			type = (tokens[2] as ILexerToken<string>)
 				.getTrueValue()
@@ -33,7 +33,7 @@ export class MessageBodySection {
 			{ type: TokenTypes.operator, value: ">" },
 		]);
 
-		let offset: number;
+		let offset: number | undefined;
 		if (hasOffset) {
 			offset = (sectionTokens[1] as ILexerToken<number>).getTrueValue();
 			sectionTokens = sectionTokens.slice(3);

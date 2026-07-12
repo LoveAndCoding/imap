@@ -87,7 +87,7 @@ export class MailboxListing {
 		this.name = utf7.decode(name);
 	}
 
-	public getSpecialUse(): SpecialUse {
+	public getSpecialUse(): SpecialUse | undefined {
 		if (this.isAll()) return SpecialUse.All;
 		if (this.isArchive()) return SpecialUse.Archive;
 		if (this.isDrafts()) return SpecialUse.Drafts;

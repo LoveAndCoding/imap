@@ -1,7 +1,8 @@
 import { AtomRule } from "../../../../src/lexer/rules/atom";
 import { AtomToken } from "../../../../src/lexer/tokens/atom";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/lexer/tokens/atom");
+vi.mock("../../../../src/lexer/tokens/atom");
 
 describe("AtomRule", () => {
 	// We'll always need a rule, so just make one for each test
@@ -13,7 +14,7 @@ describe("AtomRule", () => {
 	test("Matches a known atom value", () => {
 		// Arrange
 		const str = "CAPABILITY";
-		const AtomTokenMock = AtomToken as jest.MockedClass<typeof AtomToken>;
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
 
 		// Act
 		const match = rule.match(str, 0);
@@ -26,7 +27,7 @@ describe("AtomRule", () => {
 	test("Matches an atom value with allowed special characters", () => {
 		// Arrange
 		const str = "@tom@nt=日本語";
-		const AtomTokenMock = AtomToken as jest.MockedClass<typeof AtomToken>;
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
 
 		// Act
 		const match = rule.match(str, 0);
@@ -39,7 +40,7 @@ describe("AtomRule", () => {
 	test("Partial match for an atom value with disallowed special characters not at the beginning", () => {
 		// Arrange
 		const str = "THIS(but not this)";
-		const AtomTokenMock = AtomToken as jest.MockedClass<typeof AtomToken>;
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
 
 		// Act
 		const match = rule.match(str, 0);
@@ -52,7 +53,7 @@ describe("AtomRule", () => {
 	test("No match for a control character only at the start", () => {
 		// Arrange
 		const str = "+ OK";
-		const AtomTokenMock = AtomToken as jest.MockedClass<typeof AtomToken>;
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
 
 		// Act
 		const noMatch = rule.match(str, 0);
@@ -67,7 +68,7 @@ describe("AtomRule", () => {
 	test("No match for a string that starts with a disallowed value", () => {
 		// Arrange
 		const str = "{I'm Invisible}";
-		const AtomTokenMock = AtomToken as jest.MockedClass<typeof AtomToken>;
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
 
 		// Act
 		const match = rule.match(str, 0);

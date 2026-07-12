@@ -31,15 +31,19 @@ export interface IConnectionEvents {
 
 	// Response Events
 	serverStatus: (response: UntaggedResponse) => void;
+	// `null` accommodates the parser's `unknown` event, which can fire with
+	// `null` for a malformed/too-short token list (see the flag comment on
+	// Parser#parseTokens) — surfaced here rather than silently dropped.
 	response: (
 		response:
 			| ContinueResponse
 			| TaggedResponse
 			| UnknownResponse
-			| UntaggedResponse,
+			| UntaggedResponse
+			| null,
 	) => void;
 	continueResponse: (response: ContinueResponse) => void;
 	taggedResponse: (response: TaggedResponse) => void;
-	unknownResponse: (response: UnknownResponse) => void;
+	unknownResponse: (response: UnknownResponse | null) => void;
 	untaggedResponse: (response: UntaggedResponse) => void;
 }

@@ -157,13 +157,14 @@ export function match(
 
 		if (!type) {
 			return {
-				match: MessageBody.createFromFullBody(text, offset),
+				// A NIL body section (no `text` token match) is an empty body
+				match: MessageBody.createFromFullBody(text ?? "", offset),
 				length,
 			};
 		} else if (!type.startsWith("HEADER")) {
 			// We let the header matcher handle header related sections
 			return {
-				match: new MessageBodySection(type, text, offset),
+				match: new MessageBodySection(type, text ?? "", offset),
 				length,
 			};
 		}
@@ -192,15 +193,15 @@ export function match(
 		const type = typeToken.getTrueValue().toUpperCase();
 		const contents = getNStringValue(shouldBeNString);
 		if (type === "RFC822") {
-			// Same as BODY[]
+			// Same as BODY[]. A NIL contents value is an empty body
 			return {
-				match: MessageBody.createFromFullBody(contents),
+				match: MessageBody.createFromFullBody(contents ?? ""),
 				length: 3,
 			};
 		} else if (type === "RFC822.TEXT") {
 			// Same as BODY[TEXT]
 			return {
-				match: new MessageBodySection("TEXT", contents),
+				match: new MessageBodySection("TEXT", contents ?? ""),
 				length: 3,
 			};
 		}

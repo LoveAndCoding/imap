@@ -8,9 +8,10 @@ import {
 	SPRule,
 	StringRule,
 } from "../../../src/lexer/rules";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../src/errors");
-jest.mock("../../../src/lexer/rules");
+vi.mock("../../../src/errors");
+vi.mock("../../../src/lexer/rules");
 
 describe("Lexer", () => {
 	describe("#defaultRules", () => {
@@ -58,7 +59,7 @@ describe("Lexer", () => {
 	describe(".addRule", () => {
 		test("Adds a rule with no order to the end of current rules", () => {
 			// Arrange
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule = new FakeRule();
 			const lexer = new Lexer();
 			(lexer as any).rules = [
@@ -81,7 +82,7 @@ describe("Lexer", () => {
 
 		test("Adds a rule with no order to empty ruleset without error", () => {
 			// Arrange
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule = new FakeRule();
 			const lexer = new Lexer();
 			(lexer as any).rules = [];
@@ -99,7 +100,7 @@ describe("Lexer", () => {
 
 		test("Adds a rule with an order to the right location in the rules", () => {
 			// Arrange
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const firstRule = new FakeRule();
 			const middleRule = new FakeRule();
 			const lexer = new Lexer();
@@ -139,7 +140,7 @@ describe("Lexer", () => {
 
 		test("Adding rule with duplicate order puts it after existing one", () => {
 			// Arrange
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const existingRule = new FakeRule();
 			const rule = new FakeRule();
 			const lexer = new Lexer();
@@ -169,9 +170,9 @@ describe("Lexer", () => {
 		test("Does not run rules on empty string", () => {
 			// Arrange
 			const lexer = new Lexer();
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule = new FakeRule();
-			rule.match = jest.fn();
+			rule.match = vi.fn();
 			(lexer as any).rules = [{ order: 1, rule }];
 
 			// Act
@@ -185,7 +186,7 @@ describe("Lexer", () => {
 		test("After a rule matches, start rule processing order over", () => {
 			// Arrange
 			const lexer = new Lexer();
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule1 = new FakeRule();
 			const rule2 = new FakeRule();
 			const rule3 = new FakeRule();
@@ -194,11 +195,11 @@ describe("Lexer", () => {
 			const token2 = { value: "Luthor" };
 
 			// This setup should first match rule 2, then rule 1
-			rule1.match = jest.fn((str) =>
+			rule1.match = vi.fn((str) =>
 				str === token2.value ? token2 : null,
 			);
-			rule2.match = jest.fn(() => token1);
-			rule3.match = jest.fn();
+			rule2.match = vi.fn(() => token1);
+			rule3.match = vi.fn();
 			(lexer as any).rules = [
 				{ order: 1, rule: rule1 },
 				{ order: 2, rule: rule2 },
@@ -218,13 +219,13 @@ describe("Lexer", () => {
 		test("Throws if a rule gives back an empty token", () => {
 			// Arrange
 			const lexer = new Lexer();
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule = new FakeRule();
-			rule.match = jest.fn(() => ({
+			rule.match = vi.fn(() => ({
 				value: "",
 			}));
 			(lexer as any).rules = [{ order: 1, rule }];
-			const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+			const TokenizationErrorMock = TokenizationError as MockedClass<
 				typeof TokenizationError
 			>;
 
@@ -244,11 +245,11 @@ describe("Lexer", () => {
 		test("Throws if no rule matches are found", () => {
 			// Arrange
 			const lexer = new Lexer();
-			const FakeRule = jest.fn();
+			const FakeRule = vi.fn();
 			const rule = new FakeRule();
-			rule.match = jest.fn(() => null);
+			rule.match = vi.fn(() => null);
 			(lexer as any).rules = [{ order: 1, rule }];
-			const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+			const TokenizationErrorMock = TokenizationError as MockedClass<
 				typeof TokenizationError
 			>;
 

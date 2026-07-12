@@ -10,26 +10,43 @@ on:
         branches: [main]
 
 jobs:
+    lint:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+            - name: Use Node.js 22.x
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22.x
+                  cache: "npm"
+            - run: npm ci
+            # Pre-existing lint debt (mostly no-useless-escape in the parser)
+            # predates this workflow and was never enforced in CI before, so
+            # this is surfaced but non-blocking for now rather than failing
+            # every PR on unrelated backlog.
+            - run: npm run lint
+              continue-on-error: true
+            - run: npm run typecheck
+
     test:
         runs-on: ubuntu-latest
 
         strategy:
             matrix:
-                node-version: [14.x, 16.x]
+                node-version: [22.x, 24.x]
                 # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
         steps:
-            - uses: actions/checkout@v2
+            - uses: actions/checkout@v4
             - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v2
+              uses: actions/setup-node@v4
               with:
                   node-version: ${{ matrix.node-version }}
-            - name: Install Deps
-              run: |
-                  npm install -g yarn
-                  yarn install
-            - run: yarn run build
-            - run: yarn test
+                  cache: "npm"
+            - run: npm ci
+            - run: npm run build
+            - run: npm test
             - name: Coveralls
               uses: coverallsapp/github-action@master
               with:
@@ -42,27 +59,38 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [14.x, 16.x]
+                node-version: [22.x, 24.x]
                 # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
         steps:
-            - uses: actions/checkout@v2
+            - uses: actions/checkout@v4
             - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v2
+              uses: actions/setup-node@v4
               with:
                   node-version: ${{ matrix.node-version }}
-            - name: Install Deps
-              run: |
-                  npm install -g yarn
-                  yarn install
-            - run: yarn run build
-            - run: yarn test:e2e
+                  cache: "npm"
+            - run: npm ci
+            - run: npm run build
+            - run: npm run test:e2e
             - name: Coveralls
               uses: coverallsapp/github-action@master
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   flag-name: e2e-${{ matrix.node-version }}
                   parallel: true
+
+    compliance:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+            - name: Use Node.js 22.x
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22.x
+                  cache: "npm"
+            - run: npm ci
+            - run: npm run test:compliance
 
     finish:
         needs: [test, e2e]
