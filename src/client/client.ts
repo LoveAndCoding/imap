@@ -7,13 +7,16 @@ import {
 	EnableCommand,
 	ExamineCommand,
 	IdCommand,
+	ListCommand,
 	LogoutCommand,
+	LsubCommand,
 	NoopCommand,
 	SelectCommand,
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
 import type { IdResponseMap } from "../commands/id";
+import type { ListOptions } from "../commands/list";
 import type { SelectOptions, SelectResult } from "../commands/select";
 import Connection from "../connection";
 import { ConnectionTimeout, TLSSocketError } from "../connection/errors";
@@ -40,6 +43,7 @@ import {
 	UntaggedResponse,
 } from "../parser";
 import type { TextCode } from "../parser";
+import type { MailboxInfo } from "../protocol/mailbox";
 import { decodeMailboxName } from "../protocol/mailbox-name";
 import { performAuthSelection } from "./auth";
 import { CapabilityRegistry } from "./capabilities";
@@ -434,11 +438,36 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
-	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession) -----------
+	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession;
+	//    M2.7/M2.8: LIST/LSUB) ------------------------------------------------
 
 	/** The currently selected mailbox, if any (spec §3.2). */
 	public get mailbox(): MailboxSession | null {
 		return this._mailboxSession;
+	}
+
+	/**
+	 * Unified LIST (spec §3.2/§5.2; RFC 3501/9051 §6.3.8/§6.3.9, RFC 5258/
+	 * 5819/6154/3348/2193 — see `ListCommand` for the full option surface).
+	 * Every option prohibition is enforced BEFORE any bytes are written
+	 * (I-9): invalid combinations throw `RangeError`, options the server
+	 * hasn't advertised the capability for throw `CapabilityError` — both
+	 * synchronously from the command constructor, validated against the live
+	 * capability registry. A plain `list()` (⇒ `LIST "" *`) needs no
+	 * capability and no options.
+	 */
+	public async list(opts?: ListOptions): Promise<MailboxInfo[]> {
+		return this.run(new ListCommand(opts, this.capabilityRegistry.view));
+	}
+
+	/**
+	 * LSUB (spec §3.2, RFC 3501 §6.3.9 — rev1 only; rev2 replaced it with
+	 * `list({ subscribed: true })`). Note the LSUB-specific `\Noselect`
+	 * semantics and the "LIST flags are more authoritative" precedence rule
+	 * documented on `LsubCommand`.
+	 */
+	public async lsub(ref: string, pattern: string): Promise<MailboxInfo[]> {
+		return this.run(new LsubCommand(ref, pattern));
 	}
 
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See

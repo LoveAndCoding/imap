@@ -74,22 +74,28 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8438-3-3 — LIST ... RETURN (STATUS (SIZE)) batch query (self-actualizing)
+// RFC8438-3-3 — LIST ... RETURN (STATUS (SIZE)) batch query
 // ═════════════════════════════════════════════════════════════════════════════
-// §3 example: 'C: A04 LIST "" % RETURN (STATUS (MESSAGES SIZE))'.
+// §3 example: 'C: A04 LIST "" % RETURN (STATUS (MESSAGES SIZE))'. REAL SIGNAL
+// (M2.7): the exchange runs end-to-end (LIST is an authenticated-state
+// command, so the prelude now logs in). The SIZE *value*'s typed surfacing on
+// MailboxInfo.status awaits M2.9's STATUS-item parser growth; this row pins
+// the command form and the tolerated exchange.
 complianceTest(
 	{
 		reqs: ["RFC8438-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: 'LIST "" % RETURN (STATUS (SIZE)) batch-queries mailbox sizes',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude([...sizeCaps(ctx.profile), "LIST-STATUS"], { profile: ctx.profile }),
+				...sessionPrelude([...sizeCaps(ctx.profile), "LIST-STATUS"], {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("LIST", { args: /^"" % RETURN \(STATUS \(SIZE\)\)$/i })),
 				reply("OK LIST completed", [
 					'* LIST () "." "INBOX"',
@@ -98,7 +104,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.list("", "%", { returnOptions: ["STATUS (SIZE)"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.list("", "%", { returnOptions: ["STATUS (SIZE)"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();

@@ -26,20 +26,17 @@
  * under both profiles here does not double-count (there is no RFC9051 id to dedupe
  * against). See the module extractionNote's rev2-core adjudication.
  *
- * driver.list() throws NotImplementedError, so the client has no extended-LIST
- * surface: it cannot emit RETURN (STATUS (...)) at all. Every test drives list()
- * with a returnOptions payload, catches the rejection, and asserts on it and on
- * the transcript directly — login() is implemented, so these are genuine (if
- * currently vacuous for the wire-shape assertions) passes rather than uncaught
- * 'unimplemented' failures. Each script also encodes the exact RFC-conformant
- * wire exchange (and, for -2-1, a matcher tight enough to reject a plausible
- * wrong emission) so that once list() lands the assertions become fully genuine.
+ * REAL SIGNAL (M2.7): driver.list() delegates to ImapClient.list() —
+ * `returnOptions: ["STATUS (…)"]` maps onto ListOptions.returnStatus, the
+ * exact RFC-conformant wire exchange runs end-to-end, and the paired
+ * `* STATUS` replies are claimed into each MailboxInfo's `status` field.
+ * -2-3/-2-4 assert the completion-despite-missing-STATUS duties on the typed
+ * results (the entry is present, its `status` simply absent).
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -62,7 +59,7 @@ function caps(profile: "rev1" | "rev2"): string[] {
 // requires the RETURN keyword, the parenthesized STATUS sub-list, and at least one
 // status attribute inside it — rejecting a wrong emission such as a bare LIST with
 // no RETURN, `RETURN (STATUS)` with no attribute list, or STATUS attributes placed
-// outside the parentheses. list() is unimplemented → the call rejects first.
+// outside the parentheses. REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC5819-2-1"],
@@ -91,24 +88,22 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When list() is implemented: the emitted LIST names STATUS inside a
-		// parenthesized RETURN list, never bare and never as a stray argument.
+		const listing = await driver.list("", "*", {
+			returnOptions: ["STATUS (MESSAGES UNSEEN)"],
+		});
+		await server.assertCompleted();
+		// The emitted LIST names STATUS inside a parenthesized RETURN list, never
+		// bare and never as a stray argument.
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
-		if (listLine) {
-			expect(listLine.args, "LIST must carry a RETURN option list").toMatch(/\bRETURN \(/);
-			expect(listLine.args, "STATUS must appear inside the RETURN parentheses").toMatch(
-				/RETURN \([^)]*STATUS \(/,
-			);
-		}
+		expect(listLine, "a LIST command must have been sent").toBeDefined();
+		expect(listLine!.args, "LIST must carry a RETURN option list").toMatch(/\bRETURN \(/);
+		expect(listLine!.args, "STATUS must appear inside the RETURN parentheses").toMatch(
+			/RETURN \([^)]*STATUS \(/,
+		);
+		// The paired `* STATUS` reply is claimed into the entry's status field.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("INBOX");
+		expect(listing[0].status).toMatchObject({ messages: 17, unseen: 2 });
 	},
 );
 
@@ -117,8 +112,8 @@ complianceTest(
 // `* LIST (\NoSelect) "." "bar"` entry that receives NO `* STATUS` reply, followed
 // by a tagged OK. A conformant client MUST complete the command on the tagged OK
 // rather than treating the missing STATUS for the \NoSelect entry as an error or a
-// stalled request. list() is unimplemented → the call rejects first; the script
-// documents the exact exchange the client must accept once it can drive it.
+// stalled request. REAL SIGNAL (M2.7): list() resolves both entries, with `status`
+// present on "foo" and absent on the \NoSelect "bar".
 complianceTest(
 	{
 		reqs: ["RFC5819-2-3"],
@@ -143,17 +138,18 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When list() is implemented: the client completes on the tagged OK and stays active —
-		// the STATUS-less \NoSelect entry is not treated as an error.
+		const listing = await driver.list("", "*", {
+			returnOptions: ["STATUS (MESSAGES UNSEEN)"],
+		});
+		await server.assertCompleted();
+		// The client completes on the tagged OK: both entries are present, the
+		// selectable one with its STATUS, the \NoSelect one without — a normal
+		// outcome, not an error.
+		expect(listing).toHaveLength(2);
+		const foo = listing.find((mb) => mb.name === "foo");
+		const bar = listing.find((mb) => mb.name === "bar");
+		expect(foo?.status).toMatchObject({ messages: 17, unseen: 2 });
+		expect(bar?.status, "a \\NoSelect entry legitimately has no STATUS").toBeUndefined();
 		expect(driver.active, "client stays active through a \\NoSelect entry lacking STATUS").toBe(
 			true,
 		);
@@ -166,7 +162,7 @@ complianceTest(
 // completion even when a listed selectable mailbox received NO `* STATUS` before
 // the tagged OK, treating it as successful with incomplete data — not a failure.
 // Distinct from -2-3: here the mailbox IS selectable (no \NoSelect) and the drop is
-// the server's optional best-effort omission. list() is unimplemented → rejects.
+// the server's optional best-effort omission. REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC5819-2-4"],
@@ -187,17 +183,16 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["STATUS (MESSAGES UNSEEN)"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a STATUS return option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When list() is implemented: the tagged OK is authoritative; a dropped STATUS is not a
-		// command failure, and the connection remains usable.
+		const listing = await driver.list("", "*", {
+			returnOptions: ["STATUS (MESSAGES UNSEEN)"],
+		});
+		await server.assertCompleted();
+		// The tagged OK is authoritative: the command resolves successfully with
+		// incomplete data (entry present, `status` absent), and the connection
+		// remains usable.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("foo");
+		expect(listing[0].status, "a dropped STATUS reply is not a failure").toBeUndefined();
 		expect(driver.active, "client stays active after a dropped STATUS reply").toBe(true);
 	},
 );

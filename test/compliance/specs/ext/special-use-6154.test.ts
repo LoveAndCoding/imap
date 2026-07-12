@@ -32,15 +32,12 @@
  * deduped) against the GENERAL option gate RFC9051-6.3.9-5, which is a distinct
  * duty (LIST options vs the CREATE-side USE parameter). See the module extractionNote.
  *
- * driver.list() (widened with selectOptions/returnOptions) and driver.create()
- * (widened with useAttributes) both throw NotImplementedError: the client has
- * no special-use LIST or CREATE-USE surface. Every test drives the relevant
- * verb, catches the rejection, and asserts on it and on the transcript
- * directly — login() is implemented, so these are genuine (if currently
- * vacuous for the wire-shape assertions) passes. Each script encodes the exact
- * RFC-conformant wire form (and a tight matcher, for the emit-form tests, that
- * rejects a plausible wrong emission) so the assertions become fully genuine
- * once list()/create() land.
+ * REAL SIGNAL for the LIST half (M2.7): driver.list() delegates to
+ * ImapClient.list() — the 2-1/2-2 emit-form tests and the 6-1/6-2 acceptance
+ * tests drive the real wire exchange end-to-end and assert on the typed
+ * MailboxInfo[] results. driver.create() (widened with useAttributes) still
+ * throws NotImplementedError: the CREATE-USE surface is M2.3's; the 3-x tests
+ * keep the catch-the-rejection shape until it lands.
  */
 import { expect } from "vitest";
 
@@ -65,8 +62,8 @@ function suCaps(profile: "rev1" | "rev2", extra: string[] = ["SPECIAL-USE"]): st
 // parenthesized selection-option list, immediately after LIST and before the
 // reference/pattern. The matcher requires the parenthesized `(SPECIAL-USE)` list
 // preceding the reference and pattern, rejecting a bare `LIST "" "*"` with no
-// selection option, or the atom placed outside the parentheses. list() is
-// unimplemented → the call rejects first.
+// selection option, or the atom placed outside the parentheses. REAL SIGNAL
+// (M2.7): the exchange runs end-to-end.
 complianceTest(
 	{
 		reqs: ["RFC6154-2-1"],
@@ -91,22 +88,18 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a SPECIAL-USE selection option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When implemented: SPECIAL-USE appears inside a parenthesized selection list.
+		const listing = await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
+		// SPECIAL-USE appears inside a parenthesized selection list.
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
-		if (listLine) {
-			expect(listLine.args, "SPECIAL-USE must be a parenthesized selection option").toMatch(
-				/^\([^)]*SPECIAL-USE[^)]*\)/,
-			);
-		}
+		expect(listLine, "a LIST command must have been sent").toBeDefined();
+		expect(listLine!.args, "SPECIAL-USE must be a parenthesized selection option").toMatch(
+			/^\([^)]*SPECIAL-USE[^)]*\)/,
+		);
+		// The typed result carries the special-use annotation.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("Sent Items");
+		expect(listing[0].specialUse).toBe("\\Sent");
 	},
 );
 
@@ -114,7 +107,7 @@ complianceTest(
 // `C: t2 LIST "" "%" RETURN (SPECIAL-USE)` (§5.2) — the option appears inside the
 // trailing RETURN parenthesized list. The matcher requires the RETURN keyword and
 // the parenthesized SPECIAL-USE after the reference/pattern, rejecting a missing
-// RETURN keyword or the atom outside the parentheses. list() rejects first.
+// RETURN keyword or the atom outside the parentheses. REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC6154-2-2"],
@@ -137,21 +130,17 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a SPECIAL-USE return option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
+		const listing = await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
-		if (listLine) {
-			expect(listLine.args, "SPECIAL-USE must appear inside the RETURN parentheses").toMatch(
-				/RETURN \([^)]*SPECIAL-USE[^)]*\)/,
-			);
-		}
+		expect(listLine, "a LIST command must have been sent").toBeDefined();
+		expect(listLine!.args, "SPECIAL-USE must appear inside the RETURN parentheses").toMatch(
+			/RETURN \([^)]*SPECIAL-USE[^)]*\)/,
+		);
+		// The typed result carries the returned special-use attribute.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].specialUse).toBe("\\Sent");
+		expect(listing[0].attributes.has("\\Marked")).toBe(true);
 	},
 );
 
@@ -303,8 +292,8 @@ complianceTest(
 // mbx-list-oflag: a client parsing LIST responses MUST accept any of them wherever
 // a mailbox-list flag may appear, interleaved with existing flags (\Marked,
 // \HasNoChildren, ...). Script a LIST response carrying all seven across several
-// mailboxes; the client must parse them without error. list() is unimplemented →
-// the call rejects (unimplemented); the script documents the acceptance duty.
+// mailboxes; the client must parse them without error. REAL SIGNAL (M2.7): the
+// typed results carry every entry with its special-use annotation.
 complianceTest(
 	{
 		reqs: ["RFC6154-6-1"],
@@ -332,15 +321,23 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
+		const listing = await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
+		// The client parses all seven special-use attributes without error…
+		expect(listing).toHaveLength(7);
+		const bySpecialUse = new Map(listing.map((mb) => [mb.specialUse, mb.name]));
+		for (const attr of [
+			"\\All",
+			"\\Archive",
+			"\\Drafts",
+			"\\Flagged",
+			"\\Junk",
+			"\\Sent",
+			"\\Trash",
+		]) {
+			expect(bySpecialUse.has(attr), `${attr} must be accepted and surfaced`).toBe(true);
 		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// When implemented: the client parses all seven special-use attributes without
-		// error and stays connected.
+		// …and stays connected.
 		expect(
 			driver.active,
 			"client must parse LIST responses carrying special-use attributes",
@@ -353,8 +350,9 @@ complianceTest(
 // understand. A client MUST NOT choke on an unrecognized "\"-prefixed atom (e.g. a
 // future "\Xyzzy" special use) in a LIST response — it parses the base response and
 // skips the unknown attribute. Script a LIST entry mixing a known flag with an
-// unknown "\Xyzzy" attribute. list() is unimplemented → the call rejects
-// (unimplemented). applicability "always" per the catalog (baseline robustness).
+// unknown "\Xyzzy" attribute. REAL SIGNAL (M2.7): the unknown attribute is data
+// (preserved in `attributes`, not detected as a special use), never an error.
+// applicability "always" per the catalog (baseline robustness).
 complianceTest(
 	{
 		reqs: ["RFC6154-6-2"],
@@ -375,15 +373,15 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*");
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// When implemented: the client survives the unknown attribute (no parse abort /
-		// disconnect) and treats the base LIST entry normally.
+		const listing = await driver.list("", "*");
+		await server.assertCompleted();
+		// The client survives the unknown attribute (no parse abort / disconnect)
+		// and treats the base LIST entry normally: the entry parses, the unknown
+		// attribute rides along as data, and it is NOT mistaken for a special use.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("INBOX");
+		expect(listing[0].attributes.has("\\HasNoChildren")).toBe(true);
+		expect(listing[0].specialUse).toBeUndefined();
 		expect(
 			driver.active,
 			"client must remain connected after ignoring an unknown list attribute",

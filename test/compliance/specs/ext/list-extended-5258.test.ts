@@ -34,15 +34,18 @@
  * would double-score the duty already covered by its RFC9051 counterpart). Only
  * RFC5258-3.1-2 runs under both profiles.
  *
- * driver.list() throws NotImplementedError: the client has no extended-LIST
- * surface, so it can neither emit an extended LIST nor be shown to violate these
- * duties on real traffic. Every test drives list() (with the widened opts where
- * relevant), catches the rejection, and asserts on it directly — a real (not
- * vacuous) pass, since login() and the transcript/error-shape assertions are
- * genuinely exercised. The prohibition tests (3-1, 3-2) never expectLine the
- * forbidden command and guard the transcript so no unadvertised/duplicate option
- * reaches the wire; the acceptance tests (3-4, 3.4-1) script the exact
- * pathological response the client must tolerate.
+ * REAL SIGNAL (M2.7): driver.list() delegates to ImapClient.list(), whose
+ * ListOptions surface expresses the extended selection/return options. The
+ * prohibition tests (3-1, 3-2) never expectLine the forbidden command: 3-1's
+ * unadvertised option is refused client-side (CapabilityError, zero bytes —
+ * the error class is deliberately not pinned, per the RFC3691-1-1 precedent,
+ * so the test keeps measuring the same duty across implementation changes);
+ * 3-2's duplicated option is structurally inexpressible on ListOptions (each
+ * option is a boolean field), which the driver reports as
+ * NotImplementedError — either way the transcript guard proves nothing
+ * reached the wire. The acceptance tests (3-4, 3.4-1) script the exact
+ * pathological response the client must tolerate and now assert on the typed
+ * MailboxInfo[] result.
  */
 import { expect } from "vitest";
 
@@ -58,10 +61,10 @@ const f = useComplianceFixture();
 // ── RFC5258-3-1: MUST NOT send a LIST option the server has not advertised ───
 // PROHIBITION test — never expectLine the forbidden command. Arm a server whose
 // CAPABILITY advertises IMAP4rev1 but NOT LIST-EXTENDED (no selection/return
-// options are enabled). Drive list() with a selection option; the client must not
-// emit that option against a server that never advertised it. list() is
-// unimplemented today → the call rejects (unimplemented); the transcript guard
-// independently proves no such option reached the wire. rev1-only (rev2 scores the
+// options are enabled). Drive list() with a selection option; the client refuses
+// client-side (CapabilityError, zero bytes written — I-9) and the transcript
+// guard independently proves no such option reached the wire. The error class is
+// deliberately not pinned (see the header note). rev1-only (rev2 scores the
 // identical duty via RFC9051-6.3.9-5).
 complianceTest(
 	{
@@ -90,9 +93,10 @@ complianceTest(
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.list() with an unadvertised option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
+		expect(
+			err,
+			"list() with an unadvertised option must reject with zero bytes written",
+		).toBeDefined();
 		await server.assertCompleted();
 		// Transcript guard: no extended-LIST selection option ever reached the wire.
 		expect(
@@ -104,11 +108,13 @@ complianceTest(
 
 // ── RFC5258-3-2: SHOULD NOT specify a LIST option more than once ─────────────
 // A well-behaved client does not repeat the same selection/return option within a
-// single LIST. Arm a LIST-EXTENDED server, drive list() asking (conceptually) for a
-// duplicated option, and assert that any LIST the client emits carries no repeated
-// option atom. list() is unimplemented → the call rejects (unimplemented); the
-// transcript guard becomes the genuine check once list() lands. rev1-only (rev2
-// scores via RFC9051-6.3.9-6).
+// single LIST. Arm a LIST-EXTENDED server and drive list() asking for a duplicated
+// option. The public ListOptions surface cannot even express a duplicate (each
+// option is a boolean field) — the driver reports the inexpressible request as
+// NotImplementedError, honestly and permanently — so no LIST reaches the wire at
+// all; the guard below additionally pins "no repeated option atom" should an
+// option-bearing LIST ever be emitted here. rev1-only (rev2 scores via
+// RFC9051-6.3.9-6).
 complianceTest(
 	{
 		reqs: ["RFC5258-3-2"],
@@ -130,15 +136,20 @@ complianceTest(
 		let err: unknown;
 		try {
 			// Even if a caller passes a duplicated option, a conformant client must not
-			// emit it twice. (Passing the pair documents the intent; the verb rejects.)
+			// emit it twice. ListOptions cannot express the duplicate, so the driver
+			// rejects the request as inexpressible (see this test's own comment).
 			await driver.list("", "*", { selectOptions: ["SUBSCRIBED", "SUBSCRIBED"] });
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
+		expect(
+			err,
+			"a duplicated LIST option is inexpressible on the public API",
+		).toBeInstanceOf(NotImplementedError);
 		await server.assertCompleted();
-		// When implemented: no LIST line may repeat the same option atom. Today no
-		// LIST is emitted, so this guard holds vacuously but documents the check.
+		// No LIST line may repeat the same option atom. No LIST is emitted for the
+		// inexpressible request, so this guard holds; it stays as the wire check
+		// should that ever change.
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
 		if (listLine) {
 			const subscribedCount = (listLine.args.match(/\bSUBSCRIBED\b/g) ?? []).length;
@@ -154,8 +165,10 @@ complianceTest(
 // A LIST response MAY carry extended data items the client did not solicit. The
 // client MUST ignore unrecognized ones and parse the base response without error.
 // Script an extended-LIST response whose mailbox line ends with an unknown
-// parenthesized extended data item. list() is unimplemented → the call rejects
-// (unimplemented). rev1-only (rev2 scores via RFC9051-7.3.1-3).
+// parenthesized extended data item. REAL SIGNAL (M2.7): list() emits
+// `LIST "" * RETURN (SUBSCRIBED)`, resolves the typed listing, and the unknown
+// XVENDOR item is data, never an error. rev1-only (rev2 scores via
+// RFC9051-7.3.1-3).
 complianceTest(
 	{
 		reqs: ["RFC5258-3-4"],
@@ -178,15 +191,17 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["SUBSCRIBED"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// When implemented: the client survives the unknown extended field and stays
-		// connected (no parse abort / disconnect).
+		const listing = await driver.list("", "*", { returnOptions: ["SUBSCRIBED"] });
+		await server.assertCompleted();
+		// The base response parsed: the entry is present with its name intact,
+		// and the unknown extended field contributed nothing (no oldName, no
+		// childInfo — those come only from recognized items).
+		expect(listing, "the base LIST entry must be parsed").toHaveLength(1);
+		expect(listing[0].name).toBe("INBOX");
+		expect(listing[0].oldName).toBeUndefined();
+		expect(listing[0].childInfo).toBeUndefined();
+		// The client survives the unknown extended field and stays connected
+		// (no parse abort / disconnect).
 		expect(
 			driver.active,
 			"client must remain connected after ignoring an unknown LIST extended field",
@@ -199,9 +214,10 @@ complianceTest(
 // RECURSIVEMATCH must also contain a base option (e.g. SUBSCRIBED). `(RECURSIVEMATCH)`
 // and `(REMOTE RECURSIVEMATCH)` are both invalid. Arm a server advertising the
 // feature and drive list() with RECURSIVEMATCH alone; a conformant client must not
-// put a lone-RECURSIVEMATCH selection list on the wire. list() is unimplemented →
-// the call rejects (unimplemented); the transcript guard is the genuine check once
-// list() lands. The one dual-profile duty in this file (see header).
+// put a lone-RECURSIVEMATCH selection list on the wire. REAL SIGNAL (M2.7): the
+// command class enforces the construction rule (RangeError, zero bytes written)
+// and the transcript guard proves the wire stayed clean. The one dual-profile
+// duty in this file (see header).
 complianceTest(
 	{
 		reqs: ["RFC5258-3.1-2"],
@@ -230,7 +246,10 @@ complianceTest(
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
+		expect(
+			err,
+			"a lone-RECURSIVEMATCH request must reject with zero bytes written",
+		).toBeDefined();
 		await server.assertCompleted();
 		// Transcript guard: RECURSIVEMATCH must never appear as a lone selection
 		// option. If it appears at all, a base option must accompany it inside the
@@ -245,11 +264,10 @@ complianceTest(
 // A client supporting extended LIST MUST treat a stronger attribute as implying any
 // attribute inferable from it: \NoInferiors implies \HasNoChildren; \NonExistent
 // implies \NoSelect. Script a LIST response carrying \NoInferiors WITHOUT the
-// implied \HasNoChildren, and (once list() lands) the client must behave as though
-// \HasNoChildren were also present — in particular it must not issue a child-
-// expansion follow-up (which only a childful mailbox would prompt). list() is
-// unimplemented → the call rejects (unimplemented). rev1-only (rev2 scores via
-// RFC9051-6.3.9.4-1).
+// implied \HasNoChildren; the client must behave as though \HasNoChildren were
+// also present — the typed MailboxInfo.attributes applies the inference, and no
+// child-expansion follow-up (which only a childful mailbox would prompt) is
+// emitted. REAL SIGNAL (M2.7). rev1-only (rev2 scores via RFC9051-6.3.9.4-1).
 complianceTest(
 	{
 		reqs: ["RFC5258-3.4-1"],
@@ -270,27 +288,23 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["CHILDREN"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// list() throws NotImplementedError WITHOUT touching the wire, so the
-		// scripted LIST step above is never satisfied — deliberately do NOT call
-		// server.assertCompleted() here (unlike the login-only siblings above,
-		// which never arm a LIST step at all): doing so would time out waiting for
-		// a command list() can never send, surfacing as a spurious violation
-		// instead of the honest "unimplemented" outcome (see RFC5258-3-4 above,
-		// which uses the same no-assertCompleted() pattern for the same reason).
-		// When implemented: exactly one LIST reaches the server — \NoInferiors implies
-		// \HasNoChildren, so no child-expansion follow-up (which a childful mailbox
-		// would drive) is emitted.
+		const listing = await driver.list("", "*", { returnOptions: ["CHILDREN"] });
+		await server.assertCompleted();
+		// The inference itself, observable on the typed result: \NoInferiors was
+		// sent WITHOUT \HasNoChildren, yet the client reports both.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].attributes.has("\\NoInferiors")).toBe(true);
+		expect(
+			listing[0].attributes.has("\\HasNoChildren"),
+			"\\NoInferiors must imply \\HasNoChildren in the reported attributes",
+		).toBe(true);
+		// Exactly one LIST reached the server — \NoInferiors implies
+		// \HasNoChildren, so no child-expansion follow-up (which a childful
+		// mailbox would drive) was emitted.
 		const listCommands = server.commandLines.filter((l) => l.verb === "LIST");
 		expect(
 			listCommands.length,
 			"\\NoInferiors implies \\HasNoChildren — no child-expansion follow-up LIST",
-		).toBeLessThanOrEqual(1);
+		).toBe(1);
 	},
 );

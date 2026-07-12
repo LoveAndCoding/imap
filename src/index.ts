@@ -29,6 +29,14 @@ export type { MailboxClosedReason, MailboxSessionEvents } from "./client/mailbox
 
 export type { SelectOptions, SelectResult } from "./commands/select";
 
+export type { ListCapabilityProbe, ListOptions } from "./commands/list";
+export type {
+	MailboxInfo,
+	MailboxStatusResult,
+	StatusItem,
+} from "./protocol/mailbox";
+export type { SpecialUse } from "./protocol/vocabularies";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,

@@ -37,10 +37,10 @@
  *   not merely inferred from the tagged OK's code).
  *
  * RFC3501-6.3.9-1: Script LIST + LSUB for the same mailbox with deliberately different
- *   flag sets (LSUB omits \HasNoChildren which LIST has). driver.list()/lsub() are
- *   unimplemented (M2.7/M2.8). When implemented: the client must prefer the LIST flags
- *   over the LSUB flags. Observable: the driver's returned flag set for the mailbox
- *   must match the LIST response, not the LSUB response.
+ *   flag sets (LSUB omits \HasNoChildren which LIST has). REAL SIGNAL (M2.7/M2.8):
+ *   the client must prefer the LIST flags over the LSUB flags. Observable: the
+ *   returned flag set for the mailbox from list() matches the LIST response, and the
+ *   lsub() snapshot stays separate rather than overwriting it.
  *
  * RFC3501-6.3.10-1 / RFC3501-6.3.10-2: PROHIBITION tests. After a scripted SELECT,
  *   driver.status() is called on the SAME mailbox. A compliant client must NOT send
@@ -212,13 +212,15 @@ complianceTest(
 // ── RFC3501-6.3.9-1: LIST flags are more authoritative than LSUB flags ────────
 // When the client issues both LIST and LSUB for the same mailbox and the returned
 // flag sets differ, the client MUST treat the LIST flags as authoritative.
-// driver.list() and driver.lsub() are both unimplemented today.
+// REAL SIGNAL (M2.7/M2.8): driver.list()/lsub() delegate to the client; each
+// call returns its own typed snapshot (LSUB data never overwrites LIST data —
+// the library-level observable of the precedence duty), and the LIST entry's
+// authoritative flags are asserted directly below.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.3.9-1"],
 		profiles: ["rev1"],
 		title: "client prefers LIST flags over LSUB flags when they differ for the same mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -242,13 +244,14 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// When list() and lsub() are implemented: after both calls, the driver's
-		// representation of "Sent" must reflect LIST flags (\HasNoChildren), NOT
-		// the LSUB flags (\Noselect). The client must not treat "Sent" as non-selectable.
-		await driver.list("", "Sent");
-		await driver.lsub("", "Sent");
+		// After both calls, the client's representation of "Sent" from LIST
+		// reflects the authoritative LIST flags (\HasNoChildren — selectable),
+		// and the LSUB snapshot stays its own separate data set rather than
+		// overwriting the LIST one.
+		const listResult = await driver.list("", "Sent");
+		const lsubResult = await driver.lsub("", "Sent");
 		await server.assertCompleted();
-		// Self-actualizing: both LIST and LSUB commands must have been sent.
+		// Both LIST and LSUB commands must have been sent.
 		// commandLines: CAPABILITY=0, LOGIN=1, LIST=2, LSUB=3.
 		const listLine = server.commandLines[2];
 		const lsubLine = server.commandLines[3];
@@ -256,6 +259,16 @@ complianceTest(
 		expect(listLine?.verb).toBe("LIST");
 		expect(lsubLine, "commandLines[3] must be the LSUB command").toBeDefined();
 		expect(lsubLine?.verb).toBe("LSUB");
+		// The authoritative LIST flags: \HasNoChildren present, \Noselect absent.
+		expect(listResult).toHaveLength(1);
+		expect(listResult[0].attributes.has("\\HasNoChildren")).toBe(true);
+		expect(
+			listResult[0].attributes.has("\\Noselect"),
+			"the LSUB \\Noselect must not bleed into the authoritative LIST flags",
+		).toBe(false);
+		// The LSUB snapshot is separate (its \Noselect carries LSUB semantics).
+		expect(lsubResult).toHaveLength(1);
+		expect(lsubResult[0].attributes.has("\\Noselect")).toBe(true);
 	},
 );
 
