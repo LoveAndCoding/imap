@@ -361,9 +361,21 @@ describe("CommandWriter", () => {
 			expect(flat(w)).toBe('"My Mailbox"');
 		});
 
-		test("non-ASCII name throws NotImplementedError (mUTF-7 stub, lands M2)", () => {
-			expect(() => writer().mailbox("Пример")).toThrow(
-				NotImplementedError,
+		test("non-ASCII name encodes as modified UTF-7 without UTF8=ACCEPT", () => {
+			// RFC 3501 §5.1.3 duty: 8-bit names are never sent unencoded on
+			// rev1. "Entwürfe" is the classic vector.
+			const w = writer();
+			w.mailbox("Entwürfe");
+			expect(flat(w)).toBe("Entw&APw-rfe");
+		});
+
+		test("non-ASCII name passes through as UTF-8 literal with UTF8=ACCEPT", () => {
+			const w = writer((cap) => cap.toUpperCase() === "UTF8=ACCEPT");
+			w.mailbox("Entwürfe");
+			// Raw UTF-8 is 8-bit content → astring's literal path.
+			const bytes = Buffer.from("Entwürfe", "utf8");
+			expect(flat(w)).toBe(
+				`{${bytes.byteLength}}\r\n${bytes.toString("binary")}`,
 			);
 		});
 

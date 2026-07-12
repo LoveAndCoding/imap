@@ -229,22 +229,16 @@ function pickLiteralForm(
 const SEQUENCE_SET_RE = /^[0-9:,*$]+$/;
 
 /**
- * STUB (lands in M2, spec §5.2): encodes a non-ASCII mailbox name for the
- * wire — modified UTF-7 for servers without `UTF8=ACCEPT` enabled, or raw
- * UTF-8 astring/literal when it is. Neither codec exists yet, so this
- * unconditionally throws. It is still given its final shape/name now so
- * `mailbox()`'s call site does not need to change when M2 lands.
+ * Encodes a non-ASCII mailbox name for the wire (spec §5.2): modified
+ * UTF-7 for servers without `UTF8=ACCEPT` enabled, raw UTF-8 when it is.
+ * Thin delegation to the protocol-layer codec (src/protocol/mailbox-name)
+ * so this module keeps its historical export while the codec logic lives
+ * beside the other protocol vocabularies. The codec also canonicalizes a
+ * bare INBOX, which is harmless here — `mailbox()` has already done it.
  */
-export function encodeMailboxName(
-	name: string,
-	opts: { utf8Accepted: boolean },
-): string {
-	throw new NotImplementedError(
-		`non-ASCII mailbox name encoding (received "${name}", UTF8=ACCEPT ` +
-			`${opts.utf8Accepted ? "enabled" : "not enabled"}) — the mUTF-7/UTF-8 ` +
-			"mailbox-name codec lands in M2",
-	);
-}
+import { encodeMailboxName } from "../protocol/mailbox-name";
+
+export { encodeMailboxName };
 
 /**
  * Builds the wire-serialized argument list for one IMAP command (spec
@@ -522,9 +516,14 @@ export class CommandWriter {
 			if (isAsciiOnly(canonical)) {
 				this.astring(canonical);
 			} else {
-				encodeMailboxName(canonical, {
-					utf8Accepted: this.has("UTF8=ACCEPT"),
-				});
+				// Non-ASCII: mUTF-7 (always ASCII → quoted/atom astring) when
+				// UTF8=ACCEPT is not enabled, raw UTF-8 (astring takes the
+				// literal path for 8-bit content) when it is.
+				this.astring(
+					encodeMailboxName(canonical, {
+						utf8Accepted: this.has("UTF8=ACCEPT"),
+					}),
+				);
 			}
 			return this;
 		});
