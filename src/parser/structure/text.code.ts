@@ -107,18 +107,30 @@ export class AtomTextCode {
 
 	constructor(public readonly kind: string, tokens: LexerTokenList) {
 		if (tokens && tokens.length) {
-			// Most resp-code arguments handled here (e.g. BADCOMPARATOR,
-			// UNDEFINED-FILTER, REFERRAL, NOUPDATE, MAXCONVERTMESSAGES/PARTS)
-			// are BARE per their RFCs' ABNF -- not surrounded by parens like
-			// e.g. APPENDUID's uid-set. splitSpaceSeparatedList's default
-			// "(" / ")" delimiters would never "start" on such an argument
-			// list, silently dropping it (contents === []); passing null/null
-			// treats the whole token list as already "in" the list so bare,
-			// top-level-space-separated arguments are preserved in order
-			// (spec §11.2/I-6: resp-code arguments are data, not discarded).
-			this.contents = splitSpaceSeparatedList(tokens, null, null).map(
-				(tkn): string => getOriginalInput(tkn),
+			// Resp-code arguments come in two ABNF shapes, and both are data
+			// that must be preserved (spec §11.2/I-6):
+			//  - parenthesized tuples, e.g. INPROGRESS ("A001" 454 1000),
+			//    MAILBOXID (F2212ea87-...), BADEVENT (MessageNew ...): the
+			//    default "(" / ")" delimiters strip the parens and split the
+			//    inner items, preserving nested grouping;
+			//  - BARE argument lists, e.g. REFERRAL <url> <url>,
+			//    UNDEFINED-FILTER name, NOUPDATE "tag", MAXCONVERTMESSAGES n:
+			//    the default delimiters would never "start" on these,
+			//    silently dropping them (contents === []); null/null treats
+			//    the whole token list as already "in" the list so top-level
+			//    space-separated arguments survive in order.
+			// Pick by the leading token: "(" means the tuple form.
+			const firstMeaningful = tokens.find(
+				(tkn) => !tkn.isType(TokenTypes.space),
 			);
+			const isParenthesized =
+				!!firstMeaningful &&
+				firstMeaningful.isType(TokenTypes.operator) &&
+				firstMeaningful.getTrueValue() === "(";
+			const split = isParenthesized
+				? splitSpaceSeparatedList(tokens)
+				: splitSpaceSeparatedList(tokens, null, null);
+			this.contents = split.map((tkn): string => getOriginalInput(tkn));
 		}
 	}
 }
