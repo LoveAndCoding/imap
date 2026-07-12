@@ -92,7 +92,7 @@ export class ComplianceDriver {
 
 	public async connect(opts: DriverConnectOptions): Promise<boolean> {
 		this.session = new Session(this.toConfig(opts));
-		return this.session.start();
+		return this.withConnectBackstop("connect", opts, this.session.start());
 	}
 
 	/**
@@ -115,7 +115,52 @@ export class ComplianceDriver {
 				this.events.push({ type: ev, detail });
 			}) as never);
 		}
-		return this.connection.connect();
+		return this.withConnectBackstop("connectLow", opts, this.connection.connect());
+	}
+
+	/**
+	 * Backstop for a connect promise that never settles: the client currently
+	 * has no graceful failure path for some rejected TLS handshakes (see the
+	 * TLS-rejection findings), so without this every such test dies at
+	 * vitest's opaque "Test timed out" instead of a diagnosable driver error.
+	 * The client's own timeout (toConfig: timeoutMs ?? 3000) gets a head
+	 * start; the backstop fires only if the promise neither resolves nor
+	 * rejects, and tears the half-open client down so a later end() cannot
+	 * hang on it.
+	 */
+	private async withConnectBackstop<T>(
+		kind: "connect" | "connectLow",
+		opts: DriverConnectOptions,
+		attempt: Promise<T>,
+	): Promise<T> {
+		const ms = (opts.timeoutMs ?? 3000) + 1000;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				attempt,
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => {
+						// Best-effort teardown — the hung connect may ignore it,
+						// so don't await; just make sure end() won't block on it.
+						const session = this.session;
+						const connection = this.connection;
+						this.session = undefined;
+						this.connection = undefined;
+						void Promise.resolve(session?.end()).catch(() => undefined);
+						void Promise.resolve(connection?.disconnect()).catch(() => undefined);
+						reject(
+							new Error(
+								`driver ${kind}() did not settle within ${ms}ms ` +
+									`(security=${opts.security} ${opts.host}:${opts.port}); ` +
+									`the client promise neither resolved nor rejected — torn down by driver backstop`,
+							),
+						);
+					}, ms);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
 	}
 
 	public async end(): Promise<void> {

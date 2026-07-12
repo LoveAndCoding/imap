@@ -29,3 +29,27 @@ test("driver connects over implicit TLS with a trusted localhost cert", async ()
 	expect(driver.hasCapability("IMAP4rev1")).toBe(true);
 	await server.assertCompleted();
 });
+
+test("a rejected TLS identity surfaces as a driver rejection, not a hang", async () => {
+	// The client currently never settles its connect promise when certificate
+	// identity verification fails, so every TLS-rejection spec test used to die
+	// at vitest's opaque test timeout. The driver's connect backstop must turn
+	// that into a prompt, diagnosable rejection. (If the client gains a
+	// graceful failure path, connect() rejects on its own — this test asserts
+	// the observable contract either way: rejection, never a hang.)
+	const wrongHost = loadCertFixture("wrong-host");
+	const server = await f.startServer({ tlsImplicit: wrongHost });
+	server.arm([[send("* OK secure ready\r\n")]]);
+	const driver = f.newDriver();
+	await expect(
+		driver.connect({
+			host: "127.0.0.1",
+			port: server.port,
+			security: "implicit",
+			ca: wrongHost.cert,
+			timeoutMs: 500,
+		}),
+	).rejects.toThrow();
+	// The backstop also cleared the half-open client, so teardown cannot hang.
+	expect(driver.active).toBe(false);
+});
