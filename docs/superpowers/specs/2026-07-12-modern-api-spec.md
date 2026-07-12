@@ -101,7 +101,10 @@ export interface ImapClientConfig {
 	auth?: ImapAuthConfig;            // omit → connect() stops in not-authenticated
 	allowInsecureAuth?: boolean;      // default false — §10.3 (RFC 8314)
 	id?: IdCommandValues | false;     // false = never send ID; default library ID
-	enable?: "auto" | string[] | false;  // §3.4; default "auto"
+	extensions?: "auto" | string[] | false;  // which server extensions to ENABLE (§3.4);
+	                                         //   default "auto". Named `extensions`, not
+	                                         //   `enable`: "enable" reads as an on/off
+	                                         //   switch for the client itself.
 	compress?: "auto" | false;        // default false until M5, then "auto"
 	maxInlineSize?: number;           // fetch part buffering cutoff, default 1 MiB (§5.4)
 	timeouts?: {
@@ -177,7 +180,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	list(opts?: ListOptions): Promise<MailboxInfo[]>;
 	lsub(ref: string, pattern: string): Promise<MailboxInfo[]>;  // rev1 only
 	status(mailbox: string, items: StatusItem[]): Promise<MailboxStatusResult>;
-	create(mailbox: string, opts?: { specialUse?: string }): Promise<void>;
+	create(mailbox: string, opts?: { specialUse?: SpecialUse }): Promise<void>;
 	delete(mailbox: string): Promise<void>;
 	rename(from: string, to: string): Promise<void>;
 	subscribe(mailbox: string): Promise<void>;
@@ -250,7 +253,7 @@ export interface ImapClientEvents {
 
 `connect()` is rejected (StateError) unless state is `disconnected`.
 
-### 3.4 ENABLE policy (`enable` config)
+### 3.4 ENABLE policy (`extensions` config)
 
 "auto" (default): after authentication, ENABLE every capability in the
 client's *understood-enable set* that the server advertises. Initial set:
@@ -407,7 +410,7 @@ export interface MailboxInfo {
 	name: string;                          // decoded UTF-8
 	delimiter: string | null;
 	attributes: ReadonlySet<string>;       // ci-normalized, incl. \HasChildren…
-	specialUse?: string;                   // "\\Archive" …
+	specialUse?: SpecialUse | (string & {});   // open grade — server-sent (§5.6)
 	status?: Partial<MailboxStatusResult>; // when returnStatus
 	oldName?: string;                      // OLDNAME (RFC 5465 §5.4 / 9051)
 	childInfo?: string[];                  // RFC 5258 CHILDINFO
@@ -565,6 +568,39 @@ export type TypedResponseCode = { name: KnownCodeName; …typed args }
 Codes are parsed case-insensitively; codes arriving in states where they are
 meaningless are ignored-with-debug-log, not errors (`RFC9051-11.3-3`).
 
+### 5.6 Closed vocabularies (literal unions)
+
+Rule: wherever an RFC defines a closed value set, the public type is a
+string-literal union, not bare `string` — autocomplete carries the spec.
+Two grades:
+
+- **Client-sent, RFC-closed** → strict union; anything else is a type error.
+- **Server-sent or open-on-the-wire** → `KnownUnion | (string & {})`:
+  known values autocomplete, unknown wire values still type-check as data
+  (tolerance invariant I-6 extends into the type system).
+
+```ts
+export type SpecialUse =
+	| "\\All" | "\\Archive" | "\\Drafts" | "\\Flagged"
+	| "\\Junk" | "\\Sent" | "\\Trash"          // RFC 6154
+	| "\\Important";                            // RFC 8457
+export type SystemFlag =
+	| "\\Seen" | "\\Answered" | "\\Flagged" | "\\Deleted" | "\\Draft";
+export type Flag = SystemFlag | (string & {}); // keywords are open by design
+export type SortBase =
+	| "ARRIVAL" | "CC" | "DATE" | "FROM" | "SIZE" | "SUBJECT" | "TO"  // RFC 5256
+	| "DISPLAYFROM" | "DISPLAYTO";              // RFC 5957, gated
+export type SortKey = SortBase | `REVERSE ${SortBase}`;
+export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";
+```
+
+Applied through the surface: `create()`'s `specialUse` is strict
+`SpecialUse` (client-sent); `MailboxInfo.specialUse` and mailbox
+`attributes` values are the open grade (server-sent); all flag parameters
+take `Flag[]`; `StatusItem` (§5.2) and `SearchOptions.return` (§5.3) were
+already unions. Same treatment for any future closed set — new vocabularies
+land beside these in `protocol/`.
+
 ---
 
 ## 5b. `MailboxSession`
@@ -591,10 +627,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	fetchOne(uid: number, items: FetchRequest, opts?: FetchModifiers): Promise<FetchedMessage | null>;
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
 	sort(sort: SortKey[], criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
-	thread(algorithm: "ORDEREDSUBJECT" | "REFERENCES", criteria: SearchCriteria, opts?: SearchOptions): Promise<ThreadNode[]>;
-	addFlags(uids: SequenceInput, flags: string[], opts?: StoreModifiers): Promise<StoreResult>;
-	removeFlags(uids: SequenceInput, flags: string[], opts?: StoreModifiers): Promise<StoreResult>;
-	setFlags(uids: SequenceInput, flags: string[], opts?: StoreModifiers): Promise<StoreResult>;
+	thread(algorithm: ThreadAlgorithm, criteria: SearchCriteria, opts?: SearchOptions): Promise<ThreadNode[]>;
+	addFlags(uids: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	removeFlags(uids: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	setFlags(uids: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	copy(uids: SequenceInput, dest: string): Promise<CopyResult>;
 	move(uids: SequenceInput, dest: string): Promise<CopyResult>;   // native MOVE only, gated
 	expunge(uids?: SequenceInput): Promise<number[]>;  // arg → UID EXPUNGE (UIDPLUS, gated)
