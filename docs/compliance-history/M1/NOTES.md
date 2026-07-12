@@ -44,3 +44,28 @@ the RFC4422/4959 exit rows); SCRAM-SHA-1/-256 and ANONYMOUS remain M5.
 - M0's deferred RFC9051-11.3-1/-3 now genuinely pass against the
   ImapClient surface (unhandled = I-6 tolerance channel; no state
   action taken).
+
+## Phase-boundary review outcome (post-close addendum)
+
+The review ran as a single-reviewer deep pass (the multi-lens pipeline
+hit a sub-agent result-retrieval gap in this environment — since fixed
+in .claude/agents/ via TaskOutput + anti-stall rules; the M2 close
+review runs the full pipeline). It found and we fixed before closing:
+
+- CRITICAL: §10.3 cleartext credential gate bypassable via
+  run(new LoginCommand(...)) — closed with a sendsCredentials
+  chokepoint in ImapClient.run().
+- CRITICAL: router tag/claimant/continuation-owner state leaked on
+  mid-command disconnects, permanently wedging AUTHENTICATE/STARTTLS on
+  a reused client — closed with Router.reset() on teardown + a teardown
+  signal raced by executeCommand, plus three adjacent reconnect bugs
+  (stale socket handlers, single-use parser pipeline, stale client
+  registry).
+- Verified: package.json exports map matches the actual build output.
+- Resolved: UTF8=ACCEPT auto-ENABLE preceded its codec by one commit;
+  the M2.1 codec + writer delegation have since landed, closing the gap.
+
+Tracked follow-ups (non-blocking): StartTLSCommand.states is a dead
+declaration until a public starttls() exists; add an interleaving test
+for logout() racing a mid-flight connect(); re-run the full lens
+pipeline at the M2 boundary.
