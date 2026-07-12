@@ -135,6 +135,28 @@ function quoteEscape(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+/**
+ * A single `list-char` (RFC 3501/9051 §9): ATOM-CHAR, a list-wildcard
+ * ("%"/"*"), or the resp-special "]". Used by `listMailbox()` to decide
+ * whether a pattern may be emitted as a bare token.
+ */
+function isListChar(ch: string): boolean {
+	return isAsciiAtomChar(ch) || ch === "%" || ch === "*" || ch === "]";
+}
+
+/** Whole-string `1*list-char` validation (non-empty, every char legal). */
+function isValidListMailboxToken(s: string): boolean {
+	if (s.length === 0) {
+		return false;
+	}
+	for (const ch of s) {
+		if (!isListChar(ch)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /** Whole-string 7-bit check, used by `mailbox()` to decide whether a name
  *  can go straight through `astring()` or needs the (stubbed) UTF-7/UTF-8
  *  mailbox-name codec. */
@@ -533,6 +555,46 @@ export class CommandWriter {
 						utf8Accepted: this.has("UTF8=ACCEPT"),
 					}),
 				);
+			}
+			return this;
+		});
+	}
+
+	/**
+	 * LIST/LSUB mailbox pattern (RFC 3501/9051 §9 `list-mailbox = 1*list-char
+	 * / string`, where `list-char = ATOM-CHAR / list-wildcards /
+	 * resp-specials` — i.e. an atom that may additionally contain the "%"/"*"
+	 * wildcards and "]"). Distinct from `mailbox()` on two counts, both
+	 * deliberate:
+	 *   - a pattern containing wildcards can (and conventionally does) go on
+	 *     the wire as a bare token (`LIST "" %`), which `astring()` would
+	 *     reject as an atom and therefore quote — several LIST-family RFC
+	 *     worked examples (RFC 7889 §3.2, RFC 8438 §3) show the bare form;
+	 *   - no INBOX canonicalization: a *pattern* "inbox" is matched against
+	 *     the INBOX name case-insensitively by the server (RFC 3501/9051
+	 *     §5.1); rewriting the caller's pattern would change no semantics but
+	 *     would misrepresent what the caller asked for.
+	 * Non-ASCII patterns take the same codec path as `mailbox()` (mUTF-7
+	 * unless UTF8=ACCEPT — the pattern grammar is mailbox-name-shaped, RFC
+	 * 5258 §5); anything not expressible as bare list-chars falls back to
+	 * quoted/literal exactly like `astring()`.
+	 */
+	listMailbox(pattern: string): this {
+		return this.atomic(() => {
+			if (typeof pattern !== "string") {
+				throw new RangeError("listMailbox: expected a string");
+			}
+			const encoded = isAsciiOnly(pattern)
+				? pattern
+				: encodeMailboxName(pattern, {
+						utf8Accepted: this.has("UTF8=ACCEPT"),
+					});
+			if (isValidListMailboxToken(encoded)) {
+				this.emitValue(Buffer.from(encoded, "ascii"));
+			} else if (isQuotable(encoded)) {
+				this.emitValue(Buffer.from(`"${quoteEscape(encoded)}"`, "ascii"));
+			} else {
+				this.emitLiteral(Buffer.from(encoded, "utf8"), false);
 			}
 			return this;
 		});

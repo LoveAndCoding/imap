@@ -386,6 +386,60 @@ describe("CommandWriter", () => {
 		});
 	});
 
+	describe("listMailbox()", () => {
+		test.each([
+			["*", "*"],
+			["%", "%"],
+			["Sent", "Sent"],
+			["Drafts/%", "Drafts/%"],
+			["Archive/*", "Archive/*"],
+			["a]b", "a]b"], // resp-specials "]" is a list-char
+		])("emits %s as a bare list-mailbox token", (input, expected) => {
+			const w = writer();
+			w.listMailbox(input);
+			expect(flat(w)).toBe(expected);
+		});
+
+		test("falls back to a quoted string when the pattern is not bare-safe", () => {
+			const w = writer();
+			w.listMailbox("My Folder/%");
+			expect(flat(w)).toBe('"My Folder/%"');
+		});
+
+		test("quotes the empty pattern", () => {
+			const w = writer();
+			w.listMailbox("");
+			expect(flat(w)).toBe('""');
+		});
+
+		test("does NOT canonicalize an inbox-shaped pattern (patterns are matched, not named)", () => {
+			const w = writer();
+			w.listMailbox("inbox");
+			expect(flat(w)).toBe("inbox");
+		});
+
+		test("non-ASCII pattern encodes as modified UTF-7 without UTF8=ACCEPT (RFC 5258 §5)", () => {
+			const w = writer();
+			w.listMailbox("Entwürfe/%");
+			expect(flat(w)).toBe("Entw&APw-rfe/%");
+		});
+
+		test("non-ASCII pattern passes through as UTF-8 literal with UTF8=ACCEPT", () => {
+			const w = writer((cap) => cap.toUpperCase() === "UTF8=ACCEPT");
+			w.listMailbox("Entwürfe");
+			const bytes = Buffer.from("Entwürfe", "utf8");
+			expect(flat(w)).toBe(
+				`{${bytes.byteLength}}\r\n${bytes.toString("binary")}`,
+			);
+		});
+
+		test("rejects non-string input", () => {
+			expect(() => writer().listMailbox(42 as unknown as string)).toThrow(
+				RangeError,
+			);
+		});
+	});
+
 	describe("sequenceSet()", () => {
 		test("emits a validated toString() form", () => {
 			const w = writer();

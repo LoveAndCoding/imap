@@ -7,6 +7,8 @@ import * as tls from "node:tls";
 import { Connection, ImapClient } from "../../../src/index";
 import type {
 	ImapClientConfig,
+	ListOptions,
+	MailboxInfo,
 	MailboxSession,
 	MailboxStatusResult,
 	NamespaceSet,
@@ -464,23 +466,108 @@ export class ComplianceDriver {
 	public async unsubscribe(mailbox: string): Promise<void> {
 		await this.requireClient().unsubscribe(mailbox);
 	}
-	// NOTE: the options surface for extended LIST now EXISTS on this signature —
-	// `selectOptions` (e.g. SUBSCRIBED, RECURSIVEMATCH), `returnOptions` (e.g.
-	// RETURN (STATUS (...) SPECIAL-USE CHILDREN)), and multiple `patterns` — so
-	// the option-prohibition tests RFC9051-6.3.9-5 (unadvertised option) and
-	// RFC9051-6.3.9-6 (duplicate option) are no longer vacuous by construction:
-	// a test CAN drive an option to be emitted. The verb itself remains
-	// unimplemented (throws NotImplementedError), so those tests currently
-	// self-actualize as unimplemented rather than passing vacuously.
+	/**
+	 * LIST (RFC 3501/9051 §6.3.8/§6.3.9 + the extended-LIST family). Delegates
+	 * to `ImapClient.list()` with zero protocol logic — this method only maps
+	 * the driver's raw wire-shaped option strings (`selectOptions`/
+	 * `returnOptions`/`patterns`, mirroring the RFC grammars the scripted
+	 * tests reason about) onto the public `ListOptions` shape. All option
+	 * prohibitions (RFC 5258 §3 combinations → `RangeError`; unadvertised
+	 * capabilities → `CapabilityError`, zero bytes either way) are enforced by
+	 * the client/command layer, never here.
+	 *
+	 * The one translation this boundary is allowed to make (same rationale as
+	 * `select()`'s CONDSTORE/QRESYNC note above): a driver request the public
+	 * API **cannot express** throws `NotImplementedError`. That covers (a) an
+	 * option token outside `ListOptions`' vocabulary (e.g. `RETURN (MYRIGHTS)`
+	 * — RFC 8440 has no M2 surface), and (b) a *duplicated* option token:
+	 * every `ListOptions` option is a boolean field, so "the same option
+	 * twice" is structurally inexpressible — which is exactly how the client
+	 * satisfies the RFC5258-3-2/RFC9051-6.3.9-6 SHOULD-NOT (a caller cannot
+	 * even ask for a duplicate, so none can reach the wire).
+	 */
 	public async list(
-		_ref: string,
-		_pattern: string,
-		_opts?: { selectOptions?: string[]; returnOptions?: string[]; patterns?: string[] },
-	): Promise<never> {
-		throw new NotImplementedError("LIST");
+		ref: string,
+		pattern: string,
+		opts?: { selectOptions?: string[]; returnOptions?: string[]; patterns?: string[] },
+	): Promise<MailboxInfo[]> {
+		const mapped: ListOptions = {
+			ref,
+			pattern: opts?.patterns ?? pattern,
+		};
+
+		const seenSelect = new Set<string>();
+		for (const raw of opts?.selectOptions ?? []) {
+			const option = raw.toUpperCase();
+			if (seenSelect.has(option)) {
+				throw new NotImplementedError(
+					`LIST duplicate selection option ${option} (ListOptions cannot express a repeated option)`,
+				);
+			}
+			seenSelect.add(option);
+			switch (option) {
+				case "SUBSCRIBED":
+					mapped.subscribed = true;
+					break;
+				case "RECURSIVEMATCH":
+					mapped.recursiveMatch = true;
+					break;
+				case "REMOTE":
+					mapped.remote = true;
+					break;
+				case "SPECIAL-USE":
+					mapped.specialUse = true;
+					break;
+				default:
+					throw new NotImplementedError(`LIST selection option ${raw}`);
+			}
+		}
+
+		const seenReturn = new Set<string>();
+		for (const raw of opts?.returnOptions ?? []) {
+			// The STATUS return option arrives pre-joined in its RFC 5819 wire
+			// shape, e.g. "STATUS (MESSAGES UNSEEN)".
+			const statusMatch = /^STATUS\s*\(\s*([^)]*?)\s*\)$/i.exec(raw.trim());
+			const option = statusMatch ? "STATUS" : raw.trim().toUpperCase();
+			if (seenReturn.has(option)) {
+				throw new NotImplementedError(
+					`LIST duplicate return option ${option} (ListOptions cannot express a repeated option)`,
+				);
+			}
+			seenReturn.add(option);
+			if (statusMatch) {
+				mapped.returnStatus = statusMatch[1]
+					.split(/\s+/)
+					.filter((item) => item.length > 0) as StatusItem[];
+				continue;
+			}
+			switch (option) {
+				case "SUBSCRIBED":
+					mapped.returnSubscribed = true;
+					break;
+				case "CHILDREN":
+					mapped.returnChildren = true;
+					break;
+				case "SPECIAL-USE":
+					if (mapped.specialUse === true) {
+						throw new NotImplementedError(
+							"LIST SPECIAL-USE as both a selection and a return option (ListOptions expresses one grade per call)",
+						);
+					}
+					mapped.specialUse = "return";
+					break;
+				default:
+					throw new NotImplementedError(`LIST return option ${raw}`);
+			}
+		}
+
+		return this.requireClient().list(mapped);
 	}
-	public async lsub(_ref: string, _pattern: string): Promise<never> {
-		throw new NotImplementedError("LSUB");
+
+	/** LSUB (RFC 3501 §6.3.9, rev1 only). Straight delegation to
+	 *  `ImapClient.lsub()` — zero protocol logic here. */
+	public async lsub(ref: string, pattern: string): Promise<MailboxInfo[]> {
+		return this.requireClient().lsub(ref, pattern);
 	}
 	/**
 	 * STATUS (RFC 3501 §6.3.10 / RFC 9051 §6.3.11) -- delegates straight to

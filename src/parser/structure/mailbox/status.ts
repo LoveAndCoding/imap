@@ -2,6 +2,7 @@ import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { utf7 } from "../../encoding";
 import {
+	getAStringValue,
 	getOriginalInput,
 	matchesFormat,
 	pairedArrayLoopGenerator,
@@ -151,7 +152,21 @@ export class MailboxStatus {
 		const nameTokens = tokens.slice(0, nextSpIndex);
 		const attListTokens = tokens.slice(nextSpIndex + 1);
 
-		this.name = utf7.decode(getOriginalInput(nameTokens));
+		// The name is an astring: a quoted name must contribute its VALUE
+		// (`"INBOX"` → INBOX), exactly as MailboxListing parses its own name —
+		// `getOriginalInput` alone would keep the surrounding quote characters
+		// in the name (M2.7 fix; LIST-STATUS pairs `* STATUS` names against
+		// `* LIST` names, so the two parsers must agree). Fall back to the
+		// original raw input for any token run `getAStringValue` can't model
+		// (tolerance posture unchanged — never throw on an odd name shape a
+		// prior version accepted).
+		let nameValue: string;
+		try {
+			nameValue = getAStringValue(nameTokens);
+		} catch {
+			nameValue = getOriginalInput(nameTokens);
+		}
+		this.name = utf7.decode(nameValue);
 
 		const attList = splitSpaceSeparatedList(attListTokens);
 		for (const [keyTokens, valueTokens] of pairedArrayLoopGenerator(

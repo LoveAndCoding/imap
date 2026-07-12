@@ -3,8 +3,79 @@ import { OperatorToken } from "../../../lexer/tokens";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { ciIncludes } from "../../../lexer/case-insensitive";
 import { utf7 } from "../../encoding";
-import { getAStringValue, getOriginalInput } from "../../utility";
+import {
+	getAStringValue,
+	getOriginalInput,
+	pairedArrayLoopGenerator,
+	splitSpaceSeparatedList,
+} from "../../utility";
 import { FlagList } from "../flag";
+
+/**
+ * One RFC 5258 §4 `mbox-list-extended-item`: an astring tag followed by its
+ * data. `values` flattens the item's data to plain strings:
+ *   - `("OLDNAME" ("OldMailbox"))`      → { tag: "OLDNAME", values: ["OldMailbox"] }
+ *   - `("CHILDINFO" ("SUBSCRIBED"))`    → { tag: "CHILDINFO", values: ["SUBSCRIBED"] }
+ *   - `("XTAG" "bare")`                 → { tag: "XTAG", values: ["bare"] }
+ * A data element that is itself a nested list (deeper than one level) is
+ * preserved as its raw original text in a single `values` entry — this
+ * structure records extended items, it does not model every vendor shape
+ * (I-6: unknown extended data is data, never an error).
+ */
+export interface ListingExtendedItem {
+	readonly tag: string;
+	readonly values: readonly string[];
+}
+
+/**
+ * Best-effort parse of the raw extended-data token run trailing the mailbox
+ * name (RFC 5258 §4: `mbox-list-extended = "(" [item *(SP item)] ")"`,
+ * `item = astring SP (astring / "(" ... ")")`). Tolerant by construction
+ * (spec §11.2/I-6): any shape this doesn't recognize — or any throw from the
+ * token utilities — yields `undefined`, leaving the raw `extendedData`
+ * string as the only representation, exactly as before this parser existed.
+ * The M0.5 tolerance posture is unchanged: nothing here ever throws out of
+ * `fromListing`.
+ */
+function parseExtendedItems(
+	tokens: LexerTokenList,
+): ListingExtendedItem[] | undefined {
+	try {
+		// Top-level blocks inside the outermost parens, alternating
+		// tag, data, tag, data, ...
+		const blocks = splitSpaceSeparatedList(tokens, "(", ")");
+		if (blocks.length === 0 || blocks.length % 2 !== 0) {
+			return undefined;
+		}
+		const items: ListingExtendedItem[] = [];
+		for (const [tagTokens, dataTokens] of pairedArrayLoopGenerator(blocks)) {
+			const tag = getAStringValue(tagTokens);
+			let values: string[];
+			if (
+				dataTokens[0]?.isType(TokenTypes.operator) &&
+				dataTokens[0].getTrueValue() === "("
+			) {
+				values = splitSpaceSeparatedList(dataTokens, "(", ")").map(
+					(valueTokens) => {
+						try {
+							return getAStringValue(valueTokens);
+						} catch {
+							// A nested-list (or otherwise multi-token) element:
+							// preserve it raw rather than failing the whole item.
+							return getOriginalInput(valueTokens);
+						}
+					},
+				);
+			} else {
+				values = [getAStringValue(dataTokens)];
+			}
+			items.push({ tag, values });
+		}
+		return items.length ? items : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 export enum SpecialUse {
 	"All" = "All",
@@ -98,8 +169,11 @@ export class MailboxListing {
 		const extendedData = extendedTokens.length
 			? getOriginalInput(extendedTokens)
 			: undefined;
+		const extendedItems = extendedTokens.length
+			? parseExtendedItems(extendedTokens)
+			: undefined;
 
-		return new MailboxListing(name, flags, separator, extendedData);
+		return new MailboxListing(name, flags, separator, extendedData, extendedItems);
 	}
 
 	constructor(
@@ -107,9 +181,15 @@ export class MailboxListing {
 		public readonly flags: FlagList,
 		public readonly separator: null | string,
 		// Raw, uninterpreted RFC 5258 extended list data (e.g. OLDNAME,
-		// CHILDINFO) trailing the mailbox name. Captured now per §11.5;
-		// typed accessors land with the verbs/extensions that need them.
+		// CHILDINFO) trailing the mailbox name. Captured per §11.5 and kept
+		// verbatim even now that `extendedItems` parses the common shape —
+		// the raw string is the tolerance-preserving fallback for anything
+		// the typed parse can't represent.
 		public readonly extendedData?: string,
+		// Typed view of the same data (M2.7): the RFC 5258 §4 tag/data item
+		// pairs, when the extended data parses as that shape; `undefined`
+		// otherwise (never an error — see `parseExtendedItems`).
+		public readonly extendedItems?: readonly ListingExtendedItem[],
 	) {
 		this.name = utf7.decode(name);
 	}

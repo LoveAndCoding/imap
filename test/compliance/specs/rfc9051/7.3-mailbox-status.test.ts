@@ -27,14 +27,13 @@
  * Design notes per requirement:
  *
  * RFC9051-7.3.1-1/-2/-3 (LIST duties):
- *   driver.list() is unimplemented today (throws NotImplementedError) →
- *   annotated unimplemented. Each script arms a LIST exchange whose response
- *   carries the pathological attribute combination the duty governs (conflicting
- *   \HasChildren+\HasNoChildren; \HasChildren with no child entry; an unknown
- *   extended field). The binding minimum today is that the client accepts the
- *   response without erroring and does not issue an unscripted follow-up (e.g. a
- *   child-expansion LIST). When list() lands, the scripts self-actualize: the
- *   pathological response must be handled per the duty and the single-LIST
+ *   REAL SIGNAL (M2.7): driver.list() delegates to ImapClient.list(). Each
+ *   script arms a LIST exchange whose response carries the pathological
+ *   attribute combination the duty governs (conflicting
+ *   \HasChildren+\HasNoChildren — reported as if both were absent; \HasChildren
+ *   with no child entry; an unknown extended field). The client accepts the
+ *   response without erroring, resolves the typed listing, and issues no
+ *   unscripted follow-up (e.g. a child-expansion LIST) — the single-LIST
  *   command count guards against a contradiction-driven follow-up.
  *
  * RFC9051-7.3.5-1 (FLAGS remembered):
@@ -105,15 +104,14 @@ complianceTest(
 // having or lacking children. Script a LIST response with both attributes; the
 // binding minimum today is that the client accepts it without erroring and does
 // not act on either (definitive) attribute — in particular it does not issue a
-// child-expansion follow-up that a firm \HasChildren would prompt.
-// driver.list() is unimplemented today → annotated unimplemented.
+// child-expansion follow-up that a firm \HasChildren would prompt. REAL SIGNAL
+// (M2.7): the typed MailboxInfo.attributes drops BOTH conflicting attributes.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.3.1-1"],
 		profiles: ["rev2"],
 		title:
 			"client treats a LIST entry with both \\HasChildren and \\HasNoChildren as if both are absent",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -130,8 +128,13 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.list("", "*");
+		const listing = await driver.list("", "*");
 		await server.assertCompleted();
+		// The duty itself, observable on the typed result: BOTH conflicting
+		// attributes are treated as absent.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].attributes.has("\\HasChildren")).toBe(false);
+		expect(listing[0].attributes.has("\\HasNoChildren")).toBe(false);
 		// Only the single LIST reached the server — the ambiguous attributes did not
 		// drive a child-expansion follow-up (which a firm \HasChildren would).
 		const listCommands = server.commandLines.filter((l) => l.verb === "LIST");
@@ -147,14 +150,13 @@ complianceTest(
 // prepared for a mailbox marked \HasChildren whose children do NOT appear in the
 // LIST response (they may not match the pattern, etc.). The client must not error
 // or assert a contradiction. Script \HasChildren on a mailbox with zero child
-// entries in the response. driver.list() is unimplemented today → unimplemented.
+// entries in the response. REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC9051-7.3.1-2"],
 		profiles: ["rev2"],
 		title:
 			"client tolerates a \\HasChildren mailbox with no child entry in the LIST response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -169,8 +171,11 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.list("", "*");
+		const listing = await driver.list("", "*");
 		await server.assertCompleted();
+		// The listing resolves normally, \HasChildren intact, no contradiction.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].attributes.has("\\HasChildren")).toBe(true);
 		// The client must remain connected and not have errored on the absent child.
 		expect(
 			driver.active,
@@ -185,13 +190,12 @@ complianceTest(
 // A LIST response may carry extended data items the client does not recognise.
 // The client MUST ignore them and parse the base response without error. Script a
 // LIST response with an unknown extended field appended after the mailbox name.
-// driver.list() is unimplemented today → annotated unimplemented.
+// REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC9051-7.3.1-3"],
 		profiles: ["rev2"],
 		title: "client ignores an unrecognized LIST extended field and parses the base response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -209,8 +213,14 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.list("", "*");
+		const listing = await driver.list("", "*");
 		await server.assertCompleted();
+		// The base entry parses normally; the unknown extended field contributed
+		// nothing (no oldName/childInfo, which only recognized items populate).
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("INBOX");
+		expect(listing[0].oldName).toBeUndefined();
+		expect(listing[0].childInfo).toBeUndefined();
 		// The client must survive the unknown extended field (no disconnect / parse
 		// abort) and treat the base LIST entry normally.
 		expect(

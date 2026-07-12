@@ -11,7 +11,10 @@
  *   anywhere in the document — defined here per the M2.10 plan task
  *   (RFC 2342 §5's three positional namespace classes), mirroring the
  *   existing `src/parser/structure/namespace.ts` structure's parsed shape.
+ * - `MailboxInfo` (§5.2): one LIST/LSUB listing entry (M2.7/M2.8).
  */
+
+import type { SpecialUse } from "./vocabularies";
 
 /**
  * STATUS data items (spec §5.2). The base five are RFC 3501 §6.3.10 /
@@ -105,4 +108,38 @@ export interface NamespaceSet {
 	personal: NamespaceDescriptor[];
 	other: NamespaceDescriptor[];
 	shared: NamespaceDescriptor[];
+}
+
+/**
+ * One LIST/LSUB listing entry (spec §5.2), built by `ListCommand`/
+ * `LsubCommand.accept()` (M2.7/M2.8).
+ *
+ * - `name` is the decoded, caller-facing UTF-8 name (mUTF-7 reversed;
+ *   bare INBOX canonicalized to exactly "INBOX").
+ * - `attributes` is ci-normalized: every attribute the server sent, with
+ *   known attribute names collapsed to their canonical RFC spelling (e.g. a
+ *   wire `\hasnochildren` reads back as `\HasNoChildren`) and unknown ones
+ *   preserved verbatim (I-6 — unrecognized values are data). For LIST (not
+ *   LSUB) the set also reflects the RFC 5258 §3.4/RFC 9051 §6.3.9.4
+ *   normative attribute algebra — see `ListCommand`'s doc comment.
+ * - `specialUse` is the server-sent, **open** grade of the §5.6 vocabulary:
+ *   the known RFC 6154/8457 values autocomplete, but a future special-use
+ *   attribute this client doesn't know still type-checks as data.
+ * - `status` is present only when the LIST carried `RETURN (STATUS (...))`
+ *   (RFC 5819) and the server sent the paired `* STATUS` for this mailbox
+ *   (it legally may not — \NoSelect entries, or a dropped best-effort
+ *   lookup, RFC 5819 §2/§3).
+ * - `oldName` comes from the RFC 5258/9051 (§5.4 of RFC 5465's family)
+ *   OLDNAME extended data item, decoded like `name`.
+ * - `childInfo` carries the RFC 5258 CHILDINFO extended item's strings
+ *   (selection-option names for which this entry has matching children).
+ */
+export interface MailboxInfo {
+	name: string;
+	delimiter: string | null;
+	attributes: ReadonlySet<string>;
+	specialUse?: SpecialUse | (string & {});
+	status?: Partial<MailboxStatusResult>;
+	oldName?: string;
+	childInfo?: string[];
 }

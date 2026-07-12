@@ -102,15 +102,18 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC7889-3.2-1 — LIST ... RETURN (STATUS (APPENDLIMIT)) batch query (self-act.)
+// RFC7889-3.2-1 — LIST ... RETURN (STATUS (APPENDLIMIT)) batch query
 // ═════════════════════════════════════════════════════════════════════════════
-// §3.2 example: 'C: t1 LIST "" % RETURN (STATUS (APPENDLIMIT))'.
+// §3.2 example: 'C: t1 LIST "" % RETURN (STATUS (APPENDLIMIT))'. REAL SIGNAL
+// (M2.7): the exchange runs end-to-end (LIST is an authenticated-state
+// command, so the prelude now logs in). The APPENDLIMIT *value*'s typed
+// surfacing on MailboxInfo.status awaits M2.9's STATUS-item parser growth;
+// this row pins the command form and the tolerated exchange.
 complianceTest(
 	{
 		reqs: ["RFC7889-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'LIST "" % RETURN (STATUS (APPENDLIMIT)) batch-queries mailbox upload limits',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -119,7 +122,7 @@ complianceTest(
 			[
 				...sessionPrelude(
 					[...appendlimitCaps(ctx.profile), "LIST-STATUS"],
-					{ profile: ctx.profile },
+					{ profile: ctx.profile, login: true },
 				),
 				expectLine(
 					command("LIST", { args: /^"" % RETURN \(STATUS \(APPENDLIMIT\)\)$/i }),
@@ -131,7 +134,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.list("", "%", { returnOptions: ["STATUS (APPENDLIMIT)"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.list("", "%", { returnOptions: ["STATUS (APPENDLIMIT)"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();

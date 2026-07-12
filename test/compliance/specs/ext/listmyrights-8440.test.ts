@@ -25,9 +25,11 @@
  * rights) is already scored under RFC4314-2.1.1-3/§3.5/§3.8 — this file
  * scores only the LIST-side request/ordering/absence delta RFC 8440 adds.
  *
- * OBSERVATION: all four entries are self-actualizing — driver.list() and
- * driver.myrights() both throw NotImplementedError unconditionally, so the
- * client has no LIST-MYRIGHTS-aware surface at all today. Wire forms and
+ * OBSERVATION: all four entries are self-actualizing — the public
+ * ListOptions surface (M2.7) has no MYRIGHTS return option, so the driver
+ * reports the request as NotImplementedError ("LIST return option
+ * MYRIGHTS"); driver.myrights() is likewise unimplemented. The annotations
+ * stay honest until an ACL-facet milestone adds the surface. Wire forms and
  * the LIST/MYRIGHTS pairing/absence shapes are pinned to RFC 8440's own §1/
  * §3/§4 worked examples.
  */
