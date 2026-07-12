@@ -5,7 +5,8 @@ import { describe, expect, test } from "vitest";
 
 import { complianceTest } from "../compliance-test";
 import { defineAcceptanceTable } from "../acceptance-table";
-import { classifyFailure } from "../meta";
+import { classifyFailure, type ComplianceMeta } from "../meta";
+import { runComplianceBody } from "../register";
 import { NotImplementedError } from "../../driver/errors";
 
 describe("complianceTest", () => {
@@ -40,6 +41,38 @@ describe("classifyFailure", () => {
 	test("any other error → violation", () => {
 		expect(classifyFailure(new Error("assertion failed"))).toBe("violation");
 		expect(classifyFailure("string throw")).toBe("violation");
+	});
+});
+
+describe("runComplianceBody (classification wiring)", () => {
+	// The shared try/catch → classifyFailure → tag → rethrow path both
+	// wrappers register through. Previously only classifyFailure (the pure
+	// function) was tested; the wiring itself was never exercised.
+	test("a NotImplementedError is tagged 'unimplemented' and rethrown", async () => {
+		const meta: ComplianceMeta = { reqs: ["RFC0000-0.0-6"], profile: "rev1" };
+		const boom = new NotImplementedError("DEMO");
+		await expect(
+			runComplianceBody(meta, async () => {
+				throw boom;
+			}),
+		).rejects.toBe(boom);
+		expect(meta.failureKind).toBe("unimplemented");
+	});
+
+	test("any other throw is tagged 'violation' and rethrown", async () => {
+		const meta: ComplianceMeta = { reqs: ["RFC0000-0.0-7"], profile: "rev2" };
+		await expect(
+			runComplianceBody(meta, async () => {
+				throw new Error("assertion failed");
+			}),
+		).rejects.toThrow("assertion failed");
+		expect(meta.failureKind).toBe("violation");
+	});
+
+	test("a passing body leaves failureKind unset", async () => {
+		const meta: ComplianceMeta = { reqs: ["RFC0000-0.0-8"], profile: "rev1" };
+		await runComplianceBody(meta, async () => undefined);
+		expect(meta.failureKind).toBeUndefined();
 	});
 });
 

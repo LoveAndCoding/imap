@@ -84,6 +84,31 @@ test("LIVE cross-check: every IANA registry token has a coverage entry", () => {
 	expect(missing).toEqual([]);
 });
 
+test("registry tallies match the documented counts", () => {
+	// Pins the reconciliation arithmetic so documented tallies can't silently
+	// drift from the code (the PR text once cited numbers that didn't add up).
+	// Two denominators exist and both are pinned:
+	//  - registryCoverage rows: 92 = 73 cataloged + 5 no-client-requirements
+	//    + 5 obsoleted-by + 9 out-of-scope (includes vendor/extension tokens
+	//    that are not in the IANA snapshot);
+	//  - IANA snapshot tokens: 78, every one covered (see the LIVE
+	//    cross-checks around this test).
+	// A snapshot refresh or checklist change is EXPECTED to update these
+	// numbers — update them here and in any prose that cites them, together.
+	const byStatus: Record<string, number> = {};
+	for (const e of registryCoverage) {
+		byStatus[e.status] = (byStatus[e.status] ?? 0) + 1;
+	}
+	expect(byStatus).toEqual({
+		cataloged: 73,
+		"no-client-requirements": 5,
+		"obsoleted-by": 5,
+		"out-of-scope": 9,
+	});
+	expect(registryCoverage.length).toBe(92);
+	expect(ianaImapCapabilities.length).toBe(78);
+});
+
 test("LIVE cross-check: the snapshot is non-empty and the checklist covers it fully", () => {
 	// Guards against an accidentally-empty snapshot silently passing the
 	// completeness test above.

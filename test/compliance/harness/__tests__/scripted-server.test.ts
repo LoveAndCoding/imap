@@ -52,6 +52,17 @@ test("chunked send delivers bytes intact", async () => {
 	await server.outcome();
 	await new Promise((r) => sock.once("close", r));
 	expect(rx.data()).toBe("* OK split-greeting\r\n");
+	// Chunking must actually have happened: the transcript records one S entry
+	// per write, so the greeting must appear as three separate sends ([4, 7]
+	// plus the remainder), not one coalesced write.
+	const sends = server.transcript
+		.format()
+		.split("\n")
+		.filter((l) => / S: /.test(l));
+	expect(sends).toHaveLength(3);
+	expect(sends[0]).toContain("S: * OK");
+	expect(sends[1]).toContain("S:  split-");
+	expect(sends[2]).toContain("S: greeting\\r\\n");
 });
 
 test("fails the script when an unexpected line arrives", async () => {

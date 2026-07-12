@@ -1,7 +1,6 @@
-import { test } from "vitest";
-
 import type { Profile } from "../catalog/types";
-import { classifyFailure, type FailureKind } from "./meta";
+import type { FailureKind } from "./meta";
+import { registerCompliance } from "./register";
 
 export interface AcceptanceRowBase {
 	req: string;
@@ -27,22 +26,15 @@ export function defineAcceptanceTable<R extends AcceptanceRowBase>(
 ): void {
 	for (const row of table.rows) {
 		for (const profile of table.profiles) {
-			test(
-				`[${row.req}] [${profile}] ${table.name}: ${row.variant}`,
-				async (tctx) => {
-					tctx.task.meta.compliance = {
-						reqs: [row.req],
-						profile,
-						...(table.expectFailure !== undefined ? { expectFailure: table.expectFailure } : {}),
-					};
-					try {
-						await table.execute(row, { profile });
-					} catch (err) {
-						tctx.task.meta.compliance.failureKind = classifyFailure(err);
-						throw err;
-					}
+			registerCompliance(
+				{
+					reqs: [row.req],
+					profile,
+					title: `${table.name}: ${row.variant}`,
+					expectFailure: table.expectFailure,
+					timeout: table.timeout,
 				},
-				table.timeout,
+				() => table.execute(row, { profile }),
 			);
 		}
 	}
