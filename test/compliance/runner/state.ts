@@ -131,13 +131,19 @@ export function selectExchange(mailbox: string, opts: SelectOptions = {}): Scrip
 
 	// rev1 (default): RFC 3501 §6.3.1 response set.
 	const recent = opts.recent ?? 0;
-	const unseen = opts.unseen ?? 1;
+	// UNSEEN names the first unseen message's sequence number, so it cannot
+	// apply to an empty mailbox — defaulting it alongside exists=0 would
+	// script a jointly-invalid state no real server sends. Omit it unless
+	// the mailbox has messages (or the caller explicitly asked for it).
+	const unseen = opts.unseen ?? (exists > 0 ? 1 : undefined);
 	return [
 		expectLine(command(verb, { args: new RegExp(`^(?:${name}|"${name}")$`, flags) })),
 		reply(`OK [${code}] ${verb} completed`, [
 			`* ${exists} EXISTS`,
 			`* ${recent} RECENT`,
-			`* OK [UNSEEN ${unseen}] Message ${unseen} is first unseen`,
+			...(unseen === undefined
+				? []
+				: [`* OK [UNSEEN ${unseen}] Message ${unseen} is first unseen`]),
 			`* OK [UIDVALIDITY ${uidValidity}] UIDs valid`,
 			`* OK [UIDNEXT ${uidNext}] Predicted next UID`,
 			"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)",
