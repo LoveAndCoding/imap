@@ -71,7 +71,13 @@ For each group, invoke the `review-runner` sub-agent (Agent tool,
 - The group id/label and total group count.
 
 Give each sub-agent specific, complete instructions — don't assume it can
-infer scope beyond what you hand it. Run groups in parallel.
+infer scope beyond what you hand it. Run groups in parallel by issuing
+multiple synchronous Agent calls in a single message (`run_in_background:
+false` on every call) — never spawn a sub-agent in the background. A
+backgrounded sub-agent detaches from this workflow: its completion isn't
+awaited at the point you need its result, which stalls the run and can
+require manual intervention. Synchronous batched calls give the same
+parallelism with none of that risk.
 
 ### 4. Collect results
 
@@ -87,7 +93,9 @@ Merge every group's findings into one combined list, renumbering
 sequentially. Look for and merge duplicate findings that surfaced from
 independent groups (e.g. the same systemic issue flagged in two file
 groups). Split the merged list into **3 roughly-equal batches** and spin up
-three `review-validator` sub-agents in parallel, one per batch, for a final
+three `review-validator` sub-agents in parallel (three synchronous Agent
+calls in one message, `run_in_background: false` — same as step 3, never
+in the background), one per batch, for a final
 holistic pass — this catches things a single group-scoped review-runner
 couldn't see, like priority inconsistency between similar findings raised
 in different groups, or a finding that's actually invalid once seen next to
@@ -142,6 +150,9 @@ each sub-agent did.
   predefined lens agents it selects from).
 - Do provide specific, step-by-step instructions to every sub-agent you
   invoke, including what's expected back from it.
+- Do invoke every sub-agent synchronously (`run_in_background: false`).
+  Never create a sub-agent in the background — for parallelism, batch
+  multiple synchronous Agent calls into a single message instead.
 - Do NOT conduct the review yourself.
 - Do NOT read the files from the changeset. Your `Read` tool access exists
   only for non-changeset files: the findings template and your own scratch
