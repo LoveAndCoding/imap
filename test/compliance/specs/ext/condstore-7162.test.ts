@@ -33,7 +33,8 @@
  *   RFC7162-3.1.6-1   Accept '* SEARCH ... (MODSEQ n)' [rev1 ONLY — IMAP4rev2
  *                     removed the legacy SEARCH response].
  *                                                    *** REAL — mailbox/search.ts ***
- *   RFC7162-3.1.7-1   STATUS HIGHESTMODSEQ: request form (self-act.) + value
+ *   RFC7162-3.1.7-1   STATUS HIGHESTMODSEQ: request form (REAL as of M2.9 —
+ *                     driver.status() wired) + value
  *                     acceptance incl. 0.            *** REAL — mailbox/status.ts ***
  *   RFC7162-3.1.8-1   SELECT/EXAMINE (CONDSTORE) select parameter form (self-act.)
  *   RFC7162-3.1.9-1   Accept '* SORT ... (MODSEQ n)'. *** REAL VIOLATION — probed:
@@ -614,19 +615,20 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC7162-3.1.7-1 — STATUS HIGHESTMODSEQ: request form (self-actualizing)
+// RFC7162-3.1.7-1 — STATUS HIGHESTMODSEQ: request form (REAL — M2.9)
 // ═════════════════════════════════════════════════════════════════════════════
 // Request half: the client emits HIGHESTMODSEQ inside the STATUS attribute
 // list (Example 17: 'A042 STATUS blurdybloop (UIDNEXT MESSAGES HIGHESTMODSEQ)').
-// driver.status() throws today → unimplemented. The matcher anchors the full
-// parenthesized attribute list, so a wrong impl that quotes the atom, drops the
-// parens, or reorders arguments to put HIGHESTMODSEQ outside the list fails.
+// REAL as of M2.9: driver.status() is wired to ImapClient.status() (the
+// HIGHESTMODSEQ item is capability-gated on CONDSTORE, advertised here).
+// The matcher anchors the full parenthesized attribute list, so a wrong impl
+// that quotes the atom, drops the parens, or reorders arguments to put
+// HIGHESTMODSEQ outside the list fails.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.7-1"],
 		profiles: ["rev1", "rev2"],
 		title: "STATUS request form: HIGHESTMODSEQ as a bare atom inside the attribute list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -645,7 +647,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.status("blurdybloop", ["UIDNEXT", "MESSAGES", "HIGHESTMODSEQ"]);
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");

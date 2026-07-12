@@ -32,6 +32,15 @@ export type { SelectOptions, SelectResult } from "./commands/select";
 // Mailbox-management option types (spec §3.2/§5.6, M2.3).
 export type { CreateMailboxOptions } from "./commands/create";
 export type { SpecialUse } from "./protocol/vocabularies";
+// Mailbox-management shared types (spec §3.2/§5.2 — M2.9 STATUS, M2.10
+// NAMESPACE; `StatusItem` is also LIST's RETURN (STATUS ...) vocabulary).
+export type {
+	MailboxStatusResult,
+	NamespaceDescriptor,
+	NamespaceExtension,
+	NamespaceSet,
+	StatusItem,
+} from "./protocol/mailbox";
 
 // Error hierarchy (spec §4).
 export {

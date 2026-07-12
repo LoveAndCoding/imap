@@ -9,6 +9,12 @@
  * adds USEATTR -- the RFC 6154 §3 code a server puts on a tagged NO when it
  * rejects an unsupported/duplicate special-use attribute; it carries no
  * arguments, so the variant is a bare name. Everything else
+ * UIDNEXT, HIGHESTMODSEQ, NOMODSEQ, UIDNOTSTICKY, MAILBOXID. M2.9 (STATUS)
+ * adds APPENDLIMIT -- RFC 7889's atom also appears as a resp-code (e.g. on
+ * a tagged NO rejecting an over-limit APPEND, or an informational untagged
+ * OK), not only as a STATUS item; typed here since STATUS is where
+ * APPENDLIMIT-as-item is first built, and M2.11's APPEND reuses it for the
+ * resp-code form. Everything else
  * -- known-but-not-yet-typed and genuinely unknown codes alike -- still
  * surfaces through the open `{ name, args }` fallback member (never an
  * error, per the tolerance invariant I-6): `commands/collector.ts`'s
@@ -25,4 +31,7 @@ export type TypedResponseCode =
 	| { name: "UIDNOTSTICKY" }
 	| { name: "MAILBOXID"; value: string | null }
 	| { name: "USEATTR" }
+	/** RFC 7889: `value` is the advertised limit; `null` when the code
+	 *  carried no (or a non-numeric) argument. */
+	| { name: "APPENDLIMIT"; value: bigint | null }
 	| { name: string; args: string | null };

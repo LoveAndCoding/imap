@@ -47,11 +47,13 @@
  *   STATUS to the wire. The script contains NO expectLine step for STATUS — any STATUS
  *   command from the client produces an unscripted command (script failure). The
  *   transcript guard `not.toMatch(...)` on client lines (C: prefixed) adds an
- *   independent signal. REAL SIGNAL for the SELECT half (M2.2): driver.select() now
- *   really selects the mailbox; driver.status() still throws `NotImplementedError`
- *   (M2.9), which the prohibition assertion (`expect(statusError).toBeDefined()`)
- *   accepts either way — the transcript guard is what actually proves the prohibition
- *   once STATUS itself lands. The two tests are intentionally separate: 6.3.10-1 is
+ *   independent signal. REAL SIGNAL on both halves as of M2.9: driver.select()
+ *   really selects the mailbox (M2.2) and driver.status() is wired to
+ *   ImapClient.status(), which itself enforces the prohibition — STATUS against
+ *   the currently selected mailbox rejects `StateError` locally with zero bytes
+ *   written (the `expect(statusError).toBeDefined()` assertion sees that throw,
+ *   and the transcript guard proves no STATUS reached the wire). The two tests
+ *   are intentionally separate: 6.3.10-1 is
  *   SHOULD NOT (anti-pattern) and 6.3.10-2 is MUST NOT (explicit prohibition of the
  *   new-message-check use case).
  *
@@ -265,7 +267,8 @@ complianceTest(
 // If the client sends STATUS anyway, it produces an unscripted command (script
 // failure), making the violation observable. The transcript guard additionally
 // verifies no STATUS appears in client-sent lines.
-// driver.select() and driver.status() are both unimplemented today.
+// REAL as of M2.9: ImapClient.status() rejects StateError locally for the
+// currently selected mailbox — zero bytes written.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.3.10-1"],
@@ -286,11 +289,9 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// Select the mailbox first (unimplemented today — will throw).
 		await driver.select("INBOX");
-		// A conformant client must refuse to send STATUS on the selected mailbox.
-		// When select() is implemented: call status() on "INBOX" (the selected
-		// mailbox). A compliant driver must refuse locally (not send the command).
+		// A conformant client must refuse to send STATUS on the selected mailbox:
+		// ImapClient.status() rejects StateError locally (M2.9), zero bytes.
 		// Any STATUS that reaches the wire will produce an unscripted-command failure.
 		let statusError: unknown;
 		try {
@@ -298,8 +299,6 @@ complianceTest(
 		} catch (err) {
 			statusError = err;
 		}
-		// The driver must throw — either NotImplementedError (today) or a
-		// compliance-enforcement error once select() + status() are implemented.
 		expect(statusError).toBeDefined();
 		await server.assertCompleted();
 		// Transcript guard: no STATUS command must appear in client-sent lines.
@@ -315,7 +314,8 @@ complianceTest(
 // anti-pattern of polling the selected mailbox for new messages via STATUS.
 // The correct mechanism is unsolicited EXISTS/RECENT or NOOP.
 // PROHIBITION test design mirrors 6.3.10-1 (no expectLine for STATUS).
-// driver.select() and driver.status() are both unimplemented today.
+// REAL as of M2.2/M2.9: select() and status() are both wired; the client
+// never sends STATUS spontaneously, and NOOP is the correct check.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.3.10-2"],
