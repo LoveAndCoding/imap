@@ -430,16 +430,6 @@ export const registryCoverage: RegistryEntry[] = [
 			"deferred rather than cataloged now. Strong candidate for a future phase's extraction.",
 	},
 	{
-		capability: "UNSELECT",
-		status: "out-of-scope",
-		note:
-			"BORDERLINE JUDGMENT: RFC 3691 defines a small, genuinely client-issuable UNSELECT " +
-			"command (close the selected mailbox without expunging \\Deleted messages) — real but " +
-			"narrow client-binding duties. Not among the plan's five named delta candidates; " +
-			"deferred per the same conservative default as UIDONLY rather than expanding this " +
-			"phase's bounded delta round. Straightforward candidate for a future phase.",
-	},
-	{
 		capability: "LIST-METADATA",
 		status: "out-of-scope",
 		note:
@@ -614,5 +604,19 @@ export const registryCoverage: RegistryEntry[] = [
 		status: "cataloged",
 		source: "RFC9585",
 		note: "* OK [INPROGRESS (tag current goal)] acceptance — parenthesized arg parses for real; resp-code kind is NOT case-folded (measured violation).",
+	},
+
+	// ---- M2 (modern-API milestone 2) suite growth ------------------------------
+	// Promoted from the Phase 6 out-of-scope borderline block above by M2.12.
+	{
+		capability: "UNSELECT",
+		status: "cataloged",
+		source: "RFC3691",
+		note:
+			"UNSELECT (deselect without expunging \\Deleted; contrast CLOSE). Promoted from this " +
+			"list's Phase 6 out-of-scope borderline judgment by M2.12 (modern-API M2 mailbox-" +
+			"management milestone): full extraction in catalog/ext/rfc3691.ts, spec coverage in " +
+			"specs/ext/unselect-3691.test.ts. rev2-core overlap: RFC 9051 §6.4.2 absorbs UNSELECT " +
+			"into the rev2 base spec — rev1-only tags adjudicated in-catalog.",
 	},
 ];

@@ -109,3 +109,10 @@ test("catalog contains the Phase 6 reconciliation-delta sources", () => {
 		]),
 	);
 });
+
+test("catalog contains the M2 suite-growth sources", () => {
+	// M2.12 (modern-API M2 mailbox-management milestone): RFC 3691 UNSELECT,
+	// promoted from the registry-coverage out-of-scope borderline list.
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(expect.arrayContaining(["RFC3691"]));
+});

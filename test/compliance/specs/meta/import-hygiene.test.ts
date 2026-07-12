@@ -18,14 +18,20 @@ function walk(dir: string): string[] {
 
 const IMPORT_RE = /(?:from\s+|require\(\s*|import\(\s*|^import\s+)["']([^"']+)["']/gm;
 
-test("compliance suite only touches the client via src/index", () => {
+// The public package surface is the spec §1.1 exports map: "." (src/index),
+// "./commands" (src/commands), and "./sasl" (src/sasl). The compliance suite
+// may consume exactly those entry points and nothing deeper — deep imports
+// would let tests couple to internals the package doesn't ship.
+const PUBLIC_ENTRY_RE = /\/src\/(?:index|sasl|commands)$/;
+
+test("compliance suite only touches the client via its public entry points", () => {
 	const offenders: string[] = [];
 	for (const sub of ["specs", "driver", "runner", "harness", "reporter", "catalog"]) {
 		for (const file of walk(path.join(complianceRoot, sub))) {
 			const content = fs.readFileSync(file, "utf8");
 			for (const m of content.matchAll(IMPORT_RE)) {
 				const spec = m[1];
-				if (/\/src(\/|$)/.test(spec) && !/\/src\/index$/.test(spec)) {
+				if (/\/src(\/|$)/.test(spec) && !PUBLIC_ENTRY_RE.test(spec)) {
 					offenders.push(`${path.relative(complianceRoot, file)} imports ${spec}`);
 				}
 			}
@@ -40,7 +46,7 @@ test("only the driver imports the client at all", () => {
 		for (const file of walk(path.join(complianceRoot, sub))) {
 			const content = fs.readFileSync(file, "utf8");
 			const matches = [...content.matchAll(IMPORT_RE)];
-			if (matches.some((m) => /\/src\/index$/.test(m[1]))) {
+			if (matches.some((m) => PUBLIC_ENTRY_RE.test(m[1]))) {
 				offenders.push(path.relative(complianceRoot, file));
 			}
 		}

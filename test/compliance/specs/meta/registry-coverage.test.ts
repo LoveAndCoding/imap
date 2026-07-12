@@ -88,9 +88,10 @@ test("registry tallies match the documented counts", () => {
 	// Pins the reconciliation arithmetic so documented tallies can't silently
 	// drift from the code (the PR text once cited numbers that didn't add up).
 	// Two denominators exist and both are pinned:
-	//  - registryCoverage rows: 92 = 73 cataloged + 5 no-client-requirements
-	//    + 5 obsoleted-by + 9 out-of-scope (includes vendor/extension tokens
-	//    that are not in the IANA snapshot);
+	//  - registryCoverage rows: 92 = 74 cataloged + 5 no-client-requirements
+	//    + 5 obsoleted-by + 8 out-of-scope (includes vendor/extension tokens
+	//    that are not in the IANA snapshot; M2.12 flipped UNSELECT from
+	//    out-of-scope to cataloged, source RFC3691);
 	//  - IANA snapshot tokens: 78, every one covered (see the LIVE
 	//    cross-checks around this test).
 	// A snapshot refresh or checklist change is EXPECTED to update these
@@ -100,10 +101,10 @@ test("registry tallies match the documented counts", () => {
 		byStatus[e.status] = (byStatus[e.status] ?? 0) + 1;
 	}
 	expect(byStatus).toEqual({
-		cataloged: 73,
+		cataloged: 74,
 		"no-client-requirements": 5,
 		"obsoleted-by": 5,
-		"out-of-scope": 9,
+		"out-of-scope": 8,
 	});
 	expect(registryCoverage.length).toBe(92);
 	expect(ianaImapCapabilities.length).toBe(78);
