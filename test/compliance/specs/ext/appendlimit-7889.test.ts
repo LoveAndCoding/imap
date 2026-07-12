@@ -10,6 +10,9 @@
  *
  *   RFC7889-3.1-1  Client (implicit) MUST emit the APPENDLIMIT STATUS item
  *                  to query a mailbox's upload limit.
+ *                    *** REAL as of M2.9 — driver.status() is wired to
+ *                    ImapClient.status(); the scripts authenticate first
+ *                    because STATUS is an authenticated-state command ***
  *   RFC7889-3.2-1  Client (implicit) MUST emit LIST ... RETURN
  *                  (STATUS (APPENDLIMIT)) to batch-query mailbox limits.
  *   RFC7889-4-1    Client MUST accept a tagged NO [TOOBIG] as the well-formed
@@ -22,15 +25,17 @@
  *                    each CAPABILITY token verbatim, uppercased, as its own
  *                    map key — the "=value" suffix is never stripped) ***
  *   RFC7889-3.2-2  Client SHOULD fall back to plain STATUS when the server
- *                  lacks the LIST STATUS return option (self-actualizing).
+ *                  lacks the LIST STATUS return option.
+ *                    *** REAL as of M2.9 — same wiring note as 3.1-1 ***
  *   RFC7889-4-2    Client SHOULD avoid non-synchronizing literals when the
  *                  maximum upload size is unknown (self-actualizing).
  *
- * OBSERVATION: all entries except RFC7889-2-1 are self-actualizing —
- * driver.status()/list()/append() throw NotImplementedError unconditionally,
- * so the client has no APPENDLIMIT-aware surface at all today. The scripted
- * server pins the exact wire forms from RFC 7889's own worked examples
- * (§3.1, §3.2, §4) so each matcher is non-vacuous once implemented.
+ * OBSERVATION: the STATUS-side entries (3.1-1, 3.2-2) are REAL as of M2.9;
+ * the LIST-STATUS batching entry (3.2-1) and the APPEND entries (4-1, 4-2)
+ * remain self-actualizing — driver.list()/append() still throw
+ * NotImplementedError (M2.7/M2.11). The scripted server pins the exact wire
+ * forms from RFC 7889's own worked examples (§3.1, §3.2, §4) so each
+ * matcher is non-vacuous once implemented.
  * RFC7889-2-1 is different: capability parsing itself is fully implemented
  * (Session.capabilities is a real CapabilityList populated from the server's
  * CAPABILITY response, and driver.hasCapability(name) does an exact,
@@ -54,29 +59,39 @@ function appendlimitCaps(profile: string): string[] {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC7889-3.1-1 — STATUS (APPENDLIMIT) command form (self-actualizing)
+// RFC7889-3.1-1 — STATUS (APPENDLIMIT) command form (REAL — M2.9)
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.1 example: 'C: t1 STATUS INBOX (APPENDLIMIT)' /
-// 'S: * STATUS INBOX (APPENDLIMIT 257890)'.
+// 'S: * STATUS INBOX (APPENDLIMIT 257890)'. driver.status() is wired to
+// `ImapClient.status()` (M2.9); STATUS is an authenticated-state command
+// (RFC 3501 §6.3.10 / RFC 9051 §6.3.11 — client-enforced per spec I-11), so
+// the script authenticates first (this test predates state enforcement and
+// originally drove STATUS pre-auth, which a conformant client must refuse).
 complianceTest(
 	{
 		reqs: ["RFC7889-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "STATUS INBOX (APPENDLIMIT) queries the mailbox-specific upload limit",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(appendlimitCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(appendlimitCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("STATUS", { args: /^INBOX \(APPENDLIMIT\)$/i })),
 				reply("OK STATUS completed", ["* STATUS INBOX (APPENDLIMIT 257890)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.status("INBOX", ["APPENDLIMIT"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.status("INBOX", ["APPENDLIMIT"]);
+		// The mailbox-specific limit round-trips as a bigint (RFC 7889 §3.1's
+		// worked example value).
+		expect(result.appendLimit).toBe(257890n);
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS must have been emitted").toBeDefined();
@@ -230,7 +245,6 @@ complianceTest(
 		reqs: ["RFC7889-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client falls back to STATUS (APPENDLIMIT) when the server does not advertise LIST-STATUS",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -238,17 +252,21 @@ complianceTest(
 		server.arm([
 			[
 				// APPENDLIMIT advertised (bare form), but LIST-STATUS is NOT.
-				...sessionPrelude(appendlimitCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(appendlimitCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("STATUS", { args: /^INBOX \(APPENDLIMIT\)$/i })),
 				reply("OK STATUS completed", ["* STATUS INBOX (APPENDLIMIT 257890)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Intended behavior: since LIST-STATUS is absent, the client falls back
-		// to a plain STATUS (APPENDLIMIT) query rather than LIST ... RETURN
-		// (STATUS (APPENDLIMIT)). driver.status() throws NotImplementedError
-		// today, so no fallback decision can actually be observed yet.
-		await driver.status("INBOX", ["APPENDLIMIT"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		// Since LIST-STATUS is absent, the client uses a plain STATUS
+		// (APPENDLIMIT) query rather than LIST ... RETURN (STATUS
+		// (APPENDLIMIT)) — REAL as of M2.9 (driver.status() is wired;
+		// STATUS is an authenticated-state command, hence the login above).
+		await driver.status("INBOX", ["APPENDLIMIT"]);
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS (fallback) must have been emitted").toBeDefined();

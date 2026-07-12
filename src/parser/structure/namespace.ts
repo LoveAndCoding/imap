@@ -55,7 +55,10 @@ class NamespaceExtension {
 class NamespaceConfiguration {
 	constructor(
 		public readonly prefix: string,
-		public readonly delimeter: string,
+		/** `null` = the wire NIL (RFC 2342 §6's `Namespace` grammar allows
+		 *  `nil` in the delimiter position: a flat namespace that has no
+		 *  hierarchy). */
+		public readonly delimeter: string | null,
 		public readonly extensions: NamespaceExtension[],
 	) {}
 }
@@ -75,11 +78,17 @@ class Namespace {
 				...extensions
 			] = splitSpaceSeparatedList(list);
 
+			// Delimiter may be a quoted char OR nil (RFC 2342 §6:
+			// `... SP (<"> QUOTED_CHAR <"> / nil) ...`) — NIL = a flat,
+			// hierarchy-less namespace, surfaced as `null`.
 			if (
 				prefixTokens.length !== 1 ||
 				delimeterTokens.length !== 1 ||
 				!prefixTokens[0].isType(TokenTypes.string) ||
-				!delimeterTokens[0].isType(TokenTypes.string)
+				!(
+					delimeterTokens[0].isType(TokenTypes.string) ||
+					delimeterTokens[0].isType(TokenTypes.nil)
+				)
 			) {
 				throw new ParsingError(
 					"Invalid namespace prefix or delimeter values",

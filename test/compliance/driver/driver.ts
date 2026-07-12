@@ -5,7 +5,13 @@ import * as tls from "node:tls";
 // `src/index`) and "./sasl" (`src/sasl`). No other `src/**` path may be
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
 import { Connection, ImapClient } from "../../../src/index";
-import type { ImapClientConfig, MailboxSession } from "../../../src/index";
+import type {
+	ImapClientConfig,
+	MailboxSession,
+	MailboxStatusResult,
+	NamespaceSet,
+	StatusItem,
+} from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
 
@@ -457,8 +463,16 @@ export class ComplianceDriver {
 	public async lsub(_ref: string, _pattern: string): Promise<never> {
 		throw new NotImplementedError("LSUB");
 	}
-	public async status(_mailbox: string, _items: string[]): Promise<never> {
-		throw new NotImplementedError("STATUS");
+	/**
+	 * STATUS (RFC 3501 §6.3.10 / RFC 9051 §6.3.11) -- delegates straight to
+	 * `ImapClient.status()` (M2.9), zero protocol logic here (I-4). The
+	 * signature keeps `string[]` (scripts pass plain strings); the client
+	 * validates each item at runtime against the `StatusItem` union
+	 * (RangeError) and enforces the per-item capability gates
+	 * (CapabilityError) before any bytes are written.
+	 */
+	public async status(mailbox: string, items: string[]): Promise<MailboxStatusResult> {
+		return this.requireClient().status(mailbox, items as StatusItem[]);
 	}
 	public async append(
 		_mailbox: string,
@@ -523,8 +537,12 @@ export class ComplianceDriver {
 	public async unselect(): Promise<never> {
 		throw new NotImplementedError("UNSELECT");
 	}
-	public async namespace(): Promise<never> {
-		throw new NotImplementedError("NAMESPACE");
+	/** NAMESPACE (RFC 2342 §5) -- delegates straight to
+	 *  `ImapClient.namespaces()` (M2.10), zero protocol logic here (I-4).
+	 *  Capability-gated by the client (NAMESPACE, or IMAP4rev2 which folds
+	 *  the command into core) -- CapabilityError, zero bytes, when absent. */
+	public async namespace(): Promise<NamespaceSet> {
+		return this.requireClient().namespaces();
 	}
 
 	// ---- Phase 4: mailbox/listing/metadata + message operations ------------

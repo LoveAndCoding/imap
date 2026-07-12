@@ -45,14 +45,15 @@
  *                     wire behavior in principle but no harness can hold a
  *                     connection idle for tens of minutes per assertion).
  *
- * Genuineness note: the ENABLE / STATUS / IDLE prohibition tests all drive
- * verbs that are unimplemented today (enable/select/status/idle throw
- * NotImplementedError). Each is therefore annotated `unimplemented` — the
- * driver call rejects before any forbidden command could be attempted, so the
- * prohibition guard is not (yet) genuinely exercised. When those verbs land,
- * the scripts self-actualize: the missing expectLine + transcript guard catch
- * any forbidden command. This is disclosed here rather than hidden behind a
- * vacuous pass.
+ * Genuineness note: the STATUS prohibition tests are genuinely exercised as
+ * of M2.2/M2.9 (select() and status() are wired; status() blocks the
+ * selected-mailbox case locally with StateError, and the missing expectLine +
+ * transcript guard would catch any forbidden STATUS on the wire). The IDLE
+ * prohibition tests still drive unimplemented verbs (idle throws
+ * NotImplementedError) and remain annotated `unimplemented` — the driver
+ * call rejects before any forbidden command could be attempted, so those
+ * guards self-actualize when IDLE lands. This is disclosed here rather than
+ * hidden behind a vacuous pass.
  */
 import { expect } from "vitest";
 
@@ -331,10 +332,11 @@ complianceTest(
 // ── RFC9051-6.3.11-1: SHOULD NOT use STATUS on the selected mailbox ────────
 // PROHIBITION test. After SELECT INBOX, the client SHOULD NOT send STATUS
 // against that same mailbox (the info is available by other means). No STATUS
-// expectation is scripted — any STATUS is unscripted. REAL SIGNAL for the
-// SELECT half (M2.2): driver.select() now really selects the mailbox;
-// driver.status() still throws NotImplementedError (M2.9) -- the transcript
-// guard is what actually proves the prohibition once STATUS itself lands.
+// expectation is scripted — any STATUS is unscripted. REAL SIGNAL on both
+// halves as of M2.9: driver.select() really selects the mailbox (M2.2) and
+// driver.status() is wired to ImapClient.status(), which enforces the
+// prohibition itself — STATUS against the currently selected mailbox rejects
+// StateError locally, zero bytes written (the transcript guard proves it).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.11-1"],
@@ -373,8 +375,9 @@ complianceTest(
 // Stronger prohibition: the client MUST NOT poll the selected mailbox for new
 // messages via STATUS. The correct mechanism is unsolicited EXISTS or NOOP.
 // PROHIBITION design mirrors 6.3.11-1 (no STATUS expectation; a NOOP models the
-// correct path). REAL SIGNAL for the SELECT half (M2.2): driver.select()/
-// noop() are wired; driver.status() still throws NotImplementedError (M2.9).
+// correct path). REAL as of M2.2/M2.9: select()/noop()/status() are all wired;
+// the client never sends STATUS spontaneously and blocks it locally against
+// the selected mailbox.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.11-2"],

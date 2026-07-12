@@ -44,15 +44,18 @@
  *    unsolicited "* OK [MAILBOXID (objectid)]" delivered via connectLow() surfaces
  *    as a parsed serverStatus carrying the code AND the objectid — a genuine
  *    pass/violation test with tight assertions (not self-actualizing).
- *  - Every other cited duty has NO driver surface: driver.create()/status()/
+ *  - RFC8474-4.3-1/-4.3-2 are REAL as of M2.9: driver.status() is wired to
+ *    ImapClient.status() (MAILBOXID gated on OBJECTID), and the extended
+ *    mailbox-status parser accepts the parenthesized-objectid response item.
+ *    The script authenticates first — STATUS is an authenticated-state command.
+ *  - Every other cited duty has NO driver surface: driver.create()/
  *    fetch()/uidFetch() throw NotImplementedError → unimplemented. The scripted
- *    servers pin the exact command/response wire shapes (STATUS (MAILBOXID),
- *    FETCH (EMAILID)/(THREADID), the (objectid)/NIL response items) so the matchers
+ *    servers pin the exact command/response wire shapes (FETCH (EMAILID)/
+ *    (THREADID), the (objectid)/NIL response items) so the matchers
  *    reject a wrong impl once a surface exists. NOTE: the tagged-OK MAILBOXID
- *    (4.1-1) and the STATUS MAILBOXID item (4.3-2) do NOT parse today via connectLow
- *    (a tagged OK with no pending command surfaces as an unknownResponse; the base
- *    STATUS parser rejects a parenthesized-objectid value), so those are driven via
- *    the (throwing) CREATE/STATUS verbs and self-actualize as unimplemented.
+ *    (4.1-1) does NOT parse today via connectLow (a tagged OK with no pending
+ *    command surfaces as an unknownResponse), so it is driven via the
+ *    (throwing) CREATE verb and self-actualizes as unimplemented.
  */
 import { expect } from "vitest";
 
@@ -167,25 +170,29 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8474-4.3-1 / -4.3-2 — STATUS (MAILBOXID) request + response item
+// RFC8474-4.3-1 / -4.3-2 — STATUS (MAILBOXID) request + response item (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // The client MAY request a mailbox's ObjectID via STATUS (MAILBOXID) and must
-// parse the 'MAILBOXID (objectid)' STATUS response item. driver.status() throws
-// today → unimplemented. The scripted server pins the STATUS attribute list and
-// the parenthesized-objectid response item.
+// parse the 'MAILBOXID (objectid)' STATUS response item. REAL as of M2.9:
+// driver.status() is wired to `ImapClient.status()` (the MAILBOXID item is
+// capability-gated on OBJECTID, advertised here), and the extended
+// mailbox-status parser accepts the parenthesized-objectid value. STATUS is
+// an authenticated-state command (client-enforced, spec I-11), so the script
+// authenticates first (the test predates state enforcement and originally
+// drove STATUS pre-auth). The scripted server pins the STATUS attribute list
+// and the parenthesized-objectid response item.
 complianceTest(
 	{
 		reqs: ["RFC8474-4.3-1", "RFC8474-4.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "STATUS <mbox> (MAILBOXID) request and MAILBOXID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
 				// status-att =/ "MAILBOXID" inside the STATUS request-item list.
 				expectLine(command("STATUS", { args: /^"?INBOX"? \(MAILBOXID\)$/i })),
 				// status-att-resp =/ "MAILBOXID" SP "(" objectid ")".
@@ -193,7 +200,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.status("INBOX", ["MAILBOXID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.status("INBOX", ["MAILBOXID"]);
+		// The ObjectID is parsed out of the response item, case preserved
+		// (ObjectIDs are case-sensitive, RFC 8474 §7).
+		expect(result.mailboxId).toBe("F2212ea87d47b8ad");
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS must have been emitted").toBeDefined();

@@ -19,9 +19,11 @@
  *   RFC2342-5-3 (user-intent-policy — MAY append '%' to the Other Users' prefix).
  * These have no wire-observable pass/fail boundary and are deliberately omitted.
  *
- * REAL SIGNAL (not self-actualizing). driver.namespace() throws
- * NotImplementedError, so there is no COMMAND surface to drive. But the client
- * DOES parse an unsolicited `* NAMESPACE` response: src/parser/structure/
+ * REAL SIGNAL (not self-actualizing). These tests were authored before the
+ * NAMESPACE command surface existed (driver.namespace() is wired to
+ * `ImapClient.namespaces()` as of M2.10) and deliberately keep exercising the
+ * PARSE duty at the lowest observation level: the client parses even an
+ * unsolicited `* NAMESPACE` response: src/parser/structure/
  * namespace.ts builds a NamespaceResponse whose three positional classes are the
  * parsed `.personal` / `.others` / `.shared` (each a Namespace, or `null` when the
  * wire carried the atom NIL), and Connection surfaces it as an "untaggedResponse"

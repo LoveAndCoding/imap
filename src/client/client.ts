@@ -8,13 +8,21 @@ import {
 	ExamineCommand,
 	IdCommand,
 	LogoutCommand,
+	NamespaceCommand,
 	NoopCommand,
 	SelectCommand,
+	StatusCommand,
+	assertStatusItemsSupported,
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
 import type { IdResponseMap } from "../commands/id";
 import type { SelectOptions, SelectResult } from "../commands/select";
+import type {
+	MailboxStatusResult,
+	NamespaceSet,
+	StatusItem,
+} from "../protocol/mailbox";
 import Connection from "../connection";
 import { ConnectionTimeout, TLSSocketError } from "../connection/errors";
 import { TLSSetting } from "../connection/types";
@@ -434,11 +442,77 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
-	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession) -----------
+	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession;
+	//    M2.9: STATUS; M2.10: NAMESPACE) --------------------------------------
 
 	/** The currently selected mailbox, if any (spec §3.2). */
 	public get mailbox(): MailboxSession | null {
 		return this._mailboxSession;
+	}
+
+	/**
+	 * STATUS (spec §3.2/§5.2, RFC 3501 §6.3.10 / RFC 9051 §6.3.11) — M2.9.
+	 * All ten `StatusItem`s; extension items are capability-gated (see
+	 * `assertStatusItemsSupported`'s item→capability→RFC table in
+	 * commands/status.ts), rejecting `CapabilityError` with zero bytes
+	 * written (I-9). Invalid/empty item lists reject `RangeError` from the
+	 * command constructor, likewise before any bytes.
+	 *
+	 * STATUS against the CURRENTLY SELECTED mailbox rejects `StateError`
+	 * locally (zero bytes written): RFC 3501 §6.3.10 says the client SHOULD
+	 * NOT do this at all, and MUST NOT do it as a new-message check (RFC
+	 * 9051 §6.3.11 carries both duties forward verbatim) — and since every
+	 * datum STATUS could report about the selected mailbox is already
+	 * available on `this.mailbox` (live-tracked by the §8.3 snapshot lane),
+	 * the blocked call loses the caller nothing. The compliance rows for
+	 * both duties (RFC3501-6.3.10-1/-2, RFC9051-6.3.11-1/-2) pin exactly
+	 * this observable: a local throw and no STATUS bytes on the wire.
+	 */
+	public async status(
+		mailbox: string,
+		items: StatusItem[],
+	): Promise<MailboxStatusResult> {
+		// Constructed first: validates the item list (RangeError, zero bytes).
+		const command = new StatusCommand(mailbox, items);
+		const session = this._mailboxSession;
+		if (
+			session &&
+			!session.closed &&
+			decodeMailboxName(mailbox, { utf8Accepted: true }) === session.name
+		) {
+			throw new StateError(
+				`STATUS on the currently selected mailbox "${session.name}" is a ` +
+					"client anti-pattern (RFC 3501 §6.3.10 SHOULD NOT / RFC 9051 " +
+					"§6.3.11, incl. the MUST NOT-as-new-message-check rule) — read " +
+					"the live `client.mailbox` session instead, or use NOOP to " +
+					"solicit updates",
+				{ state: this.stateMachine.current, required: ["authenticated"] },
+			);
+		}
+		assertStatusItemsSupported(items, this.capabilityRegistry.view);
+		return this.run(command);
+	}
+
+	/**
+	 * NAMESPACE (spec §3.2, RFC 2342 §5; rev2 core per RFC 9051 §6.3.10) —
+	 * M2.10. Capability-gated on `NAMESPACE` OR `IMAP4rev2` (rev2 folds the
+	 * command into core, with no separate token), rejecting
+	 * `CapabilityError` with zero bytes written (I-9). The explicit check
+	 * here carries the RFC-annotated error; `NamespaceCommand` also declares
+	 * `capability: ["NAMESPACE", "IMAP4rev2"]` so the `run()` escape hatch
+	 * enforces the same gate for direct submissions.
+	 */
+	public async namespaces(): Promise<NamespaceSet> {
+		const view = this.capabilityRegistry.view;
+		if (!view.has("NAMESPACE") && !view.has("IMAP4rev2")) {
+			throw new CapabilityError(
+				"namespaces() requires the NAMESPACE capability (RFC 2342 §4) or " +
+					"an IMAP4rev2 server (RFC 9051 §6.3.10), neither of which the " +
+					"server has advertised",
+				{ capability: "NAMESPACE", rfc: "RFC2342" },
+			);
+		}
+		return this.run(new NamespaceCommand());
 	}
 
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See

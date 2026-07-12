@@ -60,6 +60,17 @@ export function toTypedResponseCode(
 				return { name: "UIDNOTSTICKY" };
 			case "MAILBOXID":
 				return { name: "MAILBOXID", value: code.contents?.[0] ?? null };
+			case "APPENDLIMIT": {
+				// RFC 7889 (M2.9): the same atom that serves as a STATUS item
+				// also appears as a resp-code carrying the advertised limit.
+				// A missing or non-numeric argument surfaces as `null` rather
+				// than an error (I-6).
+				const raw = code.contents?.[0];
+				return {
+					name: "APPENDLIMIT",
+					value: raw !== undefined && /^\d+$/.test(raw) ? BigInt(raw) : null,
+				};
+			}
 			default:
 				return {
 					name,
