@@ -39,9 +39,11 @@ implementation granularity below.
   (spec I-4). `src/connection/search.ts` may not gain new callers; it is
   deleted in M3.5.
 - **Branching:** feature branches off `modern-api`, PR per task-cluster.
-  Keep PRs reviewable (< ~800 lines of src change); milestone boundaries are
-  merge checkpoints with a phase-boundary review (subagent code review
-  against this plan + spec, per the compliance-suite precedent).
+  PRs are sized by coherent unit of work, not line count — automated review
+  tooling absorbs large diffs, so don't split a task artificially to hit a
+  size target. Milestone boundaries are merge checkpoints with a
+  phase-boundary review (subagent code review against this plan + spec, per
+  the compliance-suite precedent).
 
 ---
 
@@ -187,7 +189,7 @@ Task order (each its own PR unless noted):
   mechanism interface, AUTHENTICATE command (isolated, continuation-driven,
   base64, `*` cancel, SASL-IR), selection algorithm, LOGIN command +
   LOGINDISABLED gate, credential policy hook from §10.3.
-- **M1.8 ENABLE** — command + `enable` config wiring (§3.4) + ENABLED
+- **M1.8 ENABLE** — command + `extensions` config wiring (§3.4) + ENABLED
   response structure.
 - **M1.9 Driver rewire + suite sweep** — driver `connect/connectLow`
   paths target ImapClient/Connection per spec; wire noop/login/authenticate/

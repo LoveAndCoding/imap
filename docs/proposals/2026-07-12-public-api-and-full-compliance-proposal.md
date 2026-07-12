@@ -137,7 +137,7 @@ const client = new ImapClient({
 		// mechanisms: ["SCRAM-SHA-256", "PLAIN"]  // optional preference order
 	},
 	id: { name: "LovelyInbox", version: "1.0.0" },   // RFC 2971, sent if supported
-	enable: "auto",               // auto-ENABLE what we understand (QRESYNC, UTF8=ACCEPT, …)
+	extensions: "auto",           // auto-ENABLE what we understand (QRESYNC, UTF8=ACCEPT, …)
 	logger: (info) => { … },
 });
 
@@ -551,7 +551,7 @@ data fed exclusively by the router's state-tracker lane: counts, flags,
 UIDVALIDITY transitions (loud event — cache-invalidation contract),
 HIGHESTMODSEQ, QRESYNC resync ingestion (VANISHED EARLIER + flag FETCHes as a
 coherent "resync" stream on select), and UIDONLY mode (seq facet disabled,
-UIDNOTSTICKY surfaced). CONDSTORE/QRESYNC enablement flows from `enable`
+UIDNOTSTICKY surfaced). CONDSTORE/QRESYNC enablement flows from `extensions`
 config through the ENABLE command with capability negotiation.
 
 ### 4.7 SASL framework
