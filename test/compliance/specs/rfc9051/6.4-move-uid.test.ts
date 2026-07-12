@@ -27,16 +27,19 @@
  * RFC9051-6.4.9-3: FETCH responses caused by UID commands implicitly include the
  *                  UID data item.
  *
- * Genuineness note: driver.examine() / unselect() / closeMailbox() / move() /
- * uidFetch() / uidSearch() are all unimplemented today (they throw
- * NotImplementedError), so those tests are annotated `unimplemented`: the
- * driver call rejects before any forbidden command could be emitted or any
- * scripted response processed. RFC9051-6.4.1-1 is the exception (M2.2):
- * driver.select() is wired to the real client, so that prohibition test is a
- * REAL pass, not self-actualizing. The remaining prohibition tests (6.4.2-1
- * no-CLOSE/no-EXPUNGE, 6.4.8-2 no-seq-command-mid-MOVE) stay self-actualizing —
- * the missing expectLine plus transcript guards catch a violation once those
- * verbs land. This is disclosed rather than hidden behind a vacuous pass.
+ * Genuineness note: driver.examine() / move() / uidFetch() / uidSearch() are
+ * all unimplemented today (they throw NotImplementedError), so those tests
+ * are annotated `unimplemented`: the driver call rejects before any
+ * forbidden command could be emitted or any scripted response processed.
+ * RFC9051-6.4.1-1 is the exception (M2.2): driver.select() is wired to the
+ * real client, so that prohibition test is a REAL pass, not self-actualizing.
+ * RFC9051-6.4.2-1 is a second exception as of M2.13: driver.unselect() is now
+ * wired to `MailboxSession.unselect()` too, so its `expectFailure:
+ * "unimplemented"` annotation is removed — the no-CLOSE/no-EXPUNGE
+ * prohibition is a REAL pass. The remaining prohibition test (6.4.8-2
+ * no-seq-command-mid-MOVE) stays self-actualizing — the missing expectLine
+ * plus transcript guards catch a violation once MOVE lands. This is
+ * disclosed rather than hidden behind a vacuous pass.
  *
  * Note on driver surface: there is no dedicated uidMove() verb; the MOVE duties
  * here are exercised through move() (the §6.4.8 REQUIRED-COPYUID-in-untagged-OK
@@ -102,13 +105,13 @@ complianceTest(
 // Script SELECT INBOX → UNSELECT → OK; NO CLOSE and NO EXPUNGE are scripted, so
 // either would be an unscripted-command failure. A NOOP after UNSELECT confirms
 // the return to the authenticated state (no selected-state command follows).
-// driver.unselect() is unimplemented today → annotated unimplemented.
+// REAL SIGNAL as of M2.13: driver.unselect() is wired to
+// `MailboxSession.unselect()`.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.2-1"],
 		profiles: ["rev2"],
 		title: "client uses UNSELECT (not CLOSE) to deselect without expunging, returning to the authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -12,30 +12,35 @@
  *                an extension-gating duty that does not exist under rev2).
  *                *** REAL SIGNAL *** for the prohibition half: the transcript
  *                guard observes today that no UNSELECT reaches the wire when
- *                unadvertised.
+ *                unadvertised, and (as of M2.13) `unselect()` itself now
+ *                rejects `CapabilityError` (zero bytes written, I-9) rather
+ *                than `NotImplementedError`.
  *   RFC3691-2-1  UNSELECT takes no arguments and is issued only while a
  *                mailbox is selected. profiles ["rev1","rev2"] (the rfc9051
  *                catalog's §6.4.2 entry carries only the semantics, not this
  *                arguments/valid-state duty — no rev2 entry to double-score
- *                against). SELF-ACTUALIZING: driver.select()/driver.unselect()
- *                throw NotImplementedError.
+ *                against). REAL SIGNAL as of M2.13: driver.select()/
+ *                driver.unselect() are both wired to the real client.
  *   RFC3691-2-2  UNSELECT deselects like CLOSE but no messages are permanently
  *                removed. profiles ["rev1"] (rev2 scores the identical duty via
  *                RFC9051-6.4.2-1 — the ENABLE/RFC 5161 absorbed-into-rev2-core
- *                precedent). SELF-ACTUALIZING: no UNSELECT surface.
+ *                precedent). REAL SIGNAL as of M2.13.
  *   RFC3691-4-1  Case-insensitive acceptance of the UNSELECT strings. profiles
  *                ["rev1","rev2"]. *** REAL SIGNAL *** — a lowercase 'unselect'
  *                capability atom must be recognized as the UNSELECT capability
  *                (Session capability set is queried case-insensitively).
  *
- * SELF-ACTUALIZATION: the client has no UNSELECT (or SELECT) surface —
- * driver.unselect() and driver.select() both throw NotImplementedError. The
- * command-driving tests are annotated expectFailure: "unimplemented"; M2.13
- * lands the verbs and deletes the annotations, at which point the scripted
- * exchanges and post-throw assertions become the genuine wire checks. The
- * matchers reject a plausible wrong impl (UNSELECT with an argument, UNSELECT
- * without the capability advertised, CLOSE emitted where UNSELECT was asked
- * for, or an EXPUNGE fabricated on deselection) — never a vacuous pass.
+ * M2.13 landed `MailboxSession.close()`/`.unselect()` (src/client/mailbox.ts)
+ * and wired `driver.unselect()`/`driver.closeMailbox()` straight through to
+ * them (test/compliance/driver/driver.ts) — the RFC3691-2-1/RFC3691-2-2 tests
+ * below are no longer self-actualizing and their `expectFailure:
+ * "unimplemented"` annotations are removed accordingly; the RFC3691-1-1/
+ * RFC3691-4-1 tests were already real signal before this milestone (they
+ * only ever exercised the capability-registry/connect() path, never
+ * `unselect()` itself) and are unaffected. The matchers still reject a
+ * plausible wrong impl (UNSELECT with an argument, UNSELECT without the
+ * capability advertised, CLOSE emitted where UNSELECT was asked for, or an
+ * EXPUNGE fabricated on deselection) — never a vacuous pass.
  */
 import { expect } from "vitest";
 
@@ -52,7 +57,7 @@ const f = useComplianceFixture();
 const unselectLine = command("UNSELECT", { args: null });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC3691-2-1 — bare UNSELECT, only from selected state (SELF-ACTUALIZING)
+// RFC3691-2-1 — bare UNSELECT, only from selected state
 // ═════════════════════════════════════════════════════════════════════════════
 // §2 Result: "BAD - no mailbox selected, or argument supplied but none
 // permitted" — by elimination the client issues UNSELECT (a) as the bare atom
@@ -61,14 +66,13 @@ const unselectLine = command("UNSELECT", { args: null });
 // a bare UNSELECT line (the §2 example form: 'C: A341 UNSELECT'). The rev2 arm
 // also advertises the UNSELECT token (rev2 base absorbs the command, and rev2
 // servers commonly still advertise the token for rev1 compatibility) so the
-// exchange is valid under either availability model. select()/unselect() throw
-// today → unimplemented.
+// exchange is valid under either availability model. REAL SIGNAL as of M2.13:
+// select()/unselect() are both wired to the real client.
 complianceTest(
 	{
 		reqs: ["RFC3691-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues a bare argument-less UNSELECT only from selected state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -87,13 +91,13 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.select("INBOX"); // throws NotImplementedError today
-		await driver.unselect(); // throws NotImplementedError today
+		await driver.select("INBOX");
+		await driver.unselect();
 		await server.assertCompleted();
-		// When implemented: the command is the bare atom UNSELECT with no args,
-		// emitted only after SELECT completed (the script's ordering enforces the
-		// selected-state half — an UNSELECT before the SELECT exchange would be an
-		// unscripted-command failure).
+		// The command is the bare atom UNSELECT with no args, emitted only after
+		// SELECT completed (the script's ordering enforces the selected-state
+		// half — an UNSELECT before the SELECT exchange would be an unscripted-
+		// command failure).
 		const line = server.commandLines.find((l) => l.verb === "UNSELECT");
 		expect(line).toBeDefined();
 		expect(line!.args, "UNSELECT takes no arguments (RFC 3691 §2)").toBe("");
@@ -108,10 +112,15 @@ complianceTest(
 // to a server whose CAPABILITY omitted it. PROHIBITION test — no UNSELECT
 // expectation is scripted; any UNSELECT on the wire is an unscripted-command
 // failure, and a transcript guard catches it independently. The unselect()
-// call must reject with zero bytes written: today NotImplementedError (no
-// surface at all); after M2.13 a CapabilityError (the I-9 zero-bytes gate) —
-// the error class is deliberately not pinned so this prohibition keeps
-// measuring the same duty across that transition.
+// call must reject with zero bytes written: this test never selects a
+// mailbox, so as of M2.13 `driver.unselect()` rejects `StateError` (no
+// `MailboxSession` exists to call `.unselect()` on at all — see
+// `ComplianceDriver.unselect()`'s own doc comment) rather than the
+// pre-M2.13 `NotImplementedError`; the error class is deliberately not
+// pinned here (only "err is defined" + the transcript guard), so this
+// prohibition keeps measuring the same duty — no UNSELECT bytes reach an
+// unadvertising server — regardless of exactly which zero-bytes rejection
+// (state or capability) fires first for a given call shape.
 complianceTest(
 	{
 		reqs: ["RFC3691-1-1"],
@@ -159,14 +168,13 @@ complianceTest(
 // here would silently expunge and is rejected as an unscripted command), and
 // the tagged OK alone — with NO untagged EXPUNGE ("Responses: no specific
 // responses for this command") — is the only deselection signal the client may
-// expect. rev2 scores this duty via RFC9051-6.4.2-1. select()/unselect() throw
-// today → unimplemented.
+// expect. rev2 scores this duty via RFC9051-6.4.2-1. REAL SIGNAL as of M2.13:
+// select()/unselect() are both wired to the real client.
 complianceTest(
 	{
 		reqs: ["RFC3691-2-2"],
 		profiles: ["rev1"],
 		title: "UNSELECT deselects with no expunge: tagged OK only, CLOSE never emitted",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -183,12 +191,12 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.select("INBOX"); // throws NotImplementedError today
-		await driver.unselect(); // throws NotImplementedError today
+		await driver.select("INBOX");
+		await driver.unselect();
 		await server.assertCompleted();
-		// When implemented: the deselect path used UNSELECT (never CLOSE, which
-		// would permanently remove \Deleted messages), and no EXPUNGE appeared
-		// anywhere in the exchange — the tagged OK was the only signal.
+		// The deselect path used UNSELECT (never CLOSE, which would permanently
+		// remove \Deleted messages), and no EXPUNGE appeared anywhere in the
+		// exchange — the tagged OK was the only signal.
 		expect(
 			server.transcript.clientLines(),
 			"the preserve-\\Deleted deselect path must use UNSELECT, never CLOSE",

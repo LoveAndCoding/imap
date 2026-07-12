@@ -1,17 +1,23 @@
 import { TypedEmitter } from "tiny-typed-emitter";
 
+import type { Command } from "../commands/base";
+import { CloseCommand } from "../commands/close";
 import type { SelectResult } from "../commands/select";
+import { UnselectCommand } from "../commands/unselect";
+import { CapabilityError, StateError } from "../errors";
+import type { ClientState } from "./state";
 
 /**
- * `MailboxSession` (spec §5b) -- M2.2 SKELETON. Per the M2 plan's shared
- * design notes ("No stub methods on MailboxSession", mirroring the M1.6
- * precedent): this class exposes ONLY the identity/snapshot fields, the
- * events the M2 state-tracker lane can genuinely feed today, and NOTHING
- * else. `fetch`/`search`/`store`/`copy`/`move`/`expunge`/`seq`/`idle`/
- * `updates`/`close()`/`unselect()` do not exist on this class yet -- not
- * even as `NotImplementedError` throws -- they land in M2.13 (`close()`/
- * `unselect()`) and M3 (the message-op surface). `vanished` is similarly
- * absent from `MailboxSessionEvents` until M4 (QRESYNC).
+ * `MailboxSession` (spec §5b) -- M2.2 landed the skeleton (snapshot fields,
+ * events, the M2.2-era reselect/CLOSED choreography); M2.13 (this milestone)
+ * adds `close()`/`unselect()` -- the class's only two message-independent
+ * deselection methods -- plus the `"closed"`/`"unselected"` reasons those
+ * methods emit (`"reselected"` was wired in M2.2; `"disconnected"` is still
+ * a future milestone's carry-forward, see `MailboxClosedReason`'s doc
+ * comment). `fetch`/`search`/`store`/`copy`/`move`/`expunge`/`seq`/`idle`/
+ * `updates` still do not exist on this class -- not even as
+ * `NotImplementedError` throws -- they land in M3 (the M2 plan's "no stub
+ * methods ahead of their milestone" rule).
  *
  * Lifecycle: constructed by `ImapClient.select()`/`.examine()` once a
  * SELECT/EXAMINE's tagged OK arrives (never directly by a caller). Snapshot
@@ -20,16 +26,57 @@ import type { SelectResult } from "../commands/select";
  * (same pattern as `commands/base.ts`'s `Command.assignTag`/etc: a class's
  * own static methods may reach the private members of any instance of that
  * class, which is how `client.ts` mutates a session without every field
- * needing to be publicly settable).
+ * needing to be publicly settable). `close()`/`unselect()` need a second,
+ * narrower access seam back into the OWNING client -- `MailboxSessionDriver`
+ * below -- since (unlike the one-directional snapshot mutation) actually
+ * deselecting requires running a real command through `ImapClient.run()`'s
+ * state/capability gating and then telling the client to clear its own
+ * `mailbox` pointer and drop back to "authenticated". A full `ImapClient`
+ * reference is deliberately NOT threaded through (that would let this class
+ * reach far more of the client than it needs, and would create an import
+ * cycle with client.ts); the driver interface is the minimal capability set.
  */
 
-/** `closed` event reasons (spec §5b). `"closed"`/`"unselected"` are reserved
- *  for M2.13's `close()`/`unselect()` methods; `"reselected"` is wired in
- *  THIS milestone (`ImapClient.select()`/`.examine()`'s reselect
- *  choreography, and the RFC 7162/9051 CLOSED resp-code's defensive-backstop
- *  handling -- see `client.ts`'s doc comments); `"disconnected"` is wired
- *  wherever the connection teardown path lands (not this task -- M2.2 does
- *  not yet close sessions on socket loss; a future task's carry-forward).
+/**
+ * The minimal callback surface `ImapClient` hands each `MailboxSession` it
+ * constructs (see `client.ts`'s `makeMailboxDriver()`), used ONLY by
+ * `close()`/`unselect()` below. Kept as a narrow structural interface
+ * (rather than importing `ImapClient` itself) to avoid a client.ts <->
+ * mailbox.ts import cycle and to keep this class's privileges to exactly
+ * what deselection needs.
+ */
+export interface MailboxSessionDriver {
+	/** Runs a `Command` through `ImapClient.run()` -- the same state/
+	 *  capability gating (and zero-bytes-written-on-reject guarantee, I-9/
+	 *  I-11) every other verb goes through. */
+	run<T>(command: Command<T>): Promise<T>;
+	/** Live read of the owning client's current `ClientState`, for an
+	 *  accurate `StateError` when a caller re-invokes `close()`/`unselect()`
+	 *  on an already-closed session. */
+	currentState(): ClientState;
+	/** Case-insensitive capability probe against the client's live registry
+	 *  (mirrors `ImapClient.supports()`), used for `unselect()`'s
+	 *  RFC-annotated pre-check (the same "explicit precheck + command's own
+	 *  `capability` declare" two-layer pattern `ImapClient.create()`/
+	 *  `namespaces()` use). */
+	hasCapability(cap: string): boolean;
+	/** Called ONCE the deselecting command's tagged OK has actually arrived:
+	 *  clears the client's `mailbox` pointer (only if it still points at
+	 *  THIS session -- a defensive no-op otherwise) and transitions
+	 *  "selected" -> "authenticated". Never called before the command
+	 *  succeeds, so a failed CLOSE/UNSELECT (tagged NO/BAD) leaves the
+	 *  client's selection completely undisturbed. */
+	deselect(session: MailboxSession): void;
+}
+
+/** `closed` event reasons (spec §5b). `"closed"`/`"unselected"` are wired by
+ *  THIS milestone's `close()`/`unselect()` methods below; `"reselected"` was
+ *  wired in M2.2 (`ImapClient.select()`/`.examine()`'s reselect choreography,
+ *  and the RFC 7162/9051 CLOSED resp-code's defensive-backstop handling --
+ *  see `client.ts`'s doc comments, including this milestone's revisited
+ *  judgment call on that backstop's reason); `"disconnected"` is still wired
+ *  wherever the connection teardown path lands (not this task either -- a
+ *  future task's carry-forward).
  */
 export type MailboxClosedReason =
 	| "closed"
@@ -71,8 +118,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	private readonly _uidNotSticky: boolean;
 	private _highestModSeq: bigint | null;
 	private readonly _mailboxId: string | null;
+	private readonly driver: MailboxSessionDriver;
 
-	constructor(name: string, snapshot: SelectResult) {
+	constructor(name: string, snapshot: SelectResult, driver: MailboxSessionDriver) {
 		super();
 		this.name = name;
 		this.readOnly = snapshot.readOnly;
@@ -86,6 +134,7 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		this._uidNotSticky = snapshot.uidNotSticky;
 		this._highestModSeq = snapshot.noModSeq ? null : snapshot.highestModSeq;
 		this._mailboxId = snapshot.mailboxId;
+		this.driver = driver;
 	}
 
 	/** `true` once this session has been deselected (reselected, closed,
@@ -162,6 +211,82 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 
 	public get mailboxId(): string | null {
 		return this._mailboxId;
+	}
+
+	// -- deselection (spec §5b) -----------------------------------------------
+
+	/**
+	 * CLOSE (RFC 3501/9051 §6.4.2/§6.4.1) — silently expunges every message
+	 * with the \Deleted flag set, THEN deselects: see `CloseCommand`'s doc
+	 * comment for the "silent" half (no untagged EXPUNGE responses accompany
+	 * it, in either revision). On the tagged OK: this session's `closed`
+	 * flips `true` with reason `"closed"`, the owning client's `mailbox`
+	 * pointer clears, and the client state drops `"selected"` ->
+	 * `"authenticated"` — in that order (state/pointer first, `closed`
+	 * flag+event second), matching `unselect()`'s ordering below.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed — re-calling `close()`/`unselect()` on a dead session is a
+	 * caller bug, not a retryable condition. A tagged NO/BAD from the server
+	 * propagates as the ordinary `ServerNoError`/`ServerBadError` and leaves
+	 * this session completely untouched (still selected, still open).
+	 */
+	public async close(): Promise<void> {
+		this.assertOpen("close");
+		await this.driver.run(new CloseCommand());
+		this.driver.deselect(this);
+		MailboxSession.markClosed(this, "closed");
+	}
+
+	/**
+	 * UNSELECT (RFC 3691, gated on the `UNSELECT` capability under rev1;
+	 * base protocol under rev2 per RFC 9051 §6.4.2 — see `UnselectCommand`'s
+	 * doc comment for the OR-capability gate). Performs the SAME deselect as
+	 * `close()` above, EXCEPT no message is ever expunged — the entire
+	 * reason RFC 3691 exists. Same tagged-OK choreography as `close()`
+	 * (state/pointer, then `closed` flag+event), except the reason is
+	 * `"unselected"`.
+	 *
+	 * The capability gate is enforced TWICE, both before any bytes are
+	 * written (I-9): the explicit check here supplies an RFC-annotated
+	 * `CapabilityError` (mirroring `ImapClient.create()`/`namespaces()`'s own
+	 * two-layer gate), and `UnselectCommand` also declares
+	 * `capability: ["UNSELECT", "IMAP4rev2"]`, so a caller reaching the
+	 * command directly via the `client.run()` escape hatch is still caught.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same as `close()`.
+	 */
+	public async unselect(): Promise<void> {
+		this.assertOpen("unselect");
+		if (!this.driver.hasCapability("UNSELECT") && !this.driver.hasCapability("IMAP4rev2")) {
+			throw new CapabilityError(
+				"unselect() requires the UNSELECT capability (RFC 3691 §1) or an " +
+					"IMAP4rev2 server (RFC 9051 §6.4.2, which folds UNSELECT into the " +
+					"base command set with no separate capability token) -- neither " +
+					"of which the server has advertised",
+				{ capability: "UNSELECT", rfc: "RFC3691" },
+			);
+		}
+		await this.driver.run(new UnselectCommand());
+		this.driver.deselect(this);
+		MailboxSession.markClosed(this, "unselected");
+	}
+
+	/** Shared precondition for `close()`/`unselect()` (spec §5b: "`closed`...
+	 *  all methods reject `StateError`"). Reads the live client state through
+	 *  the driver seam rather than guessing, so the error's `state` field is
+	 *  accurate even if this session outlives the client dropping further
+	 *  (e.g. logout) after having already been deselected. */
+	private assertOpen(method: "close" | "unselect"): void {
+		if (this._closed) {
+			throw new StateError(
+				`MailboxSession.${method}(): this session for "${this.name}" is ` +
+					"already closed -- every method rejects once a session has been " +
+					"deselected (spec §5b)",
+				{ state: this.driver.currentState(), required: ["selected"] },
+			);
+		}
 	}
 
 	// -- internal driver surface (ImapClient's §8.3 state-tracker lane ONLY) --

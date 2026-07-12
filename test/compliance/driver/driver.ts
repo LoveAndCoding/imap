@@ -4,7 +4,7 @@ import * as tls from "node:tls";
 // package's own public subpath surfaces (spec §1.1) — "." (this repo's
 // `src/index`) and "./sasl" (`src/sasl`). No other `src/**` path may be
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
-import { Connection, ImapClient } from "../../../src/index";
+import { Connection, ImapClient, StateError } from "../../../src/index";
 import type {
 	ImapClientConfig,
 	ListOptions,
@@ -590,8 +590,30 @@ export class ComplianceDriver {
 	public async check(): Promise<never> {
 		throw new NotImplementedError("CHECK");
 	}
-	public async closeMailbox(): Promise<never> {
-		throw new NotImplementedError("CLOSE");
+	/**
+	 * CLOSE (RFC 3501/9051 §6.4.2/§6.4.1) -- M2.13. Delegates straight to
+	 * `MailboxSession.close()`, zero protocol logic here (I-4).
+	 *
+	 * No selected mailbox: there is no `MailboxSession` object to call
+	 * `close()` on (one only exists once `select()`/`examine()` has
+	 * succeeded), and this file may not import `CloseCommand` to drive the
+	 * raw `client.run()` escape hatch instead (the compliance suite's public-
+	 * surface-only import rule, see the top of this file). `StateError` is
+	 * the honest, real, public-surface-importable answer: it is exactly what
+	 * `client.run(new CloseCommand())` would itself produce (`CloseCommand`
+	 * declares `states: ["selected"]`), so this precondition check reflects
+	 * a genuine client fact rather than fabricating wire behavior.
+	 */
+	public async closeMailbox(): Promise<void> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("closeMailbox() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		await session.close();
 	}
 	public async expunge(): Promise<never> {
 		throw new NotImplementedError("EXPUNGE");
@@ -640,8 +662,28 @@ export class ComplianceDriver {
 	public async idle(): Promise<never> {
 		throw new NotImplementedError("IDLE");
 	}
-	public async unselect(): Promise<never> {
-		throw new NotImplementedError("UNSELECT");
+	/**
+	 * UNSELECT (RFC 3691; RFC 9051 §6.4.2) -- M2.13. Delegates straight to
+	 * `MailboxSession.unselect()`, zero protocol logic here (I-4) -- the
+	 * capability gate (RFC3691-1-1) and the OR-semantics for rev2 are both
+	 * enforced there, not in this driver.
+	 *
+	 * No selected mailbox: same rationale as `closeMailbox()` above --
+	 * `StateError` mirrors what `client.run(new UnselectCommand())` would
+	 * itself produce (`states: ["selected"]`), and this file may not import
+	 * `UnselectCommand` directly to drive that escape hatch (public-surface-
+	 * only import rule).
+	 */
+	public async unselect(): Promise<void> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("unselect() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		await session.unselect();
 	}
 	/** NAMESPACE (RFC 2342 §5) -- delegates straight to
 	 *  `ImapClient.namespaces()` (M2.10), zero protocol logic here (I-4).

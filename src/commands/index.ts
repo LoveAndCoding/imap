@@ -1,6 +1,7 @@
 export * from "./authenticate";
 export * from "./base";
 export * from "./capability";
+export * from "./close";
 export * from "./collector";
 export * from "./create";
 export * from "./delete";
@@ -16,6 +17,7 @@ export * from "./rename";
 export * from "./select";
 export * from "./starttls";
 export * from "./subscribe";
+export * from "./unselect";
 export * from "./unsubscribe";
 export * from "./status";
 export * from "./writer";

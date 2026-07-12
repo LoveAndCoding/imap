@@ -65,6 +65,7 @@ import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
 import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
 import { MailboxSession } from "./mailbox";
+import type { MailboxSessionDriver } from "./mailbox";
 import { ClientStateMachine } from "./state";
 import type { ClientState } from "./state";
 
@@ -671,10 +672,39 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// `mailbox` is already the caller's plain Unicode string (never mUTF-7
 		// wire bytes), so no mUTF-7 decode step is appropriate.
 		const name = decodeMailboxName(mailbox, { utf8Accepted: true });
-		const session = new MailboxSession(name, result);
+		const session = new MailboxSession(name, result, this.mailboxSessionDriver());
 		this._mailboxSession = session;
 		this.stateMachine.transition("selected");
 		return session;
+	}
+
+	/**
+	 * The narrow callback surface `MailboxSession.close()`/`.unselect()`
+	 * (M2.13, spec §5b) need to actually deselect through this client — see
+	 * `MailboxSessionDriver`'s own doc comment (src/client/mailbox.ts) for why
+	 * this is a small structural interface rather than handing the session a
+	 * full `ImapClient` reference. `deselect()` is the one method with any
+	 * side effect, and it is deliberately idempotent-and-defensive: it only
+	 * clears `_mailboxSession`/transitions state when `_mailboxSession` still
+	 * points at the SAME session instance that is deselecting, so a stray/
+	 * duplicate call (or a call racing an already-superseding reselect) can
+	 * never clobber a newer session that took its place.
+	 */
+	private mailboxSessionDriver(): MailboxSessionDriver {
+		return {
+			run: (command) => this.run(command),
+			currentState: () => this.stateMachine.current,
+			hasCapability: (cap) => this.capabilityRegistry.view.has(cap),
+			deselect: (session) => {
+				if (this._mailboxSession !== session) {
+					return;
+				}
+				this._mailboxSession = null;
+				if (this.stateMachine.current === "selected") {
+					this.stateMachine.transition("authenticated");
+				}
+			},
+		};
 	}
 
 	// -- Layer 2 escape hatch --------------------------------------------------
@@ -881,6 +911,29 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// conformant server. Kept for a server that (contrary to RFC 7162
 			// §3.2.11) emits CLOSED without the client having initiated a new
 			// SELECT/EXAMINE at all.
+			//
+			// M2.13 revisit (now that "closed"/"unselected" exist as distinct
+			// reasons alongside "reselected"): kept as "reselected", NOT changed
+			// to "closed". RFC 7162 §3.2.11 defines the CLOSED resp-code's entire
+			// reason for existing as announcing an IMPLICIT close that happens
+			// as a side effect of the client selecting/re-selecting a mailbox
+			// ("the CLOSED response code ... indicat[es] that the previous
+			// mailbox has been closed"); it is never sent in response to an
+			// explicit CLOSE or UNSELECT command (those get a plain tagged OK,
+			// which this command's own `accept()` -- not this defensive lane --
+			// already handles, via `MailboxSession.close()`/`.unselect()`
+			// themselves supplying the "closed"/"unselected" reasons directly).
+			// So a CLOSED code reaching this lane at all (i.e. arriving on some
+			// status line OTHER than the SELECT/EXAMINE this class expects it
+			// to accompany) is, by construction, still conceptually a
+			// reselect-shaped event from a non-conformant server -- not a
+			// client-initiated CLOSE/UNSELECT, which this lane never sees in
+			// the first place (`applyMailboxStatusCode` only inspects OTHER
+			// commands' status lines; CLOSE/UNSELECT's own tagged OK is
+			// consumed by `MailboxSession` before this method ever runs). "closed"/
+			// "unselected" are therefore reserved for their true owners
+			// (`MailboxSession.close()`/`.unselect()`) and this backstop keeps
+			// "reselected" as the closest honest label for an out-of-band CLOSED.
 			MailboxSession.markClosed(session, "reselected");
 			this._mailboxSession = null;
 			if (this.stateMachine.current === "selected") {
