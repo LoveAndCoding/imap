@@ -290,14 +290,14 @@ complianceTest(
 // Renaming INBOX is permitted, but some servers reject it with a tagged NO.
 // The client must handle that failure gracefully (surface it through its normal
 // command-failure path) rather than assuming the rename succeeded.
-// Script RENAME INBOX newname → tagged NO. driver.rename() is unimplemented
-// today → annotated unimplemented.
+// Script RENAME INBOX newname → tagged NO. REAL SIGNAL (M2.5):
+// driver.rename() is wired; the rejection is asserted directly and the
+// trailing NOOP step verifies the session survives the failure.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.6-1"],
 		profiles: ["rev2"],
 		title: "client handles a tagged NO in response to RENAME INBOX",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -315,16 +315,22 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// rename() throws NotImplementedError today WITHOUT touching the wire (the
-		// scripted RENAME step is never satisfied) — deliberately let it propagate
-		// uncaught rather than following up with driver.noop(): a follow-up wire
-		// call here would race the harness (still waiting on the RENAME step it
-		// never received) and surface as a spurious ConnectionError "violation"
-		// instead of the honest "unimplemented" outcome. Once rename() is
-		// implemented, this call also becomes the observable assertion: it must
-		// reject on the tagged NO, and the script's trailing NOOP step exists to
-		// verify (post-implementation) that the session survives the failure.
-		await driver.rename("INBOX", "Archive");
+		// The refusal must surface through the normal command-failure path
+		// (a tagged-NO rejection), never as a crash/hang or a silent success…
+		let renameError: unknown;
+		try {
+			await driver.rename("INBOX", "Archive");
+		} catch (err) {
+			renameError = err;
+		}
+		expect(renameError, "rename() must reject on the tagged NO").toBeInstanceOf(Error);
+		expect(
+			(renameError as Error).name,
+			"the rejection must be a ServerNoError (tagged NO)",
+		).toBe("ServerNoError");
+		// …and the session survives: the follow-up NOOP completes normally.
+		await driver.noop();
+		await server.assertCompleted();
 	},
 );
 

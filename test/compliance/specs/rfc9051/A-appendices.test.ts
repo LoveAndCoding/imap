@@ -33,10 +33,16 @@
  *
  * A-4/A-5/A-7/A-8 are conditional on the client CONSTRUCTING an international
  * (or embedded-"&") mailbox name while intending IMAP4rev1-server
- * compatibility. driver.create() is unimplemented, so each fails
- * "unimplemented"; the armed script's expectLine encodes the exact modified
- * UTF-7 form the client would have to emit, and the post-connect assertions
- * re-verify that form (self-actualizing once CREATE exists).
+ * compatibility. REAL SIGNAL (M2.3): driver.create() is wired, and the
+ * client's settled posture — it speaks rev1-compatible syntax to rev2
+ * servers and never auto-ENABLEs IMAP4rev2 (spec §3.4; the adjudicated A-1
+ * deviation above) — means mod-UTF-7 name construction genuinely happens on
+ * these rev2 sessions (raw UTF-8 names would require UTF8=ACCEPT, which
+ * these scripts deliberately do not advertise). Each script's expectLine
+ * pins the exact modified UTF-7 wire form and the post-completion
+ * assertions re-verify it. A-7's assertion was revised at M2.3 — see that
+ * test's comment (the old "-&" substring check false-positived on the
+ * compliant '&'-escape correction).
  *
  * D-1 is observable NOW via connectLow() + an unsolicited FETCH carrying a
  * 63-bit RFC822.SIZE; it should pass (JS numbers are exact to 2^53, well above
@@ -119,12 +125,14 @@ complianceTest(
 //     "R&AOk-sum&AOk-"
 // — never base64-encoding an ASCII character that can represent itself, and
 // using only modified-base64-alphabet characters inside the shifted regions.
+// REAL SIGNAL (M2.3): driver.create() is wired; the client speaks
+// rev1-compatible syntax to rev2 servers (spec §3.4/adjudicated RFC9051-A-1
+// posture), so mod-UTF-7 name construction genuinely happens here.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-4"],
 		profiles: ["rev2"],
 		title: "client mod-UTF-7-encodes only non-ASCII, never representable US-ASCII",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -144,7 +152,7 @@ complianceTest(
 		// Intending IMAP4rev1-server compatibility → mod-UTF-7 name construction.
 		await driver.create("Résumé");
 		await server.assertCompleted();
-		// When implemented: verify the encoded name shifts ONLY around non-ASCII.
+		// Verify the encoded name shifts ONLY around non-ASCII.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
@@ -164,12 +172,12 @@ complianceTest(
 // modified UTF-7 form is "caf&AOk-": the trailing shift-back "-" makes the name
 // END in US-ASCII, rather than leaving it open in the shifted base64 state
 // ("caf&AOk", which would be non-conformant).
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-5"],
 		profiles: ["rev2"],
 		title: "client terminates a non-ASCII-ending name with a shift-back to US-ASCII",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -185,8 +193,8 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("café");
 		await server.assertCompleted();
-		// When implemented: the wire name must END in US-ASCII (a "-" closing the
-		// final base64 shift), not trail off in the modified-base64 state.
+		// The wire name must END in US-ASCII (a "-" closing the final base64
+		// shift), not trail off in the modified-base64 state.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
@@ -202,15 +210,26 @@ complianceTest(
 // The consumer requests a name containing an embedded "&" that is NOT valid
 // modified UTF-7 (the RFC's own counter-example, a superfluous shift). A
 // conformant client SHOULD NOT transmit it verbatim — it must reject, correct,
-// or refuse. The armed script's matcher accepts ONLY a corrected/valid form
-// (never the raw non-conformant sequence); a client sending the bad name as-is
-// fails the script.
+// or refuse. REAL SIGNAL (M2.3): driver.create() is wired; the client
+// CORRECTS: it treats the caller's string as a plain Unicode name and
+// escapes each literal '&' per Appendix A.1 ('&' -> '&-'), producing the
+// fully conformant "&-U,BTFw-&-ZeVnLIqe-".
+//
+// Assertion revised at M2.3: the previous check was a bare
+// `not.toContain("-&")` over the whole wire name — an over-narrow matcher
+// that false-positives on the compliant correction above, where the "-&"
+// substring occurs at a literal-'-'/escape-open boundary, NOT "while in
+// base64" (the only place Appendix A.1's null-shift prohibition applies;
+// there is no base64 run at all in the corrected form — every '&' is
+// immediately closed by '-'). The revised assertions pin the actual duty:
+// the verbatim non-conformant sequence must not be transmitted, and every
+// '&' in what IS transmitted must open a well-formed, '-'-terminated
+// shift/escape.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-7"],
 		profiles: ["rev2"],
 		title: "client does not send a syntactically invalid embedded-'&' mailbox name verbatim",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -234,14 +253,23 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create(badName);
 		await server.assertCompleted();
-		// When implemented: whatever the client transmits, it MUST NOT be the raw
-		// non-conformant sequence containing a superfluous null shift "-&".
+		// Whatever the client transmits, it must not be the raw non-conformant
+		// sequence itself…
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
-		expect(name, "client must not transmit the non-conformant embedded-'&' name verbatim").not.toContain(
-			"-&",
-		);
+		expect(
+			name,
+			"client must not transmit the non-conformant embedded-'&' name verbatim",
+		).not.toBe(badName);
+		// …and every '&' in the corrected form must comply with the modified
+		// UTF-7 syntax: stripping each well-formed, '-'-terminated shift/escape
+		// ('&' + modified-BASE64 alphabet run + '-') must leave no '&' behind
+		// (a leftover '&' would be a bare/dangling shift).
+		expect(
+			name.replace(/&[A-Za-z0-9+,]*-/g, ""),
+			"every transmitted '&' must open a well-formed, '-'-terminated shift",
+		).not.toContain("&");
 	},
 );
 
@@ -251,12 +279,12 @@ complianceTest(
 // permitted. For the international name "Résumé" the conformant form
 // ("R&AOk-sum&AOk-") re-enters base64 with "&" only where real non-ASCII
 // content follows — never an empty "-&" pair.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-8"],
 		profiles: ["rev2"],
 		title: "client emits no null-shift '-&' sequence in a modified UTF-7 name",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -274,8 +302,8 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("Résumé");
 		await server.assertCompleted();
-		// When implemented: the encoded name must contain no superfluous "-&"
-		// null-shift sequence (shifts back to base64 only where content requires).
+		// The encoded name must contain no superfluous "-&" null-shift
+		// sequence (shifts back to base64 only where content requires).
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");

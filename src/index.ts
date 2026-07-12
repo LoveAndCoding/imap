@@ -29,6 +29,10 @@ export type { MailboxClosedReason, MailboxSessionEvents } from "./client/mailbox
 
 export type { SelectOptions, SelectResult } from "./commands/select";
 
+// Mailbox-management option types (spec §3.2/§5.6, M2.3).
+export type { CreateMailboxOptions } from "./commands/create";
+export type { SpecialUse } from "./protocol/vocabularies";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,

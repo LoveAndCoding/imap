@@ -4,15 +4,21 @@ import { TypedEmitter } from "tiny-typed-emitter";
 
 import {
 	CapabilityCommand,
+	CreateCommand,
+	DeleteCommand,
 	EnableCommand,
 	ExamineCommand,
 	IdCommand,
 	LogoutCommand,
 	NoopCommand,
+	RenameCommand,
 	SelectCommand,
+	SubscribeCommand,
+	UnsubscribeCommand,
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
+import type { CreateMailboxOptions } from "../commands/create";
 import type { IdResponseMap } from "../commands/id";
 import type { SelectOptions, SelectResult } from "../commands/select";
 import Connection from "../connection";
@@ -434,7 +440,62 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
-	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession) -----------
+	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession;
+	//    M2.3-M2.6: CREATE/DELETE/RENAME/SUBSCRIBE/UNSUBSCRIBE) --------------
+
+	/**
+	 * CREATE (spec §3.2, RFC 3501 §6.3.3/RFC 9051 §6.3.4; RFC 6154 §3 for
+	 * `opts.specialUse`). The name goes through the M2.1 codec inside
+	 * `CommandWriter.mailbox()` — callers always pass plain Unicode.
+	 *
+	 * The SPECIAL-USE gate lives in two layers, both zero-bytes-written
+	 * (I-9): the explicit pre-check here supplies the RFC-annotated
+	 * `CapabilityError { capability: "CREATE-SPECIAL-USE", rfc: "RFC6154" }`
+	 * spec §3.6 asks for, and `CreateCommand` also declares
+	 * `capability: "CREATE-SPECIAL-USE"` at construct time (only when
+	 * `specialUse` was given) so a caller reaching the command directly via
+	 * the `run()` escape hatch is still caught by `run()`'s generic gate.
+	 */
+	public async create(mailbox: string, opts?: CreateMailboxOptions): Promise<void> {
+		// Construct first: argument validation (e.g. an empty specialUse
+		// array -> RangeError) precedes the capability probe, and a
+		// constructor throw writes zero bytes by definition.
+		const command = new CreateCommand(mailbox, opts);
+		if (command.capability && !this.capabilityRegistry.view.has(command.capability)) {
+			throw new CapabilityError(
+				"create: the USE parameter (specialUse) requires the " +
+					"CREATE-SPECIAL-USE capability, which the server hasn't " +
+					"advertised (RFC 6154 §3: the client MUST NOT use the USE " +
+					"parameter unless the server advertises it)",
+				{ capability: command.capability, rfc: "RFC6154" },
+			);
+		}
+		await this.run(command);
+	}
+
+	/** DELETE (spec §3.2, RFC 3501 §6.3.4/RFC 9051 §6.3.5). No client-side
+	 *  INBOX guard — deletability is the server's call (see
+	 *  `DeleteCommand`'s doc comment). */
+	public async delete(mailbox: string): Promise<void> {
+		await this.run(new DeleteCommand(mailbox));
+	}
+
+	/** RENAME (spec §3.2, RFC 3501 §6.3.5/RFC 9051 §6.3.6). Both names go
+	 *  through the codec; the INBOX-rename special semantics (messages move,
+	 *  INBOX stays) are server-side — see `RenameCommand`'s doc comment. */
+	public async rename(from: string, to: string): Promise<void> {
+		await this.run(new RenameCommand(from, to));
+	}
+
+	/** SUBSCRIBE (spec §3.2, RFC 3501 §6.3.6/RFC 9051 §6.3.7). */
+	public async subscribe(mailbox: string): Promise<void> {
+		await this.run(new SubscribeCommand(mailbox));
+	}
+
+	/** UNSUBSCRIBE (spec §3.2, RFC 3501 §6.3.7/RFC 9051 §6.3.8). */
+	public async unsubscribe(mailbox: string): Promise<void> {
+		await this.run(new UnsubscribeCommand(mailbox));
+	}
 
 	/** The currently selected mailbox, if any (spec §3.2). */
 	public get mailbox(): MailboxSession | null {

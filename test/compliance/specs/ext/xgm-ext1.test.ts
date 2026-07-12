@@ -51,11 +51,10 @@
  *    with a worked example (see catalog labels-7's honest gap note for the
  *    undocumented remove/replace/.SILENT forms, not asserted here).
  *  - CREATE/RENAME/DELETE for label lifecycle (labels-2): these are the
- *    ALREADY standard RFC 3501/9051 commands: driver.create()/rename()/
- *    delete() throw NotImplementedError → unimplemented; this entry only
- *    pins the X-GM-EXT-1-specific fact that no separate label-lifecycle
- *    command exists, exercised via CREATE against a label-style mailbox
- *    name.
+ *    ALREADY standard RFC 3501/9051 commands, wired as of M2.3-M2.5; this
+ *    entry only pins the X-GM-EXT-1-specific fact that no separate
+ *    label-lifecycle command exists, exercised via CREATE against a
+ *    label-style mailbox name (REAL SIGNAL).
  */
 import { expect } from "vitest";
 
@@ -403,13 +402,12 @@ complianceTest(
 // Vendor doc: "Labels can be modified using the standard IMAP commands,
 // CREATE, RENAME, and DELETE, that act on folders." No separate label-
 // lifecycle command exists — this is exercised via an ordinary CREATE
-// against a label-style mailbox name. create() throws today.
+// against a label-style mailbox name. REAL SIGNAL (M2.3): create() is wired.
 complianceTest(
 	{
 		reqs: ["X-GM-EXT-1-labels-2"],
 		profiles: ["rev1", "rev2"],
 		title: "a Gmail label is created via the standard CREATE command, not a vendor-specific verb",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -422,8 +420,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.create("Q1-Followup"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.create("Q1-Followup");
 		await server.assertCompleted();
 		const create = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(

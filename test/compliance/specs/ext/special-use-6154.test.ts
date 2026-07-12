@@ -32,15 +32,17 @@
  * deduped) against the GENERAL option gate RFC9051-6.3.9-5, which is a distinct
  * duty (LIST options vs the CREATE-side USE parameter). See the module extractionNote.
  *
- * driver.list() (widened with selectOptions/returnOptions) and driver.create()
- * (widened with useAttributes) both throw NotImplementedError: the client has
- * no special-use LIST or CREATE-USE surface. Every test drives the relevant
- * verb, catches the rejection, and asserts on it and on the transcript
- * directly — login() is implemented, so these are genuine (if currently
- * vacuous for the wire-shape assertions) passes. Each script encodes the exact
- * RFC-conformant wire form (and a tight matcher, for the emit-form tests, that
- * rejects a plausible wrong emission) so the assertions become fully genuine
- * once list()/create() land.
+ * driver.create() (widened with useAttributes) is wired as of M2.3: the
+ * three CREATE-side tests (RFC6154-3-1/-3-2/-3-3) are REAL SIGNAL — the
+ * capability gate rejects `CapabilityError` with zero bytes (3-1), the
+ * `CREATE mailbox (USE (...))` wire form is pinned by a tight matcher
+ * (3-2), and the tagged `NO [USEATTR]` refusal surfaces as a ServerNoError
+ * carrying the typed USEATTR code (3-3). driver.list() (widened with
+ * selectOptions/returnOptions) still throws NotImplementedError until M2.7:
+ * the LIST-side tests (RFC6154-2-1/-2-2/-6-1/-6-2) drive the verb, catch
+ * the rejection, and assert on it and the transcript — genuine (if
+ * currently vacuous for the wire-shape assertions) passes whose scripts
+ * pin the exact RFC-conformant wire form for when list() lands.
  */
 import { expect } from "vitest";
 
@@ -160,9 +162,10 @@ complianceTest(
 // CAPABILITY advertises SPECIAL-USE (the LIST-side capability) but NOT
 // CREATE-SPECIAL-USE (the distinct CREATE-side capability). Drive create() with a
 // USE attribute; a conformant client must not emit a CREATE carrying `(USE (...))`
-// when CREATE-SPECIAL-USE was never advertised. create() is unimplemented → the
-// call rejects (unimplemented); the transcript guard proves no USE parameter
-// reached the wire.
+// when CREATE-SPECIAL-USE was never advertised. REAL SIGNAL (M2.3): the client
+// gates the option on the live capability registry and rejects CapabilityError
+// with ZERO bytes written (spec I-9); the transcript guard proves no USE
+// parameter reached the wire.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-1"],
@@ -190,9 +193,14 @@ complianceTest(
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.create() with a USE attribute must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
+		expect(
+			err,
+			"create() with a USE attribute must reject when CREATE-SPECIAL-USE is unadvertised",
+		).toBeInstanceOf(Error);
+		expect(
+			(err as Error).name,
+			"the rejection must be a CapabilityError (client-side gate, zero bytes)",
+		).toBe("CapabilityError");
 		await server.assertCompleted();
 		// Transcript guard: no CREATE carrying a USE parameter reached the wire.
 		expect(
@@ -207,7 +215,7 @@ complianceTest(
 // space, then a parenthesized space-separated list of use-attr tokens. The matcher
 // requires the mailbox name followed by `(USE (<attrs>))`, rejecting attributes
 // that are not parenthesized, a missing USE keyword, or attributes passed as a bare
-// flag list. create() is unimplemented → the call rejects first.
+// flag list. REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-2"],
@@ -234,23 +242,16 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		let err: unknown;
-		try {
-			await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When implemented: the attributes appear inside a (USE (...)) parameter,
-		// never as a bare flag list.
+		await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
+		await server.assertCompleted();
+		// The attributes appear inside a (USE (...)) parameter, never as a
+		// bare flag list (the tight matcher above already enforced the full
+		// §5.3 shape; this re-verifies the recorded form).
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
-		if (createLine) {
-			expect(createLine.args, "special uses must be inside a (USE (...)) parameter").toMatch(
-				/\(USE \(/,
-			);
-		}
+		expect(createLine, "a CREATE command must have been sent").toBeDefined();
+		expect(createLine!.args, "special uses must be inside a (USE (...)) parameter").toMatch(
+			/\(USE \(/,
+		);
 	},
 );
 
@@ -259,8 +260,8 @@ complianceTest(
 // (§5.3). A client that emitted a special-use CREATE MUST accept a tagged
 // `NO [USEATTR] ...` as a well-formed, per-spec refusal — surfacing the CREATE as
 // failed, not treating the [USEATTR] resp-text-code as a protocol/parse error.
-// create() is unimplemented → the call rejects first; the script documents the
-// exact refusal the client must accept once it can drive the CREATE.
+// REAL SIGNAL (M2.3): driver.create() is wired; the refusal surfaces as a
+// ServerNoError carrying the typed { name: "USEATTR" } response code.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-3"],
@@ -289,11 +290,20 @@ complianceTest(
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
-			NotImplementedError,
+		await server.assertCompleted();
+		// The client surfaces the CREATE as failed — an ordinary tagged-NO
+		// rejection carrying the typed USEATTR code, never a protocol/parse
+		// error…
+		expect(err, "create() must reject on the NO [USEATTR] refusal").toBeInstanceOf(Error);
+		expect((err as Error).name, "the rejection must be a ServerNoError").toBe(
+			"ServerNoError",
 		);
-		// When implemented: the client surfaces the CREATE as failed (the NO) and does
-		// NOT choke on the [USEATTR] code — the connection remains usable.
+		expect(
+			(err as { code?: { name?: string } }).code?.name,
+			"the rejection must carry the typed USEATTR response code",
+		).toBe("USEATTR");
+		// …and does NOT choke on the [USEATTR] code — the connection remains
+		// usable.
 		expect(driver.active, "client stays active after a NO [USEATTR] refusal").toBe(true);
 	},
 );

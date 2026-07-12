@@ -5,7 +5,7 @@ import * as tls from "node:tls";
 // `src/index`) and "./sasl" (`src/sasl`). No other `src/**` path may be
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
 import { Connection, ImapClient } from "../../../src/index";
-import type { ImapClientConfig, MailboxSession } from "../../../src/index";
+import type { ImapClientConfig, MailboxSession, SpecialUse } from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
 
@@ -421,23 +421,41 @@ export class ComplianceDriver {
 		}
 		return this.requireClient().examine(mailbox);
 	}
+	/**
+	 * CREATE (RFC 3501/9051 §6.3.3/§6.3.4; RFC 6154 for `useAttributes`) --
+	 * M2.3. Delegates straight to `ImapClient.create()`; zero protocol logic
+	 * here (I-4). `useAttributes` maps onto the public `specialUse` option;
+	 * the cast is the driver's ONE type-level accommodation: the suite's
+	 * scripts pass raw wire strings (e.g. "\\Archive"), which at runtime are
+	 * exactly the strict `SpecialUse` union's values -- and a test that
+	 * deliberately passes something outside the union is testing the
+	 * SERVER-side refusal path, which the client must not pre-filter.
+	 */
 	public async create(
-		_mailbox: string,
-		_opts?: { useAttributes?: string[] },
-	): Promise<never> {
-		throw new NotImplementedError("CREATE");
+		mailbox: string,
+		opts?: { useAttributes?: string[] },
+	): Promise<void> {
+		const specialUse = opts?.useAttributes as SpecialUse[] | undefined;
+		await this.requireClient().create(
+			mailbox,
+			specialUse !== undefined ? { specialUse } : undefined,
+		);
 	}
-	public async delete(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("DELETE");
+	/** DELETE (RFC 3501/9051 §6.3.4/§6.3.5) -- M2.4. */
+	public async delete(mailbox: string): Promise<void> {
+		await this.requireClient().delete(mailbox);
 	}
-	public async rename(_from: string, _to: string): Promise<never> {
-		throw new NotImplementedError("RENAME");
+	/** RENAME (RFC 3501/9051 §6.3.5/§6.3.6) -- M2.5. */
+	public async rename(from: string, to: string): Promise<void> {
+		await this.requireClient().rename(from, to);
 	}
-	public async subscribe(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("SUBSCRIBE");
+	/** SUBSCRIBE (RFC 3501/9051 §6.3.6/§6.3.7) -- M2.6. */
+	public async subscribe(mailbox: string): Promise<void> {
+		await this.requireClient().subscribe(mailbox);
 	}
-	public async unsubscribe(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("UNSUBSCRIBE");
+	/** UNSUBSCRIBE (RFC 3501/9051 §6.3.7/§6.3.8) -- M2.6. */
+	public async unsubscribe(mailbox: string): Promise<void> {
+		await this.requireClient().unsubscribe(mailbox);
 	}
 	// NOTE: the options surface for extended LIST now EXISTS on this signature —
 	// `selectOptions` (e.g. SUBSCRIBED, RECURSIVEMATCH), `returnOptions` (e.g.

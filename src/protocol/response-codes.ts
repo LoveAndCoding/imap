@@ -5,7 +5,10 @@
  * module does not try to pre-populate all of it at once. M2.2 (SELECT/
  * EXAMINE) is the first consumer, so it adds exactly the variants that
  * command's response family emits: CLOSED, PERMANENTFLAGS, UIDVALIDITY,
- * UIDNEXT, HIGHESTMODSEQ, NOMODSEQ, UIDNOTSTICKY, MAILBOXID. Everything else
+ * UIDNEXT, HIGHESTMODSEQ, NOMODSEQ, UIDNOTSTICKY, MAILBOXID. M2.3 (CREATE)
+ * adds USEATTR -- the RFC 6154 §3 code a server puts on a tagged NO when it
+ * rejects an unsupported/duplicate special-use attribute; it carries no
+ * arguments, so the variant is a bare name. Everything else
  * -- known-but-not-yet-typed and genuinely unknown codes alike -- still
  * surfaces through the open `{ name, args }` fallback member (never an
  * error, per the tolerance invariant I-6): `commands/collector.ts`'s
@@ -21,4 +24,5 @@ export type TypedResponseCode =
 	| { name: "NOMODSEQ" }
 	| { name: "UIDNOTSTICKY" }
 	| { name: "MAILBOXID"; value: string | null }
+	| { name: "USEATTR" }
 	| { name: string; args: string | null };

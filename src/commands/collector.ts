@@ -58,6 +58,10 @@ export function toTypedResponseCode(
 				return { name: "NOMODSEQ" };
 			case "UIDNOTSTICKY":
 				return { name: "UIDNOTSTICKY" };
+			case "USEATTR":
+				// RFC 6154 §3 (M2.3/CREATE): argument-less refusal code on a
+				// tagged NO to a special-use CREATE.
+				return { name: "USEATTR" };
 			case "MAILBOXID":
 				return { name: "MAILBOXID", value: code.contents?.[0] ?? null };
 			default:

@@ -139,28 +139,31 @@ complianceTest(
 // RFC8474-4.1-1 — accept the MAILBOXID resp-code in a tagged OK for CREATE
 // ═════════════════════════════════════════════════════════════════════════════
 // A CREATE completing with 'OK [MAILBOXID (objectid)]' must not derail the client.
-// driver.create() throws today → unimplemented. The scripted server pins the CREATE
-// command and replies with the MAILBOXID-bearing tagged OK.
+// REAL SIGNAL (M2.3): driver.create() is wired. The scripted server pins the
+// CREATE command and replies with the MAILBOXID-bearing tagged OK, which the
+// client must accept as an ordinary success. (M2.3 also added the missing
+// LOGIN step: CREATE is an authenticated-state command, so the original
+// login-less script could never complete once the verb was real.)
 complianceTest(
 	{
 		reqs: ["RFC8474-4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CREATE completes with a tagged OK [MAILBOXID (objectid)]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
 				expectLine(command("CREATE", { args: /^"?INBOX\/saved-messages"?$/i })),
 				// resp-text-code = "MAILBOXID" SP "(" objectid ")".
 				reply("OK [MAILBOXID (F2212ea87d47b8ad)] CREATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.create("INBOX/saved-messages"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.create("INBOX/saved-messages");
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "CREATE")).toBeDefined();
 	},

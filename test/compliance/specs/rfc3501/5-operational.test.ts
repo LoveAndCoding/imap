@@ -19,11 +19,10 @@
  *
  * Design notes per requirement:
  *
- * RFC3501-5.1-1: MUST NOT create 8-bit mailbox names. The driver verb
- *   driver.create() is unimplemented. We script the correct (compliant)
- *   CREATE exchange with a pure-ASCII name, then annotate unimplemented.
- *   When create() is implemented: no octet > 0x7F may appear in the mailbox
- *   name argument.
+ * RFC3501-5.1-1: MUST NOT create 8-bit mailbox names. REAL SIGNAL (M2.3):
+ *   driver.create() is wired. The correct (compliant) CREATE exchange with
+ *   a pure-ASCII name is scripted; no octet > 0x7F may appear in the
+ *   mailbox name argument.
  *
  * RFC3501-5.1-2: SHOULD interpret 8-bit mailbox names as UTF-8. Observable
  *   via connectLow(): we send a LIST response containing a mailbox name with
@@ -40,11 +39,10 @@
  *   untestable (internal design property); no test.
  *
  * RFC3501-5.1.3-2..5: All bind when the client uses international (non-ASCII)
- *   mailbox names via CREATE (or RENAME/SUBSCRIBE). driver.create() is
- *   unimplemented today. We script the full expected wire exchange with
- *   pre-computed modified UTF-7 encoded names and annotate unimplemented so
- *   that when create() is implemented the harness's expect steps enforce the
- *   encoding rules. See per-test comments for the encoding worked examples.
+ *   mailbox names via CREATE (or RENAME/SUBSCRIBE). REAL SIGNAL (M2.3):
+ *   driver.create() is wired; the harness's expect steps enforce the exact
+ *   pre-computed modified UTF-7 wire forms. See per-test comments for the
+ *   encoding worked examples.
  *
  * RFC3501-5.2-1: MUST record mailbox size updates. Observable via connectLow():
  *   send an unsolicited "* 23 EXISTS" response mid-session and verify the
@@ -99,17 +97,16 @@ import { selectExchange, sessionPrelude } from "../../runner/state";
 const f = useComplianceFixture();
 
 // ── RFC3501-5.1-1: client MUST NOT create 8-bit mailbox names ────────────
-// driver.create() is unimplemented. The test scripts a correct CREATE
-// exchange with an all-ASCII mailbox name. When create() is implemented:
-// the CREATE argument must contain only octets 0x01-0x7F (the name argument
-// is an astring / mailbox, which must be 7-bit clean in the non-literal form;
-// any mailbox name containing octets > 0x7F violates this MUST NOT).
+// REAL SIGNAL (M2.3): driver.create() is wired. The test scripts a correct
+// CREATE exchange with an all-ASCII mailbox name; the CREATE argument must
+// contain only octets 0x01-0x7F (the name argument is an astring / mailbox,
+// which must be 7-bit clean in the non-literal form; any mailbox name
+// containing octets > 0x7F violates this MUST NOT).
 complianceTest(
 	{
 		reqs: ["RFC3501-5.1-1"],
 		profiles: ["rev1"],
 		title: "client MUST NOT use 8-bit bytes in mailbox name arguments (CREATE)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -127,11 +124,10 @@ complianceTest(
 		// Conformant: create a pure-ASCII mailbox name.
 		await driver.create("NewFolder");
 		await server.assertCompleted();
-		// When implemented: script completion is the primary assertion — the
+		// Script completion is the primary assertion — the
 		// expectLine(command("CREATE", { args: "NewFolder" })) step enforces
-		// the correct wire form. The following assertion is unreachable today
-		// (driver.create() throws before server.assertCompleted()), but becomes
-		// active once create() is implemented — no octet > 0x7F is permitted.
+		// the correct wire form; the loop below re-verifies the 7-bit rule
+		// directly — no octet > 0x7F is permitted.
 		// commandLines order: CAPABILITY(0), LOGIN(1), CREATE(2).
 		const createLine = server.commandLines[2];
 		expect(createLine).toBeDefined();
@@ -196,13 +192,12 @@ complianceTest(
 // other than '-' or a valid Base64 shift would be, e.g., "foo&bar".
 // The SHOULD NOT means a conformant client must encode '&' as "&-".
 // Example name: "Drafts&More" (invalid) vs "Drafts&-More" (conformant).
-// driver.create() is unimplemented.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC3501-5.1.3-2"],
 		profiles: ["rev1"],
 		title: "client encodes '&' as '&-' in mailbox names (modified UTF-7), never bare '&'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -221,9 +216,7 @@ complianceTest(
 		// Client must encode 'Drafts&More' as 'Drafts&-More' on the wire.
 		await driver.create("Drafts&More");
 		await server.assertCompleted();
-		// When implemented: the expectLine above enforces the exact wire form.
-		// The following assertion is unreachable today (driver.create() throws
-		// before reaching here), but becomes active once create() is implemented.
+		// The expectLine above enforces the exact wire form; re-verified below.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
 		const createLine = server.commandLines[2];
 		expect(createLine).toBeDefined();
@@ -238,14 +231,13 @@ complianceTest(
 // Example: the mailbox name "Inbox" must be sent as "Inbox", never as
 // "&SQ5H-" (a contrived Base64 encoding of "Inb" that would violate this rule).
 // The test scripts the correct exchange where the ASCII portion appears literally.
-// driver.create() is unimplemented.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC3501-5.1.3-3"],
 		profiles: ["rev1"],
 		title:
 			"printable US-ASCII characters are represented directly (not Base64-encoded) in mailbox names",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -272,9 +264,7 @@ complianceTest(
 		// Logical name "Ré" — client must produce "R&AOk-" on the wire.
 		await driver.create("Ré");
 		await server.assertCompleted();
-		// When implemented: the expectLine above enforces the exact wire form.
-		// The following assertions are unreachable today (driver.create() throws
-		// before reaching here), but become active once create() is implemented.
+		// The expectLine above enforces the exact wire form; re-verified below.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
 		const createLine = server.commandLines[2];
 		expect(createLine).toBeDefined();
@@ -289,13 +279,12 @@ complianceTest(
 // Example: U+4E2D U+6587 ("中文") encodes as "&Tg32BZfn-" in modified UTF-7.
 // The name ends in '-' (US-ASCII), satisfying this MUST.
 // Wrong: "&Tg32BZfn" (missing trailing '-') would be a violation.
-// driver.create() is unimplemented.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC3501-5.1.3-4"],
 		profiles: ["rev1"],
 		title: "mailbox names with non-ASCII characters terminate with a closing '-' (US-ASCII)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -317,9 +306,7 @@ complianceTest(
 		// Logical name "中文" — client must produce "&Ti1lhw-" on the wire.
 		await driver.create("中文");
 		await server.assertCompleted();
-		// When implemented: the expectLine above enforces the exact wire form.
-		// The following assertions are unreachable today (driver.create() throws
-		// before reaching here), but become active once create() is implemented.
+		// The expectLine above enforces the exact wire form; re-verified below.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
 		const createLine = server.commandLines[2];
 		expect(createLine).toBeDefined();
@@ -338,14 +325,13 @@ complianceTest(
 //   '&' → '&-'
 //   'B' → literal
 //   So: "A&-B"  (correct — the '&-' is in US-ASCII context, not a null shift)
-// driver.create() is unimplemented.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC3501-5.1.3-5"],
 		profiles: ["rev1"],
 		title:
 			"client does not emit null shifts ('-&' inside a modified Base64 block) in mailbox names",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -365,11 +351,9 @@ complianceTest(
 		// Logical name "A&B"; client must encode '&' as '&-' (not use a null shift).
 		await driver.create("A&B");
 		await server.assertCompleted();
-		// When implemented: the expectLine above enforces the exact wire form "A&-B".
-		// The following assertion is unreachable today (driver.create() throws
-		// before reaching here), but becomes active once create() is implemented.
-		// No '-&' sequence (null shift: Base64 close immediately followed by another
-		// shift open) is forbidden by §5.1.3.
+		// The expectLine above enforces the exact wire form "A&-B"; re-verified
+		// below: no '-&' sequence (null shift: Base64 close immediately followed
+		// by another shift open) is forbidden by §5.1.3.
 		// commandLines: CAPABILITY(0), LOGIN(1), CREATE(2).
 		const createLine = server.commandLines[2];
 		expect(createLine).toBeDefined();

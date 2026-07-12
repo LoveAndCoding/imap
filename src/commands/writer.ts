@@ -504,8 +504,17 @@ export class CommandWriter {
 	 * folder literally named "inbox" nested under some other parent are not
 	 * the same thing, and without a known hierarchy delimiter this module
 	 * has no principled way to canonicalize just a leading path segment
-	 * anyway). ASCII names go straight through `astring()`. Non-ASCII names
-	 * are not yet supported — see `encodeMailboxName`.
+	 * anyway). ASCII names WITHOUT an "&" go straight through `astring()`.
+	 * Everything else — any non-ASCII name, and any name containing "&" —
+	 * goes through `encodeMailboxName` (M2.1's codec): "&" is modified
+	 * UTF-7's shift character (RFC 3501 §5.1.3), so on the mUTF-7 branch a
+	 * caller's literal "&" MUST be escaped as "&-" (RFC3501-5.1.3-2/-5;
+	 * found at M2.3 when CREATE's compliance tests gave the codec its first
+	 * black-box exercise — the original ASCII fast path let a bare "&"
+	 * through verbatim). On the UTF8=ACCEPT branch the codec passes the
+	 * name through unchanged (a raw "&" is ordinary UTF-8 there, RFC 6855),
+	 * so routing "&"-bearing ASCII names through it is behavior-neutral in
+	 * that mode.
 	 */
 	mailbox(name: string): this {
 		return this.atomic(() => {
@@ -513,12 +522,12 @@ export class CommandWriter {
 				throw new RangeError("mailbox: expected a string");
 			}
 			const canonical = name.toUpperCase() === "INBOX" ? "INBOX" : name;
-			if (isAsciiOnly(canonical)) {
+			if (isAsciiOnly(canonical) && !canonical.includes("&")) {
 				this.astring(canonical);
 			} else {
-				// Non-ASCII: mUTF-7 (always ASCII → quoted/atom astring) when
-				// UTF8=ACCEPT is not enabled, raw UTF-8 (astring takes the
-				// literal path for 8-bit content) when it is.
+				// Non-ASCII or "&"-bearing: mUTF-7 (always ASCII → quoted/atom
+				// astring) when UTF8=ACCEPT is not enabled, raw UTF-8 (astring
+				// takes the literal path for 8-bit content) when it is.
 				this.astring(
 					encodeMailboxName(canonical, {
 						utf8Accepted: this.has("UTF8=ACCEPT"),
