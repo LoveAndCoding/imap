@@ -16,7 +16,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"STARTTLS: no plaintext after OK; capabilities discarded and re-issued post-TLS",
-		expectFailure: "violation",
 	},
 	async () => {
 		const server = await f.startServer({ tlsUpgrade: localhost });

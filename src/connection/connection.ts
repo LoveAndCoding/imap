@@ -16,6 +16,7 @@ import Parser, {
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
+import { CapabilityRegistry } from "./capabilities";
 import { CRLF } from "./constants";
 import CommandQueue from "./queue";
 import {
@@ -39,6 +40,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	private commandQueue!: CommandQueue;
 	private connected: boolean;
 	private secure?: boolean;
+
+	/**
+	 * Precursor to the spec §3.5 `CapabilityRegistry` (I-2): the STARTTLS
+	 * upgrade invalidates it on handshake success and re-populates it from
+	 * the post-TLS CAPABILITY round trip; `Session` consults it after
+	 * `connect()` resolves so it doesn't re-issue CAPABILITY a second time
+	 * when the registry is already valid.
+	 */
+	public readonly capabilityRegistry = new CapabilityRegistry();
 
 	constructor(options: IMAPConnectionConfiguration) {
 		super();
@@ -171,6 +181,14 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		this.socket!.pipe(this.processingPipeline);
 
+		// The queue must be running before a STARTTLS upgrade so its
+		// CAPABILITY/STARTTLS commands go through the same isolated-context +
+		// hold/release machinery every other command does (§6.1, I-1) instead
+		// of writing directly to the socket. `this.connected` stays false
+		// until the whole connect() ritual resolves further down — only the
+		// queue's own "may I write" state needs to be live this early.
+		this.commandQueue.start();
+
 		if (
 			!this.isSecure &&
 			(tlsSetting === TLSSetting.STARTTLS ||
@@ -188,7 +206,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				this.connected = false;
 				throw err;
 			}
-			if (!this.isSecure && tlsSetting === TLSSetting.STARTTLS) {
+			// NOTE: `connected` (the local outcome of starttls(), just
+			// assigned above) is the right thing to check here — NOT
+			// `this.isSecure`. `isSecure` is gated on `this.connected`, the
+			// instance field, which is not assigned until after this whole
+			// `if` block (a few lines down); reading it here always
+			// observes `false`, so `!this.isSecure` was always `true` and
+			// this branch threw "Could not establish a secure connection"
+			// even after a successful upgrade — the bug that made every
+			// strict-STARTTLS connect() fail regardless of outcome.
+			if (!connected && tlsSetting === TLSSetting.STARTTLS) {
 				this.socket!.destroy();
 				this.socket = undefined;
 				throw new TLSSocketError(
@@ -231,6 +258,11 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.socket!.removeAllListeners();
 		this.socket = undefined;
 		this.secure = undefined;
+		// A closed connection can't have "current" capabilities — a later
+		// connect() on this same Connection instance must not let a
+		// previous session's (possibly post-TLS) capability data leak into
+		// the new one.
+		this.capabilityRegistry.invalidate();
 		this.emit("disconnected", !hadErr);
 	};
 	protected onSocketEnd = () => {
@@ -331,12 +363,17 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		let capabilities: CapabilityList;
 		if (greeting.content.text?.code instanceof CapabilityTextCode) {
-			// We have a capability list already! Yay
+			// We have a capability list already! Yay. This is ONLY used
+			// locally to decide whether STARTTLS is worth attempting — it is
+			// never written into `capabilityRegistry`, so there's nothing to
+			// discard post-upgrade (I-2): pre-TLS capability data was never
+			// exposed as "current" to begin with.
 			capabilities = greeting.content.text.code.capabilities;
 		} else {
-			// We need to retrieve the capabilities
-			const cmd = new CapabilityCommand();
-			capabilities = await cmd.run(this);
+			// We need to retrieve the capabilities. Goes through the queue
+			// (not a bare `cmd.run(this)`) so it participates in the same
+			// isolated-context bookkeeping STARTTLS itself relies on.
+			capabilities = await this.runCommand(new CapabilityCommand());
 		}
 
 		if (capabilities.doesntHave("STARTTLS")) {
@@ -344,12 +381,30 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		}
 
 		const tlsCmd = new StartTLSCommand();
-		const startNegotiation: boolean = await tlsCmd.run(this);
+		// `runCommand()` synchronously adds the command to its (isolated,
+		// because StartTLSCommand.requiresOwnContext) queue context, which —
+		// since the queue isn't held yet — synchronously writes the STARTTLS
+		// command bytes before this call returns. Holding the queue right
+		// after that still lets STARTTLS's own bytes through while blocking
+		// every other command from writing anything until release() below —
+		// the §6.1 drain guarantee behind I-1 (no bytes between the STARTTLS
+		// tagged OK and handshake completion).
+		const negotiationResult = this.runCommand(tlsCmd);
+		this.commandQueue.hold();
+
+		let startNegotiation: boolean;
+		try {
+			startNegotiation = await negotiationResult;
+		} catch (err) {
+			this.commandQueue.release();
+			throw err;
+		}
 
 		if (!startNegotiation) {
 			// In theory we shouldn't be able to hit this as
 			// the above should throw if we can't negotiate,
 			// but want to be safe
+			this.commandQueue.release();
 			return false;
 		}
 
@@ -361,16 +416,36 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		const previousSocket = this.socket!;
 		previousSocket.unpipe(this.processingPipeline);
 
-		const tlsSock = await openTls({
-			host: this.options.host,
-			socket: previousSocket,
-			timeoutMs: this.options.timeout || DEFAULT_TIMEOUT,
-			tlsOptions: this.options.tlsOptions,
-		});
+		let tlsSock: tls.TLSSocket;
+		try {
+			tlsSock = await openTls({
+				host: this.options.host,
+				socket: previousSocket,
+				timeoutMs: this.options.timeout || DEFAULT_TIMEOUT,
+				tlsOptions: this.options.tlsOptions,
+			});
+		} finally {
+			// Handshake completion — success or failure — is the end of the
+			// I-1 window either way. On failure connect() tears the whole
+			// connection down regardless; releasing here just avoids leaving
+			// the queue permanently wedged for anything that might inspect it
+			// first.
+			this.commandQueue.release();
+		}
 
 		this.socket = tlsSock;
 		this.secure = true;
 		this.socket.pipe(this.processingPipeline);
+
+		// I-2: discard everything captured before confidentiality was
+		// established, then re-issue CAPABILITY over the now-protected
+		// channel before connect() resolves (spec §10.4). `Session` consults
+		// `capabilityRegistry` and reuses this value instead of re-fetching.
+		this.capabilityRegistry.invalidate();
+		const postTlsCapabilities = await this.runCommand(
+			new CapabilityCommand(),
+		);
+		this.capabilityRegistry.set(postTlsCapabilities);
 
 		return true;
 	}

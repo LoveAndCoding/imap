@@ -52,10 +52,24 @@ export default class Session {
 			// that information will really always be helpful. Surround in
 			// a try/catch because if the server doesn't support this, it
 			// is unlikely to have support for other things we need.
-			const capsCmd = new CapabilityCommand();
-			const capabilityList: CapabilityList = await this.connection.runCommand(
-				capsCmd,
-			);
+			//
+			// connect() may already have populated the connection's
+			// capability registry — a STARTTLS upgrade invalidates whatever
+			// was cached pre-TLS (I-2) and re-issues CAPABILITY over the
+			// protected channel before it resolves (spec §10.4). Reuse that
+			// value instead of issuing a second, redundant CAPABILITY round
+			// trip; only fetch it ourselves when the registry is still
+			// unpopulated (plain/implicit connects, where connect() never
+			// touches capabilities at all).
+			const registry = this.connection.capabilityRegistry;
+			let capabilityList: CapabilityList;
+			if (registry.isValid) {
+				capabilityList = registry.value as CapabilityList;
+			} else {
+				const capsCmd = new CapabilityCommand();
+				capabilityList = await this.connection.runCommand(capsCmd);
+				registry.set(capabilityList);
+			}
 			this.capabilityList = capabilityList;
 
 			if (capabilityList.has("ID")) {

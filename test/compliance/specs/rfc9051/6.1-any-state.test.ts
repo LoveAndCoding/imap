@@ -48,8 +48,7 @@ const localhost = loadCertFixture("localhost");
 // The client MUST implement STARTTLS on cleartext ports. Observable: when the
 // server advertises STARTTLS in its CAPABILITY response on a cleartext port
 // and the consumer requests a STARTTLS security policy, the client issues
-// STARTTLS and completes the TLS upgrade. The current client's 'starttls'
-// path is broken (see RFC9051-6.2.1-* in 6.2-notauth.test.ts) → violation.
+// STARTTLS and completes the TLS upgrade.
 //
 // (The LOGINDISABLED leg of this same sentence is the prohibition tested as
 // RFC9051-6.2.3-4 in 6.2-notauth.test.ts; not duplicated here.)
@@ -58,7 +57,6 @@ complianceTest(
 		reqs: ["RFC9051-6.1.1-1"],
 		profiles: ["rev2"],
 		title: "client acts on an advertised STARTTLS capability by upgrading on a cleartext port",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

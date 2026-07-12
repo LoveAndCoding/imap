@@ -55,15 +55,12 @@ const localhost = loadCertFixture("localhost");
 //   -2 (MUST discard cached capabilities): PRE-TLS-ONLY must be gone post-TLS.
 //   -3 (SHOULD re-issue CAPABILITY): the post-TLS expect step times out if the
 //      client never re-issues.
-// The current client's starttls path is broken → annotated violation
-// (transcript-verify which leg fails).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.1-1", "RFC9051-6.2.1-2", "RFC9051-6.2.1-3"],
 		profiles: ["rev2"],
 		title:
 			"STARTTLS: no plaintext before handshake; capabilities discarded and re-issued post-TLS",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

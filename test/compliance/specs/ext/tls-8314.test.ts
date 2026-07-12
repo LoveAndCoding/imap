@@ -58,15 +58,10 @@
  *   server that advertises STARTTLS and offers NO expectation for any
  *   credential command; if the client sent LOGIN/AUTHENTICATE pre-TLS it would
  *   be an unscripted command (script failure) and the client transcript would
- *   carry it. We assert the pre-TLS client lines contain no LOGIN/AUTHENTICATE.
- *   The client's STARTTLS upgrade path is broken today (see RFC3501-6.2.1-* /
- *   RFC9051-11.1-7), so connect() fails — but the OBSERVABLE duty here is the
- *   NEGATIVE one (no credentials appear before TLS), which holds: the failing
- *   STARTTLS path never emits credentials in the clear. Annotated 'violation'
- *   because the client does not complete the confidentiality-first STARTTLS
- *   sequence the duty presumes (it aborts rather than reaching a protected
- *   channel); the genuine, non-vacuous witness is that no credential command
- *   ever reaches the wire in cleartext.
+ *   carry it. We assert the pre-TLS client lines contain no LOGIN/AUTHENTICATE
+ *   AND that the confidentiality-first STARTTLS sequence the duty presumes
+ *   actually completes (ok === true) — both hold: the client never emits
+ *   credentials in the clear, and it reaches the protected channel.
  */
 import { expect } from "vitest";
 
@@ -190,19 +185,16 @@ complianceTest(
 // (script failure) and its transcript would carry the credential line.
 //
 // Genuineness: the assertion is the NEGATIVE duty — no LOGIN/AUTHENTICATE
-// appears in the pre-TLS client transcript. The client's STARTTLS upgrade path
-// is broken today (connect() fails), but the failing path never emits
-// credentials in the clear, so the prohibition holds non-vacuously (the
-// transcript-scan sentinel would fire if a credential command ever appeared).
-// Annotated 'violation' because the client does not complete the
-// confidentiality-first STARTTLS sequence the duty presumes.
+// appears in the pre-TLS client transcript (the transcript-scan sentinel
+// would fire if a credential command ever appeared) — combined with the
+// POSITIVE duty that the confidentiality-first STARTTLS sequence the test
+// presumes actually completes (ok === true).
 complianceTest(
 	{
 		reqs: ["RFC8314-5.2-4", "RFC8314-5.1-7"],
 		profiles: ["rev1", "rev2"],
 		title:
 			"client sends no credential command before a minimum-confidentiality TLS session is established",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -244,8 +236,7 @@ complianceTest(
 			"no AUTHENTICATE command must appear before TLS",
 		).not.toMatch(/\bAUTHENTICATE\b/);
 		// The confidentiality-first STARTTLS sequence must complete for the client
-		// to legitimately proceed to any credentialed operation. STARTTLS is broken
-		// today → ok === false (honest violation).
+		// to legitimately proceed to any credentialed operation.
 		expect(ok).toBe(true);
 		await server.assertCompleted();
 	},

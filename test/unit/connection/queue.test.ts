@@ -216,4 +216,114 @@ describe("CommandQueue", () => {
 			expect(q.queueContexts).toHaveLength(0);
 		});
 	});
+
+	// §6.1 drain guarantee / I-1: the STARTTLS upgrade holds the queue right
+	// after sending its own command so that nothing else can write bytes
+	// between the tagged OK and the completion of the TLS handshake.
+	describe("hold/release (I-1: no bytes between STARTTLS OK and handshake completion)", () => {
+		const flushMicrotasks = () =>
+			new Promise((resolve) => setImmediate(resolve));
+
+		test("a command added while held is not dispatched until release()", () => {
+			// Arrange
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+
+			// Act: simulate the window between the STARTTLS tagged OK and the
+			// handshake completing — nothing may be written while held.
+			q.hold();
+			q.add(cmdMock);
+
+			// Assert: held, so no bytes for this command have been written yet.
+			expect(cmdMock.run).not.toBeCalled();
+
+			// Act: handshake completes, the hold is lifted.
+			q.release();
+
+			// Assert: only now does the withheld command actually write.
+			expect(cmdMock.run).toBeCalled();
+		});
+
+		test("a command already dispatched before hold() keeps running (only later writes are blocked)", () => {
+			// Arrange — mirrors the real STARTTLS sequence: `runCommand(tlsCmd)`
+			// synchronously writes the STARTTLS bytes, THEN the queue is held.
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			const startTlsCmd: any = {
+				run: vi.fn(() => Promise.resolve()),
+				emit: vi.fn(),
+				requiresOwnContext: true,
+			};
+
+			// Act
+			q.add(startTlsCmd); // dispatched immediately — not held yet
+			q.hold();
+
+			// Assert: STARTTLS's own bytes were written before the hold began.
+			expect(startTlsCmd.run).toBeCalledTimes(1);
+		});
+
+		test("release() is a no-op when not currently held", () => {
+			// Arrange
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+
+			// Act
+			q.release(); // never held — must not throw or misbehave
+			q.add(cmdMock);
+
+			// Assert: ordinary (unheld) dispatch still happens immediately.
+			expect(cmdMock.run).toBeCalled();
+		});
+
+		test("a context promoted to active while still held withholds its writes too", async () => {
+			// Arrange: an isolated (STARTTLS-shaped) command occupies the active
+			// context; a second command is queued behind it in its own context.
+			// While the first command is in flight, hold() is engaged (as the
+			// real upgrade does) and the first command then resolves — promoting
+			// the second context to active. Its command must NOT be dispatched
+			// while still held, even though context promotion happens mid-hold.
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+
+			let resolveFirst: () => void = () => undefined;
+			const firstCmd: any = {
+				run: vi.fn(
+					() => new Promise<void>((resolve) => (resolveFirst = resolve)),
+				),
+				emit: vi.fn(),
+				requiresOwnContext: true,
+			};
+			const secondCmd: any = {
+				run: vi.fn(() => Promise.resolve()),
+				emit: vi.fn(),
+				requiresOwnContext: true,
+			};
+
+			q.add(firstCmd);
+			q.add(secondCmd);
+			q.hold();
+
+			// Act: the first (isolated) command completes while still held,
+			// which promotes the second context to active.
+			resolveFirst();
+			await flushMicrotasks();
+
+			// Assert: the second command must still be withheld.
+			expect(secondCmd.run).not.toBeCalled();
+
+			// Act
+			q.release();
+			await flushMicrotasks();
+
+			// Assert
+			expect(secondCmd.run).toBeCalled();
+		});
+	});
 });

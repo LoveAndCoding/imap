@@ -237,24 +237,19 @@ complianceTest(
 // exchange completes.
 //
 // CONFOUND-RESOLUTION NOTE (why a valid cert, not wrong-host):
-// The earlier wrong-host formulation asserted only ok === false, which the
-// client satisfies today for a CONFOUNDED reason — its STARTTLS path is broken
-// independently (see RFC9051-11.2-1's STARTTLS leg, which fails even with a
-// VALID localhost cert), so connect() returns false regardless of cert
-// identity. That made the assertion a FALSE PASS: it credited the result-check
-// duty while the abort was caused by broken STARTTLS, never by a result check.
-// A wrong-host abort cannot be distinguished from the generic STARTTLS failure
-// until STARTTLS works. This test therefore isolates the duty via the positive
-// leg on a valid cert (the result-check is witnessed only when the client
-// completes a checked, acceptable negotiation and proceeds). STARTTLS is broken
-// today → this fails honestly and is annotated 'violation'; it self-actualizes
-// into a genuine result-check witness once STARTTLS lands.
+// A wrong-host formulation asserting only ok === false would be a FALSE PASS
+// if STARTTLS were broken independently of the result check — connect()
+// would return false regardless of cert identity, crediting the result-check
+// duty for an abort actually caused by something else. A wrong-host abort
+// cannot be distinguished from a generic STARTTLS failure. This test
+// therefore isolates the duty via the positive leg on a valid cert: the
+// result-check is witnessed only when the client completes a checked,
+// acceptable negotiation and proceeds to the post-TLS CAPABILITY exchange.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.1-7"],
 		profiles: ["rev2"],
 		title: "client checks the STARTTLS negotiation result and proceeds only after acceptable security",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -282,7 +277,7 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		// A client that result-checks a completed, acceptable STARTTLS negotiation
-		// proceeds. Broken STARTTLS today → ok === false (honest violation).
+		// proceeds.
 		expect(ok).toBe(true);
 		await server.assertCompleted();
 	},
@@ -297,16 +292,14 @@ complianceTest(
 //   - STARTTLS leg: connect with security:"starttls" to a cleartext listener
 //     that upgrades → the STARTTLS code path must be reachable and drive the
 //     upgrade to success.
-// The Implicit-TLS half works today; the STARTTLS half is broken (see
-// RFC9051-6.2.1-* / RFC9051-11.1-7) → the STARTTLS leg fails honestly and the
-// whole test is annotated violation. Transcript-verify: the implicit leg
-// passes its assertion, the starttls leg is where the failure surfaces.
+// Both legs must complete: the Implicit-TLS leg over a real tls.createServer
+// listener, and the STARTTLS leg driving connection.ts's starttls() upgrade
+// to success (see RFC9051-6.2.1-* / RFC9051-11.1-7).
 complianceTest(
 	{
 		reqs: ["RFC9051-11.2-1"],
 		profiles: ["rev2"],
 		title: "client implements both Implicit TLS and STARTTLS negotiation (two-session pair)",
-		expectFailure: "violation",
 		timeout: 8000,
 	},
 	async () => {
@@ -349,7 +342,7 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		// The STARTTLS code path must also be reachable and succeed. Broken today.
+		// The STARTTLS code path must also be reachable and succeed.
 		expect(starttlsOk, "STARTTLS leg must complete the upgrade").toBe(true);
 		await starttlsServer.assertCompleted();
 	},

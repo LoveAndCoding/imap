@@ -21,13 +21,23 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 	public commands: Set<Command<any>>;
 	public running: boolean;
 
+	/**
+	 * Commands that have been handed to `add()`/`run()` while the owning
+	 * `CommandQueue` is held (§6.1 drain guarantee, I-1) sit here instead of
+	 * being dispatched to `command.run()` — so no bytes reach the socket —
+	 * until `flushPending()` runs them on release.
+	 */
+	private pending: Set<Command<any>>;
+
 	constructor(
 		public readonly connection: Connection,
 		immediatelyStart = false,
 		public readonly isIsolated: boolean = false,
+		private readonly isHeld: () => boolean = () => false,
 	) {
 		super();
 		this.commands = new Set();
+		this.pending = new Set();
 		this.running = immediatelyStart;
 	}
 
@@ -43,12 +53,13 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		this.commands.add(command);
 
 		if (this.running) {
-			this.startCommand(command);
+			this.dispatch(command);
 		}
 	}
 
 	protected remove(command: Command<any>) {
 		this.commands.delete(command);
+		this.pending.delete(command);
 		command.emit("cancel");
 		this.emit("commandCanceled", command);
 	}
@@ -62,7 +73,7 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		this.emit("start");
 		if (this.commands.size) {
 			for (const cmd of this.commands) {
-				this.startCommand(cmd);
+				this.dispatch(cmd);
 			}
 		} else {
 			this.emit("idle");
@@ -80,6 +91,32 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		}
 	}
 
+	/**
+	 * Starts every command withheld while the queue was held. A no-op (left
+	 * for the next release) if still held — nested hold()/release() pairs
+	 * must not let an inner release flush an outer hold.
+	 */
+	public flushPending() {
+		if (this.isHeld() || this.pending.size === 0) {
+			return;
+		}
+
+		const toStart = [...this.pending];
+		this.pending.clear();
+		for (const cmd of toStart) {
+			this.startCommand(cmd);
+		}
+	}
+
+	private dispatch(command: Command<any>) {
+		if (this.isHeld()) {
+			this.pending.add(command);
+			return;
+		}
+
+		this.startCommand(command);
+	}
+
 	private startCommand(command: Command<any>) {
 		if (!this.running) {
 			return;
@@ -90,6 +127,7 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		cmdRun.finally(() => {
 			this.emit("commandDone", command);
 			this.commands.delete(command);
+			this.pending.delete(command);
 			if (this.commands.size === 0) {
 				this.emit("idle");
 			}
@@ -99,6 +137,7 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 
 export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	public queueContexts: AsyncQueueContext[];
+	private held: boolean;
 
 	constructor(
 		public readonly connection: Connection,
@@ -106,6 +145,7 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	) {
 		super();
 		this.queueContexts = [];
+		this.held = false;
 	}
 
 	protected get activeContext(): AsyncQueueContext | void {
@@ -114,6 +154,11 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 
 	protected get waitingContext(): AsyncQueueContext | void {
 		return this.queueContexts[this.queueContexts.length - 1];
+	}
+
+	/** Whether the queue is currently held (see `hold()`). */
+	public get isHeld(): boolean {
+		return this.held;
 	}
 
 	add<T>(command: Command<T>) {
@@ -147,6 +192,32 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		this.cancelAllRunningCommands();
 	}
 
+	/**
+	 * §6.1 drain guarantee / I-1: while held, no command anywhere in the
+	 * queue may write its bytes to the socket, no matter which context is
+	 * active when the hold is lifted — contexts consult `isHeld()` at
+	 * dispatch time, not just at creation time, so a context promoted to
+	 * active *during* a hold still withholds its writes. Used by the
+	 * STARTTLS upgrade to guarantee nothing is written between the STARTTLS
+	 * tagged OK and TLS handshake completion.
+	 */
+	hold(): void {
+		this.held = true;
+	}
+
+	/**
+	 * Releases a prior `hold()` and immediately dispatches anything queued
+	 * up in the meantime. A no-op if not currently held.
+	 */
+	release(): void {
+		if (!this.held) {
+			return;
+		}
+
+		this.held = false;
+		this.activeContext?.flushPending();
+	}
+
 	private addQueueContext(isIsolated = false) {
 		const q = new AsyncQueueContext(
 			this.connection,
@@ -154,6 +225,7 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 			// have an active connection
 			this.running && this.queueContexts.length === 0,
 			isIsolated,
+			() => this.held,
 		);
 		// remove it once the queue is idle
 		q.once("idle", () => this.removeQueueContext(q));

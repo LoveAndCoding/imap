@@ -19,11 +19,13 @@
  *
  * These duties predate and are restated by RFC 3501 §6.2.1/§11.1; the tests
  * mirror the RFC3501 STARTTLS/TLS-identity specs but cite the RFC 2595 family
- * ids so the source is scored independently. Known client defects reproduced:
- * the STARTTLS upgrade path's choreography (capability re-issue, no-bytes
- * invariant) is still broken (STARTTLS-usage tests → violation; a later
- * milestone). Hostname/identity verification (implicit TLS) is now enforced
- * by the connection/tls.ts policy module → pass.
+ * ids so the source is scored independently. Hostname/identity verification
+ * (implicit TLS) is enforced by the connection/tls.ts policy module, and the
+ * STARTTLS upgrade choreography (isolated-context drain + hold/release
+ * around the handshake, capability registry invalidation + re-issue) is
+ * implemented in connection.ts's starttls() — both → pass. RFC2595-9-1 (warn
+ * or refuse on a stripped STARTTLS capability) stays annotated 'violation':
+ * see that test's own note.
  */
 import { expect } from "vitest";
 
@@ -149,16 +151,16 @@ complianceTest(
 // re-issues CAPABILITY over the protected channel (ok === true).
 //
 // CONFOUND-RESOLUTION: a wrong-host formulation asserting only ok === false
-// would be a FALSE PASS — the client's STARTTLS path is broken independently,
-// so connect() returns false regardless of the result check. We isolate the
-// duty via the positive leg on a valid cert (mirrors RFC9051-11.1-7). STARTTLS
-// is broken today → this fails honestly and is annotated 'violation'.
+// would be a FALSE PASS if STARTTLS were broken independently of the result
+// check — connect() would return false regardless of it. We isolate the duty
+// via the positive leg on a valid cert (mirrors RFC9051-11.1-7): only a
+// client that genuinely checks the negotiation result and finds it
+// acceptable proceeds to the post-TLS CAPABILITY exchange.
 complianceTest(
 	{
 		reqs: ["RFC2595-2.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client checks the STARTTLS negotiation result and proceeds only after acceptable security",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -193,14 +195,12 @@ complianceTest(
 // response + TLS negotiation complete (3.1-1; the harness startTls step fails
 // if plaintext arrives before the handshake). Once TLS started, the client
 // MUST discard cached capabilities (3.1-2, restated in §9 as 9-3) and SHOULD
-// re-issue CAPABILITY (3.1-3). Mirrors RFC3501-6.2.1-1/-2/-3. STARTTLS is
-// broken today → violation.
+// re-issue CAPABILITY (3.1-3). Mirrors RFC3501-6.2.1-1/-2/-3.
 complianceTest(
 	{
 		reqs: ["RFC2595-3.1-1", "RFC2595-3.1-2", "RFC2595-3.1-3", "RFC2595-9-3"],
 		profiles: ["rev1", "rev2"],
 		title: "STARTTLS: no plaintext after OK; cached capabilities discarded and re-issued post-TLS",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
