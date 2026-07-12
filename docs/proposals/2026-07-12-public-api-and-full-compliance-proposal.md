@@ -1,7 +1,7 @@
 # Proposal: The Public API, and the Road to Full IMAP Compliance
 
 **Date:** 2026-07-12
-**Status:** Draft for review
+**Status:** Accepted — §6 decisions settled with the maintainer (2026-07-12)
 **Scope:** The `modern-api` rewrite — public interface design first, then the
 implementation architecture and phasing required to reach full compliance with
 every spec the compliance suite measures.
@@ -542,7 +542,8 @@ the measured violations:
 
 ### 4.6 Session, mailbox state, and sync
 
-`Session` grows into `ImapClient`; a new `MailboxSession` owns selected-state
+`Session` is replaced outright by `ImapClient` (no alias — see §6.1); a new
+`MailboxSession` owns selected-state
 data fed exclusively by the router's state-tracker lane: counts, flags,
 UIDVALIDITY transitions (loud event — cache-invalidation contract),
 HIGHESTMODSEQ, QRESYNC resync ingestion (VANISHED EARLIER + flag FETCHes as a
@@ -577,8 +578,9 @@ API design and several (TLS) are security-relevant.
 
 **M1 — Client shell and auth.**
 `CommandWriter`, router, state machine, `ImapClient` (connect/state/events/
-errors as in §3.1, §3.7), AUTHENTICATE+SASL core (PLAIN, OAUTHBEARER,
-XOAUTH2, SASL-IR), LOGIN+LOGINDISABLED, LOGOUT, ENABLE, ID/NOOP re-homed.
+errors as in §3.1, §3.7) replacing `Session` in the public surface (§6.1),
+AUTHENTICATE+SASL core (PLAIN, OAUTHBEARER, XOAUTH2, SASL-IR),
+LOGIN+LOGINDISABLED, LOGOUT, ENABLE, ID/NOOP re-homed.
 *Exit:* RFC 3501/9051 §6.1–6.2 + RFC 4422/4616/4959/5161/7628 MUST ≥ 90%.
 
 **M2 — Mailbox management.**
@@ -612,8 +614,8 @@ surface).
 **M6 — Full-compliance close-out and 1.0.**
 Sweep remaining SHOULD/MAY where implementable; adjudicate any requirement we
 *choose* not to satisfy (documented, with rationale, in the compliance
-report); docs site from TSDoc; migration guide; semver commitment; publish
-the compliance matrix as a README badge/table.
+report); docs site from TSDoc; migration guide; semver commitment; version
+bumped to 1.0; publish the compliance matrix as a README badge/table.
 *Exit:* MUST/MUST NOT = 100% of testable across all sources and both
 profiles; SHOULD ≥ 95% with written rationale for each exception; MAY
 adjudicated case-by-case.
@@ -624,18 +626,24 @@ class + parser structure + facet, which is the architecture's point.
 
 ---
 
-## 6. Risks and open questions
+## 6. Settled decisions
 
-1. **Naming:** `ImapClient` replacing `Session` (recommended: `Session` is
-   already public but pre-1.0; rename now, alias until 1.0).
-2. **UID-first** (`inbox.fetch` = UID FETCH, `inbox.seq.fetch` = FETCH) is a
-   deliberate break from node-imap's seq-default. Recommended for the
-   UIDONLY/QRESYNC era; needs sign-off since it inverts old muscle memory.
-3. **Facets vs. flat methods** for extensions (§3.6): facets recommended;
-   the alternative (60+ methods on one class) hurts discoverability.
-4. **How much of Layer 1 is public at 1.0:** recommend `Connection`, the
-   response classes, and events stay public (the suite's `connectLow` path
-   already depends on them), but the lexer internals go package-private.
+Reviewed with the maintainer 2026-07-12; recorded here so they are not
+re-litigated during the build.
+
+1. **Naming:** `ImapClient` replaces `Session` outright. No alias, no
+   deprecation window — everything on this branch is unreleased, and the
+   version bumps to 1.0 when the modernization rewrite lands (M6). `Session`
+   disappears from the public surface as part of M1.
+2. **UID-first is the API's grain** (`inbox.fetch` = UID FETCH,
+   `inbox.seq.fetch` = FETCH). A deliberate break from node-imap's
+   seq-default, made for the UIDONLY/QRESYNC era; the migration guide calls
+   it out prominently.
+3. **Extensions ship as facets** (§3.6), not flat methods — 60+ methods on
+   one class would sink discoverability.
+4. **Layer 1 at 1.0:** `Connection`, the response classes, and their events
+   stay public (the suite's `connectLow` path already depends on them); the
+   lexer internals go package-private.
 5. **SHOULD-level duties that are genuinely product decisions** (e.g. ALERT
    *display*, RFC 8314 config-probing rules): the library exposes the
    compliant mechanism (events, policy flags) and documents the consumer's
