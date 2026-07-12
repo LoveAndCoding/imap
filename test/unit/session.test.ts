@@ -120,3 +120,64 @@ describe("Session capability reconciliation (spec §10.4, I-2)", () => {
 		expect(session.capabilities?.has("POST-TLS-ONLY")).toBe(true);
 	});
 });
+
+describe("Session.start() failure-path state hygiene (MEDIUM-11)", () => {
+	test("a failed start() resets authed/capabilityList/serverInfo, mirroring end()", async () => {
+		// Arrange: connect() succeeds and the connection reports a PREAUTH-style
+		// `authenticated: true` (Session copies this BEFORE the later ID
+		// exchange below fails) — a partial success followed by a later
+		// failure, which is exactly the shape that used to leave `authed`
+		// stuck `true` while `started` alone got reset.
+		const caps = fakeCaps(["IMAP4rev1", "ID"]);
+		const runCommand = vi.fn(async (command: any) => {
+			if (command.type === "CAPABILITY") return caps;
+			if (command.type === "ID") throw new Error("simulated ID exchange failure");
+			throw new Error(`unexpected command in test: ${command.type}`);
+		});
+		const fakeConnection = {
+			isActive: true,
+			authenticated: true,
+			capabilityRegistry: new CapabilityRegistry(),
+			connect: vi.fn(async () => true),
+			runCommand,
+			disconnect: vi.fn(async () => undefined),
+		};
+		const session = new Session({ host: "localhost", port: 143 } as any);
+		(session as any).connection = fakeConnection;
+
+		// Act
+		const ok = await session.start();
+
+		// Assert: everything reset, mirroring end() — no self-contradictory
+		// stale reads (e.g. `authenticated: true` while `active: false`).
+		expect(ok).toBe(false);
+		expect(session.active).toBe(false);
+		expect(session.authenticated).toBe(false);
+		expect(session.capabilities).toBe(null);
+		expect(session.server).toBe(null);
+		expect(fakeConnection.disconnect).toHaveBeenCalledTimes(1);
+	});
+
+	test("a rejecting connection.disconnect() in the failure path is awaited and caught, not left as an unhandled rejection", async () => {
+		const fakeConnection = {
+			isActive: true,
+			authenticated: false,
+			capabilityRegistry: new CapabilityRegistry(),
+			connect: vi.fn(async () => true),
+			runCommand: vi.fn(async () => {
+				throw new Error("simulated CAPABILITY failure");
+			}),
+			disconnect: vi.fn(async () => {
+				throw new Error("disconnect also failed");
+			}),
+		};
+		const session = new Session({ host: "localhost", port: 143 } as any);
+		(session as any).connection = fakeConnection;
+
+		// If disconnect()'s rejection isn't awaited (and caught) inside
+		// start(), it becomes an unhandled promise rejection instead of
+		// start() simply resolving `false`.
+		await expect(session.start()).resolves.toBe(false);
+		expect(fakeConnection.disconnect).toHaveBeenCalledTimes(1);
+	});
+});

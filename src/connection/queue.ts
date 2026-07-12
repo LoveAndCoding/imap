@@ -189,6 +189,13 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 
 	stop() {
 		this.running = false;
+		// Defensive hygiene (CRITICAL-2): a dead/erroring socket must never
+		// leave the queue permanently held. `stop()` is the one operation every
+		// teardown path (both the normal socket-close lifecycle and a
+		// connect()-time failure) is guaranteed to call, so resetting `held`
+		// here — in addition to `release()` doing so on its own paths —
+		// guarantees a wedged hold can't survive past a torn-down connection.
+		this.held = false;
 		this.cancelAllRunningCommands();
 	}
 

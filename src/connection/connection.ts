@@ -1,3 +1,4 @@
+import { EventEmitter } from "events";
 import * as net from "net";
 import { clearTimeout, setTimeout } from "timers";
 import * as tls from "tls";
@@ -80,6 +81,67 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 */
 	public readonly capabilityRegistry = new CapabilityRegistry();
 
+	/**
+	 * Internal, untyped fanout of EVERY untagged status response — including
+	 * the greeting — fired BEFORE `handleStatusResponse()`'s consumer-facing
+	 * ALERT suppression gate (CRITICAL-3). `awaitGreeting()` listens here
+	 * instead of on the public `serverStatus` event so a legal `* OK [ALERT]
+	 * ...` (or PREAUTH/BYE-with-ALERT) greeting still resolves the greeting
+	 * wait even though it's never surfaced as a trusted `serverStatus` event
+	 * pre-confidentiality. Purely an implementation detail — it changes
+	 * nothing about what consumers observe via the public event map.
+	 */
+	private readonly rawStatusEvents = new EventEmitter();
+
+	/**
+	 * Armed for the duration of an in-flight `connect()` call: kept attached
+	 * to whatever socket currently exists (plain, implicit-TLS, or the
+	 * post-STARTTLS-upgrade socket) so a socket failure at ANY phase rejects
+	 * the in-flight `connect()` promise instead of hanging it, and is never
+	 * an unhandled `error` event (which would crash the process) — CRITICAL-2.
+	 * Cleared and replaced by the permanent `onSocketError` handler once
+	 * `connect()` succeeds.
+	 */
+	private transientConnectError?: (err: unknown) => void;
+
+	/**
+	 * (Re-)attaches the transient connect-time error handler to the CURRENT
+	 * `this.socket`. Called after every socket (re)assignment during
+	 * `connect()` — including the mid-flight swap to the TLS socket in
+	 * `starttls()` — so the handler always tracks the live socket rather than
+	 * a socket that's since been replaced. A no-op if there's no live socket
+	 * or no in-flight `connect()` (i.e. no handler has been armed).
+	 */
+	private rebindTransientErrorHandler(): void {
+		if (!this.socket || !this.transientConnectError) {
+			return;
+		}
+		this.socket.off("error", this.transientConnectError);
+		this.socket.on("error", this.transientConnectError);
+	}
+
+	/**
+	 * Shared teardown for every `connect()` failure path (CRITICAL-1,
+	 * CRITICAL-2): destroys whatever socket exists, resets every piece of
+	 * per-attempt state (including `preauthed` — a stale `true` here would
+	 * let a LATER, unrelated `connect()` attempt on this same instance skip
+	 * STARTTLS eligibility and silently resolve over plaintext), and stops
+	 * the command queue so a hold engaged mid-STARTTLS can never survive a
+	 * torn-down connection attempt.
+	 */
+	private teardownFailedConnect(): void {
+		if (this.transientConnectError) {
+			this.socket?.off("error", this.transientConnectError);
+		}
+		this.socket?.destroy();
+		this.socket = undefined;
+		this.secure = undefined;
+		this.connected = false;
+		this.preauthed = false;
+		this.commandQueue.stop();
+		this.transientConnectError = undefined;
+	}
+
 	constructor(options: IMAPConnectionConfiguration) {
 		super();
 		// Shallow copy options so we're not modifying the original object
@@ -155,75 +217,111 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.socket = undefined;
 		const timeoutWait = timeout || DEFAULT_TIMEOUT;
 
+		// CRITICAL-1: every attempt starts from a clean slate. Without this,
+		// a Connection that saw a rejected cleartext PREAUTH greeting on a
+		// prior attempt (which sets `preauthed = true` BEFORE the
+		// mandatory-TLS policy check throws) would carry that stale flag into
+		// a later, successful connect() on the same instance — skipping
+		// STARTTLS eligibility below and silently resolving over plaintext
+		// while reporting authenticated.
+		this.preauthed = false;
+
+		// CRITICAL-2: armed for the whole ritual below. Any socket 'error'
+		// event before the permanent handler is installed at the very end
+		// rejects `connectAbort` (raced against every hazardous await) —
+		// never an unhandled 'error' event, never a hang — and defensively
+		// stops the command queue so a hold engaged mid-STARTTLS can never
+		// survive the failure.
+		let rejectConnectAbort!: (err: Error) => void;
+		const connectAbort = new Promise<never>((_, reject) => {
+			rejectConnectAbort = reject;
+		});
+		// A "losing" racer in Promise.race is still attached to via race's
+		// internals (no unhandled-rejection risk from that), but this promise
+		// is also used stand-alone as a rejection source; give it its own
+		// harmless catch so a codepath that never races it can't warn either.
+		connectAbort.catch(() => undefined);
+		this.transientConnectError = (err: unknown) => {
+			this.commandQueue.stop();
+			rejectConnectAbort(err instanceof Error ? err : new Error(String(err)));
+		};
+
 		let connected: boolean;
 
-		if (tlsSetting === TLSSetting.DEFAULT) {
-			// Implicit TLS: every TLS socket is created through the ONE TLS
-			// policy module. A handshake or identity failure rejects here
-			// (never a hang, never a boolean-false resolve) — let it
-			// propagate to the caller after tearing down any partial state.
-			try {
+		try {
+			if (tlsSetting === TLSSetting.DEFAULT) {
+				// Implicit TLS: every TLS socket is created through the ONE TLS
+				// policy module. A handshake or identity failure rejects here
+				// (never a hang, never a boolean-false resolve) — let it
+				// propagate to the caller after tearing down any partial state.
 				this.socket = await openTls({
 					host,
 					port,
 					timeoutMs: timeoutWait,
 					tlsOptions,
 				});
-			} catch (err) {
-				this.socket = undefined;
-				this.secure = undefined;
-				this.connected = false;
-				throw err;
-			}
-			this.secure = true;
-			connected = true;
-		} else {
-			connected = await new Promise<boolean>((resolve, reject) => {
-				// Setup a simple timeout
-				let connTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
-					// Check to make sure we didn't already close the connection
-					if (!this.socket) {
-						return;
-					}
+				this.secure = true;
+				connected = true;
+				this.rebindTransientErrorHandler();
+			} else {
+				connected = await Promise.race([
+					new Promise<boolean>((resolve, reject) => {
+						// Setup a simple timeout
+						let connTimeout: NodeJS.Timeout | undefined = setTimeout(() => {
+							// Check to make sure we didn't already close the connection
+							if (!this.socket) {
+								return;
+							}
 
-					connTimeout = undefined;
-					const tmrErr = new ConnectionTimeout(timeoutWait, "Socket");
-					this.socket.destroy(tmrErr);
-					this.socket = undefined;
-					reject(tmrErr);
-				}, timeoutWait);
-				const clearTimer = (connected) => {
-					return () => {
-						if (connTimeout) {
-							clearTimeout(connTimeout);
 							connTimeout = undefined;
-							resolve(connected);
-						}
-						// The socket may have already been cleared out (e.g. by
-						// the timeout above), in which case there's nothing
-						// left to unregister these listeners from.
-						this.socket?.off("end", clearTimerBad);
-						this.socket?.off("close", clearTimerBad);
-					};
-				};
-				const clearTimerGood = clearTimer(true);
-				const clearTimerBad = clearTimer(false);
-				this.socket = net.connect(
-					{
-						host,
-						port,
-					},
-					clearTimerGood,
-				);
-				this.secure = false;
-				this.socket.once("end", clearTimerBad);
-				this.socket.once("close", clearTimerBad);
-			});
+							const tmrErr = new ConnectionTimeout(timeoutWait, "Socket");
+							this.socket.destroy(tmrErr);
+							this.socket = undefined;
+							reject(tmrErr);
+						}, timeoutWait);
+						const clearTimer = (connected) => {
+							return () => {
+								if (connTimeout) {
+									clearTimeout(connTimeout);
+									connTimeout = undefined;
+									resolve(connected);
+								}
+								// The socket may have already been cleared out (e.g. by
+								// the timeout above), in which case there's nothing
+								// left to unregister these listeners from.
+								this.socket?.off("end", clearTimerBad);
+								this.socket?.off("close", clearTimerBad);
+							};
+						};
+						const clearTimerGood = clearTimer(true);
+						const clearTimerBad = clearTimer(false);
+						this.socket = net.connect(
+							{
+								host,
+								port,
+							},
+							clearTimerGood,
+						);
+						this.secure = false;
+						// Armed as soon as the socket exists (CRITICAL-2): an
+						// ECONNREFUSED/ECONNRESET here previously had no
+						// listener at all, which is an unhandled 'error' event
+						// (process crash) rather than a rejected connect().
+						this.rebindTransientErrorHandler();
+						this.socket.once("end", clearTimerBad);
+						this.socket.once("close", clearTimerBad);
+					}),
+					connectAbort,
+				]);
 
-			if (!connected) {
-				this.socket = undefined;
-				return false;
+				if (!connected) {
+					this.socket = undefined;
+					return false;
+				}
 			}
+		} catch (err) {
+			this.teardownFailedConnect();
+			throw err;
 		}
 
 		this.socket!.pipe(this.processingPipeline);
@@ -243,12 +341,9 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// already-resolved greeting rather than waiting for a second one.
 		let greeting: StatusResponse;
 		try {
-			greeting = await this.awaitGreeting();
+			greeting = await Promise.race([this.awaitGreeting(), connectAbort]);
 		} catch (err) {
-			this.socket?.destroy();
-			this.socket = undefined;
-			this.secure = undefined;
-			this.connected = false;
+			this.teardownFailedConnect();
 			throw err;
 		}
 
@@ -259,15 +354,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				tlsSetting === TLSSetting.STARTTLS_OPTIONAL)
 		) {
 			try {
-				connected = await this.starttls(greeting);
+				connected = await Promise.race([
+					this.starttls(greeting),
+					connectAbort,
+				]);
 			} catch (err) {
 				// A failed STARTTLS upgrade leaves the connection dead — never
 				// continue cleartext after a failed handshake. Tear down so a
 				// later disconnect()/end() can't hang on a half-open client.
-				this.socket?.destroy();
-				this.socket = undefined;
-				this.secure = undefined;
-				this.connected = false;
+				this.teardownFailedConnect();
 				throw err;
 			}
 			// NOTE: `connected` (the local outcome of starttls(), just
@@ -280,22 +375,23 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// even after a successful upgrade — the bug that made every
 			// strict-STARTTLS connect() fail regardless of outcome.
 			if (!connected && tlsSetting === TLSSetting.STARTTLS) {
-				this.socket!.destroy();
-				this.socket = undefined;
+				this.teardownFailedConnect();
 				throw new TLSSocketError(
 					"Could not establish a secure connection",
 					"policy",
 				);
 			}
+			this.rebindTransientErrorHandler();
 		}
 
 		this.connected = connected;
 		if (!connected) {
-			this.socket!.destroy();
-			this.socket = undefined;
+			this.teardownFailedConnect();
 			return false;
 		}
 
+		this.socket!.off("error", this.transientConnectError!);
+		this.transientConnectError = undefined;
 		this.socket!.on("error", this.onSocketError);
 		this.socket!.once("end", this.onSocketEnd);
 		this.socket!.once("close", this.onSocketClose);
@@ -406,6 +502,18 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * emits exactly as before.
 	 */
 	protected handleStatusResponse(resp: UntaggedResponse): void {
+		// CRITICAL-3: fire the internal, pre-suppression fanout for EVERY
+		// status response — including the greeting itself — before the
+		// ALERT consumer-facing gate below runs. `awaitGreeting()` listens
+		// here instead of on `serverStatus` so a legal `* OK [ALERT] ...` (or
+		// PREAUTH/BYE-with-ALERT) greeting still resolves the greeting wait
+		// even though it's never surfaced as a trusted `serverStatus` event
+		// pre-confidentiality — otherwise that suppression left
+		// `awaitGreeting()`'s ONLY resolution path (`once("serverStatus",
+		// ...)`) with nothing to ever fire, hanging every such connect() until
+		// the greeting timeout.
+		this.rawStatusEvents.emit("status", resp);
+
 		const status = resp.content as StatusResponse;
 		const code = status.text?.code;
 		const isAlert = code instanceof AtomTextCode && code.kind === "ALERT";
@@ -454,7 +562,20 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			(resolve, reject) => {
 				const greetingTimeoutAmount =
 					this.options.timeout || DEFAULT_TIMEOUT;
+				// CRITICAL-3: listen on the internal pre-suppression fanout,
+				// not the public `serverStatus` event — an ALERT-carrying
+				// greeting is never emitted as `serverStatus` pre-
+				// confidentiality, but it MUST still resolve this wait.
+				const onStatus = (resp: UntaggedResponse) => {
+					clearTimeout(greetingTimeout);
+					resolve(resp);
+				};
 				const greetingTimeout = setTimeout(() => {
+					// LOW-14a: the timeout path must remove this listener too
+					// — previously only the resolved path did (implicitly, via
+					// `once` firing), leaking one listener per timed-out
+					// greeting wait.
+					this.rawStatusEvents.off("status", onStatus);
 					reject(
 						new ConnectionTimeout(
 							greetingTimeoutAmount,
@@ -462,10 +583,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 						),
 					);
 				}, greetingTimeoutAmount);
-				this.once("serverStatus", (resp) => {
-					clearTimeout(greetingTimeout);
-					resolve(resp);
-				});
+				this.rawStatusEvents.once("status", onStatus);
 			},
 		);
 
@@ -507,9 +625,13 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// `this.connected`) is likewise never true here in practice, but is
 		// kept for safety in case a future public starttls() entry point
 		// calls this post-connect.
-		if (!this.socket || this.isSecure) {
-			// Don't need to (or can't) do TLS in this case
-			return this.connected;
+		if (this.isSecure) {
+			// Already secure: nothing left to do, and that's success.
+			return true;
+		}
+		if (!this.socket) {
+			// No transport at all to upgrade — can't proceed either way.
+			return false;
 		}
 
 		let capabilities: CapabilityList;
@@ -528,7 +650,17 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		}
 
 		if (capabilities.doesntHave("STARTTLS")) {
-			return this.connected;
+			// HIGH-4: opportunistic (`STARTTLS_OPTIONAL`) mode continues on
+			// the CURRENT (cleartext) transport when the server doesn't
+			// advertise STARTTLS — spec §3.3: "opportunistic continues
+			// cleartext"; only a FAILED negotiation is fatal, an absent
+			// capability is not. `true` here means exactly that: connect()
+			// should treat this as success and resolve over plaintext.
+			// Strict (`STARTTLS`) mode must still fail when there's nothing
+			// to upgrade to — `false` here is what lets connect()'s
+			// `!connected && tlsSetting === STARTTLS` check turn this into
+			// the mandatory-TLS policy-error teardown.
+			return this.options.tls !== TLSSetting.STARTTLS;
 		}
 
 		const tlsCmd = new StartTLSCommand();
@@ -559,6 +691,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			return false;
 		}
 
+		// MEDIUM-7 (STARTTLS command-injection defense): the tagged OK for
+		// STARTTLS was just observed. Discard any buffered-but-not-yet-
+		// complete line sitting in the processing pipeline right now, before
+		// touching the socket at all — the same discard `onSocketClose` does
+		// for the same reason. A server that packs extra plaintext bytes into
+		// the same TCP segment as the tagged OK (the classic STARTTLS
+		// plaintext-injection shape) must never have that residue carried
+		// across the TLS boundary and misread as a post-handshake response.
+		this.processingPipeline.forceNewLine(false);
+
 		// We already checked for `this.socket` above, so it must still be
 		// set here. Upgrade it in place through the ONE TLS policy module —
 		// `tlsOptions.socket` here is the module's own internal wiring of
@@ -575,18 +717,29 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				timeoutMs: this.options.timeout || DEFAULT_TIMEOUT,
 				tlsOptions: this.options.tlsOptions,
 			});
-		} finally {
-			// Handshake completion — success or failure — is the end of the
-			// I-1 window either way. On failure connect() tears the whole
-			// connection down regardless; releasing here just avoids leaving
-			// the queue permanently wedged for anything that might inspect it
-			// first.
+		} catch (err) {
+			// Handshake failure ends the I-1 window — release so the queue
+			// isn't left permanently wedged. connect() tears the whole
+			// connection down regardless of this release.
 			this.commandQueue.release();
+			throw err;
 		}
 
+		// MEDIUM-6: swap to the new secure socket BEFORE releasing the held
+		// queue. `release()` synchronously flushes anything parked during the
+		// hold — a command parked there must be dispatched against the NEW
+		// (TLS) socket, never the old plaintext one it would otherwise still
+		// see if release() ran first.
 		this.socket = tlsSock;
 		this.secure = true;
 		this.socket.pipe(this.processingPipeline);
+		// CRITICAL-2: the transient connect-time error handler was bound to
+		// `previousSocket`; follow the swap so a socket failure between here
+		// and the permanent handler's installation (e.g. during the post-TLS
+		// CAPABILITY round trip below) still rejects the in-flight connect()
+		// instead of crashing or hanging it.
+		this.rebindTransientErrorHandler();
+		this.commandQueue.release();
 
 		// I-2: discard everything captured before confidentiality was
 		// established, then re-issue CAPABILITY over the now-protected

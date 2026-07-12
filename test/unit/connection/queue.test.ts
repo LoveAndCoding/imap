@@ -325,5 +325,38 @@ describe("CommandQueue", () => {
 			// Assert
 			expect(secondCmd.run).toBeCalled();
 		});
+
+		// CRITICAL-2 defensive hygiene: a dead/erroring socket mid-STARTTLS
+		// tears the connection down via `stop()`, not `release()` — `stop()`
+		// must reset `held` itself so a hold engaged right before the failure
+		// can never survive into (and permanently wedge) a later reconnect
+		// attempt that reuses this same CommandQueue instance.
+		test("stop() resets held even when release() was never called", () => {
+			// Arrange
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+
+			// Act: simulate a hold engaged (as STARTTLS does) that is never
+			// cleanly released — e.g. the connection died and was torn down
+			// via stop() instead.
+			q.hold();
+			expect(q.isHeld).toBe(true);
+			q.stop();
+
+			// Assert: held must not survive stop().
+			expect(q.isHeld).toBe(false);
+
+			// A subsequent start() + hold()/release() cycle (as a later
+			// reconnect attempt would do) must behave normally — nothing
+			// left permanently wedged.
+			q.start();
+			const cmdMock: any = { run: vi.fn(() => Promise.resolve()), emit: vi.fn() };
+			q.hold();
+			q.add(cmdMock);
+			expect(cmdMock.run).not.toBeCalled();
+			q.release();
+			expect(cmdMock.run).toBeCalled();
+		});
 	});
 });

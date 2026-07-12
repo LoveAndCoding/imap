@@ -100,7 +100,7 @@ export default class Session {
 		} catch (error) {
 			// Try and destroy the connection
 			try {
-				this.connection.disconnect();
+				await this.connection.disconnect();
 			} catch (_) {
 				// Intentionally ignored: we're already handling a connection error
 			}
@@ -110,8 +110,15 @@ export default class Session {
 				message: "Unable to connect to the server",
 				error,
 			});
-			// And set us back to not started
+			// Reset ALL state back to not-started, mirroring end() — a failed
+			// start() must not leave `authed`/`capabilityList`/`serverInfo`
+			// stale from a partial attempt (e.g. PREAUTH observed before a
+			// later step in start() threw), which would let later reads
+			// self-contradict `active`/`authenticated`.
 			this.started = false;
+			this.authed = false;
+			this.capabilityList = null;
+			this.serverInfo = null;
 			return false;
 		}
 

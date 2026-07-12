@@ -132,6 +132,32 @@ describe("Connection greeting handling (spec §10.5/§10.6, I-7, I-8)", () => {
 			expect(connection.isActive).toBe(false);
 		});
 
+		test("LOW-14a: a greeting-timeout does not leak its internal status listener", async () => {
+			const server = await startSilentServer();
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 30,
+			});
+			const rawStatusEvents = (
+				connection as unknown as { rawStatusEvents: import("events").EventEmitter }
+			).rawStatusEvents;
+
+			// Three separate connect() attempts, each timing out on the
+			// greeting — before the fix, every timed-out wait left its
+			// `once("status", ...)` listener attached forever (only the
+			// resolved path removed it, implicitly, by firing).
+			for (let i = 0; i < 3; i++) {
+				await expect(connection.connect()).rejects.toMatchObject({
+					phase: "Greeting",
+				});
+			}
+
+			expect(rawStatusEvents.listenerCount("status")).toBe(0);
+		});
+
 		test("PREAUTH over cleartext with tls:'off' is accepted and marks authenticated", async () => {
 			const server = await startScriptedServer(
 				"* PREAUTH IMAP4rev1 server logged in as user\r\n",
@@ -291,6 +317,118 @@ describe("Connection greeting handling (spec §10.5/§10.6, I-7, I-8)", () => {
 			// Both the greeting and the UIDVALIDITY line are ordinary OKs and
 			// must both surface as serverStatus events.
 			expect(statusEvents.length).toBe(2);
+		});
+	});
+
+	describe("ALERT-bearing GREETINGS resolve connect() promptly (CRITICAL-3)", () => {
+		// `handleStatusResponse()` never emits the public `serverStatus` event
+		// for an ALERT-carrying response pre-confidentiality (RFC9051-11.3-2).
+		// `awaitGreeting()` used to have NO OTHER way to observe the greeting
+		// (it only listened on `serverStatus`), so a legal `* OK [ALERT] ...`
+		// (or PREAUTH/BYE-with-ALERT) greeting hung every such connect() until
+		// the greeting timeout. It must now resolve immediately regardless.
+
+		test("`* OK [ALERT] ...` greeting resolves connect() promptly (not via the greeting timeout) and logs the alert as untrusted", async () => {
+			const alertText = "MAINTENANCE-IN-PROGRESS";
+			const server = await startScriptedServer(`* OK [ALERT] ${alertText}\r\n`);
+			cleanup = server.close;
+
+			const logs: IMAPLogMessage[] = [];
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 2000,
+				logger: (info) => logs.push(info),
+			});
+			const statusEvents: unknown[] = [];
+			connection.on("serverStatus", (resp) => statusEvents.push(resp));
+
+			const start = Date.now();
+			const ok = await connection.connect();
+			const elapsed = Date.now() - start;
+
+			expect(ok).toBe(true);
+			expect(connection.isActive).toBe(true);
+			// Resolved by the greeting itself, nowhere near the 2s timeout —
+			// proves this didn't just hang until the greeting-timeout fallback.
+			expect(elapsed).toBeLessThan(1000);
+
+			const alertLog = logs.find((l) => l.message.includes(alertText));
+			expect(alertLog).toBeDefined();
+			expect(alertLog?.level).toBe("warn");
+			expect((alertLog as { detail?: { trusted?: boolean } }).detail).toMatchObject({
+				code: "ALERT",
+				trusted: false,
+			});
+			// Still never surfaced as a trusted serverStatus event pre-TLS,
+			// even though it WAS the greeting (RFC9051-11.3-2 unaffected).
+			expect(statusEvents.length).toBe(0);
+		});
+
+		test("`* PREAUTH [ALERT] ...` greeting resolves per PREAUTH rules and logs the alert as untrusted", async () => {
+			const alertText = "PREAUTH-ALERT-TEST";
+			const server = await startScriptedServer(`* PREAUTH [ALERT] ${alertText}\r\n`);
+			cleanup = server.close;
+
+			const logs: IMAPLogMessage[] = [];
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 2000,
+				logger: (info) => logs.push(info),
+			});
+			const statusEvents: unknown[] = [];
+			connection.on("serverStatus", (resp) => statusEvents.push(resp));
+
+			const start = Date.now();
+			const ok = await connection.connect();
+			const elapsed = Date.now() - start;
+
+			expect(ok).toBe(true);
+			expect(connection.authenticated).toBe(true);
+			expect(elapsed).toBeLessThan(1000);
+
+			const alertLog = logs.find((l) => l.message.includes(alertText));
+			expect(alertLog).toBeDefined();
+			expect((alertLog as { detail?: { trusted?: boolean } }).detail).toMatchObject({
+				code: "ALERT",
+				trusted: false,
+			});
+			expect(statusEvents.length).toBe(0);
+		});
+
+		test("`* BYE [ALERT] ...` greeting rejects connect() promptly and still logs the alert as untrusted", async () => {
+			const alertText = "BYE-ALERT-TEST";
+			const server = await startScriptedServer(`* BYE [ALERT] ${alertText}\r\n`);
+			cleanup = server.close;
+
+			const logs: IMAPLogMessage[] = [];
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 2000,
+				logger: (info) => logs.push(info),
+			});
+			const statusEvents: unknown[] = [];
+			connection.on("serverStatus", (resp) => statusEvents.push(resp));
+
+			const start = Date.now();
+			await expect(connection.connect()).rejects.toThrow(/BYE/);
+			const elapsed = Date.now() - start;
+
+			expect(connection.isActive).toBe(false);
+			expect(elapsed).toBeLessThan(1000);
+
+			const alertLog = logs.find((l) => l.message.includes(alertText));
+			expect(alertLog).toBeDefined();
+			expect((alertLog as { detail?: { trusted?: boolean } }).detail).toMatchObject({
+				code: "ALERT",
+				trusted: false,
+			});
+			expect(statusEvents.length).toBe(0);
 		});
 	});
 });
