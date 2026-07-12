@@ -1,7 +1,10 @@
 # Proposal: The Public API, and the Road to Full IMAP Compliance
 
 **Date:** 2026-07-12
-**Status:** Accepted — §6 decisions settled with the maintainer (2026-07-12)
+**Status:** Accepted — §6 decisions settled with the maintainer (2026-07-12).
+Implementable follow-ons: normative spec at
+`docs/superpowers/specs/2026-07-12-modern-api-spec.md`, work breakdown at
+`docs/superpowers/plans/2026-07-12-modern-api-implementation-plan.md`.
 **Scope:** The `modern-api` rewrite — public interface design first, then the
 implementation architecture and phasing required to reach full compliance with
 every spec the compliance suite measures.
@@ -91,7 +94,7 @@ send unadvertised LIST options).
 
 **P4 — UIDs are the default; sequence numbers are the opt-in.** Sequence
 numbers mutate under the caller's feet and are forbidden entirely under
-UIDONLY (RFC 9585). Message operations on the main path take UIDs; a
+UIDONLY (RFC 9586). Message operations on the main path take UIDs; a
 `mailbox.seq.*` facet exposes sequence-number variants and is automatically
 unavailable when UIDONLY is enabled. This makes the modern extensions
 (UIDPLUS, QRESYNC, OBJECTID, UIDONLY) the natural grain of the API instead of
