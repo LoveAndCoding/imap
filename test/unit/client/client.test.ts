@@ -16,10 +16,11 @@ import { Command } from "../../../src/commands/base";
 import type { ResponseCollector } from "../../../src/commands/collector";
 import type { CommandWriter } from "../../../src/commands/writer";
 import {
+	AuthError,
 	CapabilityError,
 	ConnectionError,
-	NotImplementedError,
 	StateError,
+	TlsError,
 } from "../../../src/errors";
 
 /** A minimal, inert fake command for exercising `run()`'s gating in
@@ -197,23 +198,217 @@ describe("ImapClient (spec §3.2/§3.3)", () => {
 		await expect(client.connect()).rejects.toBeInstanceOf(StateError);
 	});
 
-	test("auth config present rejects connect() with NotImplementedError (the AUTHENTICATE seam)", async () => {
-		server = await ScriptedServer.start();
-		server.arm([
-			[
-				send("* OK ready\r\n"),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
-			],
-		]);
+	describe("AUTHENTICATE/LOGIN (spec §9.3/§10.3, M1.7b)", () => {
+		test("credential policy: cleartext + no allowInsecureAuth rejects with TlsError('policy') before any AUTHENTICATE/LOGIN bytes", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
+				],
+			]);
 
-		client = new ImapClient({
-			...baseConfig(server.port),
-			auth: { user: "u", pass: "p" },
+			client = new ImapClient({
+				...baseConfig(server.port),
+				auth: { user: "u", pass: "p" },
+			});
+
+			let caught: unknown;
+			try {
+				await client.connect();
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(TlsError);
+			expect((caught as TlsError).reason).toBe("policy");
+			expect(client.state).toBe("disconnected");
+			expect(server.transcript.clientLines()).not.toMatch(/AUTHENTICATE|LOGIN/);
 		});
 
-		await expect(client.connect()).rejects.toBeInstanceOf(NotImplementedError);
-		expect(client.state).toBe("disconnected");
+		test("allowInsecureAuth permits AUTHENTICATE PLAIN over cleartext; SASL-IR inline, exact base64, capabilities refreshed post-auth, state authenticated", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+			});
+
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			await server.assertCompleted();
+		});
+
+		test("preference order + unadvertised filtering: explicit mechanisms order tried in sequence, only the advertised one is attempted", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: {
+					user: "u",
+					pass: "p",
+					accessToken: "tok",
+					mechanisms: ["XOAUTH2", "PLAIN"],
+				},
+			});
+
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			// XOAUTH2 was never attempted (not advertised) — only PLAIN's bytes
+			// appear on the wire.
+			expect(server.transcript.clientLines()).not.toMatch(/XOAUTH2/);
+			await server.assertCompleted();
+		});
+
+		test("AUTHENTICATIONFAILED does not fall through to the next mechanism", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN AUTH=XOAUTH2 SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("NO [AUTHENTICATIONFAILED] bad credentials"),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: {
+					user: "u",
+					pass: "p",
+					accessToken: "tok",
+					mechanisms: ["PLAIN", "XOAUTH2"],
+				},
+			});
+
+			let caught: unknown;
+			try {
+				await client.connect();
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(AuthError);
+			expect((caught as AuthError).code?.name).toBe("AUTHENTICATIONFAILED");
+			expect(client.state).toBe("disconnected");
+			expect(server.transcript.clientLines()).not.toMatch(/XOAUTH2/);
+		});
+
+		test("a tagged BAD falls through to the next mechanism, which succeeds", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN AUTH=XOAUTH2 SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("BAD malformed"),
+					expectLine(
+						command("AUTHENTICATE", { args: "XOAUTH2 dXNlcj11AWF1dGg9QmVhcmVyIHRvawEB" }),
+					),
+					reply("OK authenticated"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: {
+					user: "u",
+					pass: "p",
+					accessToken: "tok",
+					mechanisms: ["PLAIN", "XOAUTH2"],
+				},
+			});
+
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			await server.assertCompleted();
+		});
+
+		test("LOGIN fallback when no AUTH= overlap and no LOGINDISABLED", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+					expectLine(command("LOGIN", { args: "u p" })),
+					reply("OK LOGIN completed", ["* CAPABILITY IMAP4rev1"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+			});
+
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
+			await server.assertCompleted();
+		});
+
+		test("LOGINDISABLED forecloses LOGIN entirely: AuthError, zero LOGIN bytes", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 LOGINDISABLED"]),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+			});
+
+			let caught: unknown;
+			try {
+				await client.connect();
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(AuthError);
+			expect(client.state).toBe("disconnected");
+			expect(server.transcript.clientLines()).not.toMatch(/\bLOGIN\b/);
+		});
 	});
 
 	describe("once connected (not-authenticated)", () => {

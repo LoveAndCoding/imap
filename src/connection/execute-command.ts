@@ -62,10 +62,27 @@ export async function executeCommand<T>(
 	if (interactive) {
 		unregisterInteractive = router.registerContinuationOwner({
 			onContinuation: (resp) => {
-				void Command.handleContinuation(command, resp).then((out) => {
-					const bytes = out === "abort" ? Buffer.from("*", "ascii") : out;
-					connection.writeBytes(Buffer.concat([bytes, CRLF_BUF]));
-				});
+				// GAP FOUND (M1.7b — AUTHENTICATE is the first real exercise of
+				// this path): `Command.handleContinuation()` (i.e. a subclass's
+				// `onContinuation`) is contractually supposed to catch its own
+				// failures and resolve to `"abort"` rather than reject (spec §9.1:
+				// a SASL mechanism's `step()` throw maps to `"abort"`, never a
+				// rejected hook) — but nothing enforced that, and the original
+				// `.then()` here had no `.catch()`. A hook that broke that
+				// contract (a genuine bug, or a future interactive command that
+				// doesn't follow the same discipline) would produce an unhandled
+				// promise rejection AND leave the command hung forever: no bytes
+				// are ever written back to the server, so the tagged response that
+				// would settle the command's promise never arrives either. Falling
+				// back to `"abort"` here — same as an explicit `step()` throw —
+				// keeps that failure mode a normal `*` cancellation (tagged NO/BAD
+				// settles the promise) instead of a silent deadlock/process crash.
+				void Command.handleContinuation(command, resp)
+					.catch((): "abort" => "abort")
+					.then((out) => {
+						const bytes = out === "abort" ? Buffer.from("*", "ascii") : out;
+						connection.writeBytes(Buffer.concat([bytes, CRLF_BUF]));
+					});
 			},
 		});
 	}
@@ -74,7 +91,12 @@ export async function executeCommand<T>(
 		await performWrite(connection, command, tag, segments, taggedPromise, interactive);
 		const tagged = await taggedPromise;
 		if (tagged.status.status === "OK") {
-			return Command.acceptResult(command, new ResponseCollector(claimed, tagged));
+			// `accept()` may itself be async (spec §7.1's widened contract, M1.7b
+			// — e.g. `AuthenticateCommand` awaiting a SASL mechanism's `finish()`,
+			// which can reject the command's promise even though the server
+			// already said OK); `await`ing a synchronous return is a no-op, so
+			// every pre-existing synchronous `accept()` is unaffected.
+			return await Command.acceptResult(command, new ResponseCollector(claimed, tagged));
 		}
 		throw Command.mapError(command, tagged);
 	} finally {

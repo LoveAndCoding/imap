@@ -19,7 +19,6 @@ import {
 	CapabilityError,
 	ConnectionError,
 	ImapError,
-	NotImplementedError,
 	StateError,
 	TlsError,
 } from "../errors";
@@ -31,10 +30,11 @@ import {
 	UnknownResponse,
 	UntaggedResponse,
 } from "../parser";
+import { performAuthSelection } from "./auth";
 import { CapabilityRegistry } from "./capabilities";
 import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
-import type { ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
+import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
 import { ClientStateMachine } from "./state";
 import type { ClientState } from "./state";
 
@@ -184,15 +184,66 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/**
-	 * SEAM for M1.7: AUTHENTICATE/LOGIN mechanism selection (spec §9.3) lands
-	 * here. Until then, `connect()` only reaches this when `auth` config is
-	 * present (and PREAUTH didn't already authenticate us) — so throwing
-	 * unconditionally is correct: there is no implemented auth path yet.
+	 * `connect()`'s step-5 seam (M1.7b): AUTHENTICATE/LOGIN mechanism
+	 * selection (spec §9.3). Only reached when `auth` config is present and
+	 * PREAUTH didn't already authenticate us. Does NOT itself transition to
+	 * "authenticated" — `runAuthSelection()` (shared with the public
+	 * `authenticate()` method below) does that once selection actually
+	 * succeeds.
 	 */
 	protected async performAuthentication(): Promise<void> {
-		throw new NotImplementedError(
-			"ImapClient authentication (AUTHENTICATE/LOGIN, spec §9.3)",
-		);
+		// `config.auth` is guaranteed present by `connect()`'s own guard
+		// (`postGreetingState !== "authenticated" && this.config.auth`); the
+		// `!` is a defensive assertion, not a silent fallback.
+		await this.runAuthSelection(this.config.auth!);
+	}
+
+	/**
+	 * Public authentication entry point (spec §3.2): legal only in
+	 * "not-authenticated" (mirrors `performAuthentication()`'s own
+	 * precondition, but this path can also be reached OUTSIDE `connect()` —
+	 * e.g. a caller that omitted `auth` from the config and authenticates
+	 * explicitly afterward). Uses the supplied `auth`, or falls back to the
+	 * config's own `auth` when omitted.
+	 */
+	public async authenticate(auth?: ImapAuthConfig): Promise<void> {
+		const current = this.stateMachine.current;
+		if (current !== "not-authenticated") {
+			throw new StateError(
+				'authenticate() requires the client to be "not-authenticated"',
+				{ state: current, required: ["not-authenticated"] },
+			);
+		}
+		const effective = auth ?? this.config.auth;
+		if (!effective) {
+			throw new TypeError(
+				"authenticate() requires auth credentials: pass them explicitly, " +
+					"or configure `auth` on the ImapClientConfig",
+			);
+		}
+		await this.runAuthSelection(effective);
+	}
+
+	/**
+	 * Shared by `performAuthentication()` (the `connect()` seam) and the
+	 * public `authenticate()`: runs spec §9.3's selection algorithm, refreshes
+	 * capabilities per spec §3.3 step 5 if the winning command's own tagged
+	 * response didn't already do so, then transitions to "authenticated".
+	 */
+	private async runAuthSelection(auth: ImapAuthConfig): Promise<void> {
+		await performAuthSelection(auth, {
+			capabilities: this.capabilityRegistry.view,
+			isSecure: this.connection.isSecure,
+			allowInsecureAuth: this.config.allowInsecureAuth,
+			host: this.config.host,
+			port: this.config.port,
+			run: (command) => this.run(command),
+			refreshCapabilities: async () => {
+				this.capabilityRegistry.invalidate();
+				await this.ensureCapabilities();
+			},
+		});
+		this.stateMachine.transition("authenticated");
 	}
 
 	/**

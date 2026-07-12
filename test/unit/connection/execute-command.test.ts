@@ -173,4 +173,48 @@ describe("executeCommand (spec §7.1/§6.2 — the queue's per-command wire I/O)
 			expect(written).toHaveLength(0);
 		});
 	});
+
+	describe("interactive continuation robustness (spec §9.1 — GAP FOUND: a hook that rejects instead of resolving to \"abort\")", () => {
+		/** An interactive command whose `onContinuation` breaks the documented
+		 *  contract (spec §7.1: resolve to bytes or `"abort"`, never reject) by
+		 *  rejecting outright — simulating a bug in a future interactive command
+		 *  (or a mechanism that somehow escapes `AuthenticateCommand`'s own
+		 *  internal try/catch). Before the fix, `executeCommand`'s
+		 *  `.then()`-with-no-`.catch()` on this promise produced an unhandled
+		 *  rejection AND never wrote anything back to the server — the command
+		 *  would hang forever (no tagged response could ever arrive, since the
+		 *  server is still waiting on a reply to its continuation). */
+		class BrokenInteractiveCommand extends Command<null> {
+			readonly verb = "BROKEN";
+			readonly queueMode = "pipeline" as const;
+			protected write(_w: CommandWriter): void {
+				// No arguments.
+			}
+			protected accept(): null {
+				return null;
+			}
+			protected async onContinuation(): Promise<Buffer | "abort"> {
+				throw new Error("onContinuation broke its own contract by rejecting");
+			}
+		}
+
+		test("a rejecting onContinuation falls back to '*' abort instead of hanging or crashing", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new BrokenInteractiveCommand();
+
+			const resultPromise = executeCommand(connection, cmd, "A00008");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(`A00008 BROKEN${CRLF}`);
+
+			router.routeContinuation(parseLine(`+ ready${CRLF}`) as ContinueResponse);
+			await flushMicrotasks();
+
+			// Falls back to '*' cancellation, exactly like an onContinuation that
+			// itself resolved to "abort" — no unhandled rejection, no hang.
+			expect(Buffer.concat(written).toString("ascii")).toBe(`A00008 BROKEN${CRLF}*${CRLF}`);
+
+			router.routeTagged(parseLine(`A00008 NO cancelled${CRLF}`) as TaggedResponse);
+			await expect(resultPromise).rejects.toBeInstanceOf(ServerNoError);
+		});
+	});
 });

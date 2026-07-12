@@ -110,8 +110,19 @@ export abstract class Command<TResult> {
 	 *  `ResponseCollector` instance that received every claimed response in
 	 *  arrival order, so a future FETCH command can start consuming/
 	 *  streaming literal data out of claimed responses before its own
-	 *  `accept()` is ever called. */
-	protected abstract accept(c: ResponseCollector): TResult;
+	 *  `accept()` is ever called.
+	 *
+	 *  May return `TResult` directly OR a `Promise<TResult>` (widened by
+	 *  M1.7b for `AuthenticateCommand`): a SASL mechanism's `finish()` step
+	 *  (spec §9.1) MUST run — and be able to reject — even after a tagged OK
+	 *  has already arrived (the SCRAM server-signature case: the server says
+	 *  OK, but the client's own verification of the server's final data can
+	 *  still fail, and that MUST surface as the command's rejection, not be
+	 *  silently ignored). `executeCommand` (connection/execute-command.ts)
+	 *  awaits whatever this returns before settling the command's promise, so
+	 *  a synchronous `TResult` return (every command before AUTHENTICATE) is
+	 *  unaffected — awaiting a non-thenable value is a same-microtask no-op. */
+	protected abstract accept(c: ResponseCollector): TResult | Promise<TResult>;
 
 	/** Continuation hook for INTERACTIVE commands only (AUTHENTICATE, IDLE —
 	 *  neither lands in this milestone). The queue-automatic literal gate
@@ -179,7 +190,7 @@ export abstract class Command<TResult> {
 		return cmd.claims(resp, ctx);
 	}
 
-	static acceptResult<T>(cmd: Command<T>, c: ResponseCollector): T {
+	static acceptResult<T>(cmd: Command<T>, c: ResponseCollector): T | Promise<T> {
 		return cmd.accept(c);
 	}
 
