@@ -8,6 +8,7 @@ const DEFUALT_MAX_LINE_LENGTH = 2e6; // 2MB
 
 export type NewlineTranformOptions = Partial<{
 	maxLineLength: number;
+	allowHalfOpen: boolean;
 }>;
 
 interface INewlineTranformEvents {
@@ -57,11 +58,12 @@ declare interface NewlineTranform {
 }
 
 class NewlineTranform extends Transform {
-	private currentLine: Buffer;
+	private currentLine: Buffer | undefined;
 	private maxLineLength: number;
 
 	constructor(options?: NewlineTranformOptions) {
 		super({
+			allowHalfOpen: options?.allowHalfOpen,
 			objectMode: true,
 		});
 
@@ -72,12 +74,16 @@ class NewlineTranform extends Transform {
 				: DEFUALT_MAX_LINE_LENGTH;
 	}
 
-	_flush(done: () => void) {
-		if (this.currentLine && this.currentLine.length) {
+	public forceNewLine(emitData = true) {
+		if (emitData && this.currentLine && this.currentLine.length) {
 			this.push(this.currentLine);
 			this.emit("line", this.currentLine);
 		}
 		this.currentLine = undefined;
+	}
+
+	_flush(done: () => void) {
+		this.forceNewLine();
 		done();
 	}
 

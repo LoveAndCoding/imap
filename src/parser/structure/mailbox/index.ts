@@ -24,7 +24,7 @@ export type ContentType =
 //                   "LSUB" SP mailbox-list / "SEARCH" *(SP nz-number) /
 //                   "STATUS" SP mailbox SP "(" [status-att-list] ")" /
 //                   number SP "EXISTS" / number SP "RECENT"
-export function match(tokens: LexerTokenList): ContentType {
+export function match(tokens: LexerTokenList): ContentType | null {
 	const toCheckList = [
 		FlagList,
 		MailboxListing,

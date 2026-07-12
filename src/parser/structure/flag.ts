@@ -52,6 +52,7 @@ export class FlagList {
 
 	constructor(tokens: LexerTokenList, isWrappedInParens = true) {
 		this.flagMap = new Map();
+		this.hasWildcard = false;
 
 		const blocks = splitSpaceSeparatedList(
 			tokens,

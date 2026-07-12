@@ -1,10 +1,11 @@
 import NewlineTranform from "../../src/newline.transform";
+import { vi } from "vitest";
 
 describe("NewlineTranform", () => {
 	test("Breaks incoming full lines into newlines", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
+		const listenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		const write = ["test\r\n", "test2\r\n", "test3\r\n"];
 
@@ -24,7 +25,7 @@ describe("NewlineTranform", () => {
 	test("Respects empty lines", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
+		const listenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		const write = [
 			"test\r\n\r\n",
@@ -71,7 +72,7 @@ describe("NewlineTranform", () => {
 	test("Breaks oddly split lines into newlines", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
+		const listenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		const write = ["te", "st\r", "\n", "test2\r\ntest3", "\r\n"];
 
@@ -91,7 +92,7 @@ describe("NewlineTranform", () => {
 	test("Accepts string and buffer writes", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
+		const listenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		const write = ["test", Buffer.from("\r\n")];
 
@@ -104,11 +105,11 @@ describe("NewlineTranform", () => {
 		expect(autobot.read().toString()).toBe("test\r\n");
 	});
 
-	test("Does not accept object writes", (done) => {
+	test("Does not accept object writes", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
-		const errListenerMock = jest.fn();
+		const listenerMock = vi.fn();
+		const errListenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		autobot.on("error", errListenerMock);
 		const writeObj = {
@@ -118,48 +119,66 @@ describe("NewlineTranform", () => {
 		};
 
 		//Act
-		autobot.write(writeObj, (err) => {
-			//Assert
-			expect(listenerMock).toBeCalledTimes(0);
-			expect(err).toBeInstanceOf(TypeError);
-			done();
+		return new Promise<void>((resolve, reject) => {
+			autobot.write(writeObj, (err) => {
+				try {
+					//Assert
+					expect(listenerMock).toBeCalledTimes(0);
+					expect(err).toBeInstanceOf(TypeError);
+					resolve();
+				} catch (e) {
+					reject(e);
+				}
+			});
 		});
 	});
 
-	test("Respects max buffer length", (done) => {
+	test("Respects max buffer length", () => {
 		//Arrange
 		const autobot = new NewlineTranform({ maxLineLength: 2 });
-		const listenerMock = jest.fn();
-		const errListenerMock = jest.fn();
+		const listenerMock = vi.fn();
+		const errListenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		autobot.on("error", errListenerMock);
 		const write = "A test string but it's too long\r\n";
 
 		//Act
-		autobot.write(write, (err) => {
-			//Assert
-			expect(listenerMock).toBeCalledTimes(0);
-			expect(err).toBeInstanceOf(RangeError);
-			done();
+		return new Promise<void>((resolve, reject) => {
+			autobot.write(write, (err) => {
+				try {
+					//Assert
+					expect(listenerMock).toBeCalledTimes(0);
+					expect(err).toBeInstanceOf(RangeError);
+					resolve();
+				} catch (e) {
+					reject(e);
+				}
+			});
 		});
 	});
 
-	test("Flushes any unfinished data to lines on end", (done) => {
+	test("Flushes any unfinished data to lines on end", () => {
 		//Arrange
 		const autobot = new NewlineTranform();
-		const listenerMock = jest.fn();
+		const listenerMock = vi.fn();
 		autobot.on("line", listenerMock);
 		const write = "Roll out";
 
 		//Act
 		autobot.write(write);
 		expect(listenerMock).toBeCalledTimes(0);
-		autobot.end((err) => {
-			//Assert
-			expect(listenerMock).toBeCalledTimes(1);
-			expect(listenerMock).toBeCalledWith(Buffer.from(write));
-			expect(err).toBeUndefined();
-			done();
+		return new Promise<void>((resolve, reject) => {
+			autobot.end((err) => {
+				try {
+					//Assert
+					expect(listenerMock).toBeCalledTimes(1);
+					expect(listenerMock).toBeCalledWith(Buffer.from(write));
+					expect(err).toBeUndefined();
+					resolve();
+				} catch (e) {
+					reject(e);
+				}
+			});
 		});
 	});
 });

@@ -227,9 +227,11 @@ export class ExtendedSearchResponse {
 				// We're in the complex case, which is just an astring list.
 				// Recursively split it into lists and sublists, getting the
 				// astring value for each item.
-				const splitComplex = (tks) => {
+				const splitComplex = (
+					tks: LexerTokenList,
+				): ESearchComplexValue[] => {
 					const blocks = splitSpaceSeparatedList(tks);
-					const set = [];
+					const set: ESearchComplexValue[] = [];
 
 					for (const block of blocks) {
 						if (

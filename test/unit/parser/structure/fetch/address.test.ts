@@ -7,8 +7,9 @@ import {
 	splitUnseparatedListofLists,
 	splitSpaceSeparatedList,
 } from "../../../../../src/parser/utility";
+import { vi, type MockedFunction } from "vitest";
 
-jest.mock("../../../../../src/parser/utility");
+vi.mock("../../../../../src/parser/utility");
 
 const addressParsingTests = [
 	{
@@ -53,11 +54,11 @@ describe("Address", () => {
 		"Parsing Test: $what",
 		({ source, expected }) => {
 			// Arrange
-			const splitSpaceSeparatedListMock = splitSpaceSeparatedList as jest.MockedFunction<
+			const splitSpaceSeparatedListMock = splitSpaceSeparatedList as MockedFunction<
 				typeof splitSpaceSeparatedList
 			>;
 			splitSpaceSeparatedListMock.mockReturnValue(source as any);
-			const getNStringValueMock = getNStringValue as jest.MockedFunction<
+			const getNStringValueMock = getNStringValue as MockedFunction<
 				typeof getNStringValue
 			>;
 			getNStringValueMock.mockImplementation(
@@ -173,15 +174,15 @@ describe("AddressList", () => {
 		"Parsing Test: $what",
 		({ source, expected }) => {
 			// Arrange
-			const splitUnseparatedListofListsMock = splitUnseparatedListofLists as jest.MockedFunction<
+			const splitUnseparatedListofListsMock = splitUnseparatedListofLists as MockedFunction<
 				typeof splitUnseparatedListofLists
 			>;
 			splitUnseparatedListofListsMock.mockReturnValue(source as any);
-			const splitSpaceSeparatedListMock = splitSpaceSeparatedList as jest.MockedFunction<
+			const splitSpaceSeparatedListMock = splitSpaceSeparatedList as MockedFunction<
 				typeof splitSpaceSeparatedList
 			>;
 			splitSpaceSeparatedListMock.mockImplementation((val: any) => val);
-			const getNStringValueMock = getNStringValue as jest.MockedFunction<
+			const getNStringValueMock = getNStringValue as MockedFunction<
 				typeof getNStringValue
 			>;
 			getNStringValueMock.mockImplementation(

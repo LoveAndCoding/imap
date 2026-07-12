@@ -21,8 +21,6 @@ import { BaseToken } from "./base";
  * This second special case about an atom
  */
 export class NilToken extends BaseToken<null> implements ILexerToken<null> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: "NIL") {
 		super(TokenTypes.nil);
 	}

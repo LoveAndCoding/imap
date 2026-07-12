@@ -4,9 +4,10 @@ import {
 	LiteralStringToken,
 	QuotedStringToken,
 } from "../../../../src/lexer/tokens/string";
+import { vi, type MockedClass } from "vitest";
 
-jest.mock("../../../../src/errors");
-jest.mock("../../../../src/lexer/tokens/string");
+vi.mock("../../../../src/errors");
+vi.mock("../../../../src/lexer/tokens/string");
 
 describe("StringRule", () => {
 	// We'll always need a rule, so just make one for each test
@@ -20,7 +21,7 @@ describe("StringRule", () => {
 	test("Matches a quoted string value", () => {
 		// Arrange
 		const str = '"Testing"';
-		const QuotedStringTokenMock = QuotedStringToken as jest.MockedClass<
+		const QuotedStringTokenMock = QuotedStringToken as MockedClass<
 			typeof QuotedStringToken
 		>;
 
@@ -35,7 +36,7 @@ describe("StringRule", () => {
 	test("Partial match on a quoted string value", () => {
 		// Arrange
 		const str = '"Test" But Also Ignore "this text"';
-		const QuotedStringTokenMock = QuotedStringToken as jest.MockedClass<
+		const QuotedStringTokenMock = QuotedStringToken as MockedClass<
 			typeof QuotedStringToken
 		>;
 
@@ -50,7 +51,7 @@ describe("StringRule", () => {
 	test("Throws with unclosed double quote string", () => {
 		// Arrange
 		const str = '"Open error';
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 
@@ -72,7 +73,7 @@ describe("StringRule", () => {
 	test("Matches a literal string value", () => {
 		// Arrange
 		const str = "{4}\r\nTest";
-		const LiteralStringTokenMock = LiteralStringToken as jest.MockedClass<
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
 			typeof LiteralStringToken
 		>;
 
@@ -87,7 +88,7 @@ describe("StringRule", () => {
 	test("Partial Match for a literal string value", () => {
 		// Arrange
 		const str = "{4}\r\nThis but not this";
-		const LiteralStringTokenMock = LiteralStringToken as jest.MockedClass<
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
 			typeof LiteralStringToken
 		>;
 
@@ -102,7 +103,7 @@ describe("StringRule", () => {
 	test("Throws with not enough data for literal string", () => {
 		// Arrange
 		const str = "{2}\r\n";
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 
@@ -122,7 +123,7 @@ describe("StringRule", () => {
 	test("Throws with invalid size of literal", () => {
 		// Arrange
 		const str = "{20000000000000000000000000000000000000}\r\n";
-		const TokenizationErrorMock = TokenizationError as jest.MockedClass<
+		const TokenizationErrorMock = TokenizationError as MockedClass<
 			typeof TokenizationError
 		>;
 
@@ -144,10 +145,10 @@ describe("StringRule", () => {
 	test("No Match for non-string value", () => {
 		// Arrange
 		const str = "'Single quotes don\\'t count'";
-		const QuotedStringTokenMock = QuotedStringToken as jest.MockedClass<
+		const QuotedStringTokenMock = QuotedStringToken as MockedClass<
 			typeof QuotedStringToken
 		>;
-		const LiteralStringTokenMock = LiteralStringToken as jest.MockedClass<
+		const LiteralStringTokenMock = LiteralStringToken as MockedClass<
 			typeof LiteralStringToken
 		>;
 

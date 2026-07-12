@@ -1,0 +1,25 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"outDir": null,
+		"rootDir": null,
+		"types": ["node"],
+		// import.meta requires an ES-module target. ES2020 (not ES2022+) keeps
+		// useDefineForClassFields=false, matching the root build's semantics for
+		// the src/ files this project pulls in. The root tsconfig now targets
+		// ES2022, so this must be pinned explicitly rather than inherited.
+		"target": "es2020",
+		"module": "es2020",
+		"moduleResolution": "node",
+		// "node" (aka "node10") is deprecated as of TS 6; this suite
+		// deliberately keeps it (see above) rather than adopting "bundler"/
+		// "node16" resolution semantics as part of an unrelated modernization.
+		"ignoreDeprecations": "6.0",
+		// Third-party .d.ts (vitest/vite/rollup) target newer TypeScript and lib
+		// versions than the repo pins; only this suite's own files need checking.
+		// (`node:` specifiers are covered by types/node-prefixed-modules.d.ts
+		// until @types/node is bumped past v12.)
+		"skipLibCheck": true
+	},
+	"include": ["./**/*"]
+}

@@ -12,7 +12,7 @@ export enum TokenTypes {
 	string,
 }
 
-type TokenTypeTrueValueMap = {
+export type TokenTypeTrueValueMap = {
 	[TokenTypes.atom]: string;
 	[TokenTypes.bigint]: number | bigint;
 	[TokenTypes.eol]: "\r\n";

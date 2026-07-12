@@ -10,7 +10,7 @@ This module does not perform any magic such as auto-decoding of messages/attachm
 
 ## Requirements
 
--   [node.js](http://nodejs.org/) -- v10.0.0 or newer
+-   [node.js](http://nodejs.org/) -- v22.0.0 or newer
 
 -   An IMAP server to connect to -- tested with gmail
 

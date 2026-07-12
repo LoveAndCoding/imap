@@ -10,8 +10,6 @@ import { BaseToken } from "./base";
 export class OperatorToken
 	extends BaseToken<string>
 	implements ILexerToken<string> {
-	public readonly type: TokenTypes;
-
 	// `value` is a subtype of string specifically to enforce typing upon
 	// instantiation of the class. We only want and expect certain values
 	constructor(public readonly value: string) {
@@ -33,8 +31,6 @@ export class OperatorToken
  * on its own. The parser can then decide if it wants to be strict.
  */
 export class SPToken extends BaseToken<" "> implements ILexerToken<" "> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: " ") {
 		super(TokenTypes.space);
 	}
@@ -53,8 +49,6 @@ export class SPToken extends BaseToken<" "> implements ILexerToken<" "> {
 export class CRLFToken
 	extends BaseToken<"\r\n">
 	implements ILexerToken<"\r\n"> {
-	public readonly type: TokenTypes;
-
 	constructor(public readonly value: "\r\n") {
 		super(TokenTypes.eol);
 	}
