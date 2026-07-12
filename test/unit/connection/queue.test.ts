@@ -132,6 +132,7 @@ describe("CommandQueue", () => {
 			// Assert
 			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(2);
+			expect(q.queueContexts[1].isIsolated).toBe(false);
 			expect(q.queueContexts[1].commands.size).toBe(1);
 			expect(q.queueContexts[1].commands.values().next().value).toEqual(
 				cmdMock,
@@ -152,10 +153,66 @@ describe("CommandQueue", () => {
 			// Assert
 			expect(q.connection).toEqual(connMock);
 			expect(q.queueContexts).toHaveLength(2);
+			expect(q.queueContexts[1].isIsolated).toBe(true);
 			expect(q.queueContexts[1].commands.size).toBe(1);
 			expect(q.queueContexts[1].commands.values().next().value).toEqual(
 				cmdMock,
 			);
+		});
+	});
+
+	describe("context lifecycle", () => {
+		const flushMicrotasks = () =>
+			new Promise((resolve) => setImmediate(resolve));
+
+		test("Runs a command queued after an isolated command once the isolated context completes", async () => {
+			// Arrange
+			const connMock: any = jest.fn();
+			const q = new CommandQueue(connMock);
+			const isolatedCmd: any = {
+				run: jest.fn(() => Promise.resolve()),
+				requiresOwnContext: true,
+				emit: jest.fn(),
+			};
+			const followupCmd: any = {
+				run: jest.fn(() => Promise.resolve()),
+				emit: jest.fn(),
+			};
+
+			// Act
+			q.start();
+			q.add(isolatedCmd);
+			q.add(followupCmd);
+			await flushMicrotasks();
+
+			// Assert: the isolated context completed, was removed, and the
+			// next context became active and ran its command. Before the
+			// removeQueueContext fix the completed isolated context pinned
+			// the queue and followupCmd.run was never called.
+			expect(isolatedCmd.run).toBeCalled();
+			expect(followupCmd.run).toBeCalled();
+		});
+
+		test("Emits idle and empties contexts once all commands complete", async () => {
+			// Arrange
+			const connMock: any = jest.fn();
+			const q = new CommandQueue(connMock);
+			const cmdMock: any = {
+				run: jest.fn(() => Promise.resolve()),
+				emit: jest.fn(),
+			};
+			let idleTriggered = false;
+			q.once("idle", () => (idleTriggered = true));
+
+			// Act
+			q.start();
+			q.add(cmdMock);
+			await flushMicrotasks();
+
+			// Assert
+			expect(cmdMock.run).toBeCalled();
+			expect(idleTriggered).toBe(true);
+			expect(q.queueContexts).toHaveLength(0);
 		});
 	});
 });
