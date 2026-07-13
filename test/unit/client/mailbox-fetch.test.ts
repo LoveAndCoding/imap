@@ -468,5 +468,95 @@ describe("MailboxSession.fetch()/.fetchOne() (spec §5.4/§5b, M3.5)", () => {
 			await server.assertCompleted();
 		});
 	});
+
+	describe("FetchModifiers.vanished (RFC 7162 §3.2.6, M4.6)", () => {
+		test("UID FETCH ... (CHANGEDSINCE n VANISHED): a preceding VANISHED (EARLIER) both parses AND surfaces as a session 'vanished' event, without disrupting the FETCH results", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
+				expectLine(command("ENABLE", { args: /QRESYNC/i })),
+				reply("OK ENABLE completed", ["* ENABLED QRESYNC"]),
+				expectLine(command("SELECT", { args: /^INBOX$/i })),
+				reply("OK [READ-WRITE] SELECT completed", [
+					"* 10 EXISTS",
+					"* 0 RECENT",
+					"* OK [HIGHESTMODSEQ 90060115205545359] Highest",
+				]),
+				expectLine(
+					command("UID FETCH", {
+						args: /^300:500 \(FLAGS\) \(CHANGEDSINCE 12345 VANISHED\)$/i,
+					}),
+				),
+				reply("OK FETCH completed", [
+					"* VANISHED (EARLIER) 300:310,405,411",
+					"* 1 FETCH (UID 404 MODSEQ (65402) FLAGS (\\Seen))",
+				]),
+			]);
+			await client.enableExtensions(["QRESYNC"]);
+			const session = await client.select("INBOX");
+
+			const vanishedEvents: Array<{ uids: number[]; earlier: boolean }> = [];
+			session.on("vanished", (uids, earlier) => vanishedEvents.push({ uids, earlier }));
+
+			const out: FetchedMessage[] = [];
+			for await (const msg of session.fetch("300:500", { flags: true }, { changedSince: 12345n, vanished: true })) {
+				out.push(msg);
+			}
+			await server.assertCompleted();
+
+			expect(out).toHaveLength(1);
+			expect(out[0].uid).toBe(404);
+			expect([...(out[0].flags ?? [])]).toEqual(["\\Seen"]);
+			// The VANISHED response survives alongside the FETCH stream and
+			// decrements nothing (EARLIER) -- exists stays whatever the
+			// original SELECT reported.
+			expect(vanishedEvents).toEqual([{ uids: [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 405, 411], earlier: true }]);
+			expect(session.exists).toBe(10);
+		});
+
+		test("vanished without QRESYNC enabled rejects CapabilityError, zero bytes written", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE"], [
+				expectLine(command("SELECT", { args: /^INBOX$/i })),
+				reply("OK [READ-WRITE] SELECT completed", [
+					"* 10 EXISTS",
+					"* 0 RECENT",
+					"* OK [HIGHESTMODSEQ 90060115205545359] Highest",
+				]),
+			]);
+			const session = await client.select("INBOX");
+
+			let caught: unknown;
+			try {
+				for await (const _msg of session.fetch("300:500", { flags: true }, {
+					changedSince: 12345n,
+					vanished: true,
+				})) {
+					// unreachable
+				}
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(Error);
+			expect((caught as { capability?: string }).capability).toBe("QRESYNC");
+			await server.assertCompleted();
+		});
+
+		test("seq.fetch() with vanished rejects RangeError -- VANISHED is UID-FETCH-only", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
+				expectLine(command("SELECT", { args: /^INBOX$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 10 EXISTS", "* 0 RECENT"]),
+			]);
+			const session = await client.select("INBOX");
+
+			expect(() =>
+				session.seq.fetch("1:5", { flags: true }, { changedSince: 12345n, vanished: true }),
+			).toThrow(RangeError);
+			await server.assertCompleted();
+		});
+	});
 });
 

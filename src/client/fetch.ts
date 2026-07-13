@@ -130,20 +130,29 @@ export interface BodyPartRequest {
 export type FetchRequest = string | FetchItems;
 
 /**
- * spec §5b. `changedSince` (RFC 7162 CONDSTORE `CHANGEDSINCE`) is real as of
- * M4.5: gated on the CONDSTORE capability being ADVERTISED (not `ENABLE`d --
- * see `src/commands/select.ts`'s `SelectOrExamineCommand` doc comment for
- * the RFC 7162 §3.1.1 rationale this shares) and on the selected mailbox not
- * having reported NOMODSEQ (`MailboxSession.highestModSeq !== null`,
- * RFC7162-3.1.2.2-1 -- see `MailboxSession.runFetch()`'s own doc comment).
- * `vanished` remains QRESYNC-inert (M4.6's job): still throws
- * `CapabilityError` before any bytes are written (I-9), mirroring the
- * `SelectOptions.qresync` precedent (M2.2/M4.5).
+ * spec §5b/§5.4. `changedSince` (RFC 7162 CONDSTORE `CHANGEDSINCE`) is real
+ * as of M4.5: gated on the CONDSTORE capability being ADVERTISED (not
+ * `ENABLE`d -- see `src/commands/select.ts`'s `SelectOrExamineCommand` doc
+ * comment for the RFC 7162 §3.1.1 rationale this shares) and on the selected
+ * mailbox not having reported NOMODSEQ (`MailboxSession.highestModSeq !==
+ * null`, RFC7162-3.1.2.2-1 -- see `MailboxSession.runFetch()`'s own doc
+ * comment).
+ *
+ * `vanished` is real as of M4.6 (RFC 7162 §3.2.6, QRESYNC). Spec §5.4's own
+ * text calls for a "compile-time overload" alongside the runtime gate --
+ * this discriminated union is that overload: `vanished: true` is only
+ * constructible together with a REQUIRED (not optional) `changedSince`,
+ * making `{ vanished: true }` alone (with no `changedSince`) a TYPE ERROR,
+ * not just a runtime one. The runtime backstop for a caller that reaches
+ * this shape without going through the compiler (e.g. a driver adapting a
+ * looser wire-shaped input) lives in `MailboxSession.runFetch()` (the
+ * changedSince-required and UID-grain-only checks, both `RangeError`) and
+ * `FetchCommand`'s own constructor (the QRESYNC-ENABLEd capability check,
+ * `CapabilityError`) -- see both of those doc comments.
  */
-export interface FetchModifiers {
-	changedSince?: bigint;
-	vanished?: boolean;
-}
+export type FetchModifiers =
+	| { changedSince?: bigint; vanished?: false }
+	| { changedSince: bigint; vanished: true };
 
 /** One address (spec §5.4, RFC 9051 §7.5.2). Group markers (`AddressGroup`
  *  boundaries in the underlying parser, e.g. "undisclosed-recipients") are

@@ -10,6 +10,7 @@ import type {
 	AppendResult as ClientAppendResult,
 	CopyResult,
 	FetchItems,
+	FetchModifiers as RealFetchModifiers,
 	FetchRequest,
 	FetchedMessage,
 	ImapClientConfig,
@@ -21,6 +22,7 @@ import type {
 	SearchCriteria,
 	SearchOptions as RealSearchOptions,
 	SearchResult,
+	SelectOptions as RealSelectOptions,
 	SortKey,
 	SpecialUse,
 	StatusItem,
@@ -98,14 +100,16 @@ export interface SearchOptions {
  *  - `qresync`: append `(QRESYNC (uidvalidity modseq [known-uids]))`.
  *
  * Deliberately kept as its own ad hoc shape (rather than importing the real
- * `src/commands/select.ts` `SelectOptions`) even though both are wired to the
- * public client now: this interface's field names (`uidvalidity`/`modseq`,
- * lower/mixed-case) mirror the RFC 7162 §3.2.6 QRESYNC wire grammar the
- * scripted-server tests reason about, not the real type's camelCase
- * (`uidValidity`/`highestModSeq`) public surface -- see `driver.select()`'s
- * doc comment for why no translation between the two is ever needed in
- * practice (every caller of this field throws `NotImplementedError` before
- * the real type would be constructed).
+ * `src/commands/select.ts` `SelectOptions` directly into every spec file):
+ * this interface's field names (`uidvalidity`/`modseq`, lower/mixed-case)
+ * mirror the RFC 7162 §3.2.6 QRESYNC wire grammar the scripted-server tests
+ * reason about, not the real type's camelCase (`uidValidity`/
+ * `highestModSeq`) public surface. M4.6: `driver.select()`/`.examine()` now
+ * translate this ad hoc shape onto the real one (a driver-side field-name
+ * mapping, not wire-protocol logic -- I-4) -- `seqMatchData` (the fourth,
+ * optional QRESYNC argument, RFC7162-3.2.5.2-1) still has no field here
+ * (documented driver gap, see `ext/qresync-7162.test.ts`'s own note on that
+ * row), so only the 3-argument form can be driven from this suite today.
  */
 export interface SelectOptions {
 	condstore?: boolean;
@@ -373,6 +377,35 @@ function parseAdHocReturnItem(
 	throw new NotImplementedError(`SEARCH RETURN option ${JSON.stringify(item)}`);
 }
 
+/**
+ * Translates `driver.select()`/`.examine()`'s ad hoc `SelectOptions` (this
+ * file's own lower/mixed-case, RFC-grammar-mirroring shape) onto the real,
+ * spec-typed `SelectOptions` (`src/commands/select.ts`, camelCase). M4.6:
+ * `qresync.uidvalidity` -> `uidValidity`, `qresync.modseq` ->
+ * `highestModSeq`, `qresync.knownUids` passes straight through (same field
+ * name on both sides, and a bare wire-form string is already a legal
+ * `SequenceInput`, spec §5.1). `seqMatch` has no ad hoc field to translate
+ * from (documented driver gap -- see the ad hoc `SelectOptions`' own doc
+ * comment), so it is never populated here.
+ */
+function translateAdHocSelectOptions(opts: SelectOptions | undefined): RealSelectOptions | undefined {
+	if (opts === undefined) {
+		return undefined;
+	}
+	const real: RealSelectOptions = {};
+	if (opts.condstore !== undefined) {
+		real.condstore = opts.condstore;
+	}
+	if (opts.qresync !== undefined) {
+		real.qresync = {
+			uidValidity: opts.qresync.uidvalidity,
+			highestModSeq: opts.qresync.modseq,
+			...(opts.qresync.knownUids !== undefined ? { knownUids: opts.qresync.knownUids } : {}),
+		};
+	}
+	return Object.keys(real).length > 0 ? real : undefined;
+}
+
 /** Translates one `driver.search()`/`driver.uidSearch()` call's ad hoc
  *  `(criteria, opts)` pair into the real, spec-typed `SearchCriteria`/
  *  `SearchOptions` `MailboxSession.search()`/`.seq.search()` actually take. */
@@ -611,6 +644,29 @@ function translateAdHocFetchItems(rawItems: string[]): FetchRequest {
 		applyAdHocFetchItem(target, item);
 	}
 	return target;
+}
+
+/**
+ * Translates `driver.fetch()`/`.uidFetch()`'s ad hoc `FetchOptions`
+ * (`{changedSince?, vanished?}`, both independently optional) onto the real
+ * `FetchModifiers` (M4.6's spec §5.4 compile-time-overload union: `vanished:
+ * true` is only constructible together with a REQUIRED `changedSince`).
+ * `opts.vanished` WITHOUT `opts.changedSince` is exactly one of the shapes
+ * `ext/qresync-7162.test.ts`'s RFC7162-3.2.6-2 row deliberately drives (a
+ * caller asking for the ill-formed combination) -- the cast below carries
+ * that shape through UNCHANGED (rather than silently dropping `vanished` or
+ * inventing a `changedSince`) so `MailboxSession.runFetch()`'s own
+ * `RangeError` for exactly this case is what the compliance test actually
+ * observes, not a driver-level swallow.
+ */
+function translateAdHocFetchModifiers(opts: FetchOptions | undefined): RealFetchModifiers | undefined {
+	if (opts?.changedSince === undefined && opts?.vanished === undefined) {
+		return undefined;
+	}
+	if (opts.vanished) {
+		return { changedSince: opts.changedSince, vanished: true } as unknown as RealFetchModifiers;
+	}
+	return opts.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
 }
 
 /**
@@ -858,37 +914,23 @@ export class ComplianceDriver {
 	 * server that hasn't advertised it now sees the real `CapabilityError`
 	 * `ImapClient.select()` itself throws).
 	 *
-	 * `opts.qresync` remains the one deliberate exception: QRESYNC is M4.6's
-	 * job (RFC 7162 §3.2/RFC 5162's resync-ingestion machinery), and the real
-	 * `SelectCommand` still throws `CapabilityError` for it -- which
-	 * `classifyFailure` would misclassify as an honest `"violation"` rather
-	 * than `"unimplemented"` (only `NotImplementedError` classifies as the
-	 * latter). Translating "this feature is not implemented yet" into
-	 * `NotImplementedError` at the driver boundary is exactly the kind of
-	 * failure-kind translation the driver is allowed to do (it is not wire
-	 * protocol logic); the QRESYNC-parameter compliance tests stay annotated
-	 * `expectFailure: "unimplemented"` and this keeps that annotation honest.
+	 * `opts.qresync` is real as of M4.6 -- `translateAdHocSelectOptions()` maps
+	 * this ad hoc shape's lower/mixed-case field names (`uidvalidity`/
+	 * `modseq`) onto the real `SelectOptions.qresync`'s camelCase ones
+	 * (`uidValidity`/`highestModSeq`), a driver-side field-rename (I-4: not
+	 * wire-protocol logic -- the real bytes are still assembled entirely by
+	 * `SelectCommand`). A caller asking for QRESYNC against a server/session
+	 * that hasn't positively ENABLEd it now sees the real `CapabilityError`
+	 * `ImapClient.select()` itself throws.
 	 */
 	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		if (opts?.qresync) {
-			throw new NotImplementedError("SELECT (QRESYNC select parameter)");
-		}
-		return this.requireClient().select(
-			mailbox,
-			opts?.condstore !== undefined ? { condstore: opts.condstore } : undefined,
-		);
+		return this.requireClient().select(mailbox, translateAdHocSelectOptions(opts));
 	}
 
 	/** EXAMINE (RFC 3501/9051 §6.3.2/§6.3.3) -- same shape/rationale as
 	 *  `select()` above. */
 	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		if (opts?.qresync) {
-			throw new NotImplementedError("EXAMINE (QRESYNC select parameter)");
-		}
-		return this.requireClient().examine(
-			mailbox,
-			opts?.condstore !== undefined ? { condstore: opts.condstore } : undefined,
-		);
+		return this.requireClient().examine(mailbox, translateAdHocSelectOptions(opts));
 	}
 	/**
 	 * CREATE (RFC 3501/9051 §6.3.3/§6.3.4; RFC 6154 for `useAttributes`) --
@@ -1156,16 +1198,14 @@ export class ComplianceDriver {
 	 * `CapabilityError`: unadvertised CONDSTORE, or a NOMODSEQ mailbox per
 	 * RFC7162-3.1.2.2-1).
 	 *
-	 * `opts.vanished` remains translated to `NotImplementedError` the same
-	 * way `select()`'s own `qresync` is (see that method's doc comment): the
-	 * real `MailboxSession.fetch()` throws a genuine `CapabilityError` for it
-	 * (QRESYNC is M4.6's job), which `classifyFailure` would otherwise score
-	 * as an honest `"violation"` rather than `"unimplemented"`.
+	 * `opts.vanished` is real as of M4.6 -- `translateAdHocFetchModifiers()`
+	 * builds the real (union-typed) `FetchModifiers`; a caller reaching for it
+	 * on THIS bare (non-UID, sequence-number-grain) verb now sees the real
+	 * `RangeError` `MailboxSession.runFetch()` throws for exactly that case
+	 * (RFC7162-3.2.6-1: VANISHED is UID-FETCH-only) rather than a driver-level
+	 * intercept.
 	 */
 	public async fetch(seq: string, items: string[], opts?: FetchOptions): Promise<FetchedMessage[]> {
-		if (opts?.vanished) {
-			throw new NotImplementedError("FETCH (VANISHED modifier)");
-		}
 		// RFC 9394 §3.3's `(PARTIAL m:n)` FETCH MODIFIER (paging the RESULT SET
 		// of a FETCH command itself -- distinct from `BodyPartRequest.partial`'s
 		// `<start.length>` octet window, and from SEARCH's own PARTIAL return
@@ -1179,7 +1219,7 @@ export class ComplianceDriver {
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
-		const fetchOpts = opts?.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
+		const fetchOpts = translateAdHocFetchModifiers(opts);
 		for await (const msg of session.seq.fetch(seq, request, fetchOpts)) {
 			out.push(msg);
 		}
@@ -1265,17 +1305,15 @@ export class ComplianceDriver {
 	}
 	/** UID FETCH -- M3.5. UID grain: wired to `client.mailbox!.fetch(...)`
 	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
-	 *  `fetch()`'s own doc comment above for the ad hoc-translation rationale
-	 *  and the VANISHED -> `NotImplementedError` translation (CHANGEDSINCE is
-	 *  real as of M4.5). */
+	 *  `fetch()`'s own doc comment above for the ad hoc-translation rationale.
+	 *  `opts.vanished` is real as of M4.6 (CHANGEDSINCE real as of M4.5) --
+	 *  see `fetch()`'s own doc comment; this is the UID-grain verb VANISHED is
+	 *  actually legal on (RFC 7162 §3.2.6). */
 	public async uidFetch(
 		seq: string,
 		items: string[],
 		opts?: FetchOptions,
 	): Promise<FetchedMessage[]> {
-		if (opts?.vanished) {
-			throw new NotImplementedError("UID FETCH (VANISHED modifier)");
-		}
 		// See `fetch()`'s own doc comment above for why this is checked at
 		// runtime rather than through the declared `FetchOptions` type.
 		if ((opts as { partial?: unknown } | undefined)?.partial !== undefined) {
@@ -1284,7 +1322,7 @@ export class ComplianceDriver {
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
-		const fetchOpts = opts?.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
+		const fetchOpts = translateAdHocFetchModifiers(opts);
 		for await (const msg of session.fetch(seq, request, fetchOpts)) {
 			out.push(msg);
 		}

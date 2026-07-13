@@ -2,61 +2,94 @@ import { CapabilityError } from "../errors";
 import {
 	AtomTextCode,
 	ExistsCount,
+	Fetch,
 	FlagList,
 	NumberTextCode,
 	PermanentFlagsTextCode,
 	RecentCount,
 	StatusResponse,
+	VanishedResponse,
 } from "../parser";
 import type { UntaggedResponse } from "../parser";
+import { SequenceSet } from "../protocol/sequence-set";
+import type { SequenceInput } from "../protocol/sequence-set";
 import { Command } from "./base";
 import type { ClaimContext } from "./base";
+import { expandUidSet } from "./collector";
 import type { ResponseCollector } from "./collector";
-import type { CommandWriter } from "./writer";
+import { CommandWriter } from "./writer";
 
 /**
  * SELECT/EXAMINE (RFC 3501/9051 §6.3.1/§6.3.2; RFC 9051 §6.3.2/§6.3.3) —
- * M2.2 landed the §5b type SHAPE in full; M4.5 (this milestone) un-stubs
- * `condstore`: `SELECT mailbox (CONDSTORE)` / `EXAMINE mailbox (CONDSTORE)`
- * (RFC 7162 §3.1.8/§7 `condstore-param`) is now genuinely emitted once the
- * CONDSTORE capability is advertised — see `SelectOrExamineCommand`'s own
- * doc comment for the advertised-vs-ENABLEd gate this milestone settled.
- * `qresync` remains inert (M4.6's job — QRESYNC's own ENABLE-gated
- * activation model, RFC 7162 §3.2.3/§3.2.4, is a materially different
- * capability check than CONDSTORE's): passing it still throws
- * `CapabilityError` synchronously from this command's constructor (cheap,
- * honest, zero bytes written, per spec invariant I-9) rather than silently
- * ignoring the option or half-emitting the RFC 7162 §3.2.6 QRESYNC
- * select-param wire form.
+ * M2.2 landed the §5b type SHAPE in full; M4.5 un-stubbed `condstore`:
+ * `SELECT mailbox (CONDSTORE)` / `EXAMINE mailbox (CONDSTORE)` (RFC 7162
+ * §3.1.8/§7 `condstore-param`) is genuinely emitted once the CONDSTORE
+ * capability is advertised — see `SelectOrExamineCommand`'s own doc comment
+ * for the advertised-vs-ENABLEd gate that milestone settled. M4.6 (this
+ * milestone) un-stubs `qresync`: `SELECT mailbox (QRESYNC (uidvalidity
+ * modseq [known-uids [seq-match-data]]))` (RFC 7162 §3.2.5/§7
+ * `qresync-param`) is genuinely emitted once QRESYNC has been positively
+ * ENABLEd (RFC 7162 §3.2.3/§3.2.4 -- a materially different, harder gate
+ * than CONDSTORE's plain-advertisement one: see `SelectOrExamineCommand`'s
+ * constructor for the `caps` probe this depends on being `_enabled`-aware
+ * for QRESYNC specifically, `ImapClient`'s `effectiveCapability()`).
  *
- * `qresync`'s interior shape approximates spec §5b's
- * `{ uidValidity, highestModSeq, knownUids?: SequenceInput, seqMatch?: … }`
- * with `knownUids`/`seqMatch` typed as pre-formed wire strings: `SequenceInput`
- * (spec §5.1) doesn't exist in this codebase yet (it lands with a later
- * milestone's SELECT/FETCH-family sequence-set support), and since this
- * option is inert -- constructing it always throws, it is never serialized --
- * exact type fidelity here doesn't matter; this is a documented placeholder,
- * not the final shape.
+ * `qresync`'s interior shape is now the REAL spec §5b shape: `knownUids`/
+ * `seqMatch`'s two members are `SequenceInput` (spec §5.1, landed in M3),
+ * replacing the M2.2-era placeholder pre-formed wire strings (Shared design
+ * note 7 of the M4 plan -- a pre-announced breaking change to
+ * `SelectOptions`, not a new one this milestone introduces).
  */
 export interface SelectOptions {
 	condstore?: boolean;
 	qresync?: {
 		uidValidity: number;
 		highestModSeq: bigint;
-		knownUids?: string;
-		seqMatch?: { knownSeqSet: string; knownUidSet: string };
+		/** RFC 7162 §3.2.5/§7 `known-uids` (the third QRESYNC argument): a set
+		 *  of UIDs the client already knows about, stamped `kind: "uid"`. */
+		knownUids?: SequenceInput;
+		/** RFC 7162 §3.2.5.2/§7 `seq-match-data` (the fourth, optional QRESYNC
+		 *  argument): a parenthesized pair of same-cardinality sequence-sets --
+		 *  `knownSeqSet` (message sequence numbers, `kind: "seq"`) paired
+		 *  positionally with `knownUidSet` (the UIDs those sequence numbers
+		 *  corresponded to as of the last sync, `kind: "uid"`). Both MUST be
+		 *  in ascending order (RFC7162-3.2.5.2-1) -- `SequenceSet.toString()`'s
+		 *  own canonical (sorted, coalesced) form satisfies that automatically. */
+		seqMatch?: { knownSeqSet: SequenceInput; knownUidSet: SequenceInput };
 	};
 }
 
 /**
- * The minimal capability read surface `SelectOrExamineCommand`'s `condstore`
- * gate needs -- same structural-probe convention as `ListCapabilityProbe`/
- * `FetchCapabilityProbe`/`SearchCapabilityProbe`. `ImapClient.select()`/
- * `.examine()` pass `this.capabilityRegistry.view` (plain advertisement,
- * NOT the `_enabled`-aware `effectiveCapability()` reading UTF8=ACCEPT
- * uses) -- see this file's own doc comment on `SelectOrExamineCommand` for
- * why plain advertisement is the deliberately-chosen, RFC-correct gate for
- * CONDSTORE specifically.
+ * One resync event observed during a QRESYNC-parameterized SELECT/EXAMINE's
+ * own response family (RFC 7162 §3.2.5.1: "pending flag changes" as
+ * UID-bearing FETCH lines, plus expunge reports as `VANISHED (EARLIER)`
+ * lines) -- captured in the EXACT order the two interleave on the wire, so
+ * `MailboxSession` can replay them through its buffered `vanished`/`flags`
+ * events in that same order (spec §5b's resync-buffering guarantee). Kept
+ * structurally independent of `MailboxSessionEvents` (no import from
+ * `client/mailbox.ts` here) to avoid a select.ts <-> mailbox.ts import
+ * cycle -- TS structural typing is all either side needs.
+ */
+export type SelectResyncEvent =
+	| { kind: "vanished"; uids: number[]; earlier: boolean }
+	| {
+			kind: "flags";
+			seq: number;
+			uid?: number;
+			flags: ReadonlySet<string>;
+			modSeq?: bigint;
+	  };
+
+/**
+ * The minimal capability read surface `SelectOrExamineCommand`'s `condstore`/
+ * `qresync` gates need -- same structural-probe convention as
+ * `ListCapabilityProbe`/`FetchCapabilityProbe`/`SearchCapabilityProbe`.
+ * `ImapClient.select()`/`.examine()` pass `effectiveCapability()` (M4.6):
+ * for `CONDSTORE` that reads exactly like plain advertisement (falls through
+ * unchanged), and for `QRESYNC` it reads the `_enabled`-aware branch instead
+ * -- see this file's own doc comment on `SelectOrExamineCommand` for why
+ * each capability needs its OWN gate model, and `effectiveCapability()`'s own
+ * doc comment (`client.ts`) for the two-name special case.
  */
 export interface SelectCapabilityProbe {
 	has(cap: string): boolean;
@@ -89,23 +122,35 @@ export interface SelectResult {
 	noModSeq: boolean;
 	uidNotSticky: boolean;
 	mailboxId: string | null;
+	/** M4.6: the QRESYNC resync stream (RFC 7162 §3.2.5.1) observed during
+	 *  THIS SELECT/EXAMINE exchange, in wire arrival order -- always present,
+	 *  empty when this wasn't a QRESYNC-parameterized select (or the server
+	 *  had nothing to resync). `MailboxSession`'s constructor buffers these
+	 *  and replays them per spec §5b's resync-buffering guarantee -- see
+	 *  that class's own doc comment. */
+	resync: SelectResyncEvent[];
 }
 
 /** The SELECT/EXAMINE response family (spec §8 step 3a / this task's design
- *  note): FLAGS/EXISTS/RECENT untagged data, plus every untagged STATUS-type
+ *  note): FLAGS/EXISTS/RECENT untagged data, every untagged STATUS-type
  *  response (the "* OK/NO [...] text" lines carrying UIDVALIDITY/UIDNEXT/
  *  PERMANENTFLAGS/HIGHESTMODSEQ/NOMODSEQ/UIDNOTSTICKY/MAILBOXID/CLOSED resp-
- *  codes) that arrive while this command is in flight. `queueMode: "serial"`
- *  guarantees no other command is concurrently in flight to contend for
- *  these, so claiming the whole family unconditionally (rather than trying
- *  to correlate individual lines some other way) is safe and simple. The
- *  rev2 untagged LIST line some servers include (RFC 9051 §6.3.2) is
- *  deliberately NOT claimed here -- MailboxInfo/LIST parsing is a later
- *  task's (M2.7) concern; left unclaimed, it flows through the ordinary
- *  tolerance path (`ImapClient`'s `unhandled` event), which is the correct,
- *  spec-sanctioned outcome for data this command has no use for (I-6).
+ *  codes), plus (M4.6, Shared design note 5 of the M4 plan) VANISHED and
+ *  FETCH -- the QRESYNC resync stream (RFC 7162 §3.2.5.1) a QRESYNC-
+ *  parameterized SELECT/EXAMINE's tagged OK is preceded by. Left unclaimed
+ *  before this milestone, that data silently leaked to the generic
+ *  `unhandled` tolerance path instead of populating the new session.
+ *  `queueMode: "serial"` guarantees no other command is concurrently in
+ *  flight to contend for any of this, so claiming the whole family
+ *  unconditionally (rather than trying to correlate individual lines some
+ *  other way) is safe and simple. The rev2 untagged LIST line some servers
+ *  include (RFC 9051 §6.3.2) is deliberately NOT claimed here -- MailboxInfo/
+ *  LIST parsing is a later task's (M2.7) concern; left unclaimed, it flows
+ *  through the ordinary tolerance path (`ImapClient`'s `unhandled` event),
+ *  which is the correct, spec-sanctioned outcome for data this command has
+ *  no use for (I-6).
  */
-const CLAIMED_TYPES = new Set(["FLAGS", "EXISTS", "RECENT", "STATUS"]);
+const CLAIMED_TYPES = new Set(["FLAGS", "EXISTS", "RECENT", "STATUS", "VANISHED", "FETCH"]);
 
 /**
  * Shared SELECT/EXAMINE implementation. Not exported directly -- `SelectCommand`/
@@ -125,19 +170,36 @@ const CLAIMED_TYPES = new Set(["FLAGS", "EXISTS", "RECENT", "STATUS"]);
  * the CONDSTORE track by ISSUING any condstore-enabling command in the
  * first place (this select-parameter form is itself one of the four
  * ways to do so, per §3.1.8) -- there is no separate prior `ENABLE
- * CONDSTORE` handshake to wait for (contrast QRESYNC, RFC 7162 §3.2.3/
- * §3.2.4, which DOES hard-require `ENABLE QRESYNC` + a positive `ENABLED
- * QRESYNC` before ANY QRESYNC-shaped wire form may be used -- a
- * fundamentally different activation model this class deliberately does
- * NOT extend to `condstore`). See `test/compliance/catalog/ext/rfc7162.ts`'s
- * own RFC7162-3.2.3 notes: "there is no requirement for a compliant server
- * to support 'ENABLE CONDSTORE' by itself" -- i.e. the RFC does not even
- * promise ENABLE CONDSTORE has an effect, so gating on `_enabled` here would
- * be both unnecessary and potentially wrong for a real server. `caps` is
- * therefore `ImapClient.select()`/`.examine()`'s `capabilityRegistry.view`
- * (plain advertisement), not `effectiveCapability()` (which special-cases
- * UTF8=ACCEPT to its `_enabled`-aware reading) -- see `SelectCapabilityProbe`'s
- * own doc comment.
+ * CONDSTORE` handshake to wait for. See `test/compliance/catalog/ext/
+ * rfc7162.ts`'s own RFC7162-3.2.3 notes: "there is no requirement for a
+ * compliant server to support 'ENABLE CONDSTORE' by itself" -- i.e. the RFC
+ * does not even promise ENABLE CONDSTORE has an effect, so gating on
+ * `_enabled` here would be both unnecessary and potentially wrong for a
+ * real server.
+ *
+ * **M4.6 QRESYNC gate (hard-ENABLEd, not merely advertised):** `opts.qresync`
+ * is the opposite activation model, RFC 7162 §3.2.3/§3.2.4: a client MUST
+ * `ENABLE QRESYNC` and receive a POSITIVE `* ENABLED QRESYNC` (errata 1365)
+ * before using ANY QRESYNC-shaped wire form, including this select
+ * parameter. `caps` is therefore expected to be `ImapClient`'s
+ * `effectiveCapability()` probe (which special-cases exactly two names --
+ * UTF8=ACCEPT and, as of this milestone, QRESYNC -- to their `_enabled`-aware
+ * reading, falling through to plain advertisement for everything else,
+ * including CONDSTORE) rather than the raw `capabilityRegistry.view` --
+ * see `ImapClient.select()`/`.examine()` and `effectiveCapability()`'s own
+ * doc comment. Constructing this command with a plain-advertisement-only
+ * probe (e.g. the module's own `NO_SELECT_CAPS` default, or a raw
+ * `CapabilityView`) means `caps.has("QRESYNC")` can never honestly reflect
+ * "positively ENABLEd" -- callers that need the real gate must supply an
+ * `_enabled`-aware probe, exactly as `ImapClient` does.
+ *
+ * **`condstore`+`qresync` together:** rejected with `RangeError` (zero bytes
+ * written, I-9) -- QRESYNC's advertisement already implies CONDSTORE support (RFC 7162 §3.2.3: "the presence of the 'QRESYNC' capability implies support for the CONDSTORE IMAP extension even if the 'CONDSTORE' capability isn't advertised" -- catalog note on RFC7162-3.2.2/-3.2.3, itself not separately scored), so
+ * the two select parameters are never both meaningful in the same command;
+ * this guard is a conservative, documented caller-ergonomics choice (no
+ * scored catalog row was found citing an explicit wire-level MUST NOT for
+ * this combination -- flagged as an uncertainty, see this milestone's
+ * report) rather than a claimed direct RFC citation.
  */
 abstract class SelectOrExamineCommand extends Command<SelectResult> {
 	readonly verb: string;
@@ -157,6 +219,7 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 
 	private readonly forcedReadOnly: boolean;
 	private readonly condstore: boolean;
+	private readonly qresyncOpts: SelectOptions["qresync"];
 
 	constructor(
 		verb: "SELECT" | "EXAMINE",
@@ -168,6 +231,7 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 		this.verb = verb;
 		this.forcedReadOnly = verb === "EXAMINE";
 		this.condstore = opts.condstore === true;
+		this.qresyncOpts = opts.qresync;
 		if (this.condstore && !caps.has("CONDSTORE")) {
 			throw new CapabilityError(
 				`${verb}: the CONDSTORE select parameter requires the CONDSTORE ` +
@@ -177,13 +241,30 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 				{ capability: "CONDSTORE", rfc: "RFC7162" },
 			);
 		}
-		if (opts.qresync) {
-			throw new CapabilityError(
-				`${verb}: the QRESYNC select parameter is not implemented until a ` +
-					"later milestone (RFC 7162 §3.2 / RFC 5162 -- QRESYNC's resync-" +
-					"ingestion machinery is M4.6's job)",
-				{ capability: "QRESYNC", rfc: "RFC7162" },
-			);
+		if (this.qresyncOpts) {
+			if (this.condstore) {
+				throw new RangeError(
+					`${verb}: the CONDSTORE and QRESYNC select parameters cannot both ` +
+						"be requested in the same command -- QRESYNC already implies " +
+						"CONDSTORE support (RFC 7162 §3.2.3); pass only `qresync`",
+				);
+			}
+			if (!caps.has("QRESYNC")) {
+				throw new CapabilityError(
+					`${verb}: the QRESYNC select parameter requires a positive 'ENABLE ` +
+						"QRESYNC' + '* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4, " +
+						"errata 1365) -- mere advertisement of the QRESYNC capability is " +
+						"not enough; call `client.enableExtensions([\"QRESYNC\"])` (or let " +
+						"the default `extensions: \"auto\"` config request it) first",
+					{ capability: "QRESYNC", rfc: "RFC7162" },
+				);
+			}
+			// Pre-validate/canonicalize the SequenceInput fields (a bad
+			// `SequenceInput` throws `RangeError` from `SequenceSet.from()`)
+			// synchronously, before this command is ever submitted (I-9) --
+			// same "precompile against a throwaway writer" rationale
+			// `FetchCommand`/`SearchCommand` already establish.
+			this.write(new CommandWriter({ has: (cap) => caps.has(cap) }));
 		}
 	}
 
@@ -194,6 +275,31 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 			// grammar: the bare atom CONDSTORE inside a parenthesized list
 			// AFTER the mailbox name -- 'SELECT INBOX (CONDSTORE)'.
 			w.list((inner) => inner.atom("CONDSTORE"));
+		} else if (this.qresyncOpts) {
+			const { uidValidity, highestModSeq, knownUids, seqMatch } = this.qresyncOpts;
+			// RFC 7162 §7 qresync-param: 'QRESYNC (uidvalidity mod-sequence-value
+			// [known-uids] [seq-match-data])' -- the ENTIRE thing (including the
+			// "QRESYNC" atom) is itself the one select-param element, hence the
+			// outer w.list() wraps both the atom and the nested group.
+			w.list((inner) => {
+				inner.atom("QRESYNC");
+				inner.list((qr) => {
+					qr.number(uidValidity);
+					qr.bignumber(highestModSeq);
+					if (knownUids !== undefined) {
+						qr.sequenceSet(SequenceSet.from(knownUids).withKind("uid"));
+					}
+					if (seqMatch !== undefined) {
+						// RFC 7162 §7 seq-match-data: '(' known-sequence-set SP
+						// known-uid-set ')' -- both MUST ascend (RFC7162-3.2.5.2-1),
+						// which `SequenceSet.toString()`'s canonical form guarantees.
+						qr.list((sm) => {
+							sm.sequenceSet(SequenceSet.from(seqMatch.knownSeqSet).withKind("seq"));
+							sm.sequenceSet(SequenceSet.from(seqMatch.knownUidSet).withKind("uid"));
+						});
+					}
+				});
+			});
 		}
 	}
 
@@ -299,6 +405,42 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 			taggedCode ? (taggedCode as { kind?: unknown }).kind : undefined;
 		const readOnly = this.forcedReadOnly || taggedKind === "READ-ONLY";
 
+		// M4.6: the QRESYNC resync stream (RFC 7162 §3.2.5.1) -- VANISHED
+		// (EARLIER) expunge reports and UID-bearing flag-carrying FETCH lines,
+		// walked in ORIGINAL wire arrival order (c.untagged() with no filter,
+		// unlike the type-filtered `c.untagged("FLAGS")`/etc. calls above,
+		// which would lose the interleaving) so `MailboxSession` can replay
+		// them in the exact order they arrived. Present regardless of whether
+		// this was a QRESYNC-parameterized select -- always empty otherwise,
+		// since a non-QRESYNC exchange has no VANISHED/flag-carrying-FETCH
+		// lines to claim in the first place.
+		const resync: SelectResyncEvent[] = [];
+		for (const line of c.untagged()) {
+			if (line.type === "VANISHED" && line.content instanceof VanishedResponse) {
+				resync.push({
+					kind: "vanished",
+					uids: expandUidSet(line.content.uids),
+					earlier: line.content.earlier,
+				});
+			} else if (line.type === "FETCH" && line.content instanceof Fetch && line.content.flags) {
+				const uid = line.content.uid?.id;
+				resync.push({
+					kind: "flags",
+					seq: line.content.sequenceNumber,
+					...(typeof uid === "number" ? { uid } : {}),
+					flags: new Set(line.content.flags.flags.map((f) => f.name)),
+					...(line.content.modseq !== undefined
+						? {
+								modSeq:
+									typeof line.content.modseq === "bigint"
+										? line.content.modseq
+										: BigInt(line.content.modseq),
+							}
+						: {}),
+				});
+			}
+		}
+
 		return {
 			flags,
 			permanentFlags,
@@ -311,6 +453,7 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 			noModSeq,
 			uidNotSticky,
 			mailboxId,
+			resync,
 		};
 	}
 }

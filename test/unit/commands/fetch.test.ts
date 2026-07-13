@@ -495,4 +495,55 @@ describe("FetchCommand (RFC 3501/9051 §6.4.5/§6.4.9, M3.5)", () => {
 			expect((await part!.buffer()).toString("utf8")).toBe("hello world");
 		});
 	});
+
+	describe("CHANGEDSINCE / VANISHED modifiers (RFC 7162 §3.1.4.1/§3.2.6, M4.5/M4.6)", () => {
+		test("changedSince alone: '(CHANGEDSINCE n)' trails the item list, gated on CONDSTORE", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new FetchCommand(seqSet(1), { flags: true }, true, 1024, ALL_CAPS, 12345n);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 UID FETCH 1 (FLAGS) (CHANGEDSINCE 12345)${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("changedSince without CONDSTORE throws CapabilityError synchronously, zero bytes", () => {
+			expect(
+				() => new FetchCommand(seqSet(1), { flags: true }, true, 1024, NO_CAPS, 12345n),
+			).toThrow(CapabilityError);
+		});
+
+		test("vanished rides INSIDE the CHANGEDSINCE modifier list, after CHANGEDSINCE, on UID FETCH", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new FetchCommand(seqSet(1), { flags: true }, true, 1024, ALL_CAPS, 12345n, true);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 UID FETCH 1 (FLAGS) (CHANGEDSINCE 12345 VANISHED)${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("vanished on a plain (non-UID) FETCH throws RangeError synchronously, zero bytes (RFC7162-3.2.6-1)", () => {
+			expect(
+				() => new FetchCommand(seqSet(1, "seq"), { flags: true }, false, 1024, ALL_CAPS, 12345n, true),
+			).toThrow(RangeError);
+		});
+
+		test("vanished without changedSince throws RangeError synchronously, zero bytes (RFC7162-3.2.6-2)", () => {
+			expect(
+				() => new FetchCommand(seqSet(1), { flags: true }, true, 1024, ALL_CAPS, undefined, true),
+			).toThrow(RangeError);
+		});
+
+		test("vanished without QRESYNC (even with CONDSTORE + changedSince) throws CapabilityError synchronously, zero bytes", () => {
+			const condstoreOnly: FetchCapabilityProbe = { has: (cap) => cap === "CONDSTORE" };
+			expect(
+				() => new FetchCommand(seqSet(1), { flags: true }, true, 1024, condstoreOnly, 12345n, true),
+			).toThrow(CapabilityError);
+		});
+	});
 });

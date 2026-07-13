@@ -68,13 +68,144 @@ describe("SelectCommand / ExamineCommand (RFC 3501/9051 §6.3.1/§6.3.2)", () =>
 		expect(() => new ExamineCommand("INBOX", { condstore: true })).toThrow(CapabilityError);
 	});
 
-	test("constructing with qresync throws CapabilityError synchronously, zero bytes", () => {
+	test("constructing with qresync (no caps probe -- NO_SELECT_CAPS default) throws CapabilityError synchronously, zero bytes", () => {
 		expect(
 			() =>
 				new SelectCommand("INBOX", {
 					qresync: { uidValidity: 1, highestModSeq: 1n },
 				}),
 		).toThrow(CapabilityError);
+	});
+
+	describe("M4.6 QRESYNC", () => {
+		const QRESYNC_CAPS = { has: (cap: string) => cap === "QRESYNC" || cap === "CONDSTORE" };
+		const NO_CAPS = { has: () => false };
+
+		test("qresync against a plain-advertisement-only probe still throws CapabilityError (advertisement alone never satisfies the hard-ENABLE gate)", () => {
+			// A probe that reports QRESYNC as advertised but is NOT the
+			// `_enabled`-aware kind `ImapClient.effectiveCapability()` supplies --
+			// exercised structurally here since this unit lives below the client
+			// layer; `client.select()`'s own doc comment documents the real gate.
+			expect(
+				() => new SelectCommand("INBOX", { qresync: { uidValidity: 1, highestModSeq: 1n } }, NO_CAPS),
+			).toThrow(CapabilityError);
+		});
+
+		test("condstore+qresync together throws RangeError synchronously, zero bytes (QRESYNC already implies CONDSTORE)", () => {
+			expect(
+				() =>
+					new SelectCommand(
+						"INBOX",
+						{ condstore: true, qresync: { uidValidity: 1, highestModSeq: 1n } },
+						QRESYNC_CAPS,
+					),
+			).toThrow(RangeError);
+		});
+
+		test("a malformed SequenceInput in knownUids throws RangeError synchronously (precompile against a throwaway writer)", () => {
+			expect(
+				() =>
+					new SelectCommand(
+						"INBOX",
+						{ qresync: { uidValidity: 1, highestModSeq: 1n, knownUids: "not-a-sequence-set" } },
+						QRESYNC_CAPS,
+					),
+			).toThrow(RangeError);
+		});
+
+		test("3-argument wire form: SELECT INBOX (QRESYNC (67890007 90060115194045000 41,43:211,214:541))", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new SelectCommand(
+				"INBOX",
+				{
+					qresync: {
+						uidValidity: 67890007,
+						highestModSeq: 90060115194045000n,
+						knownUids: "41,43:211,214:541",
+					},
+				},
+				QRESYNC_CAPS,
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 SELECT INBOX (QRESYNC (67890007 90060115194045000 41,43:211,214:541))${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK [READ-WRITE] SELECT completed${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("4-argument wire form (seq-match-data): both member sets ascend, canonicalized by SequenceSet", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new SelectCommand(
+				"INBOX",
+				{
+					qresync: {
+						uidValidity: 67890007,
+						highestModSeq: 90060115194045000n,
+						knownUids: "41,43:211,214:541",
+						seqMatch: { knownSeqSet: [9, 5, 1, 101, 130, 121], knownUidSet: "6,50,100,250:260,300:310" },
+					},
+				},
+				QRESYNC_CAPS,
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				"A1 SELECT INBOX (QRESYNC (67890007 90060115194045000 41,43:211,214:541 " +
+					`(1,5,9,101,121,130 6,50,100,250:260,300:310)))${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK [READ-WRITE] SELECT completed${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("2-argument wire form (no knownUids/seqMatch): SELECT INBOX (QRESYNC (67890007 90060115194045000))", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new SelectCommand(
+				"INBOX",
+				{ qresync: { uidValidity: 67890007, highestModSeq: 90060115194045000n } },
+				QRESYNC_CAPS,
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 SELECT INBOX (QRESYNC (67890007 90060115194045000))${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK [READ-WRITE] SELECT completed${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("resync stream: VANISHED (EARLIER) + flag-carrying FETCH lines, interleaved, land in SelectResult.resync in wire order", async () => {
+			const { connection, router } = makeFakeConnection();
+			const cmd = new SelectCommand(
+				"INBOX",
+				{ qresync: { uidValidity: 67890007, highestModSeq: 90060115194045000n } },
+				QRESYNC_CAPS,
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+
+			for (const line of [
+				"* 49 FETCH (UID 117 FLAGS (\\Seen \\Answered) MODSEQ (12111230047))",
+				"* VANISHED (EARLIER) 41,43:45,50",
+				"* 50 FETCH (UID 119 FLAGS (\\Draft) MODSEQ (12111230047))",
+				"* 314 EXISTS",
+			]) {
+				router.routeUntagged(parseLine(`${line}${CRLF}`) as UntaggedResponse);
+			}
+			router.routeTagged(parseLine(`A1 OK [READ-WRITE] SELECT completed${CRLF}`) as TaggedResponse);
+
+			const result = await resultPromise;
+			expect(result.exists).toBe(314);
+			// Order matters: the VANISHED line arrived BETWEEN the two FETCH
+			// lines on the wire, and `resync` preserves that exact interleaving
+			// (not "all FETCH then all VANISHED" or vice versa).
+			expect(result.resync).toEqual([
+				{ kind: "flags", seq: 49, uid: 117, flags: new Set(["\\Seen", "\\Answered"]), modSeq: 12111230047n },
+				{ kind: "vanished", uids: [41, 43, 44, 45, 50], earlier: true },
+				{ kind: "flags", seq: 50, uid: 119, flags: new Set(["\\Draft"]), modSeq: 12111230047n },
+			]);
+		});
 	});
 
 	test("write() emits the mailbox name via w.mailbox() (INBOX canonicalization included)", async () => {

@@ -20,6 +20,7 @@ function baseSnapshot(overrides: Partial<SelectResult> = {}): SelectResult {
 		noModSeq: false,
 		uidNotSticky: false,
 		mailboxId: null,
+		resync: [],
 		...overrides,
 	};
 }
@@ -158,6 +159,32 @@ describe("MailboxSession (spec §5b, M2.2 skeleton)", () => {
 			expect(handler).toHaveBeenCalledExactlyOnceWith(update);
 		});
 
+		describe("applyVanished (RFC 7162 §3.2.10, M4.6)", () => {
+			test("earlier: true does NOT decrement exists (informational only) but still emits", () => {
+				const session = makeSession({ exists: 10 });
+				const handler = vi.fn();
+				session.on("vanished", handler);
+
+				MailboxSession.applyVanished(session, [1, 2, 3], true);
+				expect(session.exists).toBe(10);
+				expect(handler).toHaveBeenCalledExactlyOnceWith([1, 2, 3], true);
+			});
+
+			test("earlier: false decrements exists by the UID count (floored at 0) and emits", () => {
+				const session = makeSession({ exists: 5 });
+				const handler = vi.fn();
+				session.on("vanished", handler);
+
+				MailboxSession.applyVanished(session, [1, 2], false);
+				expect(session.exists).toBe(3);
+				expect(handler).toHaveBeenCalledExactlyOnceWith([1, 2], false);
+
+				// Never goes negative even against a pathological over-report.
+				MailboxSession.applyVanished(session, [3, 4, 5, 6, 7, 8], false);
+				expect(session.exists).toBe(0);
+			});
+		});
+
 		test("applyUidValidity emits (next, prev) only when it actually changes", () => {
 			const session = makeSession({ uidValidity: 1 });
 			const handler = vi.fn();
@@ -177,18 +204,104 @@ describe("MailboxSession (spec §5b, M2.2 skeleton)", () => {
 
 			const existsHandler = vi.fn();
 			const expungeHandler = vi.fn();
+			const vanishedHandler = vi.fn();
 			session.on("exists", existsHandler);
 			session.on("expunge", expungeHandler);
+			session.on("vanished", vanishedHandler);
 
 			MailboxSession.applyExists(session, 99);
 			MailboxSession.applyExpunge(session, 1);
 			MailboxSession.applyRecent(session, 5);
 			MailboxSession.applyUidValidity(session, 999);
+			MailboxSession.applyVanished(session, [1, 2, 3], false);
 
 			expect(session.exists).toBe(3);
 			expect(session.uidValidity).toBe(42);
 			expect(existsHandler).not.toHaveBeenCalled();
 			expect(expungeHandler).not.toHaveBeenCalled();
+			expect(vanishedHandler).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("QRESYNC resync-buffering guarantee (spec §5b, M4.6)", () => {
+		function resyncSnapshot() {
+			return {
+				resync: [
+					{
+						kind: "vanished" as const,
+						uids: [41, 43, 44, 45, 50],
+						earlier: true,
+					},
+					{
+						kind: "flags" as const,
+						seq: 49,
+						uid: 117,
+						flags: new Set(["\\Seen"]),
+						modSeq: 12111230047n,
+					},
+				],
+			};
+		}
+
+		test("a listener attached synchronously right after construction receives the buffered events (via the deferred microtask flush)", async () => {
+			const session = makeSession(resyncSnapshot());
+			const vanishedEvents: unknown[] = [];
+			const flagsEvents: unknown[] = [];
+			session.on("vanished", (uids, earlier) => vanishedEvents.push({ uids, earlier }));
+			session.on("flags", (update) => flagsEvents.push(update));
+
+			// Not yet flushed synchronously -- the flush is deliberately deferred
+			// by one microtask turn (see `maybeTriggerResyncFlush()`'s own doc
+			// comment) so that BOTH same-tick listeners above are registered
+			// before either one is emitted to.
+			expect(vanishedEvents).toEqual([]);
+			expect(flagsEvents).toEqual([]);
+
+			await new Promise((r) => setImmediate(r));
+
+			expect(vanishedEvents).toEqual([{ uids: [41, 43, 44, 45, 50], earlier: true }]);
+			expect(flagsEvents).toEqual([
+				{ seq: 49, uid: 117, flags: new Set(["\\Seen"]), modSeq: 12111230047n },
+			]);
+			// EARLIER never touches exists.
+			expect(session.exists).toBe(3);
+		});
+
+		test("once() also triggers the buffered flush (not just on())", async () => {
+			const session = makeSession(resyncSnapshot());
+			const handler = vi.fn();
+			session.once("vanished", handler);
+			await new Promise((r) => setImmediate(r));
+			expect(handler).toHaveBeenCalledExactlyOnceWith([41, 43, 44, 45, 50], true);
+		});
+
+		test("addListener() also triggers the buffered flush", async () => {
+			const session = makeSession(resyncSnapshot());
+			const handler = vi.fn();
+			session.addListener("flags", handler);
+			await new Promise((r) => setImmediate(r));
+			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		test("no listener attached at all: the setImmediate fallback still flushes (bookkeeping applied), but a listener attached only AFTER that fallback misses the (already-drained) events", async () => {
+			const session = makeSession(resyncSnapshot());
+			// Let the construction-time setImmediate fallback run with nobody
+			// listening yet.
+			await new Promise((r) => setImmediate(r));
+			await new Promise((r) => setImmediate(r));
+
+			const lateHandler = vi.fn();
+			session.on("vanished", lateHandler);
+			await new Promise((r) => setImmediate(r));
+			expect(lateHandler).not.toHaveBeenCalled();
+		});
+
+		test("a session with no resync data never schedules a flush (no observable behavior difference from before M4.6)", async () => {
+			const session = makeSession();
+			const handler = vi.fn();
+			session.on("vanished", handler);
+			await new Promise((r) => setImmediate(r));
+			expect(handler).not.toHaveBeenCalled();
 		});
 	});
 

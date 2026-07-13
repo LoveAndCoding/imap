@@ -62,8 +62,10 @@ import {
 	TaggedResponse,
 	UnknownResponse,
 	UntaggedResponse,
+	VanishedResponse,
 } from "../parser";
 import type { TextCode } from "../parser";
+import { expandUidSet } from "../commands/collector";
 import type { MailboxInfo } from "../protocol/mailbox";
 import { decodeMailboxName } from "../protocol/mailbox-name";
 import { performAuthSelection } from "./auth";
@@ -514,16 +516,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * genuinely negotiated), plain advertisement is the correct and complete
 	 * gate for every CONDSTORE-shaped option this client emits — falling
 	 * through to the ordinary `capabilityRegistry.view.has()` check below is
-	 * the intended behavior, not a gap. `QRESYNC` is the opposite: RFC 7162
-	 * §3.2.3/§3.2.4 make a positive `ENABLE QRESYNC` + `ENABLED QRESYNC`
-	 * response a hard MUST before any QRESYNC-shaped wire form may be used —
-	 * that capability DOES need to join this `_enabled`-gated branch, once
-	 * M4.6 gives it a real path to gate. Every other capability name falls
-	 * through to the ordinary advertisement check unchanged.
+	 * the intended behavior, not a gap. `QRESYNC` is the opposite (M4.6 gives
+	 * it its real path to gate, per this comment's own prediction at M4.5
+	 * kickoff): RFC 7162 §3.2.3/§3.2.4 make a positive `ENABLE QRESYNC` +
+	 * `* ENABLED QRESYNC` response (errata 1365) a hard MUST before any
+	 * QRESYNC-shaped wire form may be used (the select parameter, RFC7162-
+	 * 3.2.5-1; the VANISHED FETCH modifier, RFC7162-3.2.6-2/-3) — so QRESYNC
+	 * now joins this `_enabled`-gated branch alongside UTF8=ACCEPT. Every
+	 * other capability name falls through to the ordinary advertisement
+	 * check unchanged.
 	 */
 	private effectiveCapability(cap: string): boolean {
-		if (cap.toUpperCase() === "UTF8=ACCEPT") {
-			return this._enabled.has("UTF8=ACCEPT");
+		const upper = cap.toUpperCase();
+		if (upper === "UTF8=ACCEPT" || upper === "QRESYNC") {
+			return this._enabled.has(upper);
 		}
 		return this.capabilityRegistry.view.has(cap);
 	}
@@ -776,21 +782,28 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See
-	 *  `selectOrExamine()` for the shared choreography. */
+	 *  `selectOrExamine()` for the shared choreography. `effectiveCapability()`
+	 *  (M4.6), not the raw `capabilityRegistry.view`, is passed as the
+	 *  capability probe: CONDSTORE reads exactly like plain advertisement
+	 *  through it (unchanged from M4.5), while QRESYNC gets the `_enabled`-
+	 *  aware hard-ENABLE gate `SelectOrExamineCommand`'s own doc comment
+	 *  requires (RFC 7162 §3.2.3/§3.2.4) — see `effectiveCapability()`'s own
+	 *  doc comment. */
 	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
 		return this.selectOrExamine(
 			mailbox,
-			new SelectCommand(mailbox, opts, this.capabilityRegistry.view),
+			new SelectCommand(mailbox, opts, { has: (cap) => this.effectiveCapability(cap) }),
 		);
 	}
 
 	/** EXAMINE (spec §3.2/§3.1, RFC 3501/9051 §6.3.2/§6.3.3): identical
 	 *  choreography to `select()`; the returned session's `readOnly` is
-	 *  always `true` (enforced by `ExamineCommand.accept()`). */
+	 *  always `true` (enforced by `ExamineCommand.accept()`). Same
+	 *  `effectiveCapability()` probe as `select()` above, same rationale. */
 	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
 		return this.selectOrExamine(
 			mailbox,
-			new ExamineCommand(mailbox, opts, this.capabilityRegistry.view),
+			new ExamineCommand(mailbox, opts, { has: (cap) => this.effectiveCapability(cap) }),
 		);
 	}
 
@@ -1243,16 +1256,24 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	/**
 	 * State-tracker lane, mailbox half (spec §8.3) -- live-update side:
-	 * EXISTS/RECENT/EXPUNGE/FETCH-flag untagged responses arriving while a
-	 * mailbox is selected mutate that session's snapshot IN ARRIVAL ORDER
-	 * (the router/connection fan these out synchronously and in wire order,
-	 * so a synchronous handler here preserves that ordering for free), then
-	 * emit its events. VANISHED (QRESYNC) is deliberately out of scope until
-	 * M4 (the M2 plan's `MailboxSession` skeleton note). Guarded identically
-	 * to `applyMailboxStatusCode` above: only fires against a LIVE session,
-	 * so the EXISTS/RECENT lines that are part of an in-flight SELECT's own
-	 * response (already claimed + folded into its `SelectResult`) are
-	 * naturally ignored here too.
+	 * EXISTS/RECENT/EXPUNGE/VANISHED/FETCH-flag untagged responses arriving
+	 * while a mailbox is selected mutate that session's snapshot IN ARRIVAL
+	 * ORDER (the router/connection fan these out synchronously and in wire
+	 * order, so a synchronous handler here preserves that ordering for
+	 * free), then emit its events. VANISHED (RFC 7162 §3.2.10, M4.6) replaces
+	 * EXPUNGE for the rest of a QRESYNC-ENABLEd connection (§3.2.7/§3.2.9) --
+	 * routed to `MailboxSession.applyVanished()` here exactly like every
+	 * other live update, no QRESYNC-specific branching needed at this layer
+	 * (a server that never sends VANISHED simply never reaches this branch;
+	 * one that does has already gone through the ENABLE QRESYNC handshake
+	 * `effectiveCapability()`/`SelectOrExamineCommand`'s own gate requires).
+	 * Guarded identically to `applyMailboxStatusCode` above: only fires
+	 * against a LIVE session, so the EXISTS/RECENT/VANISHED/FETCH lines that
+	 * are part of an in-flight SELECT/EXAMINE's own response (already claimed
+	 * + folded into its `SelectResult.resync`, M4.6) are naturally ignored
+	 * here too -- this lane and the resync-buffer lane are mutually exclusive
+	 * by construction (a claimed response never also reaches the generic
+	 * `unhandled`/live-update path).
 	 */
 	private applyMailboxLiveUpdate(resp: UntaggedResponse): void {
 		const session = this._mailboxSession;
@@ -1266,6 +1287,8 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			MailboxSession.applyRecent(session, content.count);
 		} else if (content instanceof Expunge) {
 			MailboxSession.applyExpunge(session, content.sequenceNumber);
+		} else if (content instanceof VanishedResponse) {
+			MailboxSession.applyVanished(session, expandUidSet(content.uids), content.earlier);
 		} else if (content instanceof Fetch && content.flags) {
 			const uid = content.uid?.id;
 			MailboxSession.applyFlagsUpdate(session, {

@@ -327,6 +327,7 @@ function compileFetchWire(
 	uidGrain: boolean,
 	caps: FetchCapabilityProbe,
 	changedSince: bigint | undefined,
+	vanished: boolean,
 ): void {
 	w.sequenceSet(set);
 	if (typeof request === "string") {
@@ -355,7 +356,40 @@ function compileFetchWire(
 		// RFC 7162 §7 chgsince-fetch-mod: the modifier list follows the item
 		// list (or macro) -- 'FETCH <set> <items> (CHANGEDSINCE <mod-sequence>)'
 		// (§3.1.4.1 Example 12).
-		w.list((inner) => inner.atom("CHANGEDSINCE").bignumber(changedSince));
+		w.list((inner) => {
+			inner.atom("CHANGEDSINCE").bignumber(changedSince);
+			if (vanished) {
+				// RFC 7162 §3.2.6 rexpunges-fetch-mod: VANISHED rides INSIDE the
+				// same modifier list as CHANGEDSINCE (never a separate list), only
+				// on UID FETCH (`MailboxSession.runFetch()`'s own `RangeError` gate
+				// already refuses a bare-FETCH caller before this point is ever
+				// reached), and only once QRESYNC has been positively ENABLEd.
+				if (!uidGrain) {
+					throw new RangeError(
+						"FetchModifiers.vanished is only allowed on UID FETCH (RFC 7162 " +
+							"§3.2.6), never plain FETCH",
+					);
+				}
+				if (!caps.has("QRESYNC")) {
+					throw new CapabilityError(
+						"FetchModifiers.vanished requires a positive 'ENABLE QRESYNC' + " +
+							"'* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4/§3.2.6), " +
+							"which this connection hasn't completed",
+						{ capability: "QRESYNC", rfc: "RFC7162" },
+					);
+				}
+				inner.atom("VANISHED");
+			}
+		});
+	} else if (vanished) {
+		// Mirrors `MailboxSession.runFetch()`'s own `RangeError` for the same
+		// case (RFC7162-3.2.6-2) -- kept here too so a caller reaching this
+		// command directly via the `client.run()` escape hatch (bypassing
+		// `MailboxSession` entirely) is still refused, zero bytes written.
+		throw new RangeError(
+			"FetchModifiers.vanished must be specified together with changedSince " +
+				"(RFC 7162 §3.2.6)",
+		);
 	}
 }
 
@@ -426,6 +460,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	private readonly maxInlineSizeValue: number;
 	private readonly forcedStreamSections: ReadonlySet<string>;
 	private readonly changedSince: bigint | undefined;
+	private readonly vanished: boolean;
 
 	private collector: ResponseCollector | undefined;
 	private resolveCollectorReady!: () => void;
@@ -438,6 +473,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		maxInlineSize: number,
 		caps: FetchCapabilityProbe = NO_FETCH_CAPS,
 		changedSince?: bigint,
+		vanished = false,
 	) {
 		super();
 		this.verb = uidGrain ? "UID FETCH" : "FETCH";
@@ -447,6 +483,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		this.caps = caps;
 		this.maxInlineSizeValue = maxInlineSize;
 		this.changedSince = changedSince;
+		this.vanished = vanished;
 		this.forcedStreamSections =
 			typeof request === "object" ? collectForcedStreamSections(request) : new Set();
 		// Pre-compile once against a throwaway writer purely to surface any
@@ -459,6 +496,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 			uidGrain,
 			caps,
 			changedSince,
+			vanished,
 		);
 		this.collectorReady = new Promise((resolve) => {
 			this.resolveCollectorReady = resolve;
@@ -466,7 +504,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	}
 
 	protected write(w: CommandWriter): void {
-		compileFetchWire(w, this.set, this.request, this.uidGrain, this.caps, this.changedSince);
+		compileFetchWire(w, this.set, this.request, this.uidGrain, this.caps, this.changedSince, this.vanished);
 	}
 
 	protected onCollectorReady(c: ResponseCollector): void {

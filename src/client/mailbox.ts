@@ -11,7 +11,7 @@ import { MoveCommand } from "../commands/move";
 import { SortCommand } from "../commands/message/sort";
 import { ThreadCommand } from "../commands/message/thread";
 import type { ThreadNode } from "../commands/message/thread";
-import type { SelectResult } from "../commands/select";
+import type { SelectResult, SelectResyncEvent } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
 import { assertSearchResSentinelAllowed, criteriaHasModSeq } from "../commands/search-criteria";
@@ -181,10 +181,39 @@ export interface SequenceFacet {
 export interface MailboxSessionEvents {
 	exists: (count: number, prev: number) => void;
 	expunge: (seq: number) => void;
+	/**
+	 * QRESYNC (RFC 7162 §3.2.10, M4.6). `earlier: true` — a `VANISHED
+	 * (EARLIER)` response (§3.2.10.1): informational only, reporting UIDs
+	 * that are ALREADY excluded from this session's `exists`/wire EXISTS
+	 * counts (arriving either as part of a QRESYNC SELECT/EXAMINE's own
+	 * resync stream, §3.2.5.1, or -- unusually -- later on the same
+	 * connection); `exists` is deliberately NOT decremented for this case.
+	 * `earlier: false` — a bare `VANISHED` (§3.2.10.2): a LIVE expunge
+	 * report that replaces EXPUNGE for the rest of a QRESYNC-ENABLEd
+	 * connection (§3.2.7/§3.2.9); `exists` IS decremented, by the COUNT of
+	 * `uids` (this session keeps no seq<->uid map, spec §8.3, so — same
+	 * limit `expunge`'s own per-seq decrement already has — a duplicate or
+	 * already-absent UID in a pathological server's report would still
+	 * decrement once per reported UID; not compensated for). See
+	 * `MailboxSession.applyVanished()`'s own doc comment for the full
+	 * reconciliation approach and its honest limits.
+	 */
+	vanished: (uids: number[], earlier: boolean) => void;
 	flags: (update: MailboxFlagsUpdate) => void;
 	uidValidityChanged: (next: number, prev: number) => void;
 	closed: (reason: MailboxClosedReason) => void;
 }
+
+/** Event names `MailboxSessionEvents` carries resync-buffered payloads for
+ *  (spec §5b's resync-buffering guarantee) -- see `MailboxSession`'s own doc
+ *  comment on the buffering mechanism. Currently `vanished`/`flags` only
+ *  (the two shapes `SelectResyncEvent` produces); listed explicitly (rather
+ *  than "any event") so a future unrelated event addition doesn't silently
+ *  start triggering resync flushes it has nothing to do with. */
+const RESYNC_TRIGGER_EVENTS: ReadonlySet<keyof MailboxSessionEvents> = new Set([
+	"vanished",
+	"flags",
+]);
 
 export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	/** Decoded (caller-facing UTF-8) mailbox name, INBOX-canonicalized --
@@ -228,6 +257,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 */
 	private readonly familyChains = new Map<string, Promise<unknown>>();
 
+	/**
+	 * M4.6 (spec §5b's resync-buffering guarantee): QRESYNC resync events
+	 * (`VANISHED`/flag-carrying `FETCH` lines observed during THIS session's
+	 * own SELECT/EXAMINE, `SelectResult.resync`) held here until they're
+	 * replayed -- see `maybeTriggerResyncFlush()`/`flushResync()` below for
+	 * the full mechanism. `null` once flushed (whether or not anything was
+	 * ever buffered) — used as the single "already done" sentinel everywhere
+	 * else in this class checks it.
+	 */
+	private _resyncBuffer: SelectResyncEvent[] | null;
+	/** Guards against scheduling more than one pending microtask flush (see
+	 *  `maybeTriggerResyncFlush()`) — independent of `_resyncBuffer` itself
+	 *  being non-null, since the buffer is only cleared once the scheduled
+	 *  flush actually RUNS, not when it's merely queued. */
+	private _resyncFlushMicrotaskQueued = false;
+
 	/** Sequence-number-grain mirror facet (spec §5b) — see `SequenceFacet`'s
 	 *  own doc comment. Constructed once, alongside every other field, in
 	 *  this constructor; its methods delegate back into this same session via
@@ -254,6 +299,94 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		this._mailboxId = snapshot.mailboxId;
 		this.driver = driver;
 		this.seq = new SeqFacet(this);
+		this._resyncBuffer = snapshot.resync.length > 0 ? [...snapshot.resync] : null;
+		if (this._resyncBuffer) {
+			// Fallback flush (spec §5b: "...or first turn of the microtask queue
+			// after resolution") for the caller that never attaches a `vanished`/
+			// `flags` listener at all -- see `maybeTriggerResyncFlush()`'s own doc
+			// comment for why this MUST be a macrotask (`setImmediate`), not a
+			// microtask, in THIS codebase: `ImapClient.selectOrExamine()`'s own
+			// promise chain (the F1 mutex `.then()`, the async
+			// `performSelectOrExamine()`, `select()`'s own async wrapper) is
+			// several microtask hops deep, so a bare `queueMicrotask()` scheduled
+			// here would provably fire BEFORE the original caller's own
+			// `await client.select(...)` continuation ever runs -- verified
+			// empirically (see this milestone's report) -- which would flush the
+			// buffer to zero listeners before the caller had any chance to
+			// attach one, breaking the very guarantee this exists to provide.
+			// `setImmediate` unconditionally drains the ENTIRE microtask queue
+			// first (Node ordering), so it always runs strictly after any
+			// realistic caller continuation, at the cost of being a slightly
+			// later "eventually" than the spec's own literal "next microtask
+			// tick" phrasing -- a deliberate, documented interpretation: nothing
+			// observable depends on the exact timing of THIS fallback (a
+			// listener attached before it fires always wins via
+			// `maybeTriggerResyncFlush()`'s own earlier, listener-triggered
+			// flush instead).
+			setImmediate(() => MailboxSession.flushResync(this));
+		}
+	}
+
+	/**
+	 * Called from the `on`/`once`/`addListener` overrides below on EVERY
+	 * attach of a resync-bearing event name (`RESYNC_TRIGGER_EVENTS`) -- not
+	 * itself the flush, but the trigger that SCHEDULES one, deferred by
+	 * exactly one microtask turn. That one-turn defer (rather than flushing
+	 * synchronously, inline with the attach) is deliberate: a caller that
+	 * attaches SEVERAL resync-relevant listeners back-to-back, synchronously,
+	 * in the same tick --
+	 *   ```
+	 *   const session = await client.select(...);
+	 *   session.on("vanished", onVanished);
+	 *   session.on("flags", onFlags);
+	 *   ```
+	 * -- must have BOTH registered before either one receives a replayed
+	 * event; flushing on the FIRST attach synchronously would emit `flags`
+	 * events to zero listeners (since `onFlags` hasn't been registered yet at
+	 * that point), silently dropping them. Deferring to the next microtask
+	 * turn lets the rest of the caller's own synchronous statements (any
+	 * further `.on()` calls in the same block) run to completion first --
+	 * JS never interleaves microtasks with currently-executing synchronous
+	 * code -- so by the time the deferred flush actually runs, every
+	 * same-tick listener is already attached.
+	 */
+	private maybeTriggerResyncFlush(event: keyof MailboxSessionEvents): void {
+		if (
+			this._resyncBuffer === null ||
+			this._resyncFlushMicrotaskQueued ||
+			!RESYNC_TRIGGER_EVENTS.has(event)
+		) {
+			return;
+		}
+		this._resyncFlushMicrotaskQueued = true;
+		queueMicrotask(() => MailboxSession.flushResync(this));
+	}
+
+	// `tiny-typed-emitter`'s `TypedEmitter` IS Node's `EventEmitter` (just
+	// retyped, `require("events").EventEmitter`) -- overriding `on`/`once`/
+	// `addListener` here intercepts every attachment path this codebase (and
+	// the eventual M4.3 `updates()` iterator, which attaches the same way)
+	// actually uses. `prependListener`/`prependOnceListener` are deliberately
+	// NOT overridden -- unused anywhere in this codebase today; a caller that
+	// reaches for one of those two specifically to observe resync data would
+	// not get the buffering guarantee, a documented, narrow limitation (see
+	// this milestone's report).
+	on<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
+		super.on(event, listener);
+		this.maybeTriggerResyncFlush(event);
+		return this;
+	}
+
+	once<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
+		super.once(event, listener);
+		this.maybeTriggerResyncFlush(event);
+		return this;
+	}
+
+	addListener<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
+		super.addListener(event, listener);
+		this.maybeTriggerResyncFlush(event);
+		return this;
 	}
 
 	/** `true` once this session has been deselected (reselected, closed,
@@ -417,12 +550,14 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * signature): iterating it is what actually submits the command and
 	 * starts consuming responses (`MailboxSession.runFetch()`/`driveFetch()`
 	 * below build this lazily), so constructing the iterable performs no I/O
-	 * by itself. `FetchModifiers.changedSince`/`.vanished` are CONDSTORE/
-	 * QRESYNC-gated and throw `CapabilityError` synchronously (zero bytes
-	 * written, I-9) — CONDSTORE-inert this milestone, mirroring the M2.2
-	 * `SelectOptions.condstore`/`.qresync` precedent exactly (shared M3
-	 * design note). Every other capability gate (`items.modSeq`/`.emailId`/
-	 * etc.) lives in `FetchCommand`'s own constructor.
+	 * by itself. `FetchModifiers.changedSince` is CONDSTORE-gated
+	 * (advertisement); `.vanished` (M4.6, RFC 7162 §3.2.6) additionally
+	 * requires `changedSince` also being set (`RangeError` if not, enforced
+	 * in `runFetch()`) AND the UID grain (`RangeError` on `seq.fetch()`) AND
+	 * QRESYNC having been positively ENABLEd (`CapabilityError`, enforced in
+	 * `FetchCommand`'s own constructor) -- all zero bytes written, I-9. Every
+	 * other capability gate (`items.modSeq`/`.emailId`/etc.) also lives in
+	 * `FetchCommand`'s own constructor.
 	 *
 	 * Rejects `StateError` (zero bytes written, thrown synchronously from
 	 * this call, not from the returned iterable) if this session is already
@@ -1000,8 +1135,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * §3.1.4.1) — gated HERE against `assertModSeqUsable()`'s NOMODSEQ check
 	 * (RFC7162-3.1.2.2-1) before `FetchCommand` is even constructed, which
 	 * separately gates plain CONDSTORE-advertisement (RFC7162-3.1.1-1).
-	 * `FetchModifiers.vanished` still throws `CapabilityError` HERE,
-	 * synchronously (I-9) — QRESYNC (RFC 7162 §3.2/RFC 5162) is M4.6's job.
+	 * `FetchModifiers.vanished` is real as of M4.6 (RFC 7162 §3.2.6): two
+	 * STRUCTURAL prerequisites (independent of any capability) are enforced
+	 * HERE, synchronously, before `FetchCommand` is even constructed --
+	 * `vanished` requires `changedSince` also being set (§3.2.6's "MUST only
+	 * be specified together with the CHANGEDSINCE ... modifier",
+	 * RFC7162-3.2.6-2 -- the public `FetchModifiers` union type already makes
+	 * this a compile-time error for a caller going through the typed surface;
+	 * this is the runtime backstop for one that doesn't, e.g. a driver/JS
+	 * caller), and `vanished` is only legal on UID FETCH, never plain FETCH
+	 * (§3.2.6: "only allowed in the UID FETCH command", RFC7162-3.2.6-1).
+	 * The actual QRESYNC-ENABLEd capability gate lives in `FetchCommand`'s own
+	 * constructor (`caps.has("QRESYNC")`, mirroring `changedSince`'s
+	 * CONDSTORE-advertisement gate living there too) -- `session.driver.
+	 * hasCapability()` is `ImapClient.effectiveCapability()` (M4.6: now
+	 * `_enabled`-aware for QRESYNC specifically), so that check is
+	 * genuinely hard-ENABLE-gated, not merely advertisement-gated.
 	 */
 	static runFetch(
 		session: MailboxSession,
@@ -1013,12 +1162,20 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const method = kind === "uid" ? "fetch" : "seq.fetch";
 		session.assertOpen(method);
 		if (opts?.vanished) {
-			throw new CapabilityError(
-				`${method}(): the VANISHED FETCH modifier is not implemented until a ` +
-					"later milestone (QRESYNC, RFC 7162 §3.2/RFC 5162, is M4.6's job) -- " +
-					"call fetch() without `vanished` today",
-				{ capability: "QRESYNC", rfc: "RFC7162" },
-			);
+			if (kind !== "uid") {
+				throw new RangeError(
+					`${method}(): the VANISHED FETCH modifier is only allowed on UID ` +
+						"FETCH (RFC 7162 §3.2.6) -- call fetch() (not seq.fetch()) if " +
+						"you need it",
+				);
+			}
+			if (opts.changedSince === undefined) {
+				throw new RangeError(
+					`${method}(): the VANISHED FETCH modifier must be specified together ` +
+						"with `changedSince` (RFC 7162 §3.2.6) -- the server has no other " +
+						"way to bound which expunges to report",
+				);
+			}
 		}
 		if (opts?.changedSince !== undefined) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
@@ -1044,6 +1201,7 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			session.driver.maxInlineSize(),
 			probe,
 			opts?.changedSince,
+			opts?.vanished === true,
 		);
 		// Kicks off the actual submission/dispatch (write, wait-for-tagged,
 		// settle, cleanup) in the background -- by the time this call returns
@@ -1110,11 +1268,91 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		session.emit("expunge", seq);
 	}
 
+	/**
+	 * QRESYNC VANISHED (RFC 7162 §3.2.10, M4.6) -- the single entry point for
+	 * BOTH the resync-buffered case (`flushResync()` below, from a QRESYNC
+	 * SELECT/EXAMINE's own response family) and a genuinely LIVE untagged
+	 * `VANISHED` arriving later on the connection (`ImapClient.
+	 * applyMailboxLiveUpdate()`). One reconciliation rule covers both call
+	 * sites correctly:
+	 *
+	 * - `earlier: true` (`VANISHED (EARLIER)`, §3.2.10.1) is, per the RFC's
+	 *   own wording, informational about UIDs that are ALREADY excluded from
+	 *   whatever EXISTS count accompanies it -- true whether that EXISTS
+	 *   count is the SELECT's own initial one (the resync case) or a LATER
+	 *   untagged EXISTS on the same connection (the unusual live case: a
+	 *   compliant server only sends the EARLIER form during resync, per
+	 *   §3.2.5.1, but nothing this client controls prevents a
+	 *   non-conformant one from sending it later too). Either way, `exists`
+	 *   is NOT decremented here -- doing so would double-count against an
+	 *   EXISTS line that already reflects the removal.
+	 * - `earlier: false` (bare `VANISHED`, §3.2.10.2) is always a LIVE
+	 *   expunge report, replacing EXPUNGE for the rest of a QRESYNC-ENABLEd
+	 *   connection (§3.2.7/§3.2.9) -- `exists` IS decremented, by
+	 *   `uids.length` (mirroring `applyExpunge()`'s own per-message
+	 *   decrement, just counted rather than one-at-a-time, since spec §8.3
+	 *   keeps no seq<->uid map to look any individual UID up in). Floored at
+	 *   0, same defense-in-depth as `applyExpunge()`.
+	 *
+	 * HONEST LIMIT: because this session tracks no seq<->uid map, a
+	 * pathological server reporting a UID that was never actually present
+	 * (or reporting the same UID twice across two live VANISHED responses)
+	 * would still decrement `exists` once per reported UID -- the exact same
+	 * class of limitation `applyExpunge()`'s own doc comment already accepts
+	 * for a duplicate/spurious classic EXPUNGE, just counted instead of
+	 * single-stepped. Not compensated for; a conformant server never does
+	 * this.
+	 */
+	static applyVanished(session: MailboxSession, uids: number[], earlier: boolean): void {
+		if (session._closed) {
+			return;
+		}
+		if (!earlier) {
+			session._exists = Math.max(0, session._exists - uids.length);
+		}
+		session.emit("vanished", uids, earlier);
+	}
+
 	static applyFlagsUpdate(session: MailboxSession, update: MailboxFlagsUpdate): void {
 		if (session._closed) {
 			return;
 		}
 		session.emit("flags", update);
+	}
+
+	/**
+	 * Replays this session's buffered QRESYNC resync events (spec §5b's
+	 * resync-buffering guarantee), in the original wire arrival order --
+	 * idempotent no-op once already flushed (`_resyncBuffer === null`),
+	 * whether reached via the construction-time `setImmediate` fallback or
+	 * via `maybeTriggerResyncFlush()`'s listener-triggered microtask,
+	 * whichever runs first. Stops replaying (but still clears the buffer) if
+	 * the session closes partway through -- same no-op-once-closed posture
+	 * every other `apply*` static above takes; a session that closes between
+	 * `select()` resolving and its resync flush running has bigger problems
+	 * than a few stale cached-flag events.
+	 */
+	private static flushResync(session: MailboxSession): void {
+		const buffer = session._resyncBuffer;
+		if (buffer === null) {
+			return;
+		}
+		session._resyncBuffer = null;
+		for (const event of buffer) {
+			if (session._closed) {
+				break;
+			}
+			if (event.kind === "vanished") {
+				MailboxSession.applyVanished(session, event.uids, event.earlier);
+			} else {
+				MailboxSession.applyFlagsUpdate(session, {
+					seq: event.seq,
+					...(event.uid !== undefined ? { uid: event.uid } : {}),
+					flags: event.flags,
+					...(event.modSeq !== undefined ? { modSeq: event.modSeq } : {}),
+				});
+			}
+		}
 	}
 
 	static applyUidValidity(session: MailboxSession, next: number): void {

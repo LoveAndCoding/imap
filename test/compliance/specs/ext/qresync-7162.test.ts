@@ -9,6 +9,15 @@
  * CONDSTORE §3.1 duties. Both cite ids from the single catalog source
  * test/compliance/catalog/ext/rfc7162.ts.
  *
+ * M4.6 UPDATE: every row below is now a REAL pass (VANISHED parsing, QRESYNC
+ * select-parameter emission, and the VANISHED FETCH modifier are all
+ * genuinely implemented) — the `expectFailure: "unimplemented"` hints this
+ * file used to carry on five rows (RFC7162-3.2.5-1, -3.2.5.2-1, -3.2.6-1/-2/
+ * -3) have been removed as part of M4.6's stale-annotation sweep. See git
+ * history for this file's M4.5-era header, which documented the
+ * then-current "client goes deaf on VANISHED" finding and the driver's
+ * command-emission NotImplementedError translation -- both now stale.
+ *
  * Testable catalog ids covered HERE:
  *
  *   RFC7162-3.2.3-1    Client using QRESYNC MUST issue ENABLE QRESYNC once
@@ -16,26 +25,32 @@
  *   RFC7162-3.2.3-2    MUST NOT use QRESYNC param / VANISHED modifier before a
  *                      POSITIVE '* ENABLED QRESYNC' (self-act. prohibition)
  *   RFC7162-3.2.5-1    SELECT (QRESYNC (uidvalidity modseq [known-uids]))
- *                      parameter form (self-act.)
+ *                      parameter form.                *** REAL — M4.6 ***
  *   RFC7162-3.2.5.1-1  Accept the QRESYNC resync stream: UID-bearing FETCH
- *                      (*** REAL pass — fetch parsers ***) AND the VANISHED
- *                      (EARLIER) expunge report (*** REAL — HONEST VIOLATION,
- *                      see probe note below ***)
+ *                      AND the VANISHED (EARLIER) expunge report.
+ *                                                      *** REAL ***
  *   RFC7162-3.2.5.2-1  seq-match-data: both sets ascending (self-act.; NOTE
  *                      driver gap — SelectOptions.qresync has NO seqMatchData
- *                      field, so only the 3-argument form can be driven today)
- *   RFC7162-3.2.6-1    VANISHED never with plain (non-UID) FETCH (self-act.)
- *   RFC7162-3.2.6-2    VANISHED MUST ride with CHANGEDSINCE (self-act.)
- *   RFC7162-3.2.6-3    UID FETCH ... (CHANGEDSINCE n VANISHED) form (self-act.)
+ *                      field, so only the 3-argument form can be driven from
+ *                      the compliance suite today — the real public
+ *                      `SelectOptions.qresync.seqMatch` field IS implemented
+ *                      and unit-tested directly, see test/unit/commands/
+ *                      select.test.ts)
+ *   RFC7162-3.2.6-1    VANISHED never with plain (non-UID) FETCH.
+ *                                                      *** REAL — M4.6 ***
+ *   RFC7162-3.2.6-2    VANISHED MUST ride with CHANGEDSINCE.
+ *                                                      *** REAL — M4.6 ***
+ *   RFC7162-3.2.6-3    UID FETCH ... (CHANGEDSINCE n VANISHED) form.
+ *                                                      *** REAL — M4.6 ***
  *   RFC7162-3.2.7-1    Accept [HIGHESTMODSEQ n] on the tagged OK of (UID)
  *                      EXPUNGE.                     *** REAL — text.code.ts ***
  *   RFC7162-3.2.7-2    Accept expunge results as VANISHED responses.
- *                                                   *** REAL — HONEST VIOLATION ***
+ *                                                   *** REAL ***
  *   RFC7162-3.2.10.1-1 Accept '* VANISHED (EARLIER) <uids>'.
- *                                                   *** REAL — HONEST VIOLATION ***
+ *                                                   *** REAL ***
  *   RFC7162-3.2.10.2-1 After ENABLED QRESYNC, accept VANISHED in lieu of
  *                      EXPUNGE for the whole connection.
- *                                                   *** REAL — HONEST VIOLATION ***
+ *                                                   *** REAL ***
  *   RFC7162-3.2.11-1   Accept [CLOSED] as the old/new mailbox boundary
  *                      [rev1 ONLY — rev2-core twin scored as RFC9051-7.1-9].
  *                                                   *** REAL — AtomTextCode ***
@@ -60,24 +75,6 @@
  * Each matcher anchors the FULL argument string: missing parens, a misplaced
  * modifier, a quoted/string mod-sequence, or VANISHED without CHANGEDSINCE is
  * rejected — never vacuously accepted.
- *
- * OBSERVATION SPLIT (REAL-signal-first; every uncertain surface was probed via
- * a scratch connectLow run BEFORE writing):
- *  - PROBED CLIENT FINDING (the headline QRESYNC result): '* VANISHED
- *    405,407,410' and '* VANISHED (EARLIER) 300:310' have NO parse path
- *    (untagged.ts recognizes no VANISHED atom and throws ParsingError). The
- *    error is swallowed silently — the client neither errors out nor surfaces
- *    an unknownResponse event — but the parser Transform DIES: the line is
- *    dropped AND every subsequent response on the connection is lost (a
- *    trailing '* 7 EXISTS' never surfaces). The client "goes deaf". The three
- *    VANISHED acceptance tests below encode the SPEC and are annotated
- *    expectFailure: "violation" (real assertion failures, not
- *    NotImplementedError).
- *  - The resync stream's FETCH half (UID+FLAGS+MODSEQ), the HIGHESTMODSEQ
- *    tagged-OK code, the CLOSED code, and 63-bit values all parse genuinely →
- *    REAL pass tests asserting exact parsed values.
- *  - Command-emission duties (ENABLE QRESYNC, QRESYNC select param, VANISHED
- *    fetch modifier) throw NotImplementedError → honest "unimplemented".
  */
 import { expect } from "vitest";
 
@@ -270,7 +267,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SELECT command form: SELECT INBOX (QRESYNC (67890007 90060115194045000 41,43:211,214:541))",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -294,7 +290,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await driver.select("INBOX", {
 			qresync: {
@@ -314,20 +310,22 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC7162-3.2.5.2-1 — seq-match-data: both sets ascending (self-actualizing)
 // ═════════════════════════════════════════════════════════════════════════════
-// DRIVER GAP (noted per the task audit): SelectOptions.qresync carries NO
-// seqMatchData field, so the optional fourth QRESYNC argument cannot be driven
-// today — this test scripts only what the signature carries (the 3-argument
-// form) and enforces the MUST structurally: IF the client ever emits a
-// seq-match-data group, both member sets must be in ascending order (checked on
-// the recorded command line). When the driver gains a seqMatchData field, this
-// test should drive it explicitly (e.g. §3.2.5.2's '(1,5,9,101:110,121:130
-// 6,50,100,250:260,300:310)'). select() throws today → unimplemented.
+// DRIVER GAP (noted per the task audit; still present as of M4.6): the
+// driver's ad hoc `SelectOptions.qresync` carries NO seqMatchData field, so
+// the optional fourth QRESYNC argument cannot be driven from THIS suite --
+// this test scripts only what the driver's signature carries (the
+// 3-argument form) and enforces the MUST structurally: IF the client ever
+// emits a seq-match-data group, both member sets must be in ascending order
+// (checked on the recorded command line). The real public
+// `SelectOptions.qresync.seqMatch` field IS implemented and exercises the
+// 4-argument form directly (see test/unit/commands/select.test.ts) -- this
+// row stays scored against the weaker structural assertion the driver can
+// actually drive today.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.2.5.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "any emitted QRESYNC seq-match-data carries both sets in ascending order",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -351,7 +349,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await driver.select("INBOX", {
 			qresync: {
@@ -549,7 +547,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits the VANISHED modifier on a plain (non-UID) FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -574,7 +571,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await driver.select("INBOX", {
 			qresync: { uidvalidity: 67890007, modseq: 90060115194045000n },
@@ -603,7 +600,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.6-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits a VANISHED modifier unaccompanied by CHANGEDSINCE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -625,7 +621,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await driver.select("INBOX", {
 			qresync: { uidvalidity: 67890007, modseq: 90060115194045000n },
@@ -657,7 +653,6 @@ complianceTest(
 		reqs: ["RFC7162-3.2.6-3"],
 		profiles: ["rev1", "rev2"],
 		title: "UID FETCH command form: UID FETCH 300:500 (FLAGS) (CHANGEDSINCE 12345 VANISHED)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -690,7 +685,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.enable(["QRESYNC"]);
 		await driver.select("INBOX", {
 			qresync: { uidvalidity: 67890007, modseq: 90060115194045000n },

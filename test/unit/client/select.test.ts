@@ -351,6 +351,59 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 		expect(session.exists).toBe(3);
 	});
 
+	// M4.6 (RFC 7162 §3.2.7/§3.2.9/§3.2.10): a LIVE (post-select) bare VANISHED
+	// replaces EXPUNGE for the rest of a QRESYNC-ENABLEd connection -- exists
+	// decrements by the UID COUNT (mirroring EXPUNGE's per-message decrement,
+	// just counted rather than one-at-a-time, since the session keeps no
+	// seq<->uid map). A LIVE VANISHED (EARLIER) is purely informational and
+	// must NOT decrement exists (already reflected in whatever EXISTS
+	// accompanies it).
+	test("a live bare VANISHED decrements exists by the reported UID count and emits vanished(uids, false)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", ["* 10 EXISTS", "* 0 RECENT"]),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed", ["* VANISHED 405,407,410,425"]),
+		]);
+
+		const session = await client.select("INBOX");
+		expect(session.exists).toBe(10);
+
+		const events: Array<{ uids: number[]; earlier: boolean }> = [];
+		session.on("vanished", (uids, earlier) => events.push({ uids, earlier }));
+
+		await client.noop();
+		await server.assertCompleted();
+
+		expect(events).toEqual([{ uids: [405, 407, 410, 425], earlier: false }]);
+		expect(session.exists).toBe(6);
+	});
+
+	test("a live VANISHED (EARLIER) does NOT decrement exists (informational only)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", ["* 10 EXISTS", "* 0 RECENT"]),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed", ["* VANISHED (EARLIER) 405,407"]),
+		]);
+
+		const session = await client.select("INBOX");
+		expect(session.exists).toBe(10);
+
+		const events: Array<{ uids: number[]; earlier: boolean }> = [];
+		session.on("vanished", (uids, earlier) => events.push({ uids, earlier }));
+
+		await client.noop();
+		await server.assertCompleted();
+
+		expect(events).toEqual([{ uids: [405, 407], earlier: true }]);
+		expect(session.exists).toBe(10);
+	});
+
 	test("uidValidityChanged: emits (next, prev) and logs a warn when UIDVALIDITY changes post-select", async () => {
 		const logs: IMAPLogMessage[] = [];
 		server = await ScriptedServer.start();
@@ -442,28 +495,140 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 		await server.assertCompleted();
 	});
 
-	// QRESYNC is unaffected by M4.5: its own ENABLE-gated activation model
-	// (RFC 7162 §3.2.3/§3.2.4) is materially different from CONDSTORE's and
-	// remains M4.6's job -- `select({ qresync })` still throws
-	// `CapabilityError` regardless of advertisement.
-	test("SelectOptions.qresync still rejects CapabilityError synchronously, zero bytes written, current selection undisturbed (M4.6 not yet landed)", async () => {
+	// M4.6: QRESYNC's activation model is the opposite of CONDSTORE's (RFC
+	// 7162 §3.2.3/§3.2.4) -- mere advertisement never licenses the QRESYNC
+	// select parameter; a positive `ENABLE QRESYNC` + `* ENABLED QRESYNC`
+	// exchange is required first. `select({ qresync })` still throws
+	// `CapabilityError` against a server that merely advertised QRESYNC but
+	// was never ENABLEd (this client used `extensions: false`, so `connect()`
+	// never auto-ENABLEs anything).
+	test("SelectOptions.qresync rejects CapabilityError synchronously, zero bytes written, current selection undisturbed, when QRESYNC was advertised but never ENABLEd", async () => {
 		server = await ScriptedServer.start();
-		client = new ImapClient(baseConfig(server.port));
+		client = new ImapClient({ ...baseConfig(server.port), extensions: false });
 		await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
 			expectLine(command("SELECT", { args: /^INBOX$/i })),
 			reply("OK [READ-WRITE] SELECT completed", ["* 3 EXISTS", "* 0 RECENT"]),
 		]);
 		const selected = await client.select("INBOX");
 
-		await expect(
-			client.select("Sent", { qresync: { uidValidity: 1, highestModSeq: 1n } }),
-		).rejects.toBeInstanceOf(CapabilityError);
+		const err = await client
+			.select("Sent", { qresync: { uidValidity: 1, highestModSeq: 1n } })
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(CapabilityError);
+		expect((err as CapabilityError).capability).toBe("QRESYNC");
 
 		// Zero bytes written, current selection completely undisturbed.
 		expect(client.state).toBe("selected");
 		expect(client.mailbox).toBe(selected);
 		expect(selected.closed).toBe(false);
 		await server.assertCompleted();
+	});
+
+	// M4.6: once QRESYNC has been positively ENABLEd, `select({ qresync })`
+	// genuinely emits the RFC 7162 §3.2.5/§7 wire form, and the tagged OK's
+	// HIGHESTMODSEQ still populates the session exactly as it does for a
+	// plain/CONDSTORE select.
+	test("SelectOptions.qresync emits SELECT mailbox (QRESYNC (...)) once QRESYNC has been positively ENABLEd", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient({ ...baseConfig(server.port), extensions: false });
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
+			expectLine(command("ENABLE", { args: /QRESYNC/i })),
+			reply("OK ENABLE completed", ["* ENABLED QRESYNC"]),
+			expectLine(
+				command("SELECT", {
+					args: /^INBOX \(QRESYNC \(67890007 90060115194045000 41,43:211,214:541\)\)$/i,
+				}),
+			),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 314 EXISTS",
+				"* OK [UIDVALIDITY 67890007] UIDVALIDITY",
+				"* OK [HIGHESTMODSEQ 90060115205545359] Highest",
+			]),
+		]);
+		await client.enableExtensions(["QRESYNC"]);
+		expect(client.enabled.has("QRESYNC")).toBe(true);
+
+		const selected = await client.select("INBOX", {
+			qresync: {
+				uidValidity: 67890007,
+				highestModSeq: 90060115194045000n,
+				knownUids: "41,43:211,214:541",
+			},
+		});
+
+		expect(selected.exists).toBe(314);
+		expect(selected.highestModSeq).toBe(90060115205545359n);
+		await server.assertCompleted();
+	});
+
+	// M4.6, spec §5b's resync-buffering guarantee: a QRESYNC SELECT's own
+	// resync stream (VANISHED (EARLIER) + flag-carrying FETCH) is delivered
+	// through the session's `vanished`/`flags` events, and subscribing
+	// IMMEDIATELY after `await select()` resolves is guaranteed to miss
+	// nothing -- even for two listeners attached back-to-back in the same
+	// synchronous continuation.
+	describe("resync-buffering guarantee (spec §5b)", () => {
+		async function selectWithResync() {
+			server = await ScriptedServer.start();
+			client = new ImapClient({ ...baseConfig(server.port), extensions: false });
+			await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
+				expectLine(command("ENABLE", { args: /QRESYNC/i })),
+				reply("OK ENABLE completed", ["* ENABLED QRESYNC"]),
+				expectLine(command("SELECT", { args: /\(QRESYNC/i })),
+				reply("OK [READ-WRITE] SELECT completed", [
+					"* 49 FETCH (UID 117 FLAGS (\\Seen \\Answered) MODSEQ (12111230047))",
+					"* VANISHED (EARLIER) 41,43:45,50",
+					"* 314 EXISTS",
+					"* OK [UIDVALIDITY 67890007] UIDVALIDITY",
+					"* OK [HIGHESTMODSEQ 90060115205545359] Highest",
+				]),
+			]);
+			await client!.enableExtensions(["QRESYNC"]);
+			return client!.select("INBOX", {
+				qresync: { uidValidity: 67890007, highestModSeq: 90060115194045000n },
+			});
+		}
+
+		test("a single 'vanished' listener attached immediately after await select() receives the resync VANISHED (EARLIER)", async () => {
+			const session = await selectWithResync();
+			const events: Array<{ uids: number[]; earlier: boolean }> = [];
+			session.on("vanished", (uids, earlier) => events.push({ uids, earlier }));
+			await server!.assertCompleted();
+			// Give the buffered flush's microtask a turn to run.
+			await new Promise((r) => setImmediate(r));
+			expect(events).toEqual([{ uids: [41, 43, 44, 45, 50], earlier: true }]);
+			// EARLIER is purely informational -- exists is NOT decremented
+			// (the initial "* 314 EXISTS" already reflects the true count).
+			expect(session.exists).toBe(314);
+		});
+
+		test("'vanished' AND 'flags' listeners attached back-to-back (same tick) both receive their own buffered resync events -- neither is dropped", async () => {
+			const session = await selectWithResync();
+			const vanishedEvents: unknown[] = [];
+			const flagsEvents: unknown[] = [];
+			// Deliberately synchronous, back-to-back -- the exact pattern the
+			// buffering mechanism's one-microtask defer exists to protect.
+			session.on("vanished", (uids, earlier) => vanishedEvents.push({ uids, earlier }));
+			session.on("flags", (update) => flagsEvents.push(update));
+			await server!.assertCompleted();
+			await new Promise((r) => setImmediate(r));
+			expect(vanishedEvents).toEqual([{ uids: [41, 43, 44, 45, 50], earlier: true }]);
+			expect(flagsEvents).toEqual([
+				{ seq: 49, uid: 117, flags: new Set(["\\Seen", "\\Answered"]), modSeq: 12111230047n },
+			]);
+		});
+
+		test("no listener attached at all: the buffer is still flushed eventually (fallback), and a listener attached AFTER that fallback misses the (already-drained) resync data -- documented limitation", async () => {
+			const session = await selectWithResync();
+			await server!.assertCompleted();
+			// Let the construction-time setImmediate fallback flush run.
+			await new Promise((r) => setImmediate(r));
+			await new Promise((r) => setImmediate(r));
+			const lateEvents: unknown[] = [];
+			session.on("vanished", (uids, earlier) => lateEvents.push({ uids, earlier }));
+			await new Promise((r) => setImmediate(r));
+			expect(lateEvents).toEqual([]);
+		});
 	});
 
 	test("select() rejects StateError (zero bytes) when not authenticated", async () => {
