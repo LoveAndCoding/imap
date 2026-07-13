@@ -117,6 +117,32 @@ M3 will actually produce.
 
 ---
 
+## Per-task status (living — added at M4 kickoff, keep current)
+
+| Task | Status |
+|---|---|
+| M4.1 IdleController + idle() | IN FLIGHT (worktree, with M4.2) |
+| M4.2 IDLE ordering-race tests | IN FLIGHT (with M4.1) |
+| M4.3 updates() iterator | pending (needs M4.1/M4.2; vanished member needs M4.6) |
+| M4.4 AUTO_ENABLE_SET | IN FLIGHT (worktree, with M4.5) |
+| M4.5 CONDSTORE | IN FLIGHT (with M4.4) |
+| M4.6 QRESYNC | pending (needs M4.5) |
+| M4.7 SEARCHRES | **DONE BY M3** — RFC 5182 rows all pass/untestable (M3.7 SAVE + the M3-review "$" gate); validated at kickoff |
+| M4.8 WITHIN | **DONE BY M3** — RFC 5032 rows all pass/untestable (M3.7 older/younger); validated at kickoff |
+| M4.9 SORT/THREAD + DISPLAY | IN FLIGHT (worktree; ThreadNode shape adjudicated: recursive {uid?/seq?/children}) |
+| M4.10 ESORT/CONTEXT + PARTIAL | pending (PARTIAL search half done by M3.7; RFC9394-3.3-1 adjudicated deferred to M5; remaining: RFC 5267 rows) |
+| M4.11 FUZZY | pending (M3.7 flipped 6203-1/3/5 rows; remaining: 4-2, 4-3, 6-1..6-3 — RELEVANCY-adjacent) |
+| M4.12 INPROGRESS | **DONE BY M3/earlier** — RFC 9585 rows all pass/untestable; validated at kickoff |
+| M4.13 NOTIFY | pending |
+| M4.14 FILTERS | pending (scope decision at dispatch) |
+| M4.15 milestone close | pending |
+
+Kickoff validation (per the doc's own "Status check"): M3 hard
+prerequisite SATISFIED (all base verbs + SequenceSet + criteria compiler
+landed; M3 closed at 780/2/problems[], snapshot in
+`docs/compliance-history/M3/`). Exit bar this milestone: the twelve M4
+RFC families MUST ≥ 85%.
+
 ## Ground rules
 
 All of parent-plan §0 applies verbatim to every task below, by reference:
