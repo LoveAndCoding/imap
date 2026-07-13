@@ -46,7 +46,7 @@ Per-task status:
 | M3.7 SEARCH | **DONE** — `0aa5810`, +60 rows, 0 regressions |
 | M3.8 COPY/MOVE | **DONE** — `2549b99`, +9 rows; MOVE∨IMAP4rev2 gate |
 | M3.9 EXPUNGE | IN FLIGHT (worktree) |
-| M3.10 MULTIAPPEND/CATENATE | IN FLIGHT (worktree) |
+| M3.10 MULTIAPPEND/CATENATE | **DONE** — `6494b98`, +20 rows, 0 regressions |
 | M3.11 sweep + close | pending |
 
 Cumulative M3 ledger vs the M2 snapshot after the verb wave: **73 flips,
