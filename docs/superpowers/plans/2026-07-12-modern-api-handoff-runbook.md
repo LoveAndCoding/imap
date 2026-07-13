@@ -26,14 +26,20 @@ orchestration, adjudication, and diff review.
 ## 1. State at handoff
 
 *(Living section — update at every milestone close AND whenever tasks land
-between closes; last updated: M3 in progress, after M3.1+M3.3.)*
+between closes; last updated: M3 CLOSED.)*
 
-- **M0, M1, M2: CLOSED** (snapshots + notes in `docs/compliance-history/M0/`,
-  `M1/`, `M2/`). M2 close: 602 pass / 2 adjudicated violations / problems [].
-  All M2 exit families at 100% with the RFC9051-6.3.13 IDLE rows itemized as
-  M4 work. The M2 phase review's seven findings (F1 critical select/examine
-  serialization → F7) are FIXED and landed (commit `66b525a`); review outcome
-  addendum in `docs/compliance-history/M2/NOTES.md`.
+- **M0, M1, M2, M3: CLOSED** (snapshots + notes in
+  `docs/compliance-history/M0/`–`M3/`). M3 close: **780 pass / 2
+  adjudicated violations / problems []** at `cdd6dca` — 178 flips vs M2,
+  zero regressions, all nine exit families (rfc3501/9051 §6.4+§7,
+  RFC 4731/4315/3502/3516/6851) at 100% of testable MUST rows; 1372 unit
+  tests. Ten phase-review findings (2 critical) fixed in `cdd6dca`;
+  full ledger + carry-forwards in `docs/compliance-history/M3/NOTES.md`.
+  NEXT: M4 per
+  `docs/superpowers/plans/2026-07-12-modern-api-m4-live-mail-sync.md`
+  (validate its kickoff assumptions first — it was authored mid-M2; the
+  ThreadNode spec gap and FILTERS scoping decisions are flagged for
+  kickoff).
 - **M3: IN PROGRESS** per
   `docs/superpowers/plans/2026-07-12-modern-api-m3-message-operations.md`.
   - M3.1 DONE — literal-streaming design decision recorded in the M3 plan

@@ -47,7 +47,12 @@ Per-task status:
 | M3.8 COPY/MOVE | **DONE** — `2549b99`, +9 rows; MOVE∨IMAP4rev2 gate |
 | M3.9 EXPUNGE | **DONE** — `fc69102`, +2 rows; no new catalog rows (verified §6.4.3 has no client-binding entries); seq.expunge() takes no argument by design |
 | M3.10 MULTIAPPEND/CATENATE | **DONE** — `6494b98`, +20 rows, 0 regressions |
-| M3.11 sweep + close | pending |
+| M3.11 sweep + close | **DONE** — sweep `eb3f29e`, README `f7fec76`, review fixes `cdd6dca`, snapshot in `docs/compliance-history/M3/` |
+
+**M3 IS CLOSED** at 780 pass / 2 adjudicated violations / problems [] —
+178 flips vs M2, zero regressions, all nine exit families at 100% of
+testable MUST rows. See `docs/compliance-history/M3/NOTES.md` for the
+review outcome and carry-forwards.
 
 Cumulative M3 ledger vs the M2 snapshot after the verb wave: **73 flips,
 all unimplemented→pass, zero regressions; 675 pass / 2 adjudicated
