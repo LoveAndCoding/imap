@@ -28,18 +28,18 @@ orchestration, adjudication, and diff review.
 *(Living section — update at every milestone close AND whenever tasks land
 between closes; last updated: M3 CLOSED.)*
 
-- **M0, M1, M2, M3: CLOSED** (snapshots + notes in
-  `docs/compliance-history/M0/`–`M3/`). M3 close: **780 pass / 2
-  adjudicated violations / problems []** at `cdd6dca` — 178 flips vs M2,
-  zero regressions, all nine exit families (rfc3501/9051 §6.4+§7,
-  RFC 4731/4315/3502/3516/6851) at 100% of testable MUST rows; 1372 unit
-  tests. Ten phase-review findings (2 critical) fixed in `cdd6dca`;
-  full ledger + carry-forwards in `docs/compliance-history/M3/NOTES.md`.
-  NEXT: M4 per
-  `docs/superpowers/plans/2026-07-12-modern-api-m4-live-mail-sync.md`
-  (validate its kickoff assumptions first — it was authored mid-M2; the
-  ThreadNode spec gap and FILTERS scoping decisions are flagged for
-  kickoff).
+- **M0–M4: CLOSED** (snapshots + notes in `docs/compliance-history/M0/`–
+  `M4/`). M4 close: **882 pass / 6 adjudicated violations / problems []**
+  at `933cc92` — +102 rows vs M3, zero regressions (kind-aware diffing);
+  ten of twelve exit families at 100%, RFC 5267 87.5% (bar: ≥85%),
+  RFC 5466 adjudicated-blocked on M5's METADATA facet; 1465 unit tests;
+  eleven phase-review findings fixed with revert verification; legacy
+  regression scenario 3 (IDLE ordering) closed. Full ledger +
+  carry-forwards in `docs/compliance-history/M4/NOTES.md`. NEXT: M5 per
+  `docs/superpowers/plans/2026-07-12-modern-api-m5-extension-families.md`
+  (validate kickoff assumptions against the real tree first; M5 owns
+  METADATA+FILTERS, CONTEXT machinery, UIDONLY, the pure-rev2 codec
+  revisit, UID FETCH PARTIAL, and the long tail).
 - **M3: IN PROGRESS** per
   `docs/superpowers/plans/2026-07-12-modern-api-m3-message-operations.md`.
   - M3.1 DONE — literal-streaming design decision recorded in the M3 plan

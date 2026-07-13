@@ -133,9 +133,14 @@ M3 will actually produce.
 | M4.10 ESORT/CONTEXT + PARTIAL | IN FLIGHT (worktree, with M4.11 + the 18 classification repairs) |
 | M4.11 FUZZY | IN FLIGHT (with M4.10) |
 | M4.12 INPROGRESS | **DONE BY M3/earlier** — RFC 9585 rows all pass/untestable; validated at kickoff |
-| M4.13 NOTIFY | pending |
+| M4.13 NOTIFY | **DONE** — `8d459fa`, +14 rows; 5.3-2 later flipped by the review's comply-by-refusal adjudication |
 | M4.14 FILTERS | **DONE** — option (b) taken (`docs/compliance-adjudications.md`): `SearchCriteria.filter` deferred to M5 with METADATA; typed `UNDEFINED-FILTER` variant added (`response-codes.ts`/`collector.ts`). RFC 5466's own scoped bug (registry-coverage.ts's note) was already resolved by an earlier, unrelated `AtomTextCode` fix predating this milestone -- verified not a live `violation`-kind row before or after. 4 rows × 2 profiles (RFC5466-3.1-1/-3.2-1/-3.2-2/-4-1) carry forward to M5 as `unimplemented`, unchanged. |
-| M4.15 milestone close | pending |
+| M4.15 milestone close | **DONE** — review fixes `933cc92`, snapshot `docs/compliance-history/M4/` |
+
+**M4 IS CLOSED** at 882 pass / 6 adjudicated violations / problems [] —
++102 rows vs M3, zero regressions; ten families at 100%, RFC 5267 at
+87.5% (over the ≥85% bar), RFC 5466 adjudicated-blocked on M5 METADATA.
+See `docs/compliance-history/M4/NOTES.md`.
 
 Kickoff validation (per the doc's own "Status check"): M3 hard
 prerequisite SATISFIED (all base verbs + SequenceSet + criteria compiler
