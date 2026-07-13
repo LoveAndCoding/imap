@@ -15,7 +15,11 @@ import type { ThreadNode } from "../commands/message/thread";
 import type { SelectResult, SelectResyncEvent } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
-import { assertSearchResSentinelAllowed, criteriaHasModSeq } from "../commands/search-criteria";
+import {
+	assertSearchResSentinelAllowed,
+	criteriaHasModSeq,
+	criteriaSeqSequenceSets,
+} from "../commands/search-criteria";
 import type { SearchCriteria } from "../commands/search-criteria";
 import { StoreCommand } from "../commands/store";
 import type { StoreCapabilityProbe, StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
@@ -298,6 +302,57 @@ function assertSequenceGrainSafeUnderNotify(
 	}
 }
 
+/**
+ * CF3+SF1 (M4-phase-boundary review, RFC 5465 §5.2/§5.3): applies the SAME
+ * two NOTIFY prohibitions `assertSequenceGrainSafeUnderNotify` enforces for
+ * a command's own top-level sequence-set argument, but for a bare
+ * `SearchCriteria.seq` search key instead -- called from `runSearch`/
+ * `runSort`/`runThread` regardless of grain (`uid`/`seq`), since
+ * `criteria.seq` always denotes message sequence numbers no matter which
+ * grain the ENCLOSING command uses (unlike `assertSequenceGrainSafeUnderNotify`,
+ * which is a no-op for `kind === "uid"` because that check is about the
+ * command's OWN addressing, not a nested search key). RFC 5465 §5.2/§5.3's
+ * text illustrates both prohibitions with FETCH, but the underlying hazard
+ * -- an MSN denoting a different, or no longer any, message by the time the
+ * server parses it -- is general to every MSN-addressed argument, search
+ * keys included; previously neither guard was applied here at all, so a
+ * bare `{ seq: "3:*" }` (or an MSN key under active MessageExpunge) reached
+ * the wire ungated even though the equivalent `seq.fetch()` argument was
+ * already refused.
+ */
+function assertSearchCriteriaSeqSafeUnderNotify(
+	driver: MailboxSessionDriver,
+	criteria: SearchCriteria,
+	label: string,
+): void {
+	const rawSets = criteriaSeqSequenceSets(criteria);
+	if (rawSets.length === 0) {
+		return;
+	}
+	const sets = rawSets.map((s) => SequenceSet.from(s).withKind("seq"));
+	if (driver.hasActiveNotifySelectedMessageNew() && sets.some((s) => s.hasOpenEnd())) {
+		throw new RangeError(
+			`${label}: a '*'-terminated SearchCriteria.seq sequence-set is refused while a NOTIFY ` +
+				"SET (SELECTED (MessageNew ...)) registration is active (RFC 5465 §5.2: the highest " +
+				"message sequence number can change at any time once MessageNew notifications " +
+				"are active, so '*' no longer denotes a stable message, RFC5465-5.2-4) -- address " +
+				"the intended message with a fixed number instead",
+		);
+	}
+	if (driver.hasActiveNotifySelectedMessageExpunge()) {
+		throw new NotImplementedError(
+			`${label}: a SearchCriteria.seq (message-sequence-number) search key is refused while ` +
+				"a NOTIFY SET (SELECTED (MessageExpunge ...)) registration is active (RFC 5465 " +
+				"§5.3: an MSN can be invalidated between composing and parsing a command once " +
+				'immediate expunge notifications are active -- "such a client cannot use FETCH, ' +
+				'but has to use UID FETCH", RFC5465-5.3-2, read here as general to every ' +
+				"MSN-addressed argument). Transparently reissuing this call by UID would need a " +
+				"live sequence-number-to-UID cache this library does not maintain -- remove the " +
+				"seq criterion, or address the intended message via SearchCriteria.uid instead",
+		);
+	}
+}
+
 export interface MailboxSessionEvents {
 	exists: (count: number, prev: number) => void;
 	expunge: (seq: number) => void;
@@ -452,32 +507,43 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		this._mailboxId = snapshot.mailboxId;
 		this.driver = driver;
 		this.seq = new SeqFacet(this);
+		// ST6 fix (M4-phase-boundary review, spec §5b amendment): NO timed
+		// fallback flush. A prior version scheduled a `setImmediate()` fallback
+		// here for the caller that never attaches a `vanished`/`flags`
+		// listener at all -- but `setImmediate` fires after exactly one
+		// macrotask turn, and an ORDINARY caller doing ordinary awaited work
+		// between `await select()` and attaching a listener (any work
+		// spanning more than one macrotask -- not a contrived adversarial
+		// case) would already have missed that deadline, flushing the buffer
+		// to ZERO listeners and silently dropping the very
+		// VANISHED/flag-carrying-FETCH data this buffering exists to
+		// protect. Removing the timed fallback entirely is STRICTLY
+		// STRONGER: the buffer now waits for either the first listener
+		// attach (`maybeTriggerResyncFlush()`'s own microtask-deferred flush,
+		// unchanged, below) or this session closing (`markClosed()` discards
+		// it, see that method's own comment) -- a caller that never attaches
+		// and never closes the session simply never receives the replay
+		// (the buffer is small, bounded by one SELECT's resync payload, and
+		// is freed the moment the session closes either way).
+		// ST6 fix (M4-phase-boundary review, spec §5b amendment): NO timed
+		// fallback flush. A prior version scheduled a `setImmediate()` fallback
+		// here for the caller that never attaches a `vanished`/`flags`
+		// listener at all -- but `setImmediate` fires after exactly one
+		// macrotask turn, and an ORDINARY caller doing ordinary awaited work
+		// between `await select()` and attaching a listener (any work
+		// spanning more than one macrotask -- not a contrived adversarial
+		// case) would already have missed that deadline, flushing the buffer
+		// to ZERO listeners and silently dropping the very
+		// VANISHED/flag-carrying-FETCH data this buffering exists to
+		// protect. Removing the timed fallback entirely is STRICTLY
+		// STRONGER: the buffer now waits for either the first listener
+		// attach (`maybeTriggerResyncFlush()`'s own microtask-deferred flush,
+		// unchanged, below) or this session closing (`markClosed()` discards
+		// it, see that method's own comment) -- a caller that never attaches
+		// and never closes the session simply never receives the replay
+		// (the buffer is small, bounded by one SELECT's resync payload, and
+		// is freed the moment the session closes either way).
 		this._resyncBuffer = snapshot.resync.length > 0 ? [...snapshot.resync] : null;
-		if (this._resyncBuffer) {
-			// Fallback flush (spec §5b: "...or first turn of the microtask queue
-			// after resolution") for the caller that never attaches a `vanished`/
-			// `flags` listener at all -- see `maybeTriggerResyncFlush()`'s own doc
-			// comment for why this MUST be a macrotask (`setImmediate`), not a
-			// microtask, in THIS codebase: `ImapClient.selectOrExamine()`'s own
-			// promise chain (the F1 mutex `.then()`, the async
-			// `performSelectOrExamine()`, `select()`'s own async wrapper) is
-			// several microtask hops deep, so a bare `queueMicrotask()` scheduled
-			// here would provably fire BEFORE the original caller's own
-			// `await client.select(...)` continuation ever runs -- verified
-			// empirically (see this milestone's report) -- which would flush the
-			// buffer to zero listeners before the caller had any chance to
-			// attach one, breaking the very guarantee this exists to provide.
-			// `setImmediate` unconditionally drains the ENTIRE microtask queue
-			// first (Node ordering), so it always runs strictly after any
-			// realistic caller continuation, at the cost of being a slightly
-			// later "eventually" than the spec's own literal "next microtask
-			// tick" phrasing -- a deliberate, documented interpretation: nothing
-			// observable depends on the exact timing of THIS fallback (a
-			// listener attached before it fires always wins via
-			// `maybeTriggerResyncFlush()`'s own earlier, listener-triggered
-			// flush instead).
-			setImmediate(() => MailboxSession.flushResync(this));
-		}
 	}
 
 	/**
@@ -764,6 +830,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 *
 	 * Rejects `StateError` (zero bytes written) if this session is already
 	 * closed, same precondition every other method here enforces.
+	 *
+	 * ⚠️ **Do not mix `idle()` and `updates({idle:true})` (or another
+	 * concurrent `idle()`) on the SAME session (ST5, M4-phase-boundary
+	 * review).** Every explicit `IdleHandle` and every managed `updates()`
+	 * loop drive the SAME underlying "a command submission ends the current
+	 * isolated round" interrupt hook (spec §3.7) -- submitting through
+	 * `updates({idle:true})`'s own driver, or calling `idle()` again, DONEs
+	 * whatever ELSE is currently idling on this session out from under it,
+	 * same as any other command would. This converges (no deadlock, no
+	 * silent corruption) but is genuinely RFC 3501/9051 §3.7-by-design
+	 * DONE-interleaving, not a bug: any submission on a connection currently
+	 * idling ends that IDLE round. If you need concurrent live-update
+	 * consumers on one session, use `updates()` (its shared, refcounted
+	 * driver is exactly the mechanism built for that) rather than multiple
+	 * independent `idle()` handles. Routing `idle()` itself through that
+	 * same shared driver is an M5 carry-forward, not done in this milestone.
 	 */
 	public async idle(): Promise<IdleHandle> {
 		this.assertOpen("idle");
@@ -809,13 +891,33 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 *   the ordinary router lane (`ImapClient.applyMailboxLiveUpdate`)
 	 *   populate this same event stream regardless of which strategy is
 	 *   active.
-	 * - `idle: false`: always NOOP-polls, even when the server supports
-	 *   IDLE — an explicit opt-out of the isolated-context machinery.
+	 * - `idle: false`: NOOP-polls even when the server supports IDLE — an
+	 *   explicit opt-out of the isolated-context machinery FOR THIS CALL.
+	 *   ST5/ST2 amendment (M4-phase-boundary review): this is NOT an
+	 *   absolute "always NOOP-polls" guarantee — if another concurrently-
+	 *   active `updates()` iterator on the SAME session already won the
+	 *   shared driver in `"idle"` mode, THIS call joins that existing
+	 *   IDLE-backed driver instead of forcing a second, independent NOOP
+	 *   timer (see the concurrent-iterator design note below: the shared
+	 *   driver is first-iterator-wins, not decided per call). An
+	 *   `{idle:false}` caller accepts "NOOP or better", and IDLE strictly
+	 *   subsumes NOOP's observable guarantees, so silently joining an
+	 *   already-active IDLE driver is never a correctness problem for it —
+	 *   only the FIRST concurrent call (or joining an already-`"noop"`
+	 *   driver) actually forces NOOP polling.
 	 * - `idle: "require"`: like `true`, but a server WITHOUT the IDLE
 	 *   capability makes this call throw `CapabilityError` (zero bytes
 	 *   written, I-9) INSTEAD of silently degrading to NOOP polling — spec
-	 *   §3.7's documented opt-out of the silent-fallback default.
+	 *   §3.7's documented opt-out of the silent-fallback default. ST2 fix
+	 *   (M4-phase-boundary review): the SAME `CapabilityError` also fires
+	 *   when this call would otherwise JOIN an already-active `"noop"`-mode
+	 *   shared driver (a concurrent `{idle:false}` call, or an earlier
+	 *   `updates()` call that fell back to NOOP because the server lacked
+	 *   IDLE, already won it) — silently joining would hand this caller a
+	 *   NOOP-backed driver despite its explicit demand for IDLE, which
+	 *   `"require"`'s whole point is to refuse rather than silently degrade.
 	 *
+
 	 * Subscription (and, per spec §5b, the QRESYNC resync-buffer flush it
 	 * triggers via `on()`'s override below) happens LAZILY, on ITERATION
 	 * START — the first `.next()` call on the returned iterator actually
@@ -885,6 +987,24 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * `idle()`/`fetch()` enforce; only the MID-iteration case gets this
 	 * softer graceful-end treatment, since no synchronous throw is available
 	 * once a `for await` loop is already running.)
+	 *
+	 * ⚠️ **Do not mix `updates()` and an explicit `idle()` (or another
+	 * session's worth of expectations about who "owns" idling) concurrently
+	 * on the SAME session (ST5, M4-phase-boundary review).** Concurrent
+	 * `updates()` iterators on their own ARE coordinated (the refcounted
+	 * shared-driver design immediately above) -- the hazard is mixing
+	 * `updates({idle:true})` with a SEPARATE explicit `idle()` call: any
+	 * OTHER submission on this session (an ordinary command, another
+	 * `idle()`, `updates()`'s own managed re-entry) DONEs whatever is
+	 * currently idling out from under it, per spec §3.7's "a command
+	 * submission ends the current isolated round" interrupt hook -- an
+	 * explicit `IdleHandle` can be ended by any other submission, including
+	 * one issued through a DIFFERENT `updates()`/`idle()` call on the same
+	 * session. This converges (no deadlock, no silent corruption), but is
+	 * genuinely RFC 3501/9051 §3.7-by-design DONE-interleaving, not a bug --
+	 * routing `idle()` itself through this method's shared, refcounted
+	 * driver (so both surfaces coordinate automatically) is an M5
+	 * carry-forward, not done in this milestone.
 	 */
 	public updates(opts?: MailboxUpdatesOptions): AsyncIterable<MailboxUpdate> {
 		this.assertOpen("updates");
@@ -901,7 +1021,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		}
 		const wantIdle = opts?.idle !== false; // default true (spec §3.7's own "updates({idle:true})" wording)
 		const mode: LiveUpdatesMode = wantIdle && hasIdleCap ? "idle" : "noop";
-		return { [Symbol.asyncIterator]: () => createUpdatesIterator(this, mode) };
+		// ST2 (M4-phase-boundary review): threaded through to
+		// `acquireLiveUpdatesDriver()` so it can refuse joining an existing
+		// "noop"-mode shared driver when THIS call explicitly demanded IDLE.
+		const requireIdle = opts?.idle === "require";
+		return { [Symbol.asyncIterator]: () => createUpdatesIterator(this, mode, requireIdle) };
 	}
 
 	// -- deselection (spec §5b) -----------------------------------------------
@@ -1317,6 +1441,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		if (criteriaHasModSeq(criteria)) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
 		}
+		// CF3+SF1 (M4-phase-boundary review): a bare SearchCriteria.seq key is
+		// exactly as MSN-fragile as a FETCH/STORE/COPY sequence-set argument --
+		// see `assertSearchCriteriaSeqSafeUnderNotify`'s own doc comment.
+		assertSearchCriteriaSeqSafeUnderNotify(session.driver, criteria, `${method}()`);
 		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
 		const command = new SearchCommand(criteria, opts, probe, uid);
 		// S3 fix: serialize against any OTHER search()/seq.search() currently
@@ -1346,7 +1474,17 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		opts: SearchOptions | undefined,
 		uid: boolean,
 	): Promise<SearchResult> {
-		session.assertOpen(uid ? "sort" : "seq.sort");
+		const method = uid ? "sort" : "seq.sort";
+		session.assertOpen(method);
+		// CF3+SF1 (M4-phase-boundary review): `runSearch` already applied both
+		// of these guards; `runSort`/`runThread` previously applied neither,
+		// even though SORT/THREAD share the exact same `SearchCriteria`
+		// compiler (and therefore the exact same `modSeq`/`seq` criteria
+		// hazards) SEARCH does.
+		if (criteriaHasModSeq(criteria)) {
+			MailboxSession.assertModSeqUsable(session, `${method}()`);
+		}
+		assertSearchCriteriaSeqSafeUnderNotify(session.driver, criteria, `${method}()`);
 		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
 		const command = new SortCommand(sortKeys, criteria, opts, probe, uid);
 		return MailboxSession.chainFamily(session, "sort", () => session.driver.run(command));
@@ -1364,7 +1502,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		opts: SearchOptions | undefined,
 		uid: boolean,
 	): Promise<ThreadNode[]> {
-		session.assertOpen(uid ? "thread" : "seq.thread");
+		const method = uid ? "thread" : "seq.thread";
+		session.assertOpen(method);
+		// CF3+SF1 (M4-phase-boundary review): see `runSort`'s own comment above.
+		if (criteriaHasModSeq(criteria)) {
+			MailboxSession.assertModSeqUsable(session, `${method}()`);
+		}
+		assertSearchCriteriaSeqSafeUnderNotify(session.driver, criteria, `${method}()`);
 		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
 		const command = new ThreadCommand(algorithm, criteria, opts, probe, uid);
 		return MailboxSession.chainFamily(session, "thread", () => session.driver.run(command));
@@ -1516,6 +1660,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			return;
 		}
 		session._closed = true;
+		// ST6 fix (M4-phase-boundary review, spec §5b amendment): a closed
+		// session can never gain a first listener capable of receiving a
+		// resync replay -- discard rather than leave an un-flushable buffer
+		// referenced for the rest of this (now-dead) session's lifetime. A
+		// no-op if already flushed (or never had anything to buffer) --
+		// `_resyncBuffer` is already `null` either way.
+		session._resyncBuffer = null;
 		session.emit("closed", reason);
 	}
 
@@ -1603,14 +1754,18 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	/**
 	 * Replays this session's buffered QRESYNC resync events (spec §5b's
 	 * resync-buffering guarantee), in the original wire arrival order --
-	 * idempotent no-op once already flushed (`_resyncBuffer === null`),
-	 * whether reached via the construction-time `setImmediate` fallback or
-	 * via `maybeTriggerResyncFlush()`'s listener-triggered microtask,
-	 * whichever runs first. Stops replaying (but still clears the buffer) if
-	 * the session closes partway through -- same no-op-once-closed posture
-	 * every other `apply*` static above takes; a session that closes between
-	 * `select()` resolving and its resync flush running has bigger problems
-	 * than a few stale cached-flag events.
+	 * idempotent no-op once already flushed/discarded (`_resyncBuffer ===
+	 * null`). Reached ONLY via `maybeTriggerResyncFlush()`'s
+	 * listener-triggered microtask (ST6 fix, M4-phase-boundary review: the
+	 * construction-time `setImmediate` timed fallback this doc comment used
+	 * to also mention was removed entirely -- see the constructor's own
+	 * comment and the spec §5b amendment note). Stops replaying (but still
+	 * clears the buffer) if the session closes partway through -- same
+	 * no-op-once-closed posture every other `apply*` static above takes; a
+	 * session that closes between `select()` resolving and its resync flush
+	 * running has bigger problems than a few stale cached-flag events. A
+	 * session that closes BEFORE any listener ever attaches never reaches
+	 * this method at all -- `markClosed()` discards the buffer directly.
 	 */
 	private static flushResync(session: MailboxSession): void {
 		const buffer = session._resyncBuffer;
@@ -1665,13 +1820,36 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * refcount and awaits `ready` instead of racing to build a second,
 	 * independent driver (which, for `mode: "idle"`, would ping-pong forever,
 	 * see `updates()`'s own doc comment).
+	 *
+	 * ST2 fix (M4-phase-boundary review): joining an EXISTING driver whose
+	 * mode doesn't match `requireIdle` is no longer silently accepted in
+	 * both directions -- see `updates()`'s own doc comment (amended by this
+	 * fix) for the policy this enforces: `requireIdle` joining an existing
+	 * `"noop"`-mode driver throws `CapabilityError` (the caller demanded
+	 * IDLE; a NOOP driver is a degradation, not a silent substitute);
+	 * anything else joining an existing driver of either mode keeps the
+	 * pre-existing first-iterator-wins behavior unchanged.
 	 */
 	static async acquireLiveUpdatesDriver(
 		session: MailboxSession,
 		mode: LiveUpdatesMode,
+		requireIdle: boolean,
 	): Promise<void> {
 		const existing = session._liveUpdatesDriver;
 		if (existing) {
+			if (requireIdle && existing.mode !== "idle") {
+				throw new CapabilityError(
+					'updates({idle:"require"}) cannot join this session\'s already-active ' +
+						"NOOP-poll live-update driver -- a concurrent updates({idle:false}) call, " +
+						"or an earlier updates() call that fell back to NOOP polling because the " +
+						"server lacked IDLE, already won the shared driver (the concurrent-iterator " +
+						"design is first-iterator-wins, not per-call, see updates()'s own doc " +
+						"comment) -- the caller demanded IDLE, and a NOOP driver is a degradation " +
+						"from that, not a silent substitute; call updates({idle:true}) instead to " +
+						"join the existing driver regardless of its mode",
+					{ capability: "IDLE", rfc: "RFC2177" },
+				);
+			}
 			existing.refCount += 1;
 			await existing.ready;
 			return;
@@ -1680,16 +1858,26 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const ready = new Promise<void>((resolve) => {
 			resolveReady = resolve;
 		});
+		// ST3 fix (M4-phase-boundary review): construction-race guard. Before
+		// this fix, a `releaseLiveUpdatesDriver()` call landing while
+		// `controller.start()` (below) was still pending called this SAME
+		// placeholder `stop` (the real one is only installed once `start()`
+		// resolves) -- a true no-op, silently orphaning the just-started
+		// `IdleController` (a live-IDLE leak, and later ping-pong once a NEW
+		// `updates()` call builds a SECOND, independent driver against the
+		// same session). `released` lets the placeholder record that a
+		// release already happened; the post-`await` continuation checks it
+		// and stops the controller itself instead of installing a real `stop`
+		// nobody will ever call again (`releaseLiveUpdatesDriver` already
+		// cleared `session._liveUpdatesDriver` and never calls `state.stop()`
+		// a second time).
+		let released = false;
 		const state: LiveUpdatesDriverState = {
 			mode,
 			refCount: 1,
 			ready,
 			stop: () => {
-				// Replaced below once construction actually settles; a release
-				// racing construction itself (vanishingly unlikely, since
-				// `releaseLiveUpdatesDriver` only runs from a `finally` after
-				// this same `await` chain resumes) would otherwise be a no-op,
-				// which is safe either way -- refCount already reflects it.
+				released = true;
 			},
 		};
 		session._liveUpdatesDriver = state;
@@ -1702,17 +1890,24 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			};
 			const controller = new IdleController(idleDriver, { managedReentry: true });
 			await controller.start();
-			// Nobody calls `controller.done()` unless `stop()` below fires --
-			// `IdleController`'s own constructor already guards its `stopped`
-			// promise against becoming an unhandled rejection when nothing
-			// awaits it (see that class's own doc comment), so a controller
-			// that fails entirely in the background (e.g. connection teardown)
-			// cannot crash the process even though this class never observes
-			// that failure directly (a known, documented limitation -- see
-			// this milestone's report).
-			state.stop = () => {
+			if (released) {
+				// ST3: a release() call already arrived and landed on the inert
+				// placeholder above while `start()` was still pending -- stop
+				// the just-started controller right now instead of leaking it.
 				void controller.done();
-			};
+			} else {
+				// Nobody calls `controller.done()` unless `stop()` below fires --
+				// `IdleController`'s own constructor already guards its `stopped`
+				// promise against becoming an unhandled rejection when nothing
+				// awaits it (see that class's own doc comment), so a controller
+				// that fails entirely in the background (e.g. connection teardown)
+				// cannot crash the process even though this class never observes
+				// that failure directly (a known, documented limitation -- see
+				// this milestone's report).
+				state.stop = () => {
+					void controller.done();
+				};
+			}
 		} else {
 			const intervalMs = session.driver.noopFallbackIntervalMs();
 			let stopped = false;
@@ -1892,6 +2087,7 @@ class SeqFacet implements SequenceFacet {
 function createUpdatesIterator(
 	session: MailboxSession,
 	mode: LiveUpdatesMode,
+	requireIdle: boolean,
 ): AsyncIterator<MailboxUpdate> {
 	const queue: MailboxUpdate[] = [];
 	let pending:
@@ -1901,6 +2097,15 @@ function createUpdatesIterator(
 	let started = false;
 	let subscribed = false;
 	let cleanedUp = false;
+	/** ST2 (M4-phase-boundary review): `acquireLiveUpdatesDriver()` can now
+	 *  genuinely reject (`CapabilityError`, `{idle:"require"}` joining an
+	 *  existing NOOP driver) -- caught below and surfaced through the very
+	 *  next `next()` call (or the one ALREADY blocked on `pending`, if any)
+	 *  rather than silently swallowed the way the pre-M4.13 fire-and-forget
+	 *  call did (that call's only fallible step was `IdleController.start()`,
+	 *  which does not reject in practice; this new failure mode genuinely
+	 *  can, and must reach the caller). */
+	let pendingError: unknown;
 
 	const push = (update: MailboxUpdate): void => {
 		if (pending) {
@@ -1956,13 +2161,25 @@ function createUpdatesIterator(
 		session.on("vanished", onVanished);
 		session.on("flags", onFlags);
 		session.on("closed", onClosed);
-		// Fire-and-forget: `acquireLiveUpdatesDriver()`'s only fallible step
-		// (`IdleController.start()`) does not reject in practice (`start()`
+		// `IdleController.start()` itself does not reject in practice (`start()`
 		// only kicks off the round's submission, see that method's own doc
 		// comment) -- a hard failure of the underlying driver, once started,
 		// is a known, documented limitation this iterator does not surface
 		// (see `MailboxSession.acquireLiveUpdatesDriver()`'s own doc comment).
-		void MailboxSession.acquireLiveUpdatesDriver(session, mode);
+		// ST2 (M4-phase-boundary review): `acquireLiveUpdatesDriver()` can
+		// ALSO now reject synchronously-in-effect with `CapabilityError`
+		// (`{idle:"require"}` joining an existing NOOP driver) -- caught here
+		// and surfaced through `next()` rather than becoming an unhandled
+		// rejection.
+		void MailboxSession.acquireLiveUpdatesDriver(session, mode, requireIdle).catch((err: unknown) => {
+			ended = true;
+			if (pending) {
+				pending.reject(err);
+				pending = undefined;
+			} else {
+				pendingError = err;
+			}
+		});
 	}
 
 	function cleanup(): void {
@@ -1984,6 +2201,12 @@ function createUpdatesIterator(
 	return {
 		next(): Promise<IteratorResult<MailboxUpdate>> {
 			ensureStarted();
+			if (pendingError !== undefined) {
+				const err = pendingError;
+				pendingError = undefined;
+				cleanup();
+				return Promise.reject(err);
+			}
 			if (queue.length > 0) {
 				return Promise.resolve({ value: queue.shift() as MailboxUpdate, done: false });
 			}

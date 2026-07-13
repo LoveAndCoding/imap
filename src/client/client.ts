@@ -15,6 +15,7 @@ import {
 	MultiAppendCommand,
 	NamespaceCommand,
 	NotifyCommand,
+	isSelectedOnly,
 	LsubCommand,
 	NoopCommand,
 	RenameCommand,
@@ -151,6 +152,17 @@ export interface ImapClientEvents {
  * always together) by the time this runs, so in practice both resulting
  * flags are always equal — see `_notifyState`'s doc comment for why they
  * stay two separately-named fields regardless.
+ *
+ * CF2 (M4-phase-boundary review): the SELECTED match is delegated to
+ * `isSelectedOnly()` (`commands/notify.ts`), the SAME case-insensitive
+ * (I-5) SELECTED-vs-SELECTED-DELAYED distinction `NotifyCommand`'s own
+ * `isSelectedFamily` already draws for every composition-rule guard --
+ * previously this function compared `group.mailboxes !== "SELECTED"`
+ * case-SENSITIVELY, so a spec-legal lowercase/mixed-case `mailboxes:
+ * "selected"` event-group armed the real NOTIFY registration (via
+ * `NotifyCommand`) but left `_notifyState` false, silently disarming the
+ * RFC5465-5.2-4/-5.3-2 guards for a server that genuinely sends immediate
+ * MessageNew/MessageExpunge notifications for the selected mailbox.
  */
 function computeSelectedMessageEventState(spec: NotifySpec): {
 	selectedMessageNew: boolean;
@@ -159,7 +171,7 @@ function computeSelectedMessageEventState(spec: NotifySpec): {
 	let selectedMessageNew = false;
 	let selectedMessageExpunge = false;
 	for (const group of spec.set) {
-		if (group.mailboxes !== "SELECTED" || group.events === "NONE") {
+		if (!isSelectedOnly(group.mailboxes) || group.events === "NONE") {
 			continue;
 		}
 		for (const entry of group.events) {
@@ -295,6 +307,16 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				{ state: this.stateMachine.current, required: ["disconnected"] },
 			);
 		}
+		// ST1 (M4-phase-boundary review): defensive belt-and-braces reset,
+		// mirroring the SAME clear the `disconnected` bridge below performs.
+		// In the ordinary lifecycle this is already a no-op here (a prior
+		// disconnect already cleared both, and a client that has never
+		// connected starts with both empty) -- kept anyway so a hypothetical
+		// future caller path that reaches "disconnected" WITHOUT going through
+		// `wireConnectionEvents()`'s own `disconnected` handler still starts
+		// its next `connect()` from a genuinely clean slate.
+		this._enabled.clear();
+		this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
 		this.stateMachine.transition("connecting");
 
 		let connected: boolean;
@@ -583,7 +605,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * the intended behavior, not a gap. `QRESYNC` is the opposite (M4.6 gives
 	 * it its real path to gate, per this comment's own prediction at M4.5
 	 * kickoff): RFC 7162 §3.2.3/§3.2.4 make a positive `ENABLE QRESYNC` +
-	 * `* ENABLED QRESYNC` response (errata 1365) a hard MUST before any
+	 * `* ENABLED QRESYNC` response a hard MUST before any
 	 * QRESYNC-shaped wire form may be used (the select parameter, RFC7162-
 	 * 3.2.5-1; the VANISHED FETCH modifier, RFC7162-3.2.6-2/-3) — so QRESYNC
 	 * now joins this `_enabled`-gated branch alongside UTF8=ACCEPT. Every
@@ -1244,6 +1266,18 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// this is pure internal cache housekeeping for the NEXT connect(),
 			// not a fact about the server worth surfacing as a public event.
 			this.capabilityRegistry.invalidateSilently();
+			// ST1 (M4-phase-boundary review): `_enabled`/`_notifyState` are THIS
+			// connection's own negotiated state (RFC 5161 ENABLE, RFC 5465
+			// NOTIFY) -- a fresh connection has negotiated neither, exactly like
+			// `capabilityRegistry` above. Left uncleared, a reconnected client
+			// previously kept treating QRESYNC (or any other `_enabled`-gated
+			// capability) as still-ENABLEd -- silently emitting QRESYNC-shaped
+			// wire forms (`effectiveCapability()`) a brand-new connection was
+			// never told to expect -- and kept refusing seq-grain calls a stale
+			// NOTIFY registration no longer active on the new connection ever
+			// actually armed.
+			this._enabled.clear();
+			this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
 			if (session) {
 				MailboxSession.markClosed(session, "disconnected");
 			}

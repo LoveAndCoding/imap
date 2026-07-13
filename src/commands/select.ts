@@ -179,7 +179,7 @@ const CLAIMED_TYPES = new Set(["FLAGS", "EXISTS", "RECENT", "STATUS", "VANISHED"
  *
  * **M4.6 QRESYNC gate (hard-ENABLEd, not merely advertised):** `opts.qresync`
  * is the opposite activation model, RFC 7162 §3.2.3/§3.2.4: a client MUST
- * `ENABLE QRESYNC` and receive a POSITIVE `* ENABLED QRESYNC` (errata 1365)
+ * `ENABLE QRESYNC` and receive a POSITIVE `* ENABLED QRESYNC` response
  * before using ANY QRESYNC-shaped wire form, including this select
  * parameter. `caps` is therefore expected to be `ImapClient`'s
  * `effectiveCapability()` probe (which special-cases exactly two names --
@@ -252,11 +252,46 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 			if (!caps.has("QRESYNC")) {
 				throw new CapabilityError(
 					`${verb}: the QRESYNC select parameter requires a positive 'ENABLE ` +
-						"QRESYNC' + '* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4, " +
-						"errata 1365) -- mere advertisement of the QRESYNC capability is " +
-						"not enough; call `client.enableExtensions([\"QRESYNC\"])` (or let " +
-						"the default `extensions: \"auto\"` config request it) first",
+						"QRESYNC' + '* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4) " +
+						"-- mere advertisement of the QRESYNC capability is not enough; " +
+						'call `client.enableExtensions(["QRESYNC"])` (or let the default ' +
+						'`extensions: "auto"` config request it) first',
 					{ capability: "QRESYNC", rfc: "RFC7162" },
+				);
+			}
+			// CF4 (M4-phase-boundary review): no real UIDVALIDITY is ever 0 --
+			// RFC 7162 §7's `qresync-param` grammar takes it as an `nz-number`
+			// (`uidvalidity = nz-number`, RFC 3501 §9's ABNF). 0 is this
+			// module's OWN "the server didn't tell us" sentinel (see
+			// `accept()`'s `uidValidity` field below) -- writing it back out
+			// onto the wire would be both grammar-illegal and semantically
+			// meaningless (the caller cannot possibly have learned a real
+			// UIDVALIDITY of 0 from an earlier SELECT/EXAMINE to resync
+			// against). Refused before any bytes are written (I-9).
+			if (this.qresyncOpts.uidValidity < 1) {
+				throw new RangeError(
+					`${verb}: QRESYNC's uidvalidity argument must be a positive, non-zero ` +
+						"number (RFC 7162 §7 qresync-param, RFC 3501 §9 nz-number) -- " +
+						`${this.qresyncOpts.uidValidity} is this module's own "unknown" ` +
+						"sentinel for a mailbox never previously SELECTed with QRESYNC and " +
+						"must never be written to the wire",
+				);
+			}
+			// CF1 (M4-phase-boundary review): RFC 7162 §7's `qresync-param`
+			// grammar nests `seq-match-data` INSIDE the optional `known-uids`
+			// clause -- 'QRESYNC (uidvalidity mod-sequence-value [known-uids
+			// [seq-match-data]])' -- so `seq-match-data` can never legally
+			// appear without `known-uids` also present. Supplying `seqMatch`
+			// with no `knownUids` would previously write the two independently,
+			// producing a grammar-illegal four-argument form with a gap where
+			// `known-uids` should be. Refused before any bytes are written
+			// (I-9), mirroring the adjacent condstore+qresync guard above.
+			if (this.qresyncOpts.seqMatch !== undefined && this.qresyncOpts.knownUids === undefined) {
+				throw new RangeError(
+					`${verb}: QRESYNC's seqMatch (seq-match-data) argument requires ` +
+						"knownUids to also be supplied -- RFC 7162 §7's qresync-param " +
+						"grammar nests seq-match-data INSIDE the optional known-uids " +
+						"clause, so it can never legally appear alone",
 				);
 			}
 			// Pre-validate/canonicalize the SequenceInput fields (a bad

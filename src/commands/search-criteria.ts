@@ -646,6 +646,45 @@ export function criteriaHasModSeq(criteria: SearchCriteria): boolean {
 }
 
 /**
+ * CF3+SF1 (M4-phase-boundary review): collects every raw `SequenceInput`
+ * value stored under a `seq` key anywhere in `criteria`'s tree — top level
+ * or nested under `not`/`fuzzy`/`or`/`and` — same recursive-walk shape as
+ * `criteriaHasModSeq()` above. Used by `MailboxSession.runSearch()`/
+ * `.runSort()`/`.runThread()` (`client/mailbox.ts`) to apply the
+ * RFC5465-5.2-4/-5.3-2 NOTIFY guards to a bare `SearchCriteria.seq` search
+ * key — a message-sequence-number search key is exactly as MSN-fragile as a
+ * FETCH/STORE/COPY sequence-set argument (RFC 5465 §5.2/§5.3's own text
+ * names FETCH only as an illustrative example of a prohibition that is
+ * general to every MSN-addressed argument, search keys included) — and
+ * applies regardless of whether the enclosing command is SEARCH or UID
+ * SEARCH (`criteria.seq` always denotes sequence numbers either way, unlike
+ * the command's own top-level UID/seq grain).
+ */
+export function criteriaSeqSequenceSets(criteria: SearchCriteria): SequenceInput[] {
+	const found: SequenceInput[] = [];
+	if (criteria.seq !== undefined) {
+		found.push(criteria.seq);
+	}
+	if (criteria.not !== undefined) {
+		found.push(...criteriaSeqSequenceSets(criteria.not));
+	}
+	if (criteria.fuzzy !== undefined) {
+		found.push(...criteriaSeqSequenceSets(criteria.fuzzy));
+	}
+	if (criteria.or !== undefined) {
+		for (const c of criteria.or) {
+			found.push(...criteriaSeqSequenceSets(c));
+		}
+	}
+	if (criteria.and !== undefined) {
+		for (const c of criteria.and) {
+			found.push(...criteriaSeqSequenceSets(c));
+		}
+	}
+	return found;
+}
+
+/**
  * Whether `criteria` contains a `fuzzy` key anywhere in its tree — top level
  * or nested under `not`/`or`/`and` (a `fuzzy` payload's OWN interior doesn't
  * need walking here: `{ fuzzy: X }` itself already IS the FUZZY key this

@@ -102,6 +102,34 @@ describe("SelectCommand / ExamineCommand (RFC 3501/9051 §6.3.1/§6.3.2)", () =>
 			).toThrow(RangeError);
 		});
 
+		test("CF1: seqMatch without knownUids throws RangeError synchronously (RFC 7162 §7 nests seq-match-data inside the optional known-uids clause)", () => {
+			expect(
+				() =>
+					new SelectCommand(
+						"INBOX",
+						{
+							qresync: {
+								uidValidity: 67890007,
+								highestModSeq: 90060115194045000n,
+								seqMatch: { knownSeqSet: "1:5", knownUidSet: "10:14" },
+							},
+						},
+						QRESYNC_CAPS,
+					),
+			).toThrow(RangeError);
+		});
+
+		test("CF4: uidValidity 0 (this module's own 'unknown' sentinel) throws RangeError synchronously (RFC 7162 §7 nz-number)", () => {
+			expect(
+				() =>
+					new SelectCommand(
+						"INBOX",
+						{ qresync: { uidValidity: 0, highestModSeq: 90060115194045000n } },
+						QRESYNC_CAPS,
+					),
+			).toThrow(RangeError);
+		});
+
 		test("a malformed SequenceInput in knownUids throws RangeError synchronously (precompile against a throwaway writer)", () => {
 			expect(
 				() =>

@@ -699,7 +699,17 @@ FETCHes) is delivered through the returned session's events/updates stream —
 subscribing immediately after `await select()` is guaranteed to miss nothing:
 the session buffers resync events until first consumer attach or first
 turn of the microtask queue after resolution (implementation: emit on
-next-tick after resolve).
+next-tick after resolve). [Amended at the M4 review: the implementation
+buffers until first consumer attach or session close — strictly stronger
+than the original microtask-turn bound, which was shown to drop events for
+ordinary async callers. A caller that does ordinary awaited work between
+`await select()` and attaching a listener (any work spanning more than one
+macrotask, not just one microtask turn) would have its resync buffer
+flushed to zero listeners under the original bound, silently losing the
+VANISHED/flag data the whole guarantee exists to protect. The stronger rule
+— buffer until attach or close, no timed fallback at all — closes that gap:
+a never-attaching caller simply never receives the (small, per-session-
+bounded) replay, freed at close instead of flushed to nobody.]
 
 ---
 

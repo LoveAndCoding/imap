@@ -170,10 +170,14 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 	}
 
 	public stop(cause?: unknown) {
-		if (!this.running) {
-			return;
-		}
-
+		// ST4 fix (M4-phase-boundary review): no early `!this.running` return
+		// -- a queue context queued behind an isolated one (see `CommandQueue.
+		// add()`'s own doc comment) is constructed with `immediatelyStart:
+		// false` and never promoted, so `running` stays `false` on it for its
+		// entire life until `CommandQueue`'s own removeQueueContext() promotes
+		// it. `CommandQueue.stop()` below now calls THIS method on every one
+		// of its contexts, including ones exactly in that state -- the guard
+		// would otherwise silently skip rejecting their queued commands.
 		this.running = false;
 		for (const qc of this.commands) {
 			this.remove(qc, cause);
@@ -288,9 +292,31 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		return (this.waitingContext as AsyncQueueContext).add(command);
 	}
 
+	/**
+	 * ST4 fix (M4-phase-boundary review): stops EVERY context in
+	 * `queueContexts`, not only `activeContext` -- mirroring `Router.reset()`'s
+	 * own "clear every registry, not just the active slot" posture
+	 * (`connection/router.ts`). Before this fix, a context queued BEHIND an
+	 * isolated one (e.g. a command submitted while an isolated IDLE round is
+	 * active, `CommandQueue.add()`'s own doc comment) was never stopped on
+	 * teardown -- its queued command's promise (and, transitively, anything
+	 * awaiting it, such as `IdleHandle.done()`) never settled, since nothing
+	 * ever called `.stop()` on that later, not-yet-promoted context.
+	 */
+	/**
+	 * ST4 fix (M4-phase-boundary review): stops EVERY context in
+	 * `queueContexts`, not only `activeContext` -- mirroring `Router.reset()`'s
+	 * own "clear every registry, not just the active slot" posture
+	 * (`connection/router.ts`). Before this fix, a context queued BEHIND an
+	 * isolated one (e.g. a command submitted while an isolated IDLE round is
+	 * active, `CommandQueue.add()`'s own doc comment) was never stopped on
+	 * teardown -- its queued command's promise (and, transitively, anything
+	 * awaiting it, such as `IdleHandle.done()`) never settled, since nothing
+	 * ever called `.stop()` on that later, not-yet-promoted context.
+	 */
 	cancelAllRunningCommands(cause?: unknown) {
-		if (this.activeContext) {
-			this.activeContext.stop(cause);
+		for (const ctx of this.queueContexts) {
+			ctx.stop(cause);
 		}
 	}
 
@@ -313,6 +339,12 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		// guarantees a wedged hold can't survive past a torn-down connection.
 		this.held = false;
 		this.cancelAllRunningCommands(cause);
+		// ST4 fix (M4-phase-boundary review): every context just had its
+		// commands rejected above -- clear the list too (mirroring
+		// `Router.reset()`'s posture), rather than leaving dead contexts
+		// behind for a hypothetical `add()` call between this `stop()` and
+		// the next `start()` to append after.
+		this.queueContexts.length = 0;
 	}
 
 	/**

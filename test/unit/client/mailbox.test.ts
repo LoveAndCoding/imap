@@ -291,17 +291,68 @@ describe("MailboxSession (spec §5b, M2.2 skeleton)", () => {
 			expect(handler).toHaveBeenCalledTimes(1);
 		});
 
-		test("no listener attached at all: the setImmediate fallback still flushes (bookkeeping applied), but a listener attached only AFTER that fallback misses the (already-drained) events", async () => {
+		// ST6 (M4-phase-boundary review, spec §5b amendment): the timed
+		// (`setImmediate`) fallback flush was REMOVED entirely -- it flushed
+		// the buffer to zero listeners after exactly one macrotask turn,
+		// silently dropping resync events for any ordinary caller whose
+		// awaited work between `await select()` and attaching a listener
+		// happened to span more than one macrotask. The buffer now waits for
+		// either the first listener attach or the session closing --
+		// strictly stronger than the spec's original "or first turn of the
+		// microtask queue" bound.
+		test("attach after MULTIPLE macrotasks still receives the buffered resync replay (no timed fallback to race against)", async () => {
 			const session = makeSession(resyncSnapshot());
-			// Let the construction-time setImmediate fallback run with nobody
-			// listening yet.
+			// Ordinary awaited work spanning several macrotask turns -- this
+			// alone used to be enough to lose the buffer under the old
+			// `setImmediate` fallback.
+			await new Promise((r) => setImmediate(r));
 			await new Promise((r) => setImmediate(r));
 			await new Promise((r) => setImmediate(r));
 
 			const lateHandler = vi.fn();
 			session.on("vanished", lateHandler);
 			await new Promise((r) => setImmediate(r));
-			expect(lateHandler).not.toHaveBeenCalled();
+			expect(lateHandler).toHaveBeenCalledExactlyOnceWith([41, 43, 44, 45, 50], true);
+		});
+
+		test("never-attach + session close: the buffer is discarded (markClosed), no event is ever emitted, no leak", async () => {
+			const session = makeSession(resyncSnapshot());
+			const handler = vi.fn();
+			// Never attach a `vanished`/`flags` listener at all.
+			MailboxSession.markClosed(session, "disconnected");
+			// The buffer itself is freed at close (not merely left for a flush
+			// that will never run) -- `markClosed()`'s own fix, distinct from
+			// `flushResync()`'s pre-existing "stop emitting once closed" check
+			// inside its replay loop (which alone would mask this specific
+			// fix, since it already suppresses events for an already-closed
+			// session regardless of whether the buffer was freed).
+			expect((session as unknown as { _resyncBuffer: unknown })._resyncBuffer).toBeNull();
+			await new Promise((r) => setImmediate(r));
+			await new Promise((r) => setImmediate(r));
+
+			// Attaching AFTER close must not retroactively replay anything --
+			// the buffer was discarded at close, not merely deferred.
+			session.on("vanished", handler);
+			session.on("flags", handler);
+			await new Promise((r) => setImmediate(r));
+			expect(handler).not.toHaveBeenCalled();
+		});
+
+		test("double-attach (two listeners, one after the other) does not double-replay", async () => {
+			const session = makeSession(resyncSnapshot());
+			const firstHandler = vi.fn();
+			const secondHandler = vi.fn();
+			session.on("vanished", firstHandler);
+			await new Promise((r) => setImmediate(r));
+			expect(firstHandler).toHaveBeenCalledTimes(1);
+
+			// A SECOND listener attached AFTER the buffer already flushed must
+			// not trigger a re-flush (the buffer is `null` by now) -- ordinary
+			// EventEmitter semantics: it only ever sees events from here on.
+			session.on("vanished", secondHandler);
+			await new Promise((r) => setImmediate(r));
+			expect(secondHandler).not.toHaveBeenCalled();
+			expect(firstHandler).toHaveBeenCalledTimes(1);
 		});
 
 		test("a session with no resync data never schedules a flush (no observable behavior difference from before M4.6)", async () => {

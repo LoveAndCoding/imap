@@ -394,4 +394,123 @@ describe("MailboxSession.updates() (spec §5b/§3.7, M4.3)", () => {
 			await server.assertCompleted();
 		},
 	);
+
+	// -- ST2 (M4-phase-boundary review): acquireLiveUpdatesDriver mode checks --
+
+	test(
+		'ST2: updates({idle:"require"}) joining an already-active NOOP-mode shared driver rejects ' +
+			"CapabilityError instead of silently accepting a degraded (non-IDLE) driver",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port, { noopFallbackInterval: 60_000 }));
+			// No IDLE line is ever scripted -- iterA explicitly opts out
+			// (`{idle:false}`), and iterB's refusal must write zero bytes.
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+			]);
+
+			const session = await client.select("INBOX");
+			const iterA = session.updates({ idle: false })[Symbol.asyncIterator]();
+			const pendingA = iterA.next(); // wins the shared driver in "noop" mode
+
+			const iterB = session.updates({ idle: "require" })[Symbol.asyncIterator]();
+			await expect(iterB.next()).rejects.toBeInstanceOf(CapabilityError);
+
+			await iterA.return?.(undefined);
+			await pendingA.catch(() => undefined);
+			await server.assertCompleted();
+		},
+	);
+
+	test(
+		'ST2 negative (no regression): plain updates() (idle:true default) joining an existing ' +
+			"NOOP-mode driver is still accepted (only \"require\" refuses)",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port, { noopFallbackInterval: 60_000 }));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+			]);
+
+			const session = await client.select("INBOX");
+			const iterA = session.updates({ idle: false })[Symbol.asyncIterator]();
+			const pendingA = iterA.next();
+
+			const iterB = session.updates({ idle: true })[Symbol.asyncIterator]();
+			const pendingB = iterB.next(); // must NOT throw -- joins the existing NOOP driver
+
+			await iterA.return?.(undefined);
+			await iterB.return?.(undefined);
+			await pendingA.catch(() => undefined);
+			await pendingB.catch(() => undefined);
+			await server.assertCompleted();
+		},
+	);
+
+	test(
+		'ST2 negative (no regression): updates({idle:false}) joining an existing IDLE-mode driver ' +
+			"still joins it (first-iterator-wins is unchanged; only require-vs-noop is a new refusal)",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+				expectLine(command("IDLE", { args: null })),
+				send("+ idling\r\n"),
+				expectLine(bareLine("DONE")),
+				reply("OK IDLE terminated"),
+			]);
+
+			const session = await client.select("INBOX");
+			const iterA = session.updates({ idle: true })[Symbol.asyncIterator]();
+			const pendingA = iterA.next();
+			await waitForCommandCount(server, "IDLE", 1);
+
+			const iterB = session.updates({ idle: false })[Symbol.asyncIterator]();
+			const pendingB = iterB.next(); // joins the existing IDLE driver, not a second NOOP one
+
+			await iterA.return?.(undefined);
+			await iterB.return?.(undefined);
+			await pendingA.catch(() => undefined);
+			await pendingB.catch(() => undefined);
+			// Only ONE IDLE round was ever submitted.
+			expect(server.commandLines.filter((l) => l.verb === "IDLE")).toHaveLength(1);
+			await server.assertCompleted();
+		},
+	);
+
+	// -- ST3 (M4-phase-boundary review): construction-race leak ---------------
+
+	test(
+		"ST3: release() arriving before acquireLiveUpdatesDriver's construction await resolves " +
+			"still stops the just-started IdleController (no live IDLE leak)",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+				expectLine(command("IDLE", { args: null })),
+				send("+ idling\r\n"),
+				// If the constructed `IdleController` were leaked (pre-fix), no
+				// DONE would ever be sent and this step (and `assertCompleted()`
+				// below) would time out.
+				expectLine(bareLine("DONE")),
+				reply("OK IDLE terminated"),
+			]);
+
+			const session = await client.select("INBOX");
+			const iter = session.updates({ idle: true })[Symbol.asyncIterator]();
+			// `next()` synchronously drives `ensureStarted()` ->
+			// `acquireLiveUpdatesDriver()`, which suspends at its own internal
+			// `await controller.start()` -- calling `.return()` in this SAME
+			// synchronous stretch (before any microtask can run) deterministically
+			// lands the release while construction is still pending.
+			const pendingNext = iter.next();
+			const pendingReturn = iter.return?.(undefined);
+
+			await expect(pendingNext).resolves.toEqual({ value: undefined, done: true });
+			await pendingReturn;
+			await server.assertCompleted();
+		},
+	);
 });

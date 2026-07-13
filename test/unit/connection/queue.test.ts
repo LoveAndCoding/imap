@@ -448,5 +448,36 @@ describe("CommandQueue", () => {
 			await expect(promise).rejects.toBeInstanceOf(ConnectionError);
 			await expect(promise).rejects.toMatchObject({ phase: "steady" });
 		});
+
+		test(
+			"ST4 fix (M4-phase-boundary review): stop() rejects a command queued BEHIND an active " +
+				"isolated context too, not only the active context's own commands",
+			async () => {
+				const connMock: any = vi.fn();
+				const q = new CommandQueue(connMock);
+				q.start();
+				// The isolated command never settles (e.g. an active IDLE round) --
+				// its own context stays "active" for the whole test.
+				mockExecuteCommand.mockImplementation(() => new Promise(() => undefined));
+
+				const isolatedPromise = q.add(fakeCommand("isolated"));
+				isolatedPromise.catch(() => undefined); // settles too (unrelated to this test)
+				// Forced into a brand-new, NOT-yet-promoted context (the waiting
+				// context is isolated) -- this context's own `running` stays
+				// `false` until the isolated one ahead of it drains, which (before
+				// this fix) meant `AsyncQueueContext.stop()`'s early `!running`
+				// guard skipped it entirely, and `CommandQueue.cancelAllRunning
+				// Commands()` never even reached it (it only ever touched
+				// `activeContext`, i.e. queueContexts[0]).
+				const queuedPromise = q.add(fakeCommand());
+				expect(q.queueContexts.length).toBeGreaterThan(1);
+
+				q.stop("simulated close");
+
+				// Hangs forever without the fix.
+				await expect(queuedPromise).rejects.toBeInstanceOf(ConnectionError);
+				await expect(queuedPromise).rejects.toMatchObject({ phase: "steady" });
+			},
+		);
 	});
 });

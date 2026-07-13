@@ -352,3 +352,119 @@ behavior declined at RFC9051-2.3.2-1/-2. Once M4.5 made UNCHANGEDSINCE
 real, these two rows' tests stopped short-circuiting as unimplemented
 and now measure the deviation honestly (`violation`, like the
 RFC9051-7.1-1 precedent for adjudicated SHOULD deviations).
+
+---
+
+## CONDSTORE+QRESYNC combined SELECT/EXAMINE parameters — refuse client-side (adjudicated at M4-phase-boundary review, SF3)
+
+**Requirement:** No single scored catalog row directly addresses whether a
+client may combine the `(CONDSTORE)` and `(QRESYNC (...))` select
+parameters in the same SELECT/EXAMINE command. RFC 7162 §3.2.5's
+`qresync-param` ABNF and §3.1.8's `condstore-param` ABNF are each their own
+independent `select-param` alternative; the RFC text does not explicitly
+spell out what a server receiving BOTH in the same command should do.
+
+**Decision:** The client refuses the combination client-side —
+`SelectOrExamineCommand`'s constructor (`src/commands/select.ts`) throws
+`RangeError`, zero bytes written (I-9), whenever a caller supplies both
+`condstore: true` and a `qresync` option on the same `SelectOptions`. This
+stays the behavior after the M4-phase-boundary review (SF2 dropped that
+guard's stale "errata 1365" citation, replacing it with a plain RFC 7162
+§3.2.3/§3.2.4 reference, but changed no behavior); this entry is the
+adjudication record the review found missing.
+
+**Rationale:**
+1. RFC 7162 §3.2.3 states plainly that "the presence of the 'QRESYNC'
+   capability implies support for the CONDSTORE IMAP extension even if the
+   'CONDSTORE' capability isn't advertised" — so a `qresync` select
+   parameter already carries every bit of CONDSTORE-track activation a
+   separate `(CONDSTORE)` parameter would add. Sending both is at best
+   redundant.
+2. At least one plausible reading of §3.2.5's `qresync-param`/
+   `condstore-param` grammar (both are alternative productions under the
+   same `select-param` nonterminal, appearing in the same parenthesized
+   list) supports a server legitimately responding tagged BAD to a command
+   that names the same underlying capability twice in incompatible-looking
+   forms — the RFC does not rule this out, and this codebase has not found
+   text that affirmatively permits it either.
+3. Refusing a redundant-at-best, possibly-BAD-provoking combination BEFORE
+   any bytes reach the wire is this codebase's uniform posture for
+   ambiguous-or-worse combinations it has no test evidence require support
+   (invariant I-9) — the same conservative stance already applied
+   elsewhere (e.g. the SEARCHRES `"$"` sentinel gate, `\Recent`'s STORE/
+   APPEND refusal above) rather than gambling on the more permissive
+   reading against a real server.
+
+**Revisit:** if the RFC text (or an errata/interop report) is ever
+confirmed to explicitly permit — or a real server is observed to accept —
+`(CONDSTORE)` and `(QRESYNC (...))` together in one SELECT/EXAMINE, this
+guard should be relaxed to allow the combination (treating `condstore` as
+a redundant no-op once `qresync` is also present) rather than refusing it.
+
+---
+
+## RFC5465-5.3-2 — comply by refusal (adjudicated at M4-phase-boundary review, SF4)
+
+**Requirement:** "Note that if a client requests MessageExpunge with the
+SELECTED mailbox specifier, the meaning of an MSN can change at any time,
+so the client cannot use MSNs in commands anymore. For example, such a
+client cannot use FETCH, but has to use UID FETCH."
+
+**Decision:** The client REFUSES every message-sequence-numbered
+("seq"-grain) command outright — an honest `NotImplementedError`
+(`assertSequenceGrainSafeUnderNotify()`, `src/client/mailbox.ts`), applied
+uniformly to `fetch`/`addFlags`/`removeFlags`/`setFlags`/`copy`/`move`'s
+`.seq` mirrors and (per this same review's CF3+SF1 fix) to a bare
+`SearchCriteria.seq` search key under `search()`/`sort()`/`thread()` — while
+a SELECTED `MessageExpunge` NOTIFY registration is active. The UID-grain
+methods remain completely unrestricted for a caller that supplies its own
+known UIDs. This satisfies "cannot use FETCH, has to use UID FETCH": the
+library never transparently re-addresses the caller's own message sequence
+numbers as UIDs (which would require a live sequence-number-to-UID cache
+this library does not maintain, and could silently target different
+messages than the caller asked about whenever that assumption is wrong) —
+it simply declines to accept the unsafe form and leaves the safe one fully
+available.
+
+**Rationale:**
+1. This is the same refuse-don't-transform posture already adjudicated for
+   `\Recent` (RFC3501-2.3.2-1/-2, above): a client-side prohibition is
+   discharged by REFUSING the prohibited form, not by silently reshaping
+   the caller's input into a different, superficially-compliant one.
+2. RFC 5465 §5.3's "has to use UID FETCH" is not an instruction that the
+   client must transparently reissue a rejected seq-grain call by UID on
+   the caller's behalf — it is naming which command family remains legal.
+   A library that silently reinterpreted the caller's MSNs as UIDs would
+   risk operating on entirely different messages than the caller named,
+   the exact hazard the RFC's prohibition exists to prevent in the first
+   place.
+3. The compliance test previously in place
+   (`test/compliance/specs/ext/notify-5465.test.ts`, `RFC5465-5.3-2`)
+   demanded silent MSN→UID re-addressing of a bare seq-grain `fetch()` call
+   and was marked `expectFailure: "unimplemented"` since no such
+   re-addressing exists (nor should it). The M4-phase-boundary review's
+   spec lens found this demanded the wrong compliance shape: reworked to
+   assert the seq-grain call is refused AND a UID-grain call with
+   caller-supplied UIDs succeeds emitting `UID FETCH`, the row is a
+   genuine pass — RFC5465-5.3-2 flips `unimplemented` → `pass` for both
+   rev1/rev2 as of this adjudication.
+
+**Standing rule this review's spec lens established (recorded here per its
+own instruction):** `classifyFailure()`'s recognition of the real
+library's OWN `NotImplementedError` (`src/errors.ts`), alongside the
+compliance driver's synthetic one, as `unimplemented` rather than
+`violation` (`test/compliance/runner/meta.ts`) makes an adjudication entry
+in this document MANDATORY for every library-thrown `NotImplementedError`
+that is a deliberate POLICY refusal rather than a missing-surface gap —
+exactly the `\Recent` and this row's own pattern. A `NotImplementedError`
+thrown for "not built yet" needs no entry (it is genuinely unimplemented,
+revisit at the milestone that builds it); a `NotImplementedError` thrown as
+a permanent, deliberate "refuse rather than transform" policy decision
+needs one, so the classifier's leniency is never mistaken for silent scope
+creep.
+
+**Revisit:** if this library ever grows a live sequence-number-to-UID
+mirror (tracking every message's current UID keyed by its current MSN,
+updated on every EXISTS/EXPUNGE/VANISHED), re-decide whether the seq-grain
+methods should transparently re-address by UID instead of refusing —
+out of scope for any milestone currently planned.

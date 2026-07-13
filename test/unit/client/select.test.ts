@@ -618,11 +618,39 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 			]);
 		});
 
-		test("no listener attached at all: the buffer is still flushed eventually (fallback), and a listener attached AFTER that fallback misses the (already-drained) resync data -- documented limitation", async () => {
+		// ST6 (M4-phase-boundary review, spec §5b amendment): the timed
+		// (`setImmediate`) fallback flush was REMOVED entirely -- it used to
+		// flush the buffer to zero listeners after exactly one macrotask
+		// turn, silently dropping resync events for an ordinary caller whose
+		// awaited work between `await select()` and attaching a listener
+		// happened to span more than one macrotask. The buffer now waits for
+		// either the first listener attach or the session closing, so a
+		// listener attached after SEVERAL macrotask turns (not just one)
+		// still receives the replay.
+		test("no listener attached for several macrotask turns: a listener attached later STILL receives the resync data (no timed fallback to race against)", async () => {
 			const session = await selectWithResync();
 			await server!.assertCompleted();
-			// Let the construction-time setImmediate fallback flush run.
+			// Ordinary awaited work spanning several macrotask turns -- this
+			// alone used to be enough to lose the buffer under the old
+			// `setImmediate` fallback.
 			await new Promise((r) => setImmediate(r));
+			await new Promise((r) => setImmediate(r));
+			await new Promise((r) => setImmediate(r));
+			const lateEvents: unknown[] = [];
+			session.on("vanished", (uids, earlier) => lateEvents.push({ uids, earlier }));
+			await new Promise((r) => setImmediate(r));
+			expect(lateEvents).toEqual([{ uids: [41, 43, 44, 45, 50], earlier: true }]);
+		});
+
+		test("never-attach + session close: no event is ever emitted, and the buffer is freed at close", async () => {
+			const session = await selectWithResync();
+			await server!.assertCompleted();
+			// Never attach a `vanished`/`flags` listener at all -- close the
+			// session directly (`MailboxSession.markClosed()`, the same
+			// package-private driver seam `ImapClient` itself uses) rather
+			// than a real CLOSE round trip, which this fixture's scripted
+			// server doesn't expect.
+			MailboxSession.markClosed(session, "disconnected");
 			await new Promise((r) => setImmediate(r));
 			const lateEvents: unknown[] = [];
 			session.on("vanished", (uids, earlier) => lateEvents.push({ uids, earlier }));

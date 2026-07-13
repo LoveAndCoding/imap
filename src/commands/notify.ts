@@ -111,6 +111,23 @@ function isSelectedFamily(mailboxes: NotifyMailboxFilter): boolean {
 	return typeof mailboxes === "string" && SELECTED_FAMILY.has(mailboxes.toUpperCase());
 }
 
+/**
+ * CF2 (M4-phase-boundary review): whether `mailboxes` names the SELECTED
+ * specifier EXACTLY (case-insensitively, per invariant I-5) -- excludes
+ * SELECTED-DELAYED, unlike `isSelectedFamily` above. Exported for
+ * `computeSelectedMessageEventState` (`client/client.ts`), which needs the
+ * SAME case-insensitive SELECTED-vs-SELECTED-DELAYED distinction this module
+ * already draws, kept in exactly one place rather than re-implemented (a
+ * second, case-SENSITIVE copy of that distinction previously lived in
+ * `client.ts`, so a lowercase/mixed-case `mailboxes: "selected"` spec --
+ * which THIS module's own `isSelectedFamily` already arms every composition
+ * guard for -- silently failed to arm `_notifyState`'s RFC5465-5.2-4/-5.3-2
+ * guards, a client-side gap independent of what the server received).
+ */
+export function isSelectedOnly(mailboxes: NotifyMailboxFilter): boolean {
+	return typeof mailboxes === "string" && mailboxes.toUpperCase() === "SELECTED";
+}
+
 /** Validates one event-group's composition rules (RFC5465-5-1/-5-2/-6.1-2/
  *  -8-1) -- see this module's own doc comment for the full list. Throws
  *  `RangeError` on the first violation found. */

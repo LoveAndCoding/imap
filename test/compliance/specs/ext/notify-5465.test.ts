@@ -28,7 +28,10 @@
  *   RFC5465-5.2-4   No '*' message references under SELECTED MessageNew
  *                   (self-act. negative guard)
  *   RFC5465-5.3-1   Accept unsolicited EXPUNGE between commands. *** REAL ***
- *   RFC5465-5.3-2   MSN prohibition — UID commands only (self-act.)
+ *   RFC5465-5.3-2   MSN prohibition — comply by refusal: seq-grain refused,
+ *                   UID-grain (caller-supplied UIDs) unrestricted. *** REAL —
+ *                   genuine pass, SF4/M4-phase-boundary review; see
+ *                   docs/compliance-adjudications.md ***
  *   RFC5465-5.4-1   Accept unsolicited LIST with \Nonexistent. *** REAL ***
  *   RFC5465-5.4-2   Accept extended LIST with OLDNAME. *** REAL VIOLATION —
  *                   probed: listing.ts throws on the trailing extended-data
@@ -1036,18 +1039,28 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5465-5.3-2 — MSN prohibition: UID commands only after SELECTED expunges
+// RFC5465-5.3-2 — MSN prohibition: comply by refusal (SF4, M4-phase-boundary
+// review — see docs/compliance-adjudications.md's "RFC5465-5.3-2" entry)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.3: with immediate expunge notifications the meaning of an MSN can change
 // between composing and parsing a command — 'such a client cannot use FETCH,
-// but has to use UID FETCH'. The caller asks for a message-addressed fetch;
-// the script only completes if it arrives as a UID command.
+// but has to use UID FETCH'. This library satisfies that MUST NOT by
+// REFUSING the seq-grain call outright (an honest, library-thrown
+// `NotImplementedError` — no live sequence-number-to-UID cache to safely
+// re-address the caller's own numbers with, see
+// `assertSequenceGrainSafeUnderNotify`'s doc comment, `src/client/
+// mailbox.ts`) rather than silently reinterpreting the caller's MSNs as
+// UIDs — the same refuse-don't-transform posture already adjudicated for
+// `\Recent` (`docs/compliance-adjudications.md`). "Cannot use FETCH, has to
+// use UID FETCH" is genuinely satisfied: the UID-grain method remains fully
+// available, with NO seq-grain-derived restriction at all, for a caller that
+// supplies its own known UIDs — this is a real pass, not `expectFailure`.
 complianceTest(
 	{
 		reqs: ["RFC5465-5.3-2"],
 		profiles: ["rev1", "rev2"],
-		title: "client uses UID FETCH (not FETCH) while SELECTED MessageExpunge is active",
-		expectFailure: "unimplemented",
+		title:
+			"comply by refusal: seq-grain FETCH is refused, UID FETCH with caller-supplied UIDs succeeds, while SELECTED MessageExpunge is active",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1062,7 +1075,8 @@ complianceTest(
 					}),
 				),
 				reply("OK NOTIFY completed"),
-				// The message-addressed command MUST arrive as a UID command.
+				// Only the UID-grain call ever reaches the wire — the seq-grain
+				// call below is refused client-side, zero bytes written.
 				expectLine(command("UID FETCH", { args: /\(FLAGS\)$/i })),
 				reply("OK Fetch completed", ["* 1 FETCH (UID 1 FLAGS (\\Seen))"]),
 			],
@@ -1073,7 +1087,14 @@ complianceTest(
 		await driver.notify({
 			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
 		});
-		await driver.fetch("1:5", ["FLAGS"]);
+		// The seq-grain (bare FETCH) call is refused outright — comply by
+		// refusal, never a silent MSN->UID re-addressing of the caller's own
+		// numbers.
+		await expect(driver.fetch("1:5", ["FLAGS"])).rejects.toThrow(/RFC5465-5\.3-2/);
+		// The UID-grain call, with the caller's OWN known UID, is completely
+		// unrestricted — this is the "has to use UID FETCH" alternative RFC
+		// 5465 §5.3 names, and it works.
+		await driver.uidFetch("1", ["FLAGS"]);
 		await server.assertCompleted();
 		// Non-vacuous: a UID FETCH was recorded and no bare FETCH ever was.
 		expect(server.commandLines.some((l) => l.verb === "UID FETCH")).toBe(true);
