@@ -644,3 +644,30 @@ export function criteriaHasModSeq(criteria: SearchCriteria): boolean {
 	}
 	return false;
 }
+
+/**
+ * Whether `criteria` contains a `fuzzy` key anywhere in its tree — top level
+ * or nested under `not`/`or`/`and` (a `fuzzy` payload's OWN interior doesn't
+ * need walking here: `{ fuzzy: X }` itself already IS the FUZZY key this
+ * function looks for, regardless of what `X` contains) — same recursive-walk
+ * shape as `criteriaHasModSeq()` above. Used by `SortCommand` (M4.10/M4.11,
+ * RFC 6203 §6) to enforce RFC6203-4-3/-6-2's "MUST NOT use the RELEVANCY
+ * return option/sort criterion unless a FUZZY search key is also given" --
+ * both are client-side emission prohibitions, enforced before any bytes are
+ * written (I-9).
+ */
+export function criteriaHasFuzzy(criteria: SearchCriteria): boolean {
+	if (criteria.fuzzy !== undefined) {
+		return true;
+	}
+	if (criteria.not !== undefined && criteriaHasFuzzy(criteria.not)) {
+		return true;
+	}
+	if (criteria.or?.some((c) => criteriaHasFuzzy(c))) {
+		return true;
+	}
+	if (criteria.and?.some((c) => criteriaHasFuzzy(c))) {
+		return true;
+	}
+	return false;
+}

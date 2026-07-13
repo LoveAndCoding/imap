@@ -800,13 +800,31 @@ complianceTest(
 // when SORT is advertised (self-actualizing)
 // ═════════════════════════════════════════════════════════════════════════════
 // Under a server advertising I18NLEVEL=1/2 AND SORT, the active comparator
-// governs ordering on these four keys. Driven; sort() throws today.
+// governs ordering on these four keys. Driven; the comparator's governance
+// itself is server-side interpretation with no client-visible wire effect --
+// the client's own duty is simply to emit the plain SORT command, which
+// `login()`/`sort()` (both real since M3/M4.9) now do.
+// INVESTIGATION NOTE (M4.10/M4.11 kickoff): this row previously read as a
+// genuine violation once M4.9 landed real `sort()` -- investigated and found
+// to be TWO pre-existing bugs in this script, neither a comparator-
+// interpretation defect: (1) the `searchKeys` argument was passed as the
+// bare string `"ALL"` instead of the array `["ALL"]` every other SORT/THREAD
+// compliance test in this suite uses (see `sort-thread-5256.test.ts`) -- a
+// bare string reaches `translateAdHocSearch()`'s "pre-formed sequence-set"
+// branch (`criteria.seq = "ALL"`), and `SequenceSet.from("ALL")` throws
+// `RangeError` (not a valid sequence-set token); (2) the script never
+// selected a mailbox at all, yet SORT is legal only from the `"selected"`
+// state (RFC 5256 §3) -- `driver.sort()`'s own `requireMailboxSession()`
+// throws `StateError` before either bug above would even matter. Both are
+// honest client-side rejections of a malformed test fixture, not spec
+// violations. Fixed here: `["ALL"]` plus a real `selectExchange`/
+// `driver.select()`; the wire form (and hence what a comparator-governed
+// server would observe) is unaffected.
 complianceTest(
 	{
 		reqs: ["RFC5255-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client's SORT ordering on SUBJECT/FROM/etc. is governed by the active I18NLEVEL comparator when SORT is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -818,13 +836,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
 				expectLine(command("SORT", { args: /^\(SUBJECT\) UTF-8 ALL$/i })),
 				reply("OK SORT completed", ["* SORT 2 1 3"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.sort(["SUBJECT"], "ALL", "UTF-8"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["SUBJECT"], ["ALL"], "UTF-8");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();
@@ -837,13 +857,15 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // Under a server advertising I18NLEVEL=1/2 AND THREAD=ORDEREDSUBJECT, the
 // active comparator governs the threading algorithm's subject comparisons.
-// Driven; thread() throws today.
+// Driven; same INVESTIGATION NOTE as RFC5255-4.2-2 above applies (the bare
+// `"ALL"` string bug AND the missing mailbox selection, both fixed here) --
+// login()/thread() are both real (M3/M4.9), and the comparator's governance
+// is server-side/wire-invisible.
 complianceTest(
 	{
 		reqs: ["RFC5255-4.2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client's ORDEREDSUBJECT thread grouping is governed by the active I18NLEVEL comparator when advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -855,13 +877,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
 				expectLine(command("THREAD", { args: /^ORDEREDSUBJECT UTF-8 ALL$/i })),
 				reply("OK THREAD completed", ["* THREAD (1)(2 3)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.thread("ORDEREDSUBJECT", "ALL", "UTF-8"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.thread("ORDEREDSUBJECT", ["ALL"], "UTF-8");
 		await server.assertCompleted();
 		const thread = server.commandLines.find((l) => l.verb === "THREAD");
 		expect(thread, "THREAD must have been emitted").toBeDefined();
@@ -875,13 +899,13 @@ complianceTest(
 // Under a server advertising I18NLEVEL=1/2 AND THREAD=REFERENCES, the active
 // comparator governs the subject-field comparisons specifically (not the
 // Message-ID/References-header linkage, which is comparator-independent).
-// Driven; thread() throws today.
+// Driven; same INVESTIGATION NOTE as RFC5255-4.2-2 above applies (the bare
+// `"ALL"` string bug AND the missing mailbox selection, both fixed here).
 complianceTest(
 	{
 		reqs: ["RFC5255-4.2-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client's REFERENCES thread subject-field comparisons are governed by the active I18NLEVEL comparator when advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -893,13 +917,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
 				expectLine(command("THREAD", { args: /^REFERENCES UTF-8 ALL$/i })),
 				reply("OK THREAD completed", ["* THREAD (1)(2 3)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.thread("REFERENCES", "ALL", "UTF-8"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.thread("REFERENCES", ["ALL"], "UTF-8");
 		await server.assertCompleted();
 		const thread = server.commandLines.find((l) => l.verb === "THREAD");
 		expect(thread, "THREAD must have been emitted").toBeDefined();

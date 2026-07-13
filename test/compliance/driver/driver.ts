@@ -344,18 +344,23 @@ function parseAdHocSearchToken(token: string): Record<string, unknown> {
 }
 
 /** A `RETURN (...)` option token from the ad hoc `SearchOptions.return`
- *  array: the closed MIN/MAX/ALL/COUNT vocabulary, `"PARTIAL m:n"` (RFC
- *  9394 -- extracted into the real `SearchOptions.partial` field, not
- *  `.return`), or `"SAVE"` (extracted into `saveRequested`, so it merges
- *  with the ad hoc criteria-object `{ save: true }` convention below into
- *  one real `return` array with no duplicate). Anything else (RFC 6203
- *  RELEVANCY, RFC 5267 UPDATE/CONTEXT -- neither in the M3.7 §5.3
- *  `SearchOptions.return` union) throws `NotImplementedError`. */
+ *  array: the closed MIN/MAX/ALL/COUNT/RELEVANCY vocabulary (M4.11, RFC 6203
+ *  §4/§6 adds RELEVANCY to the real `SearchOptions.return` union alongside
+ *  plain SEARCH's RFC 4731 four), `"PARTIAL m:n"` (RFC 9394 -- extracted
+ *  into the real `SearchOptions.partial` field, not `.return`), or `"SAVE"`
+ *  (extracted into `saveRequested`, so it merges with the ad hoc
+ *  criteria-object `{ save: true }` convention below into one real `return`
+ *  array with no duplicate). Anything else (RFC 5267 UPDATE/CONTEXT --
+ *  neither in the §5.3 `SearchOptions.return` union, out of scope this
+ *  milestone) throws `NotImplementedError`. */
 function parseAdHocReturnItem(
 	item: string,
-): { atom: "MIN" | "MAX" | "ALL" | "COUNT" } | { save: true } | { partial: { from: number; to: number } } {
+):
+	| { atom: "MIN" | "MAX" | "ALL" | "COUNT" | "RELEVANCY" }
+	| { save: true }
+	| { partial: { from: number; to: number } } {
 	const upper = item.trim().toUpperCase();
-	if (upper === "MIN" || upper === "MAX" || upper === "ALL" || upper === "COUNT") {
+	if (upper === "MIN" || upper === "MAX" || upper === "ALL" || upper === "COUNT" || upper === "RELEVANCY") {
 		return { atom: upper };
 	}
 	if (upper === "SAVE") {
@@ -378,7 +383,7 @@ function translateAdHocSearch(
 	const criteria: Record<string, unknown> = {};
 	let charset = rawOpts?.charset;
 	let saveRequested = false;
-	const returnAtoms: Array<"MIN" | "MAX" | "ALL" | "COUNT"> = [];
+	const returnAtoms: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "RELEVANCY"> = [];
 	let partial: { from: number; to: number } | undefined;
 
 	if (typeof rawCriteria === "string") {
@@ -1517,39 +1522,53 @@ export class ComplianceDriver {
 	// ---- Phase 5: search/sort/sync/events ----------------------------------
 	// SORT/THREAD (RFC 5256, +DISPLAY RFC 5957, +ESORT/CONTEXT RFC 5267)
 	/**
-	 * SORT (RFC 5256 §3 BASE.6.4.SORT; RFC 5957 SORT=DISPLAY) -- M4.9.
+	 * SORT (RFC 5256 §3 BASE.6.4.SORT; RFC 5957 SORT=DISPLAY; RFC 5267 §3.1
+	 * ESORT RETURN options; RFC 6203 §6 RELEVANCY) -- M4.9/M4.10/M4.11.
 	 * Sequence-number grain (spec §6.2's UID-grain-default convention): wired
 	 * to `client.mailbox!.seq.sort(...)`, mirroring `search()`/`fetch()`/etc.'s
 	 * own bare-verb -> `.seq.<verb>` convention. `criteria` is this file's
 	 * pre-existing ad hoc flattened sort-criteria token array (translated by
-	 * `translateAdHocSortCriteria()` above); `searchKeys`/`charset` reuse
-	 * `translateAdHocSearch()` exactly as `search()` does, with the explicit
-	 * `charset` argument (SORT/THREAD's charset is MANDATORY on the wire,
-	 * unlike SEARCH's optional one) taking precedence over anything
-	 * `searchKeys` itself might otherwise carry. Zero protocol logic here
-	 * (I-4) -- both translators only map this file's pre-existing ad hoc
-	 * wire-shaped tokens onto the real, spec-typed shapes `MailboxSession.seq.
-	 * sort()` actually takes.
+	 * `translateAdHocSortCriteria()` above); `searchKeys`/`charset`/`opts`
+	 * reuse `translateAdHocSearch()` exactly as `search()` does (`opts.return`
+	 * merges in via the SAME ad hoc `SearchOptions.return` shape SEARCH takes
+	 * -- M4.10 adds the real `SortCommand` RETURN (...) support this drives),
+	 * with the explicit `charset` argument (SORT/THREAD's charset is
+	 * MANDATORY on the wire, unlike SEARCH's optional one) taking precedence
+	 * over anything `searchKeys` itself might otherwise carry. Zero protocol
+	 * logic here (I-4) -- both translators only map this file's pre-existing
+	 * ad hoc wire-shaped tokens onto the real, spec-typed shapes
+	 * `MailboxSession.seq.sort()` actually takes.
 	 */
-	public async sort(criteria: string[], searchKeys: unknown, charset?: string): Promise<SearchResult> {
+	public async sort(
+		criteria: string[],
+		searchKeys: unknown,
+		charset?: string,
+		opts?: SearchOptions,
+	): Promise<SearchResult> {
 		const session = this.requireMailboxSession();
 		const sortKeys = translateAdHocSortCriteria(criteria);
-		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
-			searchKeys,
-			charset !== undefined ? { charset } : undefined,
-		);
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(searchKeys, {
+			...(charset !== undefined ? { charset } : {}),
+			...(opts?.return !== undefined ? { return: opts.return } : {}),
+		});
 		return session.seq.sort(sortKeys, realCriteria, realOpts);
 	}
-	/** UID SORT -- M4.9. UID grain: wired to `client.mailbox!.sort(...)`
-	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
-	 *  `sort()`'s doc comment above for the ad hoc-translation rationale. */
-	public async uidSort(criteria: string[], searchKeys: unknown, charset?: string): Promise<SearchResult> {
+	/** UID SORT -- M4.9/M4.10/M4.11. UID grain: wired to
+	 *  `client.mailbox!.sort(...)` directly (the driver's `uid`-prefixed stub
+	 *  convention), mirroring `sort()`'s doc comment above for the ad
+	 *  hoc-translation rationale. */
+	public async uidSort(
+		criteria: string[],
+		searchKeys: unknown,
+		charset?: string,
+		opts?: SearchOptions,
+	): Promise<SearchResult> {
 		const session = this.requireMailboxSession();
 		const sortKeys = translateAdHocSortCriteria(criteria);
-		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
-			searchKeys,
-			charset !== undefined ? { charset } : undefined,
-		);
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(searchKeys, {
+			...(charset !== undefined ? { charset } : {}),
+			...(opts?.return !== undefined ? { return: opts.return } : {}),
+		});
 		return session.sort(sortKeys, realCriteria, realOpts);
 	}
 	/**

@@ -104,17 +104,21 @@ export function assertNoRecentFlag(flags: readonly string[], context: string): v
  * `SortBase` — the **client-sent, strict** grade (§5.6): RFC 5256 §5's seven
  * `sort-key` atoms (`ARRIVAL`/`CC`/`DATE`/`FROM`/`SIZE`/`SUBJECT`/`TO`) plus
  * RFC 5957 §5's two-atom `sort-key =/` extension (`DISPLAYFROM`/
- * `DISPLAYTO`). `SortKey` widens this with RFC 5256 §5's `sort-criterion =
- * ["REVERSE" SP] sort-key` production — a template-literal union rather than
- * a separate `{ reverse: boolean; key: SortBase }` object shape, since the
- * spec's own `MailboxSession.sort()` signature (§5b) takes `SortKey[]`
- * directly as the ordered sort-criteria list (M4.9).
+ * `DISPLAYTO`) plus RFC 6203 §7's one-atom `sort-key =/ "RELEVANCY"`
+ * extension (M4.11). `SortKey` widens this with RFC 5256 §5's
+ * `sort-criterion = ["REVERSE" SP] sort-key` production — a template-literal
+ * union rather than a separate `{ reverse: boolean; key: SortBase }` object
+ * shape, since the spec's own `MailboxSession.sort()` signature (§5b) takes
+ * `SortKey[]` directly as the ordered sort-criteria list (M4.9).
  *
  * `DISPLAYFROM`/`DISPLAYTO` are gated at the command layer (M4.9's
  * `SortCommand`) on the `SORT=DISPLAY` capability specifically — separate
  * from the bare `SORT` capability every other `SortBase` member needs — per
  * RFC 5957 §1's "the server MUST also support the base... SORT... extension"
  * (SORT=DISPLAY implies, but does not replace, the base SORT gate).
+ * `RELEVANCY` is likewise gated (M4.10/M4.11's `SortCommand`) on the
+ * `SEARCH=FUZZY` capability AND requires a `fuzzy` search key elsewhere in
+ * the same command's criteria (RFC6203-6-1/-6-2).
  */
 export type SortBase =
 	| "ARRIVAL"
@@ -125,7 +129,8 @@ export type SortBase =
 	| "SUBJECT"
 	| "TO" // RFC 5256 §5
 	| "DISPLAYFROM"
-	| "DISPLAYTO"; // RFC 5957 §5, gated on SORT=DISPLAY
+	| "DISPLAYTO" // RFC 5957 §5, gated on SORT=DISPLAY
+	| "RELEVANCY"; // RFC 6203 §7, gated on SEARCH=FUZZY + a FUZZY search key
 export type SortKey = SortBase | `REVERSE ${SortBase}`;
 
 /**

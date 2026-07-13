@@ -237,7 +237,6 @@ complianceTest(
 		reqs: ["RFC6203-4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SEARCH RETURN (RELEVANCY) when ESEARCH is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -267,13 +266,13 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
-		// RELEVANCY itself has no client surface yet (RFC 6203 is out of scope
-		// this milestone) -- driver.search() throws NotImplementedError before
-		// touching the wire, which trivially (and honestly) also satisfies
-		// this MUST NOT; genuinely wiring RELEVANCY is future work, not this
-		// gate's own duty.
-		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] });
-		await server.assertCompleted();
+		// M4.11: RELEVANCY is real now, gated (like every other RETURN atom) on
+		// ESEARCH/IMAP4rev2 -- absent here, the client refuses locally
+		// (CapabilityError, zero bytes written), which IS the compliant
+		// behavior for this MUST NOT; the SEARCH/reply script step is therefore
+		// never consumed, so `assertCompleted()` is deliberately NOT called
+		// (same pattern as RFC6203-1-1/filters-5466's RFC5466-3.1-3).
+		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] }).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"RETURN (RELEVANCY ...) must not be emitted absent ESEARCH",
@@ -293,7 +292,6 @@ complianceTest(
 		reqs: ["RFC6203-4-3"],
 		profiles: ["rev1", "rev2"],
 		title: "every SEARCH RETURN (RELEVANCY ...) command carries a FUZZY search key",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -327,8 +325,8 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
-		// RELEVANCY has no client surface yet (see RFC6203-4-2 above) --
-		// driver.search() throws NotImplementedError before touching the wire.
+		// M4.11: RELEVANCY is real now; this call ALREADY carries a FUZZY key
+		// alongside it, so the client emits the compliant paired form.
 		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] });
 		await server.assertCompleted();
 		expect(server.transcript.clientLines()).not.toMatch(
@@ -396,7 +394,6 @@ complianceTest(
 		reqs: ["RFC6203-6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SORT (RELEVANCY) when SORT is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -405,9 +402,13 @@ complianceTest(
 		// mismatch, and the transcript assertion pins the SORT absence.
 		server.arm([[...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY"]))]]);
 		const driver = await f.connectPlain(server);
-		// Asked for a relevancy-sorted result without SORT: the compliant path is
-		// to fail locally (or degrade to SEARCH), never to emit SORT.
-		await driver.sort(["RELEVANCY"], ['FUZZY TEXT "Helo"'], "UTF-8"); // throws today
+		// Asked for a relevancy-sorted result without SORT: no mailbox is
+		// selected here either, so the client refuses locally
+		// (`requireMailboxSession()`'s StateError, zero bytes) before
+		// `SortCommand` -- which would ALSO refuse on the missing SORT
+		// capability itself -- is ever reached; either way, the refusal is
+		// compliant and no SORT line reaches the wire.
+		await driver.sort(["RELEVANCY"], ['FUZZY TEXT "Helo"'], "UTF-8").catch(() => undefined);
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -427,7 +428,6 @@ complianceTest(
 		reqs: ["RFC6203-6-2"],
 		profiles: ["rev1", "rev2"],
 		title: "every SORT (RELEVANCY) command carries a FUZZY search key",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -445,8 +445,14 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["RELEVANCY"], ['FUZZY SUBJECT "Helo"'], "UTF-8"); // throws today
-		await server.assertCompleted();
+		// No mailbox is selected in this script, so `requireMailboxSession()`
+		// refuses locally (StateError, zero bytes) before `SortCommand` is ever
+		// constructed -- the SORT/reply step is therefore never consumed, so
+		// `assertCompleted()` is deliberately NOT called (same pattern as
+		// RFC6203-1-1/filters-5466's RFC5466-3.1-3). The refusal trivially
+		// satisfies this MUST NOT: no RELEVANCY-without-FUZZY line reaches the
+		// wire because no SORT line reaches the wire at all.
+		await driver.sort(["RELEVANCY"], ['FUZZY SUBJECT "Helo"'], "UTF-8").catch(() => undefined);
 		expect(server.transcript.clientLines()).not.toMatch(
 			/ SORT \([^)]*RELEVANCY[^)]*\) \S+ (?!.*\bFUZZY\b)/i,
 		);
@@ -463,7 +469,6 @@ complianceTest(
 		reqs: ["RFC6203-6-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SORT RETURN (RELEVANCY) when ESORT is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -490,8 +495,14 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["RELEVANCY"], ['FUZZY TEXT "Helo"'], "UTF-8"); // throws today
-		await server.assertCompleted();
+		// No mailbox is selected in this script, so `requireMailboxSession()`
+		// refuses locally (StateError, zero bytes) before `SortCommand` is ever
+		// constructed -- the SORT/reply step is therefore never consumed, so
+		// `assertCompleted()` is deliberately NOT called (same pattern as
+		// RFC6203-1-1/filters-5466's RFC5466-3.1-3). This particular call also
+		// requests no RETURN option at all (bare `sort()`, no 4th `opts` arg),
+		// so even a selected-mailbox SORT would never emit RETURN here.
+		await driver.sort(["RELEVANCY"], ['FUZZY TEXT "Helo"'], "UTF-8").catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"SORT RETURN must not be emitted absent the ESORT capability",

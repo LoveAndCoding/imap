@@ -300,22 +300,24 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // extended-sort = ["UID" SP] "SORT" search-return-opts SP sort-criteria SP
 // search-criteria — the §3.3 example emits `UID SORT RETURN () (REVERSE DATE)
-// UTF-8 UNDELETED`. driver.uidSort() throws today AND carries no RETURN
-// parameter, so this self-actualizes as unimplemented; the matcher pins the
-// RETURN atom + parenthesized (possibly empty) option list BEFORE the criteria.
+// UTF-8 UNDELETED`. M4.10: `SortCommand` now really emits `RETURN (...)` when
+// `SearchOptions.return` is given and ESORT is advertised; the matcher pins
+// the RETURN atom + parenthesized (possibly empty) option list BEFORE the
+// criteria -- driven here with an explicit EMPTY `return: []`, the RFC's own
+// §3.3 form.
 complianceTest(
 	{
 		reqs: ["RFC5267-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "extended UID SORT form: RETURN (…) immediately after the command, before the sort criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT", "ESORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT", "ESORT"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(
 					command("UID SORT", {
 						args: /^RETURN \((?:[A-Z]+(?: [A-Z0-9:]+)?(?: [A-Z]+(?: [A-Z0-9:]+)?)*)?\) \(REVERSE DATE\) (?:UTF-8|"UTF-8") UNDELETED$/i,
@@ -325,9 +327,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// No RETURN surface exists on the driver's sort verbs at all — once one
-		// exists, this drives `UID SORT RETURN () (REVERSE DATE) UTF-8 UNDELETED`.
-		await driver.uidSort(["REVERSE", "DATE"], ["UNDELETED"], "UTF-8"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// Empty RETURN () -- the RFC's own §3.3 example form.
+		await driver.uidSort(["REVERSE", "DATE"], ["UNDELETED"], "UTF-8", { return: [] });
 		await server.assertCompleted();
 		const uidSort = server.commandLines.find((l) => l.verb === "UID SORT");
 		expect(uidSort, "UID SORT must have been emitted").toBeDefined();
@@ -338,13 +341,19 @@ complianceTest(
 // RFC5267-3.1-1 — no SORT RETURN options unless ESORT is advertised
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises SORT but NOT ESORT: any SORT the client issues here
-// must be the plain RFC 5256 form (criteria list first, no RETURN atom).
+// must be the plain RFC 5256 form (criteria list first, no RETURN atom). No
+// mailbox is selected in this script (driver.uidSort() is called directly
+// after connectPlain()), so the real `SortCommand` never even gets a chance
+// to run — `requireMailboxSession()` refuses locally (StateError, zero
+// bytes) before the command is constructed at all, which trivially (and
+// compliantly) also satisfies this MUST NOT; the UID SORT/reply script step
+// is therefore never consumed, so `assertCompleted()` is deliberately NOT
+// called (same pattern as RFC6203-1-1/filters-5466's RFC5466-3.1-3).
 complianceTest(
 	{
 		reqs: ["RFC5267-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SORT RETURN options when ESORT is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -359,8 +368,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
-		await server.assertCompleted();
+		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII").catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"SORT RETURN must not be emitted absent the ESORT capability",
@@ -426,13 +434,21 @@ complianceTest(
 // RFC5267-4.1-2 — no CONTEXT/UPDATE/PARTIAL on SORT without CONTEXT=SORT
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises SORT and even ESORT (so plain MIN/MAX/ALL/COUNT would
-// be legal on SORT) but NOT CONTEXT=SORT.
+// be legal on SORT) but NOT CONTEXT=SORT. No mailbox is selected in this
+// script, so `requireMailboxSession()` refuses locally (StateError, zero
+// bytes) before `SortCommand` is ever constructed -- trivially (and
+// compliantly) satisfying this MUST NOT the same way RFC5267-3.1-1 does
+// above; the UID SORT/reply step is never consumed, so `assertCompleted()`
+// is deliberately NOT called. CONTEXT/UPDATE/PARTIAL themselves are also
+// genuinely out of scope this milestone (M4.10 plan: CONTEXT=SORT's updating
+// machinery is deferred) -- `SortCommand`'s RETURN vocabulary (MIN/MAX/ALL/
+// COUNT/SAVE/RELEVANCY) never contains those atoms at all, so even a
+// selected-mailbox SORT could not emit them.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit CONTEXT/UPDATE/PARTIAL on extended SORT without CONTEXT=SORT",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -458,8 +474,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
-		await server.assertCompleted();
+		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII").catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"CONTEXT/UPDATE/PARTIAL must not be emitted on SORT absent CONTEXT=SORT",

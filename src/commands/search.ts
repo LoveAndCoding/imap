@@ -5,6 +5,7 @@ import { UID, UIDRange, UIDSet } from "../parser/structure/uid";
 import {
 	NO_SEARCH_CAPS,
 	compileCriteria,
+	criteriaHasFuzzy,
 	criteriaHasNonAscii,
 } from "./search-criteria";
 import type { SearchCapabilityProbe, SearchCriteria } from "./search-criteria";
@@ -22,10 +23,17 @@ import { CommandWriter } from "./writer";
  * on the ESEARCH capability or an IMAP4rev2 server) — including an
  * explicitly EMPTY `return: []`, which is its own legal form (RFC4731 §3.1:
  * "SEARCH RETURN () ..." requests an ESEARCH response equivalent to `ALL`).
+ *
+ * `"RELEVANCY"` (M4.11, RFC 6203 §4) is this same RETURN vocabulary's one
+ * FUZZY-search addition: gated on BOTH the ESEARCH/IMAP4rev2 carrier (like
+ * every other return atom, RFC6203-4-2) AND the presence of a `fuzzy` search
+ * key in `criteria` (RFC6203-4-3's explicit "MUST NOT be used unless a FUZZY
+ * search key is also given") -- both enforced by `normalizeSearchOptions`
+ * below before any bytes are written (I-9).
  */
 export interface SearchOptions {
 	charset?: string;
-	return?: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "SAVE">;
+	return?: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "SAVE" | "RELEVANCY">;
 	partial?: { from: number; to: number };
 }
 
@@ -52,7 +60,7 @@ export interface SearchResult {
 	partial?: { range: string; uids: number[] };
 }
 
-const RETURN_VOCAB: ReadonlySet<string> = new Set(["MIN", "MAX", "ALL", "COUNT", "SAVE"]);
+const RETURN_VOCAB: ReadonlySet<string> = new Set(["MIN", "MAX", "ALL", "COUNT", "SAVE", "RELEVANCY"]);
 
 interface NormalizedSearchOptions {
 	returnAtoms: string[];
@@ -108,6 +116,28 @@ function normalizeSearchOptions(
 				"into core, RFC 9051 §6.4.4), neither of which the server has advertised",
 			{ capability: "SEARCHRES", rfc: "RFC5182" },
 		);
+	}
+	// M4.11, RFC 6203 §4: RELEVANCY rides the same RETURN (...) syntax (already
+	// gated on ESEARCH/IMAP4rev2 above, RFC6203-4-2) but ALSO requires the
+	// SEARCH=FUZZY capability itself (RFC6203-1-1's blanket gate applies to
+	// RELEVANCY same as to the FUZZY search key) and a `fuzzy` search key
+	// somewhere in `criteria` -- RFC6203-4-3's explicit "MUST NOT be used
+	// unless a FUZZY search key is also given". Both checked before any bytes
+	// are written (I-9).
+	if (returnAtoms.includes("RELEVANCY")) {
+		if (!caps.has("SEARCH=FUZZY")) {
+			throw new CapabilityError(
+				"SearchOptions.return: the \"RELEVANCY\" result option requires the " +
+					"SEARCH=FUZZY capability (RFC 6203), which the server hasn't advertised",
+				{ capability: "SEARCH=FUZZY", rfc: "RFC6203" },
+			);
+		}
+		if (!criteriaHasFuzzy(criteria)) {
+			throw new RangeError(
+				'SearchOptions.return: the "RELEVANCY" result option MUST NOT be used ' +
+					"unless a FUZZY search key is also given (RFC 6203 §4)",
+			);
+		}
 	}
 
 	let partial: { from: number; to: number } | undefined;
@@ -205,8 +235,11 @@ function compileSearchWire(
  *  negative for RFC 9394 newest-first paging) into its member integers.
  *  Non-numeric tokens (defensively, e.g. a stray `"*"`) are skipped rather
  *  than thrown on — this is read-side tolerance (I-6) for a value this
- *  command only ever RECEIVES, never re-validates as an outgoing sequence-set. */
-function expandRangeString(s: string): number[] {
+ *  command only ever RECEIVES, never re-validates as an outgoing sequence-set.
+ *  Exported for `SortCommand` (M4.10, RFC 5267 §3.1-2/§3.2-1) — extended SORT
+ *  results arrive in this SAME ESEARCH shape, and its ALL/PARTIAL handling
+ *  reuses this parser rather than forking a second one (M4.10 plan note). */
+export function expandRangeString(s: string): number[] {
 	const out: number[] = [];
 	for (const token of s.split(",")) {
 		const parts = token.split(":");
@@ -233,12 +266,63 @@ function expandRangeString(s: string): number[] {
 /** Flattens a parsed `UIDSet` (ESEARCH ALL return-data / classic legacy
  *  results are already flat) into its member UIDs — going through the same
  *  string-range expansion as `expandRangeString()` rather than a second,
- *  parallel enumeration implementation. */
-function uidSetToArray(set: UIDSet): number[] {
+ *  parallel enumeration implementation. Exported for `SortCommand` (M4.10) —
+ *  see `expandRangeString()`'s doc comment above. */
+export function uidSetToArray(set: UIDSet): number[] {
 	const parts: string[] = set.set.map((el) =>
 		el instanceof UIDRange ? `${el.startId}:${el.endId}` : `${(el as UID).id}`,
 	);
 	return expandRangeString(parts.join(","));
+}
+
+/**
+ * Maps one parsed `ExtendedSearchResponse` (`* ESEARCH ...`) onto the public
+ * `SearchResult` shape — factored out of `SearchCommand.fromEsearch()` (see
+ * that method's own doc comment for the full per-field rationale) so
+ * `SortCommand` (M4.10, RFC 5267 §3: extended SORT "is otherwise identical
+ * in its behaviour to the extended SEARCH command ... [and] returns results
+ * in an ESEARCH response", RFC5267-3-2) can reuse the EXACT same mapping
+ * rather than forking a second one for the same wire shape (M4.10 plan
+ * note). `requestedSave` mirrors `NormalizedSearchOptions.requestedSave`/its
+ * `SortCommand` equivalent: `true` only when the ISSUING command's own
+ * `RETURN (...)` list asked for `SAVE`.
+ */
+export function esearchToSearchResult(
+	content: ExtendedSearchResponse,
+	opts: { requestedSave?: boolean } = {},
+): SearchResult {
+	const result: SearchResult = {};
+	if (content.min !== undefined) {
+		result.min = content.min;
+	}
+	if (content.max !== undefined) {
+		result.max = content.max;
+	}
+	if (content.count !== undefined) {
+		result.count = content.count;
+	}
+	if (content.modSequenceValue !== undefined) {
+		result.modSeq =
+			typeof content.modSequenceValue === "bigint"
+				? content.modSequenceValue
+				: BigInt(content.modSequenceValue);
+	}
+	if (content.results !== undefined) {
+		result.uids = uidSetToArray(content.results);
+	}
+	const partialRaw = content.data.get("PARTIAL");
+	if (Array.isArray(partialRaw) && partialRaw.length === 2 && typeof partialRaw[0] === "string") {
+		const [range, resultsRaw] = partialRaw as [string, unknown];
+		const uids =
+			typeof resultsRaw === "string" && resultsRaw.toUpperCase() !== "NIL"
+				? expandRangeString(resultsRaw)
+				: [];
+		result.partial = { range, uids };
+	}
+	if (opts.requestedSave) {
+		result.saved = true;
+	}
+	return result;
 }
 
 /**
@@ -391,39 +475,14 @@ export class SearchCommand extends Command<SearchResult> {
 	 *     (CONTEXT/ESORT) — outside `SearchOptions.return`'s vocabulary this
 	 *     command supports, so those never populate this map for a SEARCH
 	 *     response in the first place.
+	 *
+	 * The actual field-by-field mapping now lives in the module-level,
+	 * exported `esearchToSearchResult()` above (M4.10) — `SortCommand` reuses
+	 * it verbatim for extended SORT's identical ESEARCH response shape
+	 * (RFC5267-3-2), so this method is a thin wrapper supplying this
+	 * command's own `requestedSave` flag.
 	 */
 	private fromEsearch(content: ExtendedSearchResponse): SearchResult {
-		const result: SearchResult = {};
-		if (content.min !== undefined) {
-			result.min = content.min;
-		}
-		if (content.max !== undefined) {
-			result.max = content.max;
-		}
-		if (content.count !== undefined) {
-			result.count = content.count;
-		}
-		if (content.modSequenceValue !== undefined) {
-			result.modSeq =
-				typeof content.modSequenceValue === "bigint"
-					? content.modSequenceValue
-					: BigInt(content.modSequenceValue);
-		}
-		if (content.results !== undefined) {
-			result.uids = uidSetToArray(content.results);
-		}
-		const partialRaw = content.data.get("PARTIAL");
-		if (Array.isArray(partialRaw) && partialRaw.length === 2 && typeof partialRaw[0] === "string") {
-			const [range, resultsRaw] = partialRaw as [string, unknown];
-			const uids =
-				typeof resultsRaw === "string" && resultsRaw.toUpperCase() !== "NIL"
-					? expandRangeString(resultsRaw)
-					: [];
-			result.partial = { range, uids };
-		}
-		if (this.normalized.requestedSave) {
-			result.saved = true;
-		}
-		return result;
+		return esearchToSearchResult(content, { requestedSave: this.normalized.requestedSave });
 	}
 }
