@@ -6,6 +6,7 @@ import { ScriptedServer } from "../../compliance/harness/scripted-server";
 
 import { ImapClient } from "../../../src/client/client";
 import type { ImapClientConfig } from "../../../src/client/config";
+import { StatusCommand } from "../../../src/commands/status";
 import { CapabilityError, StateError } from "../../../src/errors";
 
 const CRLF = "\r\n";
@@ -180,6 +181,31 @@ describe("ImapClient.status() (spec §3.2/§5.2, M2.9)", () => {
 		const result = await client.status("Sent", ["MESSAGES"]);
 		await server.assertCompleted();
 		expect(result.messages).toBe(4);
+	});
+
+	test("F5 (phase-review) regression: the client.run() escape hatch no longer bypasses STATUS's per-item gate", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// No APPENDLIMIT/HIGHESTMODSEQ-granting capability advertised, and no
+		// STATUS step armed at all: before F5, `client.run(new StatusCommand(...))`
+		// bypassed `ImapClient.status()`'s own pre-check entirely (that check
+		// lived only in the wrapper method, never in the command itself), so a
+		// caller reaching `StatusCommand` directly through the generic `run()`
+		// escape hatch could write a gated item straight onto the wire with
+		// zero capability checks. Constructing it directly here (no probe
+		// supplied -- exactly what a caller bypassing `client.status()` would
+		// do) must now throw CapabilityError at construction time, before
+		// `client.run()` is even reached.
+		await connectAuthenticated(server, client, ["IMAP4rev1"]);
+
+		expect(() => new StatusCommand("INBOX", ["APPENDLIMIT"])).toThrow(
+			CapabilityError,
+		);
+		await server.assertCompleted();
+		expect(
+			server.transcript.clientLines(),
+			"no STATUS bytes may reach the wire for a capability-gated escape-hatch construction (I-9)",
+		).not.toMatch(/\bSTATUS\b/);
 	});
 
 	test("status() rejects StateError (zero bytes) when not authenticated", async () => {

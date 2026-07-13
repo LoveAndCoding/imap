@@ -20,7 +20,6 @@ import {
 	SubscribeCommand,
 	UnsubscribeCommand,
 	StatusCommand,
-	assertStatusItemsSupported,
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
@@ -183,8 +182,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// client observes (greeting, CAPABILITY, tagged-OK response codes,
 		// post-STARTTLS re-fetch), so it's the only registry that's ever
 		// actually up to date. See `Connection.setCapabilityProbe()`'s doc
-		// comment for the full rationale.
-		this.connection.setCapabilityProbe((cap) => this.capabilityRegistry.view.has(cap));
+		// comment for the full rationale. F3 (RFC6855 §3.1): routed through
+		// `effectiveCapability()`, not the registry directly -- see that
+		// method's doc comment for why UTF8=ACCEPT specifically must NOT be
+		// decided by advertisement alone.
+		this.connection.setCapabilityProbe((cap) => this.effectiveCapability(cap));
 		this.wireConnectionEvents();
 	}
 
@@ -464,6 +466,33 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return cap.toUpperCase() === "UTF8=ACCEPT" && view.has("UTF8=ONLY");
 	}
 
+	/**
+	 * F3 (phase-review, RFC6855 §3.1): the client-side rule for whether a
+	 * capability's WIRE EFFECTS are actually licensed right now. Almost every
+	 * capability's wire behavior is licensed by the bare server ADVERTISEMENT
+	 * alone (the registry view) -- LITERAL+/LITERAL-/APPENDLIMIT/etc keep that
+	 * semantics unchanged here. UTF8=ACCEPT is the one capability (for now)
+	 * whose wire effects -- raw UTF-8 mailbox names in `CommandWriter.mailbox()`/
+	 * `.listMailbox()`, the APPEND `UTF8(...)` data-extension wrapper -- RFC
+	 * 6855 §3 licenses ONLY once *this client* has actually sent `ENABLE
+	 * UTF8=ACCEPT` and had it confirmed (tracked in `_enabled`), never from the
+	 * advertisement by itself: a server merely advertising UTF8=ACCEPT (or
+	 * even UTF8=ONLY) says nothing about what THIS session negotiated, and
+	 * `extensions: false` deliberately never sends ENABLE at all.
+	 *
+	 * "ENABLE-managed" capabilities (the `_enabled`-gated branch) are exactly
+	 * `UTF8=ACCEPT` today; `QRESYNC`/`CONDSTORE` are documented to join this
+	 * set in M4, once ENABLEing THEM has its own wire-visible effects to gate
+	 * the same way. Every other capability name falls through to the ordinary
+	 * advertisement check unchanged.
+	 */
+	private effectiveCapability(cap: string): boolean {
+		if (cap.toUpperCase() === "UTF8=ACCEPT") {
+			return this._enabled.has("UTF8=ACCEPT");
+		}
+		return this.capabilityRegistry.view.has(cap);
+	}
+
 	// -- mailbox management (M2.2: SELECT/EXAMINE + MailboxSession;
 	//    M2.3-M2.6: CREATE/DELETE/RENAME/SUBSCRIBE/UNSUBSCRIBE) --------------
 
@@ -549,7 +578,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		const view = this.capabilityRegistry.view;
 		return this.run(
 			new AppendCommand(mailbox, message, opts, {
-				has: (cap) => view.has(cap),
+				// F3: the UTF8(...) wrapper decision must follow `_enabled`, not
+				// the advertisement -- see `effectiveCapability()`'s doc comment.
+				// `knownAppendLimit()` stays advertisement-based (unaffected --
+				// APPENDLIMIT has no ENABLE story at all).
+				has: (cap) => this.effectiveCapability(cap),
 				knownAppendLimit: () =>
 					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
 			}),
@@ -571,6 +604,15 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * written (I-9). Invalid/empty item lists reject `RangeError` from the
 	 * command constructor, likewise before any bytes.
 	 *
+	 * F5 (phase-review, MEDIUM): the capability gate is now enforced by
+	 * `StatusCommand`'s OWN constructor (passed `this.capabilityRegistry.view`
+	 * as its probe right here) rather than by a second, separately-maintained
+	 * `assertStatusItemsSupported` call after construction — `StatusCommand`
+	 * is the single source of truth for the gate, so a caller reaching it
+	 * directly via `client.run(new StatusCommand(...))` gets the identical
+	 * enforcement/error this method does, and there is exactly one message to
+	 * keep in sync with the gate table rather than two.
+	 *
 	 * STATUS against the CURRENTLY SELECTED mailbox rejects `StateError`
 	 * locally (zero bytes written): RFC 3501 §6.3.10 says the client SHOULD
 	 * NOT do this at all, and MUST NOT do it as a new-message check (RFC
@@ -585,8 +627,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		mailbox: string,
 		items: StatusItem[],
 	): Promise<MailboxStatusResult> {
-		// Constructed first: validates the item list (RangeError, zero bytes).
-		const command = new StatusCommand(mailbox, items);
+		// Constructed first: validates the item list (RangeError) AND the
+		// per-item capability gate (CapabilityError) — both zero bytes (I-9).
+		const command = new StatusCommand(mailbox, items, this.capabilityRegistry.view);
 		const session = this._mailboxSession;
 		if (
 			session &&
@@ -602,7 +645,6 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				{ state: this.stateMachine.current, required: ["authenticated"] },
 			);
 		}
-		assertStatusItemsSupported(items, this.capabilityRegistry.view);
 		return this.run(command);
 	}
 
@@ -666,14 +708,52 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/**
+	 * F1 (phase-review, CRITICAL): client-side mutex serializing every
+	 * `selectOrExamine()` call. Overlapping `select()`/`examine()` calls used
+	 * to each read `this.stateMachine.current`/`this._mailboxSession` at THEIR
+	 * OWN call time -- so a second call, issued before the first's command had
+	 * even resolved, would decide "no reselect needed" off a state snapshot
+	 * the first call was about to invalidate, then later publish ITS session
+	 * over the first's without ever having closed it. Chaining every call
+	 * onto this promise means a call's own choreography (precondition check
+	 * through publish) never starts until the PREVIOUS call's has fully
+	 * settled, one way or the other -- see `performSelectOrExamine()`.
+	 */
+	private _selectQueue: Promise<void> = Promise.resolve();
+
+	/** SELECT/EXAMINE choreography entry point -- see `performSelectOrExamine()`
+	 *  for the actual steps; this method's only job is the F1 serialization
+	 *  above. The command is constructed by the caller (`select()`/
+	 *  `examine()`) BEFORE this is even called, so a `condstore`/`qresync`
+	 *  option still throws `CapabilityError` synchronously with zero bytes
+	 *  written, independent of the queue. */
+	private selectOrExamine(
+		mailbox: string,
+		command: Command<SelectResult>,
+	): Promise<MailboxSession> {
+		const turn = this._selectQueue.then(() =>
+			this.performSelectOrExamine(mailbox, command),
+		);
+		// The tail every NEXT call waits on must settle regardless of whether
+		// THIS call's own choreography succeeded or threw -- a failed
+		// select()/examine() must never wedge every subsequent one behind a
+		// permanently-pending promise.
+		this._selectQueue = turn.then(
+			() => undefined,
+			() => undefined,
+		);
+		return turn;
+	}
+
+	/**
 	 * Shared SELECT/EXAMINE choreography (spec §3.1's state table + §3.2's
-	 * `mailbox` property):
+	 * `mailbox` property). Only ever runs one call at a time (see the F1
+	 * mutex on `selectOrExamine()` above) -- so the precondition check below
+	 * is always re-derived against state the PREVIOUS call has already
+	 * finished settling, never a stale snapshot from before this call had to
+	 * wait its turn:
 	 *
-	 * 1. The command is constructed BEFORE anything else here runs, so a
-	 *    `condstore`/`qresync` option throws `CapabilityError` (from
-	 *    `SelectCommand`/`ExamineCommand`'s constructor) with zero bytes
-	 *    written and the current selection completely undisturbed (spec I-9).
-	 * 2. Reselect choreography: if a mailbox is already selected, this is a
+	 * 1. Reselect choreography: if a mailbox is already selected, this is a
 	 *    CLIENT-DRIVEN transition -- "select of another mailbox begins" is
 	 *    its own trigger in the §3.1 table, distinct from (though normally
 	 *    accompanied by) the server's RFC 7162/9051 CLOSED resp-code. The
@@ -688,17 +768,41 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *    `handleServerStatus()`'s CLOSED handling exists purely as an inert
 	 *    defensive backstop for a non-conformant server (see its own doc
 	 *    comment) -- it is not the primary mechanism.
-	 * 3. `run(command)` submits the real wire command. A failure (tagged
+	 * 2. `run(command)` submits the real wire command. A failure (tagged
 	 *    NO/BAD) propagates as-is (`ServerNoError`/`ServerBadError`, per
 	 *    `Command`'s default `onError`): state stays/returns to
-	 *    "authenticated" (already transitioned in step 2, or never left it),
-	 *    `mailbox` stays `null` (already cleared in step 2, or was already
+	 *    "authenticated" (already transitioned in step 1, or never left it),
+	 *    `mailbox` stays `null` (already cleared in step 1, or was already
 	 *    null).
-	 * 4. On success, build the new `MailboxSession` from the command's typed
-	 *    `SelectResult`, publish it as `mailbox`, and transition
-	 *    `authenticated -> selected`.
+	 * 3. Publish: build the new `MailboxSession` from the command's typed
+	 *    `SelectResult`. `run(command)` may have taken a while (a real
+	 *    network round trip) -- during which some OTHER, NOT-mutexed driver
+	 *    path (`MailboxSession.close()`/`.unselect()`, the disconnect
+	 *    handler, or the CLOSED-backstop lane) could have moved
+	 *    `this.stateMachine.current` out from under this call. Publish copes
+	 *    with whatever it finds rather than assuming "authenticated", so the
+	 *    internal `IllegalStateTransitionError` never leaks through the
+	 *    public `select()`/`examine()` surface:
+	 *      - "authenticated" (the ordinary case): publish, transition to
+	 *        "selected".
+	 *      - "selected" (reasoned through, not merely guarded: with THIS
+	 *        mutex in place no other `selectOrExamine()` call can be the
+	 *        cause, since none can run concurrently with this one -- the
+	 *        only other thing that could have re-entered "selected" is a
+	 *        hypothetical future driver path; kept as a defensive branch
+	 *        since a same-state `transition()` call is illegal): degrade to
+	 *        the ordinary reselect choreography instead of re-invoking
+	 *        `transition()` (which has no `selected -> selected` edge) --
+	 *        close out whatever is stale and take its place.
+	 *      - anything else (e.g. the connection dropped while this command's
+	 *        tagged OK was already in flight): a "selected" session can never
+	 *        be legally published from here. Mark the just-built session
+	 *        closed immediately (`"disconnected"` is the closest honest label
+	 *        -- same posture as the CLOSED-backstop's `"reselected"` choice)
+	 *        rather than leaving a phantom live session or throwing the
+	 *        internal transition error.
 	 */
-	private async selectOrExamine(
+	private async performSelectOrExamine(
 		mailbox: string,
 		command: Command<SelectResult>,
 	): Promise<MailboxSession> {
@@ -719,8 +823,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// wire bytes), so no mUTF-7 decode step is appropriate.
 		const name = decodeMailboxName(mailbox, { utf8Accepted: true });
 		const session = new MailboxSession(name, result, this.mailboxSessionDriver());
+
+		const staleAtPublish = this._mailboxSession;
+		const stateAtPublish = this.stateMachine.current;
 		this._mailboxSession = session;
-		this.stateMachine.transition("selected");
+		if (stateAtPublish === "authenticated") {
+			this.stateMachine.transition("selected");
+		} else if (stateAtPublish === "selected") {
+			if (staleAtPublish && staleAtPublish !== session) {
+				MailboxSession.markClosed(staleAtPublish, "reselected");
+			}
+		} else {
+			MailboxSession.markClosed(session, "disconnected");
+			this._mailboxSession = null;
+		}
 		return session;
 	}
 
@@ -867,6 +983,18 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		this.connection.on("disconnected", (wasGraceful) => {
 			const error = this._lastConnectionError;
 			this._lastConnectionError = undefined;
+			// F2 (phase-review, HIGH): a live `MailboxSession` was never
+			// invalidated when the connection itself dropped -- `client.mailbox`
+			// would keep pointing at a session that claimed `closed === false`
+			// forever, even though there is no connection left to ever
+			// deselect it through. Pointer/state first, `markClosed` last (same
+			// convention as the CLOSED-backstop lane below and the
+			// close()/unselect() driver path): clear the client's OWN
+			// bookkeeping before telling the session itself it's done, so a
+			// listener reacting to the `closed` event already observes
+			// `client.mailbox === null`/state `"disconnected"`.
+			const session = this._mailboxSession;
+			this._mailboxSession = null;
 			if (this.stateMachine.current !== "disconnected") {
 				this.stateMachine.transition("disconnected");
 			}
@@ -886,6 +1014,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// this is pure internal cache housekeeping for the NEXT connect(),
 			// not a fact about the server worth surfacing as a public event.
 			this.capabilityRegistry.invalidateSilently();
+			if (session) {
+				MailboxSession.markClosed(session, "disconnected");
+			}
 			this.emit("close", {
 				graceful: wasGraceful && !error,
 				...(error ? { error } : {}),
@@ -980,11 +1111,17 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// "unselected" are therefore reserved for their true owners
 			// (`MailboxSession.close()`/`.unselect()`) and this backstop keeps
 			// "reselected" as the closest honest label for an out-of-band CLOSED.
-			MailboxSession.markClosed(session, "reselected");
+			//
+			// F7 (phase-review): pointer/state first, `markClosed` last --
+			// matching `selectOrExamine()`'s own reselect choreography and the
+			// F2 disconnect handler above, so a `closed` listener always
+			// observes `client.mailbox`/state already updated by the time the
+			// event fires.
 			this._mailboxSession = null;
 			if (this.stateMachine.current === "selected") {
 				this.stateMachine.transition("authenticated");
 			}
+			MailboxSession.markClosed(session, "reselected");
 		}
 	}
 

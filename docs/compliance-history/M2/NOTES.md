@@ -51,3 +51,49 @@ sweeps in an M4-scoped verb. Both rows are cleanly `unimplemented`
 
 ## Flakes
 tls-8314 / RFC9051-11.2-1 unchanged; did not fire in the close runs.
+
+## Phase-review addendum (post-snapshot)
+
+The M2 phase-boundary review ran as three main-loop-orchestrated lenses
+(state, correctness, spec-compliance — the review-runner pipeline is
+unavailable in this environment; see the handoff runbook §3). Merged
+findings F1–F7, all fixed in the follow-up commit after this snapshot:
+
+- **F1 (CRITICAL)**: overlapping `select()`/`examine()` calls corrupted
+  session state — the second call's precondition check read
+  `stateMachine.current` at ITS call time, so it later published over the
+  first call's live session and leaked the internal
+  `IllegalStateTransitionError` (`selected -> selected`) through the
+  public API. Fixed with a `_selectQueue` mutex serializing the whole
+  choreography, plus a publish step that copes with whatever state it
+  finds instead of assuming "authenticated".
+- **F2 (HIGH)**: `_mailboxSession` was never invalidated on disconnect;
+  the declared `"disconnected"` close reason was dead code. The
+  disconnect handler now clears the pointer and marks the session closed
+  (pointer/state first, `markClosed` last).
+- **F3 (HIGH, RFC 6855 §3.1)**: UTF8=ACCEPT wire decisions (raw-UTF-8
+  mailbox names, the APPEND `UTF8(...)` wrapper) were keyed to the
+  capability ADVERTISEMENT instead of this client's own confirmed
+  `ENABLE` state — wrong under `extensions: false`. Fixed with
+  `effectiveCapability()`: UTF8=ACCEPT consults `_enabled`; everything
+  else stays advertisement-based. Zero compliance row flips (existing
+  RFC6855 tests always ENABLE first). Matches the spec §5.2 codec-rule
+  amendment landed alongside the review.
+- **F4 (MEDIUM)**: multi-pattern LIST was licensed by bare IMAP4rev2;
+  RFC 9051 Appendix C carves the parenthesized multi-pattern form out as
+  LIST-EXTENDED-specific. Now requires LIST-EXTENDED explicitly.
+- **F5 (MEDIUM)**: `StatusCommand` now self-enforces the per-item
+  capability gate at construction (probe parameter, strict no-caps
+  default), closing the `client.run()` escape hatch; `ImapClient.status()`
+  passes its live view and dropped its duplicate check.
+- **F6 (LOW)**: LIST-STATUS pairing now strips surviving quotes from the
+  legacy parser's quoted-name fallback before decoding (shared
+  `stripQuotes` from `status.ts`).
+- **F7 (LOW)**: CLOSED-backstop reordered to pointer/state first,
+  `markClosed` last, matching the other two close lanes.
+
+Every fix carries a regression test proven to fail with the fix
+individually reverted (19 new tests; 1011 total). Post-fix verification:
+typecheck clean, lint 0 errors, compliance re-run twice with
+byte-identical reports — 602 pass / 2 adjudicated violations /
+problems [], zero per-row changes vs this directory's snapshot.

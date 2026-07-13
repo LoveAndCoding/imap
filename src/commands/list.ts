@@ -4,7 +4,7 @@ import type { UntaggedResponse } from "../parser";
 import { ciCanonicalFrom, ciEquals } from "../lexer/case-insensitive";
 import { decodeMailboxName } from "../protocol/mailbox-name";
 import type { MailboxInfo, MailboxStatusResult, StatusItem } from "../protocol/mailbox";
-import { assertStatusItemsSupported } from "./status";
+import { assertStatusItemsSupported, stripQuotes } from "./status";
 import { Command } from "./base";
 import type { ClaimContext } from "./base";
 import type { ResponseCollector } from "./collector";
@@ -194,9 +194,21 @@ export function listingToMailboxInfo(
 /** Maps the parsed `* STATUS` structure onto the public result shape.
  *  Fields the legacy structure parser doesn't model yet (SIZE/APPENDLIMIT/
  *  DELETED/MAILBOXID — M2.9 extends it) are simply absent. */
-function mailboxStatusToResult(status: MailboxStatus): Partial<MailboxStatusResult> {
+/** Exported (F6, phase-review) so this exact pairing logic is directly
+ *  unit-testable against a hand-built `MailboxStatus`-shaped name, without
+ *  needing to coax the legacy parser's rare quoted-name fallback out of a raw
+ *  wire line — see test/unit/commands/list.test.ts's F6 describe block. */
+export function mailboxStatusToResult(status: MailboxStatus): Partial<MailboxStatusResult> {
 	const result: Partial<MailboxStatusResult> = {
-		mailbox: decodeMailboxName(status.name, { utf8Accepted: true }),
+		// F6 (phase-review): strip a surviving surrounding-DQUOTE pair BEFORE
+		// decoding, same as `status.ts`'s own `matchesMailbox` -- the legacy
+		// `MailboxStatus` parser's own quoted-name fallback (when its
+		// `getAStringValue` fast path can't model the name tokens) surfaces
+		// `.name` from the RAW wire input, quotes and all. Without this, a
+		// LIST-STATUS pairing (`info.name === status.mailbox`, in `accept()`
+		// below) silently fails whenever that fallback fires, since the LIST
+		// side is always already unquoted.
+		mailbox: decodeMailboxName(stripQuotes(status.name), { utf8Accepted: true }),
 	};
 	if (status.messages !== undefined) {
 		result.messages = status.messages;
@@ -245,7 +257,11 @@ const STATUS_ITEM_RE = /^[A-Z0-9-]+$/;
  *     sibling) → `CapabilityError`, checked against the probe the client
  *     passes at construction: extended selection/return options need
  *     LIST-EXTENDED (or an IMAP4rev2 server, where extended LIST is base
- *     grammar — RFC 9051 §6.3.9); CHILDREN additionally accepts the RFC
+ *     grammar — RFC 9051 §6.3.9); multiple patterns are the one documented
+ *     exception to that IMAP4rev2 allowance — RFC 9051 Appendix C carves the
+ *     parenthesized multi-pattern form out as a LIST-EXTENDED-specific
+ *     behavior, so a bare IMAP4rev2 server (without LIST-EXTENDED) does NOT
+ *     license it; CHILDREN additionally accepts the RFC
  *     3348 CHILDREN capability; STATUS needs LIST-STATUS (RFC 5819) — its
  *     own capability implies extended-LIST support server-side, so no
  *     separate LIST-EXTENDED check is stacked on top; SPECIAL-USE (either
@@ -395,8 +411,24 @@ export class ListCommand extends Command<MailboxInfo[]> {
 		if (opts.returnSubscribed) {
 			needExtended("SUBSCRIBED return");
 		}
-		if (patterns.length > 1) {
-			needExtended("multi-pattern");
+		if (patterns.length > 1 && !caps.has("LIST-EXTENDED")) {
+			// F4 (phase-review): multi-pattern LIST is a NARROWER carve-out than
+			// every other extended-LIST option -- RFC 9051 Appendix C lists the
+			// parenthesized multi-pattern form as a LIST-EXTENDED behavior an
+			// IMAP4rev2 server does NOT get for free just by being rev2 (unlike
+			// the selection/return options above, which rev2 folds into its base
+			// grammar). `hasExtended`'s IMAP4rev2 allowance deliberately does NOT
+			// apply here: a bare IMAP4rev2 server without LIST-EXTENDED must
+			// reject a multi-pattern LIST from this client just as a rev1 server
+			// without the capability would.
+			throw new CapabilityError(
+				"list: multiple patterns require the LIST-EXTENDED capability " +
+					"specifically (RFC 9051 Appendix C's carve-out — unlike other " +
+					"extended-LIST options, IMAP4rev2 alone does not license the " +
+					"parenthesized multi-pattern form), which the server has not " +
+					"advertised",
+				{ capability: "LIST-EXTENDED", rfc: "RFC5258" },
+			);
 		}
 		if (opts.returnChildren && !caps.has("CHILDREN") && !hasExtended) {
 			throw new CapabilityError(

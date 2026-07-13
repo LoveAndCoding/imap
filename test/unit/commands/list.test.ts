@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { ListCommand } from "../../../src/commands/list";
+import { ListCommand, mailboxStatusToResult } from "../../../src/commands/list";
 import type { ListCapabilityProbe } from "../../../src/commands/list";
 import { CapabilityError } from "../../../src/errors";
+import type { MailboxStatus } from "../../../src/parser";
 import { executeCommand } from "../../../src/connection/execute-command";
 import { Router } from "../../../src/connection/router";
 import Lexer from "../../../src/lexer/lexer";
@@ -128,16 +129,48 @@ describe("ListCommand (RFC 3501/9051 §6.3.8/§6.3.9 + RFC 5258/5819/6154/3348/2
 		expect(() => new ListCommand({ pattern: ["a", "b"] }, caps())).toThrow(CapabilityError);
 	});
 
-	test("IMAP4rev2 advertisement licenses the extended grammar (multi-pattern, SUBSCRIBED)", async () => {
+	test("IMAP4rev2 advertisement licenses the extended grammar (SUBSCRIBED selection, single pattern)", async () => {
 		const { wire } = await run(
-			new ListCommand(
-				{ pattern: ["INBOX", "Sent"], subscribed: true },
-				caps("IMAP4rev2"),
-			),
+			new ListCommand({ pattern: "INBOX", subscribed: true }, caps("IMAP4rev2")),
 			"L4",
 			['* LIST (\\Subscribed) "/" INBOX'],
 		);
-		expect(wire).toBe(`L4 LIST (SUBSCRIBED) "" (INBOX Sent)${CRLF}`);
+		expect(wire).toBe(`L4 LIST (SUBSCRIBED) "" INBOX${CRLF}`);
+	});
+
+	describe("F4 (phase-review, MEDIUM): multi-pattern LIST requires LIST-EXTENDED specifically", () => {
+		test("bare IMAP4rev2 (no LIST-EXTENDED) does NOT license multi-pattern -- CapabilityError, zero bytes (RFC 9051 Appendix C carve-out)", () => {
+			let thrown: unknown;
+			try {
+				new ListCommand({ pattern: ["INBOX", "Sent"] }, caps("IMAP4rev2"));
+			} catch (err) {
+				thrown = err;
+			}
+			expect(thrown).toBeInstanceOf(CapabilityError);
+			expect((thrown as CapabilityError).capability).toBe("LIST-EXTENDED");
+		});
+
+		test("LIST-EXTENDED advertised: multi-pattern sends the parenthesized form", async () => {
+			const { wire } = await run(
+				new ListCommand(
+					{ pattern: ["INBOX", "Sent"] },
+					caps("LIST-EXTENDED"),
+				),
+				"L14",
+				['* LIST () "/" INBOX'],
+			);
+			expect(wire).toBe(`L14 LIST "" (INBOX Sent)${CRLF}`);
+		});
+
+		test("bare IMAP4rev2 combined with multi-pattern AND another extended option: the multi-pattern gate still fires even though SUBSCRIBED alone would be licensed by IMAP4rev2", () => {
+			expect(
+				() =>
+					new ListCommand(
+						{ pattern: ["INBOX", "Sent"], subscribed: true },
+						caps("IMAP4rev2"),
+					),
+			).toThrow(CapabilityError);
+		});
 	});
 
 	test("SUBSCRIBED + RECURSIVEMATCH selection combination (RFC 5258 §3.1)", async () => {
@@ -267,6 +300,36 @@ describe("ListCommand (RFC 3501/9051 §6.3.8/§6.3.9 + RFC 5258/5819/6154/3348/2
 		expect(result[0].status).toMatchObject({ mailbox: "INBOX", messages: 17, unseen: 2 });
 		expect(result[1].name).toBe("bar");
 		expect(result[1].status).toBeUndefined();
+	});
+
+	describe("F6 (phase-review, LOW): STATUS-name quote asymmetry", () => {
+		test("a quoted STATUS name (as the legacy parser's quoted-name fallback would surface it, quotes and all) still pairs by mailbox name against the (always-unquoted) LIST side", () => {
+			// `mailboxStatusToResult` only ever reads `.name` (plus the numeric
+			// fields) -- a hand-built object satisfying that shape stands in for
+			// the rare case where the legacy `MailboxStatus` parser's
+			// `getAStringValue` fast path can't model the name tokens and falls
+			// back to the RAW wire input (quotes retained), without needing to
+			// coax that exact tokenizer edge case out of a raw wire line.
+			const quoted = { name: '"My Mailbox"', messages: 3 } as unknown as MailboxStatus;
+			const result = mailboxStatusToResult(quoted);
+			// Before the fix: `result.mailbox` would still carry the surrounding
+			// quotes ('"My Mailbox"'), which could never equal a LIST entry's
+			// always-unquoted `info.name` ("My Mailbox") in `ListCommand.accept()`'s
+			// `info.name === status.mailbox` pairing check -- silently dropping
+			// the STATUS data for that entry.
+			expect(result.mailbox).toBe("My Mailbox");
+			expect(result.messages).toBe(3);
+		});
+
+		test("INBOX canonicalization still applies once the surrounding quotes are stripped", () => {
+			const quoted = { name: '"inbox"', messages: 1 } as unknown as MailboxStatus;
+			expect(mailboxStatusToResult(quoted).mailbox).toBe("INBOX");
+		});
+
+		test("an already-unquoted name (the ordinary case) is unaffected", () => {
+			const plain = { name: "Sent", messages: 2 } as unknown as MailboxStatus;
+			expect(mailboxStatusToResult(plain).mailbox).toBe("Sent");
+		});
 	});
 
 	test("returnStatus items are deduplicated and upper-cased on the wire", async () => {

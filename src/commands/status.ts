@@ -139,13 +139,24 @@ export function assertStatusItemsSupported(
  *  structure parser builds `.name` from the RAW wire input of the name
  *  tokens (a deliberate historical quirk — see `getOriginalInput` there),
  *  so a server that quoted the name (`* STATUS "INBOX" ...`) surfaces it
- *  WITH the quotes still attached. */
-function stripQuotes(name: string): string {
+ *  WITH the quotes still attached. Exported (F6, phase-review) so
+ *  `commands/list.ts`'s LIST-STATUS pairing (`mailboxStatusToResult`) can
+ *  apply the identical fallback-tolerance rule -- one implementation, used
+ *  by both STATUS's own attribution and LIST's RETURN (STATUS ...) pairing. */
+export function stripQuotes(name: string): string {
 	if (name.length >= 2 && name.startsWith('"') && name.endsWith('"')) {
 		return name.slice(1, -1);
 	}
 	return name;
 }
+
+/** Default probe for a `StatusCommand` constructed without one: every
+ *  capability reads as unadvertised (the strict, I-9-faithful "unknown means
+ *  unadvertised" reading — same posture as `ListCommand`'s/`AppendCommand`'s
+ *  own `NO_CAPS` defaults), so a caller constructing a gated item directly
+ *  (e.g. via the `client.run()` escape hatch) without supplying the live
+ *  view gets `CapabilityError`, not a silent pass. */
+const NO_STATUS_CAPS: StatusCapabilityProbe = { has: () => false, all: () => new Set() };
 
 export class StatusCommand extends Command<MailboxStatusResult> {
 	readonly verb = "STATUS";
@@ -164,7 +175,24 @@ export class StatusCommand extends Command<MailboxStatusResult> {
 	 *  path that didn't decode it. */
 	private readonly wireName: string;
 
-	constructor(mailboxName: string, items: readonly StatusItem[]) {
+	/**
+	 * F5 (phase-review, MEDIUM): `probe` is optional so ordinary construction
+	 * sites (`ImapClient.status()`, `list.ts`'s own RETURN (STATUS ...) item
+	 * validation) keep working unchanged, but a caller reaching this command
+	 * directly through the `client.run()` escape hatch — bypassing
+	 * `ImapClient.status()`'s own pre-check entirely — now gets the SAME
+	 * per-item gate enforced here, at construction, before any bytes are
+	 * written (I-9). This constructor is now the single source of truth for
+	 * the gate (see `ImapClient.status()`, which passes its live view here
+	 * rather than maintaining its own separate `assertStatusItemsSupported`
+	 * call): one gate, one error message, impossible to let the two drift
+	 * apart the way the pre-fix code (client-side pre-check only) could.
+	 */
+	constructor(
+		mailboxName: string,
+		items: readonly StatusItem[],
+		probe: StatusCapabilityProbe = NO_STATUS_CAPS,
+	) {
 		super();
 		if (typeof mailboxName !== "string") {
 			throw new RangeError("STATUS: mailbox must be a string");
@@ -184,6 +212,10 @@ export class StatusCommand extends Command<MailboxStatusResult> {
 			}
 			return item.toUpperCase();
 		});
+		// Capability gates (CapabilityError, zero bytes — I-9): enforced HERE
+		// now, not merely by the caller — see this constructor's own doc
+		// comment above.
+		assertStatusItemsSupported(this.items, probe);
 		this.decodedName = decodeMailboxName(mailboxName, { utf8Accepted: true });
 		this.wireName = encodeMailboxName(this.decodedName);
 	}

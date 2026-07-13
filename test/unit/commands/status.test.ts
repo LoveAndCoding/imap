@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { StatusCommand, assertStatusItemsSupported } from "../../../src/commands/status";
+import type { StatusCapabilityProbe } from "../../../src/commands/status";
 import { CapabilityError } from "../../../src/errors";
 import { executeCommand } from "../../../src/connection/execute-command";
 import { Router } from "../../../src/connection/router";
@@ -58,6 +59,14 @@ function makeView(caps: string[]) {
 	};
 }
 
+/** A probe that answers every `has()` gate check affirmatively (F5:
+ *  `StatusCommand`'s constructor now self-enforces the per-item gate, so any
+ *  test constructing a command with a gated item — but that isn't itself
+ *  exercising the gate — must supply a permissive probe explicitly; the
+ *  default (no probe passed) is "nothing advertised", matching
+ *  `ListCommand`'s/`AppendCommand`'s own `NO_CAPS` posture). */
+const ALL_CAPS: StatusCapabilityProbe = { has: () => true, all: () => new Set() };
+
 describe("StatusCommand (RFC 3501 §6.3.10 / RFC 9051 §6.3.11)", () => {
 	test("declares verb/queueMode/states per spec (pipeline, authenticated+selected)", () => {
 		const cmd = new StatusCommand("INBOX", ["MESSAGES"]);
@@ -76,20 +85,43 @@ describe("StatusCommand (RFC 3501 §6.3.10 / RFC 9051 §6.3.11)", () => {
 		).toThrow(RangeError);
 	});
 
+	describe("F5 (phase-review): self-enforced per-item capability gate", () => {
+		test("default probe (no probe supplied) is 'nothing advertised': a gated item throws CapabilityError synchronously, zero bytes -- this is what makes the client.run() escape hatch safe (see status-namespace.test.ts's end-to-end version)", () => {
+			let caught: unknown;
+			try {
+				new StatusCommand("INBOX", ["APPENDLIMIT"]);
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(CapabilityError);
+			expect((caught as CapabilityError).capability).toContain("APPENDLIMIT");
+		});
+
+		test("an explicit permissive probe at construction satisfies the gate (matches ImapClient.status()'s own live-view wiring)", () => {
+			expect(
+				() => new StatusCommand("INBOX", ["APPENDLIMIT", "MAILBOXID"], ALL_CAPS),
+			).not.toThrow();
+		});
+	});
+
 	test("round trip: all ten items requested, all parsed back (incl. exact bigints beyond 2^53)", async () => {
 		const { connection, written, router } = makeFakeConnection();
-		const cmd = new StatusCommand("blurdybloop", [
-			"MESSAGES",
-			"UIDNEXT",
-			"UIDVALIDITY",
-			"UNSEEN",
-			"DELETED",
-			"SIZE",
-			"HIGHESTMODSEQ",
-			"APPENDLIMIT",
-			"MAILBOXID",
-			"RECENT",
-		]);
+		const cmd = new StatusCommand(
+			"blurdybloop",
+			[
+				"MESSAGES",
+				"UIDNEXT",
+				"UIDVALIDITY",
+				"UNSEEN",
+				"DELETED",
+				"SIZE",
+				"HIGHESTMODSEQ",
+				"APPENDLIMIT",
+				"MAILBOXID",
+				"RECENT",
+			],
+			ALL_CAPS,
+		);
 
 		const resultPromise = executeCommand(connection, cmd, "A1");
 		await flushMicrotasks();
@@ -128,7 +160,7 @@ describe("StatusCommand (RFC 3501 §6.3.10 / RFC 9051 §6.3.11)", () => {
 
 	test("small number64 values still surface as bigint (never a mixed type)", async () => {
 		const { connection, router } = makeFakeConnection();
-		const cmd = new StatusCommand("INBOX", ["SIZE", "HIGHESTMODSEQ"]);
+		const cmd = new StatusCommand("INBOX", ["SIZE", "HIGHESTMODSEQ"], ALL_CAPS);
 
 		const resultPromise = executeCommand(connection, cmd, "A2");
 		await flushMicrotasks();
@@ -146,7 +178,7 @@ describe("StatusCommand (RFC 3501 §6.3.10 / RFC 9051 §6.3.11)", () => {
 
 	test("APPENDLIMIT NIL -> null (no limit advertised), distinct from absent -> undefined", async () => {
 		const { connection, router } = makeFakeConnection();
-		const cmd = new StatusCommand("INBOX", ["APPENDLIMIT", "MESSAGES"]);
+		const cmd = new StatusCommand("INBOX", ["APPENDLIMIT", "MESSAGES"], ALL_CAPS);
 
 		const resultPromise = executeCommand(connection, cmd, "A3");
 		await flushMicrotasks();

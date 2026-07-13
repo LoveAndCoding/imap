@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { command } from "../../compliance/harness/matchers";
 import { expectLine, reply, send, type ScriptStep } from "../../compliance/harness/script";
@@ -6,6 +6,7 @@ import { ScriptedServer } from "../../compliance/harness/scripted-server";
 
 import { ImapClient } from "../../../src/client/client";
 import type { ImapClientConfig } from "../../../src/client/config";
+import { MailboxSession } from "../../../src/client/mailbox";
 import type { ClientState } from "../../../src/client/state";
 import { CapabilityError, ServerNoError, StateError } from "../../../src/errors";
 import type { IMAPLogMessage } from "../../../src/types";
@@ -286,6 +287,42 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 		expect(client.mailbox).toBe(sessionB);
 	});
 
+	test("F7 (phase-review): standalone CLOSED resp-code (non-conformant server, no accompanying SELECT/EXAMINE) updates pointer/state BEFORE the 'closed' event fires", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", ["* 3 EXISTS", "* 0 RECENT"]),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed", ["* OK [CLOSED] Previous mailbox closed"]),
+		]);
+
+		const session = await client.select("INBOX");
+
+		let observedDuringEvent: { mailboxNull: boolean; state: string } | undefined;
+		session.on("closed", (reason) => {
+			observedDuringEvent = {
+				mailboxNull: client!.mailbox === null,
+				state: client!.state,
+			};
+			expect(reason).toBe("reselected");
+		});
+
+		await client.noop();
+		await server.assertCompleted();
+
+		expect(session.closed).toBe(true);
+		expect(client.mailbox).toBeNull();
+		expect(client.state).toBe("authenticated");
+		// Pointer/state must already be updated BY THE TIME the 'closed' event
+		// fires (matching selectOrExamine()'s reselect choreography and the F2
+		// disconnect handler's own ordering) -- before the fix, markClosed()
+		// (and its synchronous 'closed' emission) ran FIRST, so a listener
+		// observed the stale pointer (still this session) and state (still
+		// "selected").
+		expect(observedDuringEvent).toEqual({ mailboxNull: true, state: "authenticated" });
+	});
+
 	test("EXISTS/EXPUNGE arriving while selected mutate the live snapshot in arrival order and emit events", async () => {
 		server = await ScriptedServer.start();
 		client = new ImapClient(baseConfig(server.port));
@@ -398,5 +435,115 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 
 		await expect(client.select("INBOX")).rejects.toBeInstanceOf(StateError);
 		await server.assertCompleted();
+	});
+
+	describe("F1 (phase-review, CRITICAL): overlapping select()/examine() no longer corrupt session state", () => {
+		test("concurrent select('A') + select('B'), neither awaited first: both resolve, A closed('reselected'), client.mailbox === sessionB, no internal error thrown", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1"], [
+				expectLine(command("SELECT", { args: /^A$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 5 EXISTS", "* 0 RECENT"]),
+				expectLine(command("SELECT", { args: /^B$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 1 EXISTS", "* 0 RECENT"]),
+			]);
+
+			// `MailboxSession` extends Node's plain `EventEmitter` (via
+			// tiny-typed-emitter), so spying on the shared prototype method --
+			// set up BEFORE either select() call -- observes every `emit()`
+			// call on ANY session for the rest of this test, sidestepping the
+			// timing trap a per-instance `session.on("closed", ...)` listener
+			// would fall into here: `client.select()` is itself `async`, so the
+			// promise the TEST awaits (`pA`) settles strictly LATER (extra
+			// promise-adoption hops) than the mutex's OWN internal chaining
+			// (attached directly to the inner, un-wrapped turn promise) -- by
+			// the time a listener attached after `await pA` could run, B's
+			// precondition step (which is what actually closes A) may already
+			// have fired the event to zero listeners. Spying on the prototype
+			// has no such gap: it's already in place before either call.
+			const emitSpy = vi.spyOn(MailboxSession.prototype, "emit");
+
+			// Deliberately NOT awaited individually before the second call --
+			// this is exactly the race the pre-fix code corrupted: the second
+			// call's precondition check used to run before the first call's own
+			// choreography (including its own state transition) had settled.
+			const pA = client.select("A");
+			const pB = client.select("B");
+
+			const sessionA = await pA;
+			// Before the fix: this threw the INTERNAL `IllegalStateTransitionError`
+			// (selected -> selected has no edge) straight through the public
+			// select() surface, because B's publish step ran `transition("selected")`
+			// while A's own publish had already left the machine in "selected".
+			const sessionB = await pB;
+			await server.assertCompleted();
+
+			// Read the recorded calls/contexts BEFORE `mockRestore()` -- restoring
+			// also clears the mock's call history (`mockRestore()` implies
+			// `mockClear()`), so reading them after would always see `[]`.
+			const closedEmitsOnA = emitSpy.mock.calls
+				.map((args, i) => ({ context: emitSpy.mock.contexts[i], args }))
+				.filter((c) => c.context === sessionA && c.args[0] === "closed")
+				.map((c) => c.args[1]);
+			emitSpy.mockRestore();
+
+			expect(sessionA.closed).toBe(true);
+			expect(closedEmitsOnA).toEqual(["reselected"]);
+			expect(sessionB.closed).toBe(false);
+			expect(sessionB.name).toBe("B");
+			expect(client.mailbox).toBe(sessionB);
+			expect(client.state).toBe("selected");
+		});
+
+		test("concurrent select('A') + examine('B'): same serialized choreography across the two verbs", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1"], [
+				expectLine(command("SELECT", { args: /^A$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 5 EXISTS", "* 0 RECENT"]),
+				expectLine(command("EXAMINE", { args: /^B$/i })),
+				reply("OK [READ-ONLY] EXAMINE completed", ["* 2 EXISTS", "* 0 RECENT"]),
+			]);
+
+			const pA = client.select("A");
+			const pB = client.examine("B");
+
+			const sessionA = await pA;
+			const sessionB = await pB;
+			await server.assertCompleted();
+
+			expect(sessionA.closed).toBe(true);
+			expect(sessionB.closed).toBe(false);
+			expect(sessionB.readOnly).toBe(true);
+			expect(client.mailbox).toBe(sessionB);
+			expect(client.state).toBe("selected");
+		});
+
+		test("select() racing session.unselect(): no internal error, deterministic final state", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "UNSELECT"], [
+				expectLine(command("SELECT", { args: /^A$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 5 EXISTS", "* 0 RECENT"]),
+				expectLine(command("UNSELECT", { args: null })),
+				reply("OK UNSELECT completed"),
+				expectLine(command("SELECT", { args: /^B$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 1 EXISTS", "* 0 RECENT"]),
+			]);
+
+			const sessionA = await client.select("A");
+
+			const unselectPromise = sessionA.unselect();
+			const selectBPromise = client.select("B");
+
+			await expect(unselectPromise).resolves.toBeUndefined();
+			const sessionB = await selectBPromise;
+			await server.assertCompleted();
+
+			expect(sessionA.closed).toBe(true);
+			expect(sessionB.closed).toBe(false);
+			expect(client.mailbox).toBe(sessionB);
+			expect(client.state).toBe("selected");
+		});
 	});
 });
