@@ -37,10 +37,30 @@
  *
  * RFC3501-4.3.1-1/-3: Binary/8-bit obligations driven through driver.append()
  *   (M2.11); both pass (neither test asserts a specific encoding choice, only
- *   that the exchange completes). RFC3501-4.3.1-2 (NUL-containing binary data
- *   MUST be encoded) is a documented, deliberate M2.11 scope exception — see
- *   that test's own doc comment: `AppendSource` is Buffer-verbatim by design,
- *   so this row is annotated `expectFailure: "violation"` rather than flipped.
+ *   that the exchange completes).
+ *
+ * RFC3501-4.3.1-2 (NUL-containing binary data MUST be encoded before
+ *   transmission): an EARLIER revision of this test scripted a completed
+ *   APPEND with a raw NUL-bearing Buffer and asserted the (never-emitted)
+ *   literal excluded the NUL byte -- a mis-scripting in the same category as
+ *   the documented RFC3501-11.1-8/RFC9051-7.1.4-2 precedents: spec §13 places
+ *   message-content encoding out of this library's scope (the caller's own
+ *   MIME layer owns it), so a §13-conformant client can never itself
+ *   BASE64-encode the payload and complete that APPEND -- the test demanded
+ *   an outcome no conformant implementation could produce. The catalog's own
+ *   operationalization of the MUST is "a conformant client never sends a
+ *   string containing NUL bytes" -- and REFUSING to transmit is as valid a
+ *   way to keep that promise as transforming would be. `AppendCommand`
+ *   (src/commands/append.ts) now enforces this at construction: a NUL byte
+ *   (0x00) in the message with `binary` not set throws a `RangeError` before
+ *   any bytes reach the wire. The rewritten test below witnesses exactly
+ *   that: driver.append() REJECTS for a NUL-bearing body with no `binary`
+ *   option, and the transcript carries zero APPEND bytes (a minimal
+ *   prelude+login-only script, never armed to expect APPEND). The positive
+ *   carve-out -- `binary: true` against a BINARY-advertising server
+ *   transmitting a literal8 -- is already covered by
+ *   specs/ext/binary-3516.test.ts's RFC3516-4.4-1 test (M2.11); referenced
+ *   there rather than duplicated here.
  */
 import { expect } from "vitest";
 
@@ -302,23 +322,33 @@ complianceTest(
 // A message buffer containing \x00 bytes must be encoded (e.g., BASE64)
 // before transmission, never sent as a raw literal.
 //
-// M2.11 SCOPE NOTE (still fails, now for a different/documented reason):
-// `AppendCommand`'s `AppendSource` is explicitly Buffer-verbatim (see its
-// doc comment in src/commands/append.ts) — this library never inspects or
-// re-encodes a caller-supplied `Buffer`'s content (MIME/base64 transfer
-// encoding is a message-AUTHORING concern the caller's own layer owns, not
-// something an IMAP client silently does to bytes it was handed). This
-// duty is therefore a deliberate, out-of-scope gap for this milestone
-// (carried forward, not silently dropped) rather than a bug: expect this
-// row to remain a documented "violation" (a NUL byte does reach the wire
-// inside the literal) until/unless a future milestone adds an opt-in
-// content-encoding facility.
+// RESCRIPTED (was a mis-scripted "violation"): the earlier version of this
+// test armed a completed APPEND exchange and asserted the (never-emitted)
+// literal excluded NUL bytes -- but demanding a *completed* APPEND of
+// unencoded binary content asks for something no §13-conformant client can
+// ever produce, since spec §13 places message-content encoding out of this
+// library's scope (the caller's own MIME layer owns it; see
+// src/commands/append.ts's `AppendSource` doc comment). That is the same
+// mis-scripted-test category as the documented RFC3501-11.1-8/
+// RFC9051-7.1.4-2 precedents (a scenario in which the catalog's condition
+// can never hold for a conformant implementation). The catalog text's own
+// operationalization of the MUST is: "a conformant client never sends a
+// string containing NUL bytes" -- and REFUSING to transmit satisfies that
+// exactly as well as transforming would. `AppendCommand` now enforces this
+// at construction (src/commands/append.ts): a NUL byte in the message with
+// `binary` unset throws a `RangeError` before any bytes reach the wire. This
+// test witnesses that refusal directly: driver.append() with a NUL-bearing
+// body and no `binary` option REJECTS, and the transcript (armed with only
+// a prelude+login, never an APPEND expectation) carries zero APPEND bytes.
+// The positive carve-out -- `binary: true` against a BINARY-advertising
+// server transmitting a literal8 -- is exercised by
+// specs/ext/binary-3516.test.ts's RFC3516-4.4-1 test (M2.11); not duplicated
+// here.
 complianceTest(
 	{
 		reqs: ["RFC3501-4.3.1-2"],
 		profiles: ["rev1"],
-		title: "binary data (NUL-containing strings) is encoded before transmission",
-		expectFailure: "violation",
+		title: "binary data (NUL-containing strings) is refused, never transmitted unencoded",
 		timeout: 5000,
 	},
 	async () => {
@@ -326,27 +356,37 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
-				expectLine(command("APPEND")),
-				reply("OK APPEND completed"),
+				// No APPEND is scripted -- a conformant client must never emit one
+				// for a NUL-bearing body without an explicit `binary` opt-out.
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// APPEND is authenticated-state; the armed script expects LOGIN.
 		await driver.login("user", "pass");
-		// Buffer with a NUL byte — client MUST encode this (e.g., BASE64).
+		// Buffer with a NUL byte — the client MUST refuse to transmit this
+		// unencoded (e.g., BASE64 it first, or opt into `binary: true`/literal8).
 		const binaryBody = Buffer.from([
 			0x53, 0x75, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x3a,
-			0x00, // NUL byte — triggers binary obligation
+			0x00, // NUL byte — triggers the binary-encoding obligation
 			0x0d, 0x0a, 0x0d, 0x0a,
 		]);
-		await driver.append("INBOX", binaryBody);
+		let err: unknown;
+		try {
+			await driver.append("INBOX", binaryBody);
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "a NUL-bearing APPEND without `binary` must reject").toBeInstanceOf(
+			RangeError,
+		);
 		await server.assertCompleted();
-		// When implemented: the literal payload must not contain NUL bytes;
-		// they must be encoded.
-		const appendLine = server.commandLines.find((l) => l.args.includes("{"));
-		if (appendLine) {
-			for (const lit of appendLine.literals) {
-				expect(lit.includes(0x00)).toBe(false);
+		// Transcript guard: zero APPEND bytes, and in particular no literal
+		// carrying an unencoded NUL, ever reached the wire.
+		expect(server.commandLines.some((l) => l.verb === "APPEND")).toBe(false);
+		for (const line of server.commandLines) {
+			for (const lit of line.literals) {
+				expect(lit.includes(0x00), "no transmitted literal may carry an unencoded NUL").toBe(
+					false,
+				);
 			}
 		}
 	},

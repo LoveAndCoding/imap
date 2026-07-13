@@ -44,6 +44,34 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 		expect(() => new AppendCommand("INBOX", 42 as never)).toThrow(RangeError);
 	});
 
+	describe("NUL-byte refusal (RFC 3501/9051 §4.3.1)", () => {
+		test("rejects a Buffer message containing a NUL byte without opts.binary", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			expect(() => new AppendCommand("INBOX", data)).toThrow(RangeError);
+			expect(() => new AppendCommand("INBOX", data)).toThrow(/NUL byte/);
+		});
+
+		test("rejects a string message containing a NUL character without opts.binary", () => {
+			expect(() => new AppendCommand("INBOX", "Subject: x\r\n\r\n\u0000body")).toThrow(
+				RangeError,
+			);
+		});
+
+		test("rejects a NUL-bearing message even when opts.binary is explicitly false", () => {
+			const data = Buffer.from([0x00]);
+			expect(() => new AppendCommand("INBOX", data, { binary: false })).toThrow(RangeError);
+		});
+
+		test("accepts a NUL-bearing Buffer message when opts.binary is true", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			expect(() => new AppendCommand("INBOX", data, { binary: true })).not.toThrow();
+		});
+
+		test("does not reject a message with no NUL bytes when opts.binary is unset", () => {
+			expect(() => new AppendCommand("INBOX", Buffer.from("plain body"))).not.toThrow();
+		});
+	});
+
 	describe("write()", () => {
 		test("plain message: mailbox + synchronizing literal, no flags/date", () => {
 			const cmd = new AppendCommand("INBOX", Buffer.from("Subject: hi\r\n\r\nbody\r\n"));
@@ -65,8 +93,8 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 			expect(text).toBe(`INBOX {${expectedBytes.length}}\r\n` + expectedBytes.toString("latin1"));
 		});
 
-		test("Buffer message passes through verbatim, including NUL/CTL bytes", () => {
-			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+		test("Buffer message passes through verbatim, including CTL bytes (no NUL)", () => {
+			const data = Buffer.from([0x53, 0x75, 0x02, 0x01]);
 			const cmd = new AppendCommand("INBOX", data);
 			const w = writerWithCaps();
 			Command.writeArgs(cmd, w);
@@ -74,6 +102,16 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 			const literalSegment = segments[segments.length - 1].bytes;
 			// The literal's data bytes are the LAST 4 bytes of the final segment
 			// (after the "INBOX {4}\r\n" announcement's own segment boundary).
+			expect(literalSegment.subarray(literalSegment.length - data.length)).toEqual(data);
+		});
+
+		test("Buffer message with a NUL byte and opts.binary:true passes through verbatim", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			const cmd = new AppendCommand("INBOX", data, { binary: true });
+			const w = writerWithCaps();
+			Command.writeArgs(cmd, w);
+			const segments = w.segments();
+			const literalSegment = segments[segments.length - 1].bytes;
 			expect(literalSegment.subarray(literalSegment.length - data.length)).toEqual(data);
 		});
 
@@ -119,13 +157,88 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 			expect(wireText(w)).toMatch(/^INBOX ~\{2\}\r\n/);
 		});
 
-		test("LITERAL+ advertised: the literal uses the non-synchronizing '{n+}' form", () => {
-			const cmd = new AppendCommand("INBOX", Buffer.from("x"));
+		test("LITERAL+ advertised (and the upload limit is known): the literal uses the non-synchronizing '{n+}' form", () => {
+			// knownAppendLimit: true isolates this test's LITERAL+-eagerness
+			// assertion from the separate RFC7889-4-2 override (see the
+			// "avoids the non-synchronizing form" tests below), which would
+			// otherwise force a synchronizing literal regardless of LITERAL+.
+			const cmd = new AppendCommand(
+				"INBOX",
+				Buffer.from("x"),
+				{},
+				{ has: () => false, knownAppendLimit: () => true },
+			);
 			const w = writerWithCaps(["LITERAL+"]);
 			Command.writeArgs(cmd, w);
 			expect(wireText(w)).toBe("INBOX {1+}\r\nx");
 			// Non-synchronizing: no segment boundary before the literal data.
 			expect(w.segments()).toHaveLength(1);
+		});
+
+		describe("RFC7889-4-2: avoid non-synchronizing literals when the upload limit is unknown", () => {
+			test("default caps (NO_CAPS, no knownAppendLimit signal): forces a synchronizing literal even with LITERAL+ advertised", () => {
+				// The default 4th-arg (NO_CAPS) reports knownAppendLimit() ===
+				// false -- the conservative "unknown" default -- so even though
+				// the WRITER advertises LITERAL+, AppendCommand must override it
+				// down to the plain synchronizing form.
+				const cmd = new AppendCommand("INBOX", Buffer.from("x"));
+				const w = writerWithCaps(["LITERAL+"]);
+				Command.writeArgs(cmd, w);
+				expect(wireText(w)).toBe("INBOX {1}\r\nx");
+				// Synchronizing: a segment boundary precedes the literal data.
+				expect(w.segments()[0]?.awaitContinuation).toBe(true);
+			});
+
+			test("LITERAL- advertised, upload limit unknown: still forces a synchronizing literal (no '-' suffix)", () => {
+				const cmd = new AppendCommand(
+					"INBOX",
+					Buffer.from("x"),
+					{},
+					{ has: () => false, knownAppendLimit: () => false },
+				);
+				const w = writerWithCaps(["LITERAL-"]);
+				Command.writeArgs(cmd, w);
+				expect(wireText(w)).toBe("INBOX {1}\r\nx");
+			});
+
+			test("knownAppendLimit: true restores ordinary LITERAL+ eagerness", () => {
+				const cmd = new AppendCommand(
+					"INBOX",
+					Buffer.from("x"),
+					{},
+					{ has: () => false, knownAppendLimit: () => true },
+				);
+				const w = writerWithCaps(["LITERAL+"]);
+				Command.writeArgs(cmd, w);
+				expect(wireText(w)).toBe("INBOX {1+}\r\nx");
+			});
+
+			test("upload limit unknown, opts.binary:true: literal8 is still forced synchronizing ('~{n}', no '+'/'-')", () => {
+				const cmd = new AppendCommand(
+					"INBOX",
+					Buffer.from([0x00, 0x01]),
+					{ binary: true },
+					{ has: () => false, knownAppendLimit: () => false },
+				);
+				const w = writerWithCaps(["LITERAL+"]);
+				Command.writeArgs(cmd, w);
+				expect(wireText(w)).toMatch(/^INBOX ~\{2\}\r\n/);
+			});
+
+			test("upload limit unknown, UTF8=ACCEPT wrapper: the wrapped literal8 is still forced synchronizing", () => {
+				const data = Buffer.from("Subject: café\r\n\r\nbody\r\n", "utf8");
+				const cmd = new AppendCommand(
+					"INBOX",
+					data,
+					{},
+					{ has: (c) => c === "UTF8=ACCEPT", knownAppendLimit: () => false },
+				);
+				const w = writerWithCaps(["UTF8=ACCEPT", "LITERAL+"]);
+				Command.writeArgs(cmd, w);
+				expect(wireText(w)).toBe(
+					`INBOX UTF8 (~{${data.length}}\r\n${data.toString("latin1")})`,
+				);
+			});
 		});
 
 		test("mailbox name goes through the M2.1 codec (non-ASCII -> mUTF-7 without UTF8=ACCEPT)", () => {
@@ -140,7 +253,12 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 		describe("RFC 6855 UTF8(...) data-extension wrapper (RFC6855-4-1/-4-2)", () => {
 			test("wraps the literal in UTF8(...) when UTF8=ACCEPT is enabled and the message has 8-bit octets", () => {
 				const data = Buffer.from("Subject: café\r\n\r\nbody\r\n", "utf8");
-				const cmd = new AppendCommand("INBOX", data, {}, { has: (c) => c === "UTF8=ACCEPT" });
+				const cmd = new AppendCommand(
+					"INBOX",
+					data,
+					{},
+					{ has: (c) => c === "UTF8=ACCEPT", knownAppendLimit: () => true },
+				);
 				const w = writerWithCaps(["UTF8=ACCEPT"]);
 				Command.writeArgs(cmd, w);
 				expect(wireText(w)).toBe(`INBOX UTF8 (~{${data.length}}\r\n${data.toString("latin1")})`);
@@ -148,7 +266,12 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 
 			test("does not wrap a 7-bit-clean message even when UTF8=ACCEPT is enabled", () => {
 				const data = Buffer.from("Subject: hi\r\n\r\nbody\r\n", "ascii");
-				const cmd = new AppendCommand("INBOX", data, {}, { has: (c) => c === "UTF8=ACCEPT" });
+				const cmd = new AppendCommand(
+					"INBOX",
+					data,
+					{},
+					{ has: (c) => c === "UTF8=ACCEPT", knownAppendLimit: () => true },
+				);
 				const w = writerWithCaps(["UTF8=ACCEPT"]);
 				Command.writeArgs(cmd, w);
 				expect(wireText(w)).toBe(`INBOX {${data.length}}\r\n${data.toString("latin1")}`);
@@ -156,7 +279,12 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 
 			test("does not wrap an 8-bit message when UTF8=ACCEPT is not enabled", () => {
 				const data = Buffer.from("Subject: café\r\n\r\nbody\r\n", "utf8");
-				const cmd = new AppendCommand("INBOX", data, {}, { has: () => false });
+				const cmd = new AppendCommand(
+					"INBOX",
+					data,
+					{},
+					{ has: () => false, knownAppendLimit: () => true },
+				);
 				const w = writerWithCaps();
 				Command.writeArgs(cmd, w);
 				expect(wireText(w)).toBe(`INBOX {${data.length}}\r\n${data.toString("latin1")}`);

@@ -28,17 +28,27 @@
  *                  lacks the LIST STATUS return option.
  *                    *** REAL as of M2.9 — same wiring note as 3.1-1 ***
  *   RFC7889-4-2    Client SHOULD avoid non-synchronizing literals when the
- *                  maximum upload size is unknown (self-actualizing).
+ *                  maximum upload size is unknown.
+ *                    *** REAL as of the LITERAL+/LITERAL- capability-probe
+ *                    fix — see that test's own doc comment. `AppendCommand`
+ *                    (src/commands/append.ts) now genuinely implements this
+ *                    SHOULD: `AppendCapabilityProbe.knownAppendLimit()`
+ *                    reports whether a global valued `APPENDLIMIT=<number>`
+ *                    capability is advertised, and `write()` forces the
+ *                    plain synchronizing literal form whenever it isn't —
+ *                    overriding LITERAL+/LITERAL- eagerness regardless of
+ *                    what the server advertised for those. ***
  *
  * OBSERVATION: the STATUS-side entries (3.1-1, 3.2-2) are REAL as of M2.9;
  * the LIST-STATUS batching entry (3.2-1) and the APPEND entries (4-1, 4-2)
  * are now REAL as of M2.7/M2.11 too — driver.list()/append() are both wired.
  * The scripted server pins the exact wire forms from RFC 7889's own worked
- * examples (§3.1, §3.2, §4). NOTE on 4-2: it currently passes, but see that
- * test's own doc comment — the pass currently rides on a separate,
- * pre-existing connection-layer defect (LITERAL+/LITERAL- never actually
- * engage in production) rather than genuine APPENDLIMIT-awareness in
- * `AppendCommand`.
+ * examples (§3.1, §3.2, §4). NOTE on 4-2: it now passes on the merits —
+ * see that test's own doc comment for the history (it used to pass only
+ * because of a separate, now-fixed connection-layer defect that forced
+ * every literal synchronizing regardless of capabilities; fixing that defect
+ * required implementing genuine APPENDLIMIT-awareness in `AppendCommand` to
+ * keep this row passing under rev2's LITERAL- baseline).
  * RFC7889-2-1 is different: capability parsing itself is fully implemented
  * (Session.capabilities is a real CapabilityList populated from the server's
  * CAPABILITY response, and driver.hasCapability(name) does an exact,
@@ -304,7 +314,7 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC7889-4-2 — avoid non-synchronizing literals when the upload limit is
-// unknown (self-actualizing)
+// unknown (REAL — genuine pass on the merits)
 // ═════════════════════════════════════════════════════════════════════════════
 // §4: "A client SHOULD avoid use of non-synchronizing literals [RFC7888]
 // when the maximum upload size supported by the IMAP server is unknown."
@@ -313,25 +323,34 @@ complianceTest(
 // literal length prefix) rather than a LITERAL+/LITERAL- non-synchronizing
 // one, avoiding the wasted-upload scenario this RFC's §1 motivates.
 //
-// M2.11 IMPLEMENTATION NOTE (not a full pass on the merits — flagged for
-// follow-up): `AppendCommand` has no dedicated logic for this SHOULD; it
-// always calls the shared `CommandWriter.literal()`, whose LITERAL+/LITERAL-
-// selection is purely capability-driven (spec §7.2), with no notion of "is
-// the append limit known". This row currently passes because of a SEPARATE,
-// pre-existing defect: `src/connection/execute-command.ts`'s `CommandWriter`
-// capability probe reads `connection.capabilityRegistry.value` (no such
-// property exists on `CapabilityRegistry` — it's `.view`) AND that registry
-// is only ever populated by the STARTTLS path, never by the ordinary
-// CAPABILITY/LOGIN/ENABLE flow `ImapClient` itself tracks — so in practice
-// `CommandWriter` never sees LITERAL+/LITERAL- as advertised at all today,
-// and every literal this library sends ends up synchronizing regardless of
-// what the server offered. That bug (out of scope for M2.11 — it is a
-// connection-layer defect, not an APPEND one, and fixing it touches every
-// command that emits a literal) is why rev2's LITERAL- advertisement here
-// never actually engages the non-sync path this test is pinning against. If
-// that connection-layer bug is fixed independently, this specific
-// assertion will need real APPENDLIMIT-awareness in `AppendCommand` to keep
-// passing under rev2 (LITERAL- alone, no known limit).
+// HISTORY (this row used to pass only by accident): originally,
+// `AppendCommand` had no dedicated logic for this SHOULD — it always called
+// the shared `CommandWriter.literal()`, whose LITERAL+/LITERAL- selection is
+// purely capability-driven (spec §7.2), with no notion of "is the append
+// limit known". The row passed anyway because of a SEPARATE, pre-existing
+// connection-layer defect: `src/connection/execute-command.ts`'s
+// `CommandWriter` capability probe read `connection.capabilityRegistry.value`
+// — `Connection`'s own precursor registry, populated only around STARTTLS,
+// never by the ordinary CAPABILITY/LOGIN/ENABLE flow `ImapClient` tracks on
+// its OWN, separate registry — so `CommandWriter` never saw LITERAL+/
+// LITERAL- as advertised at all, and every literal ended up synchronizing
+// regardless of what the server offered; rev2's LITERAL- advertisement here
+// never actually engaged the non-sync path this test pins against.
+//
+// Once that connection-layer bug was fixed (`Connection.setCapabilityProbe()`
+// / `getCapabilityProbe()`, wired from `ImapClient`'s constructor — see
+// src/connection/connection.ts), rev2's LITERAL- advertisement started
+// genuinely engaging the non-sync path, which would have flipped this row to
+// a violation without a real fix: `AppendCommand.write()`
+// (src/commands/append.ts) now consults
+// `AppendCapabilityProbe.knownAppendLimit()` and forces the plain
+// synchronizing literal form whenever the global valued
+// `APPENDLIMIT=<number>` capability isn't advertised — exactly the scenario
+// scripted below (bare `IMAP4rev1`/`IMAP4rev2 LITERAL-`, no APPENDLIMIT at
+// all) — regardless of what LITERAL+/LITERAL- would otherwise permit. See
+// specs/ext/literal-7888.test.ts's RFC7888-3-2/RFC7888-5-3 test for the
+// mirror-image scenario (a KNOWN upload limit, where LITERAL+ eagerness is
+// NOT overridden).
 complianceTest(
 	{
 		reqs: ["RFC7889-4-2"],

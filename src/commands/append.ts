@@ -10,18 +10,28 @@ import type { CommandWriter } from "./writer";
  * option because a `Buffer` already covers that case:
  *
  *  - `Buffer`: sent **verbatim**, byte-for-byte, through the literal. This
- *    library never inspects, re-encodes, or MIME-transforms a caller-
- *    supplied `Buffer` (not even to escape NUL/CTL bytes -- RFC 3501/9051
- *    §4.3.1's "encode binary data before sending" duty is a MESSAGE-
- *    AUTHORING concern the caller's own MIME layer owns, not something this
- *    IMAP client silently does to bytes it was handed). This is the
- *    deliberate, documented reading of "verbatim": what you pass is what
- *    goes on the wire, inside the literal.
+ *    library never MIME-transforms a caller-supplied `Buffer` -- RFC
+ *    3501/9051 §4.3.1's "encode binary data before sending" duty is a
+ *    MESSAGE-AUTHORING concern the caller's own MIME layer owns, not
+ *    something this IMAP client silently does to bytes it was handed. What
+ *    this constructor DOES do is refuse (not transform) an unencoded-binary
+ *    payload: a NUL byte (0x00) anywhere in the message with `opts.binary`
+ *    not set throws a `RangeError` at construction, per §4.3.1's "a
+ *    conformant client never sends a string containing NUL bytes" reading
+ *    (spec §13 lists content encoding as the caller's job, not something
+ *    this library does FOR the caller -- but never transmitting an
+ *    unencoded NUL is a promise this library can keep without doing any
+ *    encoding itself, by simply refusing to send it). A caller with
+ *    NUL-bearing content has two conformant options: pre-encode it (e.g.
+ *    base64) into a plain `Buffer`/`string`, or pass `{ binary: true }` to
+ *    send it verbatim as an RFC 3516 `literal8` (`~{n}`), which a
+ *    BINARY-capable server is expected to accept unencoded.
  *  - `string`: encoded as **UTF-8** (`Buffer.from(message, "utf8")`) before
- *    being sent exactly like the `Buffer` case above. A caller building a
- *    message from string headers/body gets the natural encoding without
- *    having to wrap every call in `Buffer.from(...)` themselves; a caller
- *    that needs a different transfer encoding (base64, quoted-printable,
+ *    being sent exactly like the `Buffer` case above (same NUL-refusal
+ *    rule applies to the resulting bytes). A caller building a message
+ *    from string headers/body gets the natural encoding without having to
+ *    wrap every call in `Buffer.from(...)` themselves; a caller that needs
+ *    a different transfer encoding (base64, quoted-printable,
  *    Windows-1252, ...) still has the `Buffer` form to hand-produce exactly
  *    the bytes they want.
  *
@@ -76,18 +86,41 @@ export interface AppendResult {
 }
 
 /**
- * The minimal capability read surface `AppendCommand` needs -- structurally
- * satisfied by `CapabilityView` (src/client/capabilities.ts), mirroring
- * `ListCapabilityProbe`/`StatusCapabilityProbe`'s own pattern so this module
- * has no dependency on the client layer. Used for exactly one wire-form
- * decision (see `write()`): whether the message literal must be wrapped in
- * the RFC 6855 `"UTF8 (" literal8 ")"` data extension.
+ * The minimal capability read surface `AppendCommand` needs -- NOT
+ * structurally satisfied by bare `CapabilityView` (src/client/capabilities.ts)
+ * alone (see `knownAppendLimit()` below); `ImapClient` wires a small adapter
+ * over its own registry rather than passing `capabilityRegistry.view`
+ * directly. Mirrors `ListCapabilityProbe`/`StatusCapabilityProbe`'s own
+ * pattern so this module has no dependency on the client layer. Used for two
+ * wire-form decisions (see `write()`):
+ *  - whether the message literal must be wrapped in the RFC 6855
+ *    `"UTF8 (" literal8 ")"` data extension (`has("UTF8=ACCEPT")`);
+ *  - whether a non-synchronizing LITERAL+/LITERAL- literal is avoided
+ *    per RFC7889-4-2 (`knownAppendLimit()`).
  */
 export interface AppendCapabilityProbe {
 	has(cap: string): boolean;
+	/**
+	 * RFC 7889 §4 (RFC7889-4-2): "A client SHOULD avoid use of
+	 * non-synchronizing literals [RFC7888] when the maximum upload size
+	 * supported by the IMAP server is unknown." `true` once the server's
+	 * upload ceiling is actually known to the caller -- concretely, the
+	 * catalog reads this as EITHER the global valued `APPENDLIMIT=<number>`
+	 * capability form, OR a mailbox-specific limit the caller has separately
+	 * discovered via STATUS/LIST (this class has no visibility into the
+	 * latter -- it only ever sees the capability-level signal). `false` (the
+	 * conservative default -- see `NO_CAPS`) covers both "no APPENDLIMIT
+	 * capability at all" and "bare APPENDLIMIT" (per-mailbox, requires a
+	 * STATUS/LIST round trip this class doesn't perform): in both cases the
+	 * ceiling is unknown from where this class sits, so `write()` avoids the
+	 * non-synchronizing form regardless of what LITERAL+/LITERAL- would
+	 * otherwise permit -- this SHOULD outranks the ordinary capability-driven
+	 * literal-form eagerness (spec §7.2) precisely when the limit is unknown.
+	 */
+	knownAppendLimit(): boolean;
 }
 
-const NO_CAPS: AppendCapabilityProbe = { has: () => false };
+const NO_CAPS: AppendCapabilityProbe = { has: () => false, knownAppendLimit: () => false };
 
 /** `true` when `data` contains at least one octet outside 7-bit US-ASCII. */
 function hasNonAsciiOctet(data: Buffer): boolean {
@@ -148,6 +181,19 @@ export class AppendCommand extends Command<AppendResult> {
 		} else {
 			throw new RangeError("APPEND: message must be a Buffer or a string");
 		}
+		// RFC 3501/9051 §4.3.1: binary (NUL-bearing) data MUST be encoded into a
+		// textual form before transmission; this client never transmits a
+		// string/literal containing an unencoded NUL byte. Refuse (do not
+		// silently transform) at construction -- `opts.binary` is the caller's
+		// explicit opt-out, requesting the RFC 3516 literal8 (`~{n}`) wire form
+		// that legitimately carries NUL octets to a BINARY-capable server.
+		if (this.opts.binary !== true && this.data.includes(0x00)) {
+			throw new RangeError(
+				"APPEND: message contains a NUL byte (0x00) -- binary content must be " +
+					"caller-encoded (e.g. base64) or sent as a literal8 via { binary: true } " +
+					"(RFC 3516), never transmitted unencoded (RFC 3501/9051 §4.3.1)",
+			);
+		}
 	}
 
 	protected write(w: CommandWriter): void {
@@ -158,6 +204,18 @@ export class AppendCommand extends Command<AppendResult> {
 		if (this.opts.internalDate) {
 			w.dateTime(this.opts.internalDate);
 		}
+
+		// RFC7889-4-2: avoid the non-synchronizing LITERAL+/LITERAL- form for
+		// the message literal when the server's upload-size ceiling is
+		// unknown -- this SHOULD outranks `CommandWriter`'s ordinary
+		// capability-driven eagerness (spec §7.2), which would otherwise use
+		// a non-sync literal purely because LITERAL+/LITERAL- was advertised,
+		// with no regard for whether an oversized message might get sent in
+		// full before the server can reject it with TOOBIG (RFC 7889 §1's
+		// motivating waste). Applies uniformly to both wire forms below (the
+		// plain literal and the UTF8(...)-wrapped literal8) since both carry
+		// the same message bytes and the same waste risk.
+		const forceSync = !this.caps.knownAppendLimit();
 
 		// RFC 6855 §4 (RFC6855-4-1): a message carrying UTF-8 header octets
 		// MUST be sent through the "UTF8 (" literal8 ")" data extension once
@@ -170,12 +228,12 @@ export class AppendCommand extends Command<AppendResult> {
 		if (this.caps.has("UTF8=ACCEPT") && hasNonAsciiOctet(this.data)) {
 			w.atom("UTF8");
 			w.list((inner) => {
-				inner.literal(this.data, { binary: true });
+				inner.literal(this.data, { binary: true, forceSync });
 			});
 			return;
 		}
 
-		w.literal(this.data, { binary: this.opts.binary === true });
+		w.literal(this.data, { binary: this.opts.binary === true, forceSync });
 	}
 
 	protected accept(c: ResponseCollector): AppendResult {

@@ -25,8 +25,14 @@ export async function executeCommand<T>(
 ): Promise<T> {
 	Command.assignTag(command, tag);
 
+	// LITERAL+/LITERAL- (RFC 7888) wire-form decision: consult whichever
+	// capability probe the connection currently has wired -- an injected
+	// Layer-2 probe (`ImapClient` wires its own live `CapabilityView` in its
+	// constructor; see `Connection.setCapabilityProbe()`'s doc comment for
+	// why that owner, not this connection's own precursor registry, is the
+	// source of truth) or the conservative fallback when none was injected.
 	const writer = new CommandWriter({
-		has: (cap) => connection.capabilityRegistry.value?.has(cap) ?? false,
+		has: connection.getCapabilityProbe(),
 	});
 	// A validation throw here happens before any byte is written — writer
 	// methods are atomic-per-call (spec §7.2) — so it's safe to propagate

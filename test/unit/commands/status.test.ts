@@ -36,6 +36,11 @@ function makeFakeConnection() {
 	});
 	const connection = {
 		capabilityRegistry: { value: null as { has(cap: string): boolean } | null },
+		// executeCommand() now resolves its LITERAL+/LITERAL- probe via
+		// getCapabilityProbe() rather than reading capabilityRegistry.value
+		// directly; these tests never advertise LITERAL+/-, so always-false
+		// (forcing a synchronizing literal) reproduces the prior behavior.
+		getCapabilityProbe: () => (_cap: string) => false,
 		router,
 		writeBytes: (buf: Buffer) => {
 			written.push(buf);

@@ -87,6 +87,59 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	public readonly capabilityRegistry = new CapabilityRegistry();
 
 	/**
+	 * Injectable LITERAL+/LITERAL- (RFC 7888) capability probe, consulted by
+	 * `executeCommand()` when it builds each command's `CommandWriter` (spec
+	 * §7.2/§6.2's literal-form decision). `null` until a Layer-2 owner (e.g.
+	 * `ImapClient`, in its constructor) calls `setCapabilityProbe()`.
+	 *
+	 * WHY THIS EXISTS: `capabilityRegistry` immediately above is this
+	 * connection's OWN precursor registry, populated ONLY around STARTTLS
+	 * (see its doc comment) — every other capability source (the initial
+	 * greeting's `[CAPABILITY ...]` code, a plain CAPABILITY command, a
+	 * tagged-OK response code, ENABLE) is ingested exclusively into
+	 * `ImapClient`'s separate, live `CapabilityView` registry
+	 * (src/client/capabilities.ts). Reading only `capabilityRegistry` here
+	 * would make the LITERAL+/LITERAL- probe blind to nearly every real
+	 * capability announcement, forcing every literal to the synchronizing
+	 * form regardless of what the server actually advertised. Layer 2 fixes
+	 * that by injecting a probe backed by its own up-to-date registry.
+	 */
+	private capabilityProbe: ((cap: string) => boolean) | null = null;
+
+	/**
+	 * Wires an external capability probe (typically `(cap) =>
+	 * this.capabilityRegistry.view.has(cap)` from `ImapClient`'s own live
+	 * registry) for `executeCommand()`'s LITERAL+/LITERAL- wire-form
+	 * decision. Optional: a Layer-1-only caller that never calls this keeps
+	 * the conservative fallback below (`getCapabilityProbe()`), which never
+	 * reports a capability as present unless this connection has genuinely
+	 * observed it -- so every literal stays synchronizing, which is always
+	 * protocol-correct even when suboptimal.
+	 */
+	public setCapabilityProbe(probe: (cap: string) => boolean): void {
+		this.capabilityProbe = probe;
+	}
+
+	/**
+	 * Resolves the effective capability probe for `executeCommand()`: the
+	 * injected probe if `setCapabilityProbe()` was called, else a fallback
+	 * onto this connection's OWN precursor `capabilityRegistry` (accurate
+	 * immediately after a STARTTLS upgrade, `null`/empty otherwise), else
+	 * always-false. The fallback is deliberately still consulted rather than
+	 * skipped straight to always-false: it costs nothing (same registry this
+	 * class already maintains for its own STARTTLS bookkeeping) and can only
+	 * ever make a Layer-1-only caller's literals MORE accurate, never less
+	 * conservative -- `capabilityRegistry` is only ever populated from a real
+	 * CAPABILITY response, so it can't manufacture a false "supported".
+	 */
+	public getCapabilityProbe(): (cap: string) => boolean {
+		if (this.capabilityProbe) {
+			return this.capabilityProbe;
+		}
+		return (cap: string) => this.capabilityRegistry.value?.has(cap) ?? false;
+	}
+
+	/**
 	 * Internal, untyped fanout of EVERY untagged status response — including
 	 * the greeting — fired BEFORE `handleStatusResponse()`'s consumer-facing
 	 * ALERT suppression gate (CRITICAL-3). `awaitGreeting()` listens here

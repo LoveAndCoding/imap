@@ -35,12 +35,18 @@
  * emitted with neither capability advertised (3-1), a '{n+}' over 4096 on a
  * LITERAL- connection (5-1/5-2), or a non-canonical literal sigil (5-3).
  *
- * STATUS as of M2.11: 3-1/5-1/5-2 pass genuinely (they assert the ABSENCE of
- * a non-sync marker, which holds regardless of capability advertisement).
- * 3-2/5-3 (LITERAL+ eagerness) still fail — see that test's own doc comment
- * for the pre-existing, out-of-scope connection-layer defect responsible
- * (`src/connection/execute-command.ts`'s capability probe never actually
- * sees advertised capabilities in production).
+ * STATUS: 3-1/5-1/5-2 pass genuinely (they assert the ABSENCE of a non-sync
+ * marker, which holds regardless of capability advertisement). 3-2/5-3
+ * (LITERAL+ eagerness) NOW ALSO pass genuinely: the pre-existing
+ * connection-layer defect that used to force every literal synchronizing
+ * regardless of advertised capabilities — `executeCommand()`
+ * (src/connection/execute-command.ts) read `connection.capabilityRegistry`,
+ * a registry `Connection` only ever populates around STARTTLS, instead of
+ * `ImapClient`'s own live, fully-populated registry — has been fixed:
+ * `Connection.setCapabilityProbe()` lets an owner inject an external probe,
+ * and `ImapClient`'s constructor wires one backed by
+ * `capabilityRegistry.view`. See src/connection/connection.ts's doc comment
+ * on `setCapabilityProbe()`/`getCapabilityProbe()` for the full design.
  */
 import { expect } from "vitest";
 
@@ -117,36 +123,41 @@ complianceTest(
 // for a continuation it was never sent (3-2). The marker is the canonical
 // '{n+}' sigil, unchanged (5-3).
 //
-// M2.11 FINDING (still fails — pre-existing connection-layer defect, not an
-// APPEND bug): `AppendCommand` correctly delegates literal-form selection to
-// `CommandWriter.literal()` (spec §7.2's LITERAL+-first rule), but the
-// PRODUCTION capability probe wired up in
-// `src/connection/execute-command.ts` reads
-// `connection.capabilityRegistry.value` — `CapabilityRegistry` has no
-// `value` property (only `.view`) — AND `connection.capabilityRegistry` is
-// only ever populated around STARTTLS, never by the ordinary CAPABILITY/
-// LOGIN/ENABLE flow `ImapClient` tracks on its OWN, separate registry. Net
-// effect: `CommandWriter.has(...)` always returns `false` in real usage, so
-// LITERAL+ is never actually honored and every literal this library emits
-// is synchronizing — this test's non-sync assertion is the first place in
-// the compliance suite that observably depends on the broken path, since
-// APPEND is the first command whose tests pin the literal announcement's
-// exact wire form. Fixing it is a connection-layer change out of this
-// milestone's scope (affects every literal-emitting command, not just
-// APPEND) — tracked as a carry-forward, not silently left unexplained.
+// FIXED (was `expectFailure: "violation"` — see the M2.11 finding this test
+// used to carry, now resolved): the PRODUCTION capability probe wired up in
+// `src/connection/execute-command.ts` used to read
+// `connection.capabilityRegistry.value` — `Connection`'s OWN precursor
+// registry, populated only around STARTTLS — instead of `ImapClient`'s own
+// live, fully-populated registry, so `CommandWriter.has(...)` always
+// answered `false` in real usage and every literal was forced synchronizing
+// regardless of what the server advertised. `Connection.setCapabilityProbe()`
+// (src/connection/connection.ts) now lets `ImapClient`'s constructor inject a
+// probe backed by its own `capabilityRegistry.view`, and `executeCommand()`
+// consults it via `connection.getCapabilityProbe()`. LITERAL+ genuinely
+// engages now.
+//
+// The server here ALSO advertises a known global upload limit
+// (`APPENDLIMIT=<n>`): RFC7889-4-2 (a separate SHOULD, implemented in
+// `AppendCommand`) instructs the client to avoid the non-synchronizing form
+// specifically when the upload ceiling is UNKNOWN — advertising a known
+// limit here isolates this test's LITERAL+-eagerness assertion from that
+// unrelated (and, on its own terms, equally correct) override; see
+// specs/ext/appendlimit-7889.test.ts's RFC7889-4-2 test for the
+// unknown-limit scenario, which deliberately exercises the opposite case.
 complianceTest(
 	{
 		reqs: ["RFC7888-3-2", "RFC7888-5-3"],
 		profiles: ["rev1", "rev2"],
 		title: "LITERAL+: a '{n+}' literal completes without any continuation round trip and keeps the '+' sigil",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "LITERAL+"], { login: true }),
+				...sessionPrelude(["IMAP4rev1", "LITERAL+", "APPENDLIMIT=1000000"], {
+					login: true,
+				}),
 				// The server offers NO '+ ' continuation for a non-sync literal; if
 				// the client wrongly blocked waiting for one, the step would time out.
 				expectLine(command("APPEND")),

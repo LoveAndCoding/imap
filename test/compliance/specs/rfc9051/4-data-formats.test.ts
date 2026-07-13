@@ -472,46 +472,106 @@ defineAcceptanceTable({
 // are not permitted (the literal8 carve-out applies to server FETCH
 // responses, not client APPEND under the rev2 base).
 //
-// M2.11 SCOPE NOTE (still fails, now for a different/documented reason):
-// `AppendCommand`'s `AppendSource` is explicitly Buffer-verbatim (see its
-// doc comment in src/commands/append.ts) — content re-encoding is a
-// message-AUTHORING concern the caller's own layer owns, not something this
-// IMAP client does to bytes it was handed. Deliberate, documented, carried-
-// forward gap — expect this row to remain a "violation" (the NUL byte does
-// reach the wire) rather than flip.
+// RESCRIPTED (was a mis-scripted "violation"): the earlier version armed a
+// completed APPEND exchange for a raw NUL-bearing Buffer and asserted the
+// (never-emitted) literal excluded NUL bytes — demanding a *completed*
+// unencoded-binary APPEND, which no §13-conformant client (message-content
+// encoding is the caller's MIME-layer concern, spec §13; see
+// src/commands/append.ts's `AppendSource` doc comment) can ever produce.
+// Same mis-scripted-test category as the documented RFC3501-11.1-8/
+// RFC9051-7.1.4-2 precedents. The catalog text's own operationalization is
+// "a conformant client never sends a string containing NUL bytes" — refusal
+// satisfies that exactly as well as transformation would. `AppendCommand`
+// now enforces this at construction (src/commands/append.ts): a NUL byte in
+// the message with `binary` unset throws a `RangeError` before any bytes
+// reach the wire. The negative leg below witnesses that refusal directly:
+// driver.append() with a NUL-bearing body and no `binary` option REJECTS,
+// and the transcript (armed with only a prelude+login, no APPEND
+// expectation) carries zero APPEND bytes.
+//
+// Positive carve-out (RFC9051-4.3.1-4's literal8 exception, client-APPEND
+// side): `binary: true` against a BINARY-advertising rev2 server transmits
+// the NUL-bearing payload as a literal8 (`~{n}`), never an ordinary literal.
+// specs/ext/binary-3516.test.ts's RFC3516-4.4-1 test covers this wire form
+// but is scoped `profiles: ["rev1"]` only (that file's own header: "RFC 9051
+// folded the <literal8> transmission mechanism into rev2 core" — i.e. rev2
+// coverage of the literal8-transmission carve-out belongs here, in core, not
+// duplicated in the RFC 3516 extension file). This second leg is that rev2
+// coverage.
 complianceTest(
 	{
 		reqs: ["RFC9051-4.3.1-3", "RFC9051-4.3.1-4"],
 		profiles: ["rev2"],
-		title: "binary data (NUL-containing strings) is encoded before transmission",
-		expectFailure: "violation",
+		title: "binary data (NUL-containing strings) is refused unencoded; literal8 is the carve-out",
 		timeout: 5000,
 	},
 	async () => {
-		const server = await f.startServer();
-		server.arm([
-			[
-				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
-				expectLine(command("APPEND")),
-				reply("OK APPEND completed"),
-			],
-		]);
-		const driver = await f.connectPlain(server);
-		await driver.login("user@example.com", "s3cret");
 		// Buffer with a NUL byte — triggers the binary-encoding obligation.
 		const binaryBody = Buffer.from([
 			0x53, 0x75, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x3a,
 			0x00, // NUL byte
 			0x0d, 0x0a, 0x0d, 0x0a,
 		]);
-		await driver.append("INBOX", binaryBody);
-		await server.assertCompleted();
-		// When implemented: no transmitted literal payload may contain NUL —
-		// binary content must appear encoded (e.g., base64).
-		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
-		expect(appendLine).toBeDefined();
-		for (const lit of appendLine!.literals) {
-			expect(lit.includes(0x00), "literal payload must not contain NUL").toBe(false);
+
+		// Leg 1 (negative): no `binary` opt-out -> the client must refuse to
+		// transmit, and zero APPEND bytes must reach the wire.
+		{
+			const server = await f.startServer();
+			server.arm([
+				[
+					...sessionPrelude(undefined, { login: true, profile: "rev2" }),
+					// No APPEND is scripted -- a conformant client must never emit
+					// one for a NUL-bearing body without an explicit `binary` opt-out.
+				],
+			]);
+			const driver = await f.connectPlain(server);
+			await driver.login("user@example.com", "s3cret");
+			let err: unknown;
+			try {
+				await driver.append("INBOX", binaryBody);
+			} catch (e) {
+				err = e;
+			}
+			expect(err, "a NUL-bearing APPEND without `binary` must reject").toBeInstanceOf(
+				RangeError,
+			);
+			await server.assertCompleted();
+			expect(server.commandLines.some((l) => l.verb === "APPEND")).toBe(false);
+			for (const line of server.commandLines) {
+				for (const lit of line.literals) {
+					expect(
+						lit.includes(0x00),
+						"no transmitted literal may carry an unencoded NUL",
+					).toBe(false);
+				}
+			}
+		}
+
+		// Leg 2 (positive carve-out): `binary: true` against a BINARY-advertising
+		// server transmits a literal8 (`~{n}`), the RFC 3516/9051 §4.3.1
+		// unencoded-binary exception.
+		{
+			const server = await f.startServer();
+			server.arm([
+				[
+					...sessionPrelude(["IMAP4rev2", "LITERAL-", "BINARY"], {
+						login: true,
+						profile: "rev2",
+					}),
+					expectLine(command("APPEND", { args: /^"?Binary-Box"? ~\{\d+\}(\+)?$/i })),
+					reply("OK APPEND completed"),
+				],
+			]);
+			const driver = await f.connectPlain(server);
+			await driver.login("user@example.com", "s3cret");
+			await driver.append("Binary-Box", binaryBody, { binary: true });
+			await server.assertCompleted();
+			const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
+			expect(appendLine, "APPEND must have been emitted").toBeDefined();
+			expect(
+				appendLine!.binary.some((b) => b === true),
+				"the payload used a ~{n} literal8",
+			).toBe(true);
 		}
 	},
 );

@@ -357,9 +357,16 @@ export class CommandWriter {
 
 	/** Appends a literal (§7.2/§6.2): the announcement, then — for a
 	 *  synchronizing literal — a segment boundary, then the literal's own
-	 *  data bytes (which start the next segment). */
-	private emitLiteral(data: Buffer, binary: boolean): void {
-		const { sync, suffix } = pickLiteralForm(data.length, this.has);
+	 *  data bytes (which start the next segment). `forceSync` bypasses the
+	 *  capability-driven `pickLiteralForm()` selection entirely and always
+	 *  emits the plain synchronizing form -- the caller's override for a
+	 *  command-level SHOULD that outranks ordinary LITERAL+/LITERAL- eagerness
+	 *  (e.g. RFC7889-4-2: avoid non-synchronizing literals when the APPEND
+	 *  upload limit is unknown, even though the server advertised LITERAL+/-). */
+	private emitLiteral(data: Buffer, binary: boolean, forceSync = false): void {
+		const { sync, suffix } = forceSync
+			? { sync: true, suffix: "" as const }
+			: pickLiteralForm(data.length, this.has);
 		const prefix = binary ? "~" : "";
 		const announcement = Buffer.from(
 			`${prefix}{${data.length}${suffix}}\r\n`,
@@ -504,14 +511,17 @@ export class CommandWriter {
 
 	/** Literal (spec §7.2/§6.2). `opts.binary` emits the literal8 `~{N}`
 	 *  form. Form (synchronizing vs not) is chosen from the capability probe
-	 *  passed to the constructor; a synchronizing literal ends the current
+	 *  passed to the constructor, UNLESS `opts.forceSync` is set, which always
+	 *  emits the plain synchronizing form regardless of what the probe would
+	 *  otherwise pick (see `emitLiteral()`'s doc comment for why a caller
+	 *  would want that override). A synchronizing literal ends the current
 	 *  wire segment (see `segments()`). */
-	literal(data: Buffer, opts?: { binary?: boolean }): this {
+	literal(data: Buffer, opts?: { binary?: boolean; forceSync?: boolean }): this {
 		return this.atomic(() => {
 			if (!Buffer.isBuffer(data)) {
 				throw new RangeError("literal: expected a Buffer");
 			}
-			this.emitLiteral(data, opts?.binary === true);
+			this.emitLiteral(data, opts?.binary === true, opts?.forceSync === true);
 			return this;
 		});
 	}

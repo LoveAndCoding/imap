@@ -176,6 +176,15 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		});
 
 		this.connection = new Connection(this.toConnectionConfig());
+		// LITERAL+/LITERAL- (RFC 7888): wire executeCommand()'s capability probe
+		// to THIS client's own live registry (`capabilityRegistry.view`) rather
+		// than leaving `Connection` to fall back on its own STARTTLS-only
+		// precursor registry -- `view` is fed by every capability source this
+		// client observes (greeting, CAPABILITY, tagged-OK response codes,
+		// post-STARTTLS re-fetch), so it's the only registry that's ever
+		// actually up to date. See `Connection.setCapabilityProbe()`'s doc
+		// comment for the full rationale.
+		this.connection.setCapabilityProbe((cap) => this.capabilityRegistry.view.has(cap));
 		this.wireConnectionEvents();
 	}
 
@@ -521,10 +530,15 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * message argument (`AppendSource`) never does — see that type's doc
 	 * comment for the Buffer-verbatim/string-UTF-8 semantics.
 	 *
-	 * `AppendCommand` is handed the live `CapabilityView` for exactly one
-	 * wire-form decision: whether a message carrying 8-bit header/body
-	 * octets must be wrapped in the RFC 6855 `UTF8(...)` data extension
-	 * (RFC6855-4-1) — the same probe-passing convention `list()` already
+	 * `AppendCommand` is handed a small adapter over the live `CapabilityView`
+	 * (not the view directly -- `AppendCapabilityProbe` needs a second method
+	 * `CapabilityView` doesn't have) for two wire-form decisions: whether a
+	 * message carrying 8-bit header/body octets must be wrapped in the RFC
+	 * 6855 `UTF8(...)` data extension (RFC6855-4-1), and whether the server's
+	 * upload-size ceiling is known (RFC7889-4-2) -- `knownAppendLimit()`
+	 * reports `true` only for the global valued `APPENDLIMIT=<number>`
+	 * capability form, per that method's own doc comment on
+	 * `AppendCapabilityProbe`. Same probe-passing convention `list()` already
 	 * uses for its own capability-gated wire-form choices.
 	 */
 	public async append(
@@ -532,8 +546,13 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		message: AppendSource,
 		opts?: AppendOptions,
 	): Promise<AppendResult> {
+		const view = this.capabilityRegistry.view;
 		return this.run(
-			new AppendCommand(mailbox, message, opts, this.capabilityRegistry.view),
+			new AppendCommand(mailbox, message, opts, {
+				has: (cap) => view.has(cap),
+				knownAppendLimit: () =>
+					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
+			}),
 		);
 	}
 	//    M2.9: STATUS; M2.10: NAMESPACE) --------------------------------------
