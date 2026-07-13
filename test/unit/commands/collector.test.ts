@@ -463,4 +463,57 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			args: null,
 		});
 	});
+
+	// M4.14 (FILTERS, RFC 5466 §3.1/§4): UNDEFINED-FILTER rides a tagged NO
+	// refusing a SEARCH FILTER <name> that names a nonexistent/inaccessible
+	// stored filter. Its argument is a BARE (unparenthesized) atom -- the
+	// same "AtomTextCode" shape as REFERRAL/NOUPDATE/MAXCONVERTMESSAGES --
+	// which `parser/structure/text.code.ts`'s bare-vs-parenthesized split
+	// already preserves; this dedicated variant renders it as a typed
+	// `filterName` field instead of the generic `{name, args}` fallback.
+	test("UNDEFINED-FILTER carries the offending filter-name, verbatim", () => {
+		const tagged = parseLine(
+			`A1 NO [UNDEFINED-FILTER on-vacation] Filter not found${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "UNDEFINED-FILTER",
+			filterName: "on-vacation",
+		});
+	});
+
+	// filter-name (RFC 5466 §4) permits digits/hyphens/dots -- exercise an
+	// edge-case name alongside the plain one above.
+	test("UNDEFINED-FILTER preserves a filter-name with digits/hyphens/dots", () => {
+		const tagged = parseLine(
+			`A1 NO [UNDEFINED-FILTER Q1-2024.important] Filter not found${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "UNDEFINED-FILTER",
+			filterName: "Q1-2024.important",
+		});
+	});
+
+	// Resp-code keywords are case-insensitive (spec §11.1); the parser
+	// dispatches on the canonical uppercase spelling regardless of how the
+	// server actually cased the wire keyword.
+	test("UNDEFINED-FILTER dispatches case-insensitively on the resp-code keyword", () => {
+		const tagged = parseLine(
+			`A1 NO [undefined-filter on-vacation] Filter not found${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "UNDEFINED-FILTER",
+			filterName: "on-vacation",
+		});
+	});
+
+	// I-6 tolerance: a non-conformant server that omits the mandated
+	// filter-name argument must still surface the code by name rather than
+	// throwing -- `filterName` renders `null`, never an error.
+	test("UNDEFINED-FILTER tolerates a missing filter-name argument (I-6)", () => {
+		const tagged = parseLine(`A1 NO [UNDEFINED-FILTER] Filter not found${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "UNDEFINED-FILTER",
+			filterName: null,
+		});
+	});
 });

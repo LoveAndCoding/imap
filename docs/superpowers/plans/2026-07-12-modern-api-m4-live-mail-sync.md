@@ -134,7 +134,7 @@ M3 will actually produce.
 | M4.11 FUZZY | IN FLIGHT (with M4.10) |
 | M4.12 INPROGRESS | **DONE BY M3/earlier** — RFC 9585 rows all pass/untestable; validated at kickoff |
 | M4.13 NOTIFY | pending |
-| M4.14 FILTERS | pending (scope decision at dispatch) |
+| M4.14 FILTERS | **DONE** — option (b) taken (`docs/compliance-adjudications.md`): `SearchCriteria.filter` deferred to M5 with METADATA; typed `UNDEFINED-FILTER` variant added (`response-codes.ts`/`collector.ts`). RFC 5466's own scoped bug (registry-coverage.ts's note) was already resolved by an earlier, unrelated `AtomTextCode` fix predating this milestone -- verified not a live `violation`-kind row before or after. 4 rows × 2 profiles (RFC5466-3.1-1/-3.2-1/-3.2-2/-4-1) carry forward to M5 as `unimplemented`, unchanged. |
 | M4.15 milestone close | pending |
 
 Kickoff validation (per the doc's own "Status check"): M3 hard

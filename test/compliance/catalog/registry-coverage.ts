@@ -262,7 +262,14 @@ export const registryCoverage: RegistryEntry[] = [
 		capability: "FILTERS",
 		status: "cataloged",
 		source: "RFC5466",
-		note: "FILTER search key + METADATA-stored definitions; [UNDEFINED-FILTER] kind accepted but its bare argument is dropped (measured violation).",
+		note:
+			"FILTER search key + METADATA-stored definitions; [UNDEFINED-FILTER] kind accepted and its " +
+			"bare filter-name argument is preserved (AtomTextCode's bare-vs-parenthesized split, fixed " +
+			"pre-M4.14, already covers this shape) -- M4.14 additionally gives it a dedicated typed " +
+			"TypedResponseCode variant (response-codes.ts/collector.ts) instead of the generic {name, " +
+			"args} fallback. SearchCriteria.filter and filter creation/management (RFC 5464 SETMETADATA " +
+			"under /private|/shared/filters/*) are deferred to M5 alongside the METADATA facet -- " +
+			"option (b), docs/compliance-adjudications.md.",
 	},
 	{
 		capability: "WITHIN",

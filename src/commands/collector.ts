@@ -161,6 +161,17 @@ export function toTypedResponseCode(
 					value: raw !== undefined && /^\d+$/.test(raw) ? BigInt(raw) : null,
 				};
 			}
+			case "UNDEFINED-FILTER": {
+				// RFC 5466 §3.1/§4 (FILTERS), M4.14: `"UNDEFINED-FILTER" SP
+				// filter-name` -- a bare (unparenthesized) atom naming the
+				// nonexistent/unaccessible FILTER the SEARCH referenced.
+				// `AtomTextCode`'s bare-vs-parenthesized split already
+				// preserves this in `contents[0]`; a missing argument from a
+				// non-conformant server surfaces as `null` rather than an
+				// error (I-6).
+				const raw = code.contents?.[0];
+				return { name: "UNDEFINED-FILTER", filterName: raw ?? null };
+			}
 			default:
 				return {
 					name,

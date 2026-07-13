@@ -253,6 +253,81 @@ rows) re-decides whether `FetchModifiers` gains a `partial` field.
 
 ---
 
+## RFC5466 (FILTERS) — `SearchCriteria.filter` deferred to M5 alongside METADATA (adjudicated at M4.14, option (b))
+
+**Requirement:** RFC 5466 defines no commands of its own — filters are
+entirely RFC 5464 SETMETADATA/GETMETADATA machinery under the reserved
+`/private/filters/...`/`/shared/filters/...` server-entry hierarchies, plus
+one FILTER search-key extension point (`search-key =/ "FILTER" SP
+filter-name`, §3.1/§4) that references a filter stored that way. `SearchCriteria`
+(spec §5.3) has no `filter` key, and the spec defines no facet/method
+anywhere for creating or managing named filters — a genuine spec gap, not
+an oversight.
+
+**Decision (option (b) of the M4.14 plan's two named options):** Leave
+`SearchCriteria` untouched this milestone. Fix only the one concrete,
+scoped bug RFC 5466 actually owns today — the `[UNDEFINED-FILTER]`
+resp-code's argument — and defer the `filter` search key, and all of
+filter creation/management, to M5 alongside the METADATA facet
+(`SETMETADATA`/`GETMETADATA` public API surface) that a `FILTER`-emitting
+client would also need. Rejected option (a) — adding a minimal
+`filter?: string` key to `SearchCriteria` now — because it would ship a
+search key whose referent nothing in this API can populate until M5's
+METADATA facet exists; M5 already owns that facet, so the natural pairing
+is to land both together rather than ship a search key with no way to
+create what it searches for.
+
+**What was actually fixed at M4.14:** `[UNDEFINED-FILTER <filter_name>]`
+(§3.1/§4) now has a dedicated typed `TypedResponseCode` variant —
+`{ name: "UNDEFINED-FILTER", filterName: string | null }`
+(`src/protocol/response-codes.ts`, `toTypedResponseCode()` in
+`src/commands/collector.ts`) — instead of falling through to the generic
+`{ name, args }` fallback. Investigation before implementing found the
+underlying data loss this fix targets (`registry-coverage.ts`'s note,
+"`[UNDEFINED-FILTER]` kind accepted but its bare argument is dropped")
+had ALREADY been resolved as a side effect of an earlier, unrelated parser
+fix to `AtomTextCode`'s bare-vs-parenthesized argument split (predates
+this milestone's dispatch; `test/unit/parser/tolerance.test.ts` already
+pinned the UNDEFINED-FILTER case at the raw-parser layer, and
+`test/compliance/specs/ext/filters-5466.test.ts`'s own
+"the UNDEFINED-FILTER resp-code exposes the offending filter-name
+argument" test was already passing, unmarked, at the M4.14 baseline — not
+a `violation`-kind row in `compliance.json`). The registry-coverage.ts note
+and this spec file's stale "PROBED: argument dropped" commentary are
+updated to match. The dedicated typed variant added here is therefore an
+API-ergonomics upgrade (structured `filterName` field vs. parsing the
+generic `args` string) rather than a data-loss fix, but is exactly the
+scoped deliverable the M4.14 plan named regardless of that finding.
+
+**M5 carry-forward (`test/compliance/specs/ext/filters-5466.test.ts`,
+`expectFailure: "unimplemented"`, four rows × two profiles):**
+- `RFC5466-3.1-1` — `SEARCH FILTER <filter_name>` command-emission wire
+  form (needs `SearchCriteria.filter`).
+- `RFC5466-3.2-1` — stored filter search-key values MUST be UTF-8-encoded
+  octets on the wire (needs `setmetadata()`, M5's METADATA facet).
+- `RFC5466-3.2-2` — filter definition via `SETMETADATA "" (/private/
+  filters/values/<name> <value>)` (needs `setmetadata()`).
+- `RFC5466-4-1` — filter-name grammar conformance at both emission sites
+  (needs both `SearchCriteria.filter` and `setmetadata()`).
+
+None of these four blocks M4.14/M4.15 exit: RFC 5466's exit bar is the
+milestone's 85% threshold, and the one row this milestone's plan scoped as
+"a concrete bug to fix regardless of the larger scope question"
+(`RFC5466-3.1-2`'s name-exposure leg) is a pass, not a violation.
+
+**Rationale:** Same as RFC9394-3.3-1's above — a self-contained addition
+(here, threading `filter` through the SEARCH criteria compiler AND adding
+the METADATA-based create/manage surface) is better scoped to the
+milestone that already owns the machinery it depends on than folded in
+piecemeal. Recorded per the M4.14 plan's explicit instruction: "record the
+choice at the M4.15 phase-boundary review."
+
+**Revisit:** M5's METADATA facet task re-decides whether `SearchCriteria`
+gains a `filter` key alongside `setmetadata()`/`getmetadata()` landing for
+real.
+
+---
+
 ## RFC7162-3.1.3-5 / RFC7162-3.1.3-6 — deviate (permanent, SHOULD-level, adjudicated at M4.5)
 
 **Requirement:** After a conditional STORE fails with `MODIFIED`, the

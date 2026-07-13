@@ -28,7 +28,13 @@
  * 3501/9051 §7.1's "ignore unrecognized response codes"), and both are
  * argument-less on the wire -- the open fallback already renders them
  * correctly, and a dedicated variant would carry no behavior a caller could
- * distinguish from `{ name, args: null }`. Everything else
+ * distinguish from `{ name, args: null }`. M4.14 (FILTERS, RFC 5466) adds
+ * UNDEFINED-FILTER -- the parser's `AtomTextCode` already preserves this
+ * BARE resp-code argument (its bare-vs-parenthesized split, `parser/
+ * structure/text.code.ts`, predates this milestone), so this variant is a
+ * dedicated-shape upgrade over the open fallback rather than a data-loss
+ * fix: it gives callers a structured `filterName` field instead of parsing
+ * the generic `args` string themselves. Everything else
  * -- known-but-not-yet-typed and genuinely unknown codes alike -- still
  * surfaces through the open `{ name, args }` fallback member (never an
  * error, per the tolerance invariant I-6): `commands/collector.ts`'s
@@ -86,4 +92,15 @@ export type TypedResponseCode =
 	 *  structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) rather than
 	 *  silently falling back to the open `{name, args}` shape. */
 	| { name: "MODIFIED"; uids: number[] }
+	/** RFC 5466 §3.1/§4 (FILTERS), M4.14: `"UNDEFINED-FILTER" SP filter-name`
+	 *  rides a tagged NO refusing a `SEARCH FILTER <name>` that names a
+	 *  nonexistent or inaccessible stored filter. `filterName` is the bare
+	 *  (unparenthesized) atom argument, verbatim; `null` when a
+	 *  non-conformant server omits it (I-6 tolerance -- never an error). This
+	 *  is the one client-observable duty RFC 5466 itself owns: filters are
+	 *  otherwise pure RFC 5464 SETMETADATA/GETMETADATA machinery (M5's
+	 *  METADATA facet), and `SearchCriteria` deliberately has no `filter` key
+	 *  yet (see `docs/compliance-adjudications.md`) -- shipping this resp-code
+	 *  variant does not depend on that larger decision. */
+	| { name: "UNDEFINED-FILTER"; filterName: string | null }
 	| { name: string; args: string | null };

@@ -13,7 +13,7 @@
  *
  *   RFC5466-3.1-1   FILTER <filter_name> search-key wire form (self-act.)
  *   RFC5466-3.1-2   Accept tagged NO [UNDEFINED-FILTER <name>].
- *                     *** REAL — split legs; probed (see PROBE OUTCOME) ***
+ *                     *** REAL — split legs; both PASS (see PROBE OUTCOME) ***
  *   RFC5466-3.1-3   MUST NOT pair FILTER with an explicit CHARSET other than
  *                   UTF-8/US-ASCII (self-act. negative guard)
  *   RFC5466-3.2-1   Stored filter search-key values MUST be UTF-8 (self-act.)
@@ -51,18 +51,33 @@
  *    the OperatorRule only fires when a token STARTS at the hyphen, so
  *    'UNDEFINED-FILTER' lexes as a single atom and the resp-code surfaces on
  *    the taggedResponse event with kind === "UNDEFINED-FILTER" intact, as an
- *    orderly NO; a trailing '* 7 EXISTS' still parses (stream survives).
- *    HOWEVER the mandated filter-name argument is DROPPED: code.contents is []
- *    because AtomTextCode hands its argument tokens to splitSpaceSeparatedList
- *    with the default '(' start-token, and a BARE (unparenthesized) argument
- *    never "enters the list" — every non-parenthesized resp-code argument is
- *    silently discarded (same mechanics for a name with digits: '2nd-try' also
- *    surfaced as contents []). The acceptance leg is therefore a genuine PASS
- *    and the name-exposure leg an honest violation (expectFailure annotated).
+ *    orderly NO; a trailing '* 7 EXISTS' still parses (stream survives). The
+ *    mandated filter-name argument is ALSO preserved: `AtomTextCode`
+ *    (`parser/structure/text.code.ts`) picks its split mode by the leading
+ *    token — a bare (unparenthesized) argument list uses the null/null form
+ *    that treats the whole token list as already "in" the list, rather than
+ *    the default '(' start-token that would never "enter" on a bare argument
+ *    (same mechanics cover a name with digits, e.g. '2nd-try', and
+ *    REFERRAL/NOUPDATE/MAXCONVERTMESSAGES's own bare arguments). This fix
+ *    predates M4.14 (landed as a general AtomTextCode bare-vs-parenthesized
+ *    split, `test/unit/parser/tolerance.test.ts`'s
+ *    "Bare (unparenthesized) resp-code arguments" suite already pins the
+ *    UNDEFINED-FILTER case directly) — BOTH legs below are therefore genuine
+ *    PASSes at the raw-parser layer, not `expectFailure`-annotated. M4.14's
+ *    own scoped fix is a layer up: `src/protocol/response-codes.ts` +
+ *    `src/commands/collector.ts`'s `toTypedResponseCode()` now give
+ *    UNDEFINED-FILTER a dedicated typed variant (`{name: "UNDEFINED-FILTER",
+ *    filterName}`) instead of the generic `{name, args}` fallback the public
+ *    SDK surface used to render it through — registry-coverage.ts's note is
+ *    updated to match (see `docs/compliance-adjudications.md` for the
+ *    SearchCriteria.filter deferral this milestone also records, option (b)).
  *  - Command-emission duties have no implemented surface: driver.search()/
  *    setmetadata() throw NotImplementedError → honest "unimplemented" with the
  *    exact wire form pinned. driver.login()/select() are deliberately un-caught
  *    in the negative-guard test so it cannot pass vacuously on inability.
+ *    These four rows (RFC5466-3.1-1, RFC5466-3.2-1, RFC5466-3.2-2,
+ *    RFC5466-4-1) carry forward to M5 alongside the METADATA facet and
+ *    SearchCriteria.filter — see docs/compliance-adjudications.md.
  */
 import { expect } from "vitest";
 
@@ -181,19 +196,21 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-3.1-2 — the offending filter-name argument surfaces (REAL — HONEST
-// VIOLATION)
+// RFC5466-3.1-2 — the offending filter-name argument surfaces (REAL — PASS)
 // ═════════════════════════════════════════════════════════════════════════════
 // §4 ABNF: resp-text-code =/ "UNDEFINED-FILTER" SP filter-name — the code the
 // client must accept CARRIES the name of the nonexistent/unaccessible filter,
 // and a client that discards it cannot tell its caller WHICH filter failed.
-// PROBED BEFORE WRITING: the argument is dropped — AtomTextCode passes its
-// argument tokens to splitSpaceSeparatedList with the default "(" start-token,
-// so a bare (unparenthesized) argument never "starts the list" and
-// code.contents comes back [] (parenthesized resp-code arguments like
-// BADEVENT's event list DO survive; bare ones like this filter-name are
-// silently discarded). The assertion encodes the SPEC, so this test fails
-// today as an honest violation.
+// M4.14 RE-PROBE: an earlier probe (before AtomTextCode's bare-vs-parenthesized
+// split landed) found this argument dropped; that fix predates this milestone's
+// dispatch (`test/unit/parser/tolerance.test.ts`'s "Bare (unparenthesized)
+// resp-code arguments" suite pins the UNDEFINED-FILTER case directly), so
+// code.contents already comes back ["on-vacation"] here — a genuine pass, not
+// `expectFailure`-annotated. M4.14's own scoped fix is the layer above this
+// raw-parser check: `toTypedResponseCode()` (src/commands/collector.ts) now
+// renders UNDEFINED-FILTER through a dedicated typed `{name, filterName}`
+// variant (src/protocol/response-codes.ts) instead of the generic
+// `{name, args}` fallback — see test/unit/commands/collector.test.ts.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-2"],
@@ -213,12 +230,11 @@ complianceTest(
 		expect(no?.status?.status).toBe("NO");
 		expect(no?.status?.text?.code?.kind).toBe("UNDEFINED-FILTER");
 		// SPEC: the resp-code is "UNDEFINED-FILTER" SP filter-name — the parsed
-		// code must carry the name, not discard it. Probed: contents is []
-		// (splitSpaceSeparatedList's default "(" start-token drops bare args).
+		// code must carry the name, not discard it. AtomTextCode's
+		// bare-vs-parenthesized split (predates M4.14) preserves it.
 		expect(
 			no?.status?.text?.code?.contents,
-			"the filter-name following UNDEFINED-FILTER must be exposed (RFC 5466 §3.1/§4) — " +
-				"the client currently discards every non-parenthesized resp-code argument",
+			"the filter-name following UNDEFINED-FILTER must be exposed (RFC 5466 §3.1/§4)",
 		).toEqual(["on-vacation"]);
 		await waitForUntagged(driver, "EXISTS");
 	},
