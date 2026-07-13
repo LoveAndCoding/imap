@@ -67,3 +67,35 @@ export type SystemFlag =
 	| "\\Deleted"
 	| "\\Draft";
 export type Flag = SystemFlag | (string & {}); // keywords are open by design
+
+/**
+ * Refuses a client-sent flag list containing `\Recent` (case-insensitive --
+ * flags are atoms, and keyword/atom comparison is case-insensitive
+ * everywhere per invariant I-5): RFC 3501 §2.3.2 says `\Recent` "can not be
+ * altered by the client" (RFC3501-2.3.2-1) and "can not be used as an
+ * argument in a STORE or APPEND command" (RFC3501-2.3.2-2) -- both
+ * client-side MUST NOT duties whose catalog notes operationalize them as
+ * "no such attempt appears in the client's command stream". Throwing
+ * `RangeError` at command construction, before any bytes are written, is
+ * the same refuse-don't-transform posture as `AppendCommand`'s NUL-byte
+ * refusal (RFC 3501/9051 §4.3.1): the one conformance promise the library
+ * can keep without transforming caller data is to never transmit the
+ * prohibited form at all. Adjudicated at M3.6 (see
+ * docs/compliance-adjudications.md), superseding M2.11's earlier
+ * pass-through posture for `AppendOptions.flags`.
+ *
+ * `context` prefixes the error message with the refusing verb (e.g.
+ * `"STORE"`, `"APPEND"`).
+ */
+export function assertNoRecentFlag(flags: readonly string[], context: string): void {
+	for (const flag of flags) {
+		if (typeof flag === "string" && flag.toUpperCase() === "\\RECENT") {
+			throw new RangeError(
+				`${context}: the \\Recent flag cannot be altered by the client and ` +
+					"must never appear in a client-sent flag list (RFC 3501 §2.3.2: " +
+					'"can not be used as an argument in a STORE or APPEND command") -- ' +
+					"remove it from the flags array; the server alone manages \\Recent",
+			);
+		}
+	}
+}

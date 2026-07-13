@@ -9,6 +9,44 @@ Format: requirement id · decision · rationale.
 
 ---
 
+## RFC3501-2.3.2-1 / RFC3501-2.3.2-2 — comply by refusal (adjudicated at M3.6, supersedes an M2.11 design note)
+
+**Requirement:** `\Recent` "can not be altered by the client"
+(RFC3501-2.3.2-1) and "can not be used as an argument in a STORE or APPEND
+command" (RFC3501-2.3.2-2).
+
+**Decision:** The client REFUSES a caller-supplied flag list containing
+`\Recent` (case-insensitive): `RangeError` at command construction, zero
+bytes written, for both STORE/UID STORE (`StoreCommand`,
+`src/commands/store.ts`) and APPEND (`AppendCommand`,
+`src/commands/append.ts`) — the shared check is
+`assertNoRecentFlag()` in `src/protocol/vocabularies.ts`. This is not a
+deviation from the requirement; it is the adjudicated resolution of an
+internal design conflict about HOW to comply, recorded here because it
+supersedes a previously documented posture.
+
+**Rationale:**
+1. The catalog rows are client-side MUST NOTs whose notes operationalize
+   them as "no such attempt appears in the client's command stream" — a
+   duty the client can only discharge by never emitting the prohibited
+   form, not by forwarding it for the server to reject.
+2. The compliance test's own design comment says "passing `\Recent` must
+   be rejected by the client before it reaches the wire".
+3. M2.11's `AppendOptions.flags` doc comment documented the opposite
+   (pass-through, "server enforces"), and M3.6's first draft extended that
+   posture to STORE for symmetry — but that M2.11 "precedent" was never
+   actually exercised against a `\Recent` flag (the passing APPEND
+   compliance test drives no flags at all), so it carried no tested
+   weight. Superseded by this adjudication; the doc comment now points
+   here.
+4. The on-point precedent class is `AppendCommand`'s NUL-byte refusal
+   (RFC 3501/9051 §4.3.1): refuse-don't-transform, `RangeError` before
+   any bytes, with compliance scripts that a refusing client cannot
+   satisfy being rescripted to assert the refusal instead
+   (`test/compliance/specs/rfc3501/2.3-flags.test.ts`).
+
+---
+
 ## RFC9051-7.1-1 — deviate (permanent, SHOULD-level)
 
 **Requirement:** "Content of ALERT response codes received on a connection
@@ -102,29 +140,3 @@ making the raw-UTF-8 arm active); the deviation is only reachable with
 codec gains a pure-rev2 (IMAP4rev2 without IMAP4rev1) raw-UTF-8 arm; the
 spec §5.2 text was amended at the M2 review to match the implemented
 rule and points here.
-
----
-
-## \Recent in STORE/APPEND flag arguments — client-side refusal (RFC3501-2.3.2-1/-2)
-
-**Context:** RFC 3501 §2.3.2: "\Recent … can not be altered by the
-client" and "can not be used as an argument in a STORE or APPEND
-command". The catalog treats both as client-side MUST NOTs
-(rev1-profile rows; RFC 9051 removed \Recent entirely). M2.11's APPEND
-work had documented a pass-through posture (flags forwarded, server
-enforces), but that posture was never exercised — the passing APPEND
-test drives no flags at all.
-
-**Decision (M3.6 adjudication):** the client REFUSES \Recent
-(case-insensitive) in STORE operations and in `AppendOptions.flags`
-with a `RangeError` before any bytes reach the wire — mirroring the
-NUL-refusal precedent (refusal is how the client satisfies a
-"never appears in the command stream" operationalization). The
-2.3-flags STORE script was corrected per the documented
-unsatisfiable-script precedent class: a refusing client never sends
-the armed STORE exchange. M2.11's pass-through doc comment is
-superseded and amended in place.
-
-**Residual risk:** none identified — no legitimate use exists for a
-client-set \Recent under either RFC; rev2 sessions cannot name the
-flag at all.

@@ -76,7 +76,10 @@
  *   Script: select → store …SILENT… → OK + unsolicited "* 1 FETCH (FLAGS (\Seen))" → NOOP.
  *   The unsolicited FETCH rides in the reply()'s untagged list, so it is delivered
  *   with the tagged STORE OK, before the subsequent NOOP expectation.
- *   driver.store() and driver.noop() are unimplemented today → expectFailure: "unimplemented".
+ *   REAL SIGNAL (M3.6): driver.store()/driver.noop() are wired to the public client.
+ *   StoreCommand claims nothing (its own doc comment), so the unsolicited FETCH FLAGS
+ *   response flows through ImapClient's generic live-update lane untouched, same as a
+ *   fully external change would -- the client accepts it without error either way.
  *
  * RFC3501-6.4.8-5 (leading number in untagged FETCH is always a sequence number):
  *   Acceptance duty: in a UID FETCH response "* 2 FETCH (UID 47 FLAGS ())", the number
@@ -550,7 +553,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.6-1"],
 		profiles: ["rev1"],
 		title: "client accepts unsolicited untagged FETCH for external flag change after .SILENT STORE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -1,3 +1,4 @@
+import { assertNoRecentFlag } from "../protocol/vocabularies";
 import type { Flag } from "../protocol/vocabularies";
 import { Command } from "./base";
 import { toTypedResponseCode } from "./collector";
@@ -53,12 +54,19 @@ export type AppendSource = Buffer | string;
  */
 export interface AppendOptions {
 	/** `(flags)` parameter (RFC 3501/9051 §9 `flag-list`). Never include
-	 *  `\Recent` -- it cannot be set by the client (RFC3501-2.3.2-2); this
-	 *  module does not pre-filter a caller-supplied `\Recent`, it is passed
-	 *  through `CommandWriter.flagList()`'s ordinary flag-syntax validation
-	 *  like any other flag (rejecting it outright would be inventing a
-	 *  restriction distinct from "the server may reject" -- a judgment call
-	 *  consistent with this module's usual server-enforces posture). */
+	 *  `\Recent` -- it cannot be set by the client, and RFC 3501 §2.3.2
+	 *  explicitly names APPEND: "can not be used as an argument in a STORE
+	 *  or APPEND command" (RFC3501-2.3.2-2). A flag list containing
+	 *  `\Recent` (case-insensitive) throws `RangeError` at construction,
+	 *  zero bytes written, same refuse-don't-transform posture as this
+	 *  command's own NUL-byte refusal above. HISTORY: M2.11 originally
+	 *  documented the opposite (pass-through, "the server may reject") --
+	 *  that posture was SUPERSEDED at the M3.6 adjudication (see
+	 *  docs/compliance-adjudications.md): the catalog rows are client-side
+	 *  MUST NOTs operationalized as "no such attempt appears in the
+	 *  client's command stream", and the earlier pass-through reading was
+	 *  never actually exercised against a `\Recent` flag (the passing
+	 *  APPEND compliance test drives no flags at all). */
 	flags?: Flag[];
 	/** `date-time` parameter (RFC 3501/9051 §9 `date-time`), the message's
 	 *  INTERNALDATE. Omitted entirely when absent (the server assigns the
@@ -193,6 +201,14 @@ export class AppendCommand extends Command<AppendResult> {
 					"caller-encoded (e.g. base64) or sent as a literal8 via { binary: true } " +
 					"(RFC 3516), never transmitted unencoded (RFC 3501/9051 §4.3.1)",
 			);
+		}
+		// RFC 3501 §2.3.2 (RFC3501-2.3.2-1/-2): \Recent can never appear in a
+		// client-sent flag list; §2.3.2 names APPEND explicitly. Refuse
+		// (RangeError, zero bytes) at construction -- see AppendOptions.flags's
+		// doc comment for the M3.6 adjudication that superseded M2.11's
+		// original pass-through posture (docs/compliance-adjudications.md).
+		if (this.opts.flags) {
+			assertNoRecentFlag(this.opts.flags, this.verb);
 		}
 	}
 

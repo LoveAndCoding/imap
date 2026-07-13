@@ -18,6 +18,7 @@ import type {
 	SearchResult,
 	SpecialUse,
 	StatusItem,
+	StoreResult,
 } from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
@@ -917,13 +918,41 @@ export class ComplianceDriver {
 	public async fetch(_seq: string, _items: string[], _opts?: FetchOptions): Promise<never> {
 		throw new NotImplementedError("FETCH");
 	}
+	/**
+	 * STORE (RFC 3501/9051 §6.4.6/§6.4.9) -- M3.6. Delegates to
+	 * `MailboxSession.seq.addFlags()/.removeFlags()/.setFlags()` -- the
+	 * driver's own non-`uid`-prefixed stub wires to the `.seq` facet (bare
+	 * `STORE`, sequence numbers), per the M3 plan's driver-wiring convention
+	 * (the `uid`-prefixed stub, `uidStore()` below, wires to the UID-grain
+	 * methods directly).
+	 *
+	 * `action` is the raw wire-form string these compliance scripts pass
+	 * directly (`"+FLAGS"`, `"-FLAGS"`, `"FLAGS"`, each optionally suffixed
+	 * `".SILENT"`) -- `parseStoreAction()` translates it into which of the
+	 * three public methods to call plus `{ silent }`; this is a driver-side
+	 * dispatch choice (I-4: no wire bytes are hand-assembled here), not a
+	 * re-implementation of STORE's wire form, which `StoreCommand` alone
+	 * produces. Any action string outside those six forms (e.g.
+	 * `"+X-GM-LABELS"`, RFC's Gmail-labels extension -- a later milestone's
+	 * `addGmailLabels`/`removeGmailLabels`) stays `NotImplementedError`,
+	 * unchanged from today.
+	 *
+	 * `opts.unchangedSince` is translated to `NotImplementedError` the same
+	 * way `select()`/`examine()` above translate `condstore`/`qresync`: the
+	 * real `StoreCommand` throws a genuine `CapabilityError` for it
+	 * (CONDSTORE is inert this milestone), which `classifyFailure` would
+	 * otherwise score as an honest `"violation"` rather than
+	 * `"unimplemented"` -- this keeps the RFC 7162 STORE compliance tests'
+	 * `expectFailure: "unimplemented"` annotation accurate once STORE itself
+	 * is wired.
+	 */
 	public async store(
-		_seq: string,
-		_action: string,
-		_flags: string[],
-		_opts?: StoreOptions,
-	): Promise<never> {
-		throw new NotImplementedError("STORE");
+		seq: string,
+		action: string,
+		flags: string[],
+		opts?: StoreOptions,
+	): Promise<StoreResult> {
+		return this.runStore("seq", seq, action, flags, opts);
 	}
 	public async copy(_seq: string, _mailbox: string): Promise<never> {
 		throw new NotImplementedError("COPY");
@@ -953,13 +982,17 @@ export class ComplianceDriver {
 		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(criteria, opts);
 		return session.search(realCriteria, realOpts);
 	}
+	/** UID STORE (RFC 3501/9051 §6.4.6/§6.4.9) -- M3.6. Same translation as
+	 *  `store()` above, delegating to the UID-grain `addFlags()`/
+	 *  `removeFlags()`/`setFlags()` directly (per the M3 plan's driver-wiring
+	 *  convention: the `uid`-prefixed stub wires to the UID-grain method). */
 	public async uidStore(
-		_seq: string,
-		_action: string,
-		_flags: string[],
-		_opts?: StoreOptions,
-	): Promise<never> {
-		throw new NotImplementedError("UID STORE");
+		seq: string,
+		action: string,
+		flags: string[],
+		opts?: StoreOptions,
+	): Promise<StoreResult> {
+		return this.runStore("uid", seq, action, flags, opts);
 	}
 	public async uidCopy(_seq: string, _mailbox: string): Promise<never> {
 		throw new NotImplementedError("UID COPY");
@@ -1157,6 +1190,71 @@ export class ComplianceDriver {
 			);
 		}
 		return this.client;
+	}
+
+	/** The currently selected `MailboxSession`, or a `StateError` mirroring
+	 *  what the real `MailboxSession.addFlags()`/etc. would themselves throw
+	 *  if reached with no selected mailbox at all -- same rationale as
+	 *  `closeMailbox()`/`unselect()` above (this file may not import command
+	 *  classes to drive the `client.run()` escape hatch directly). Shared by
+	 *  `runStore()` below; a later message-op driver stub (FETCH/SEARCH/COPY/
+	 *  MOVE/EXPUNGE) can reuse it too. */
+	private requireMailboxSession(): MailboxSession {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("this verb requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session;
+	}
+
+	/**
+	 * Translates a STORE/UID STORE action string (`"+FLAGS"`, `"-FLAGS"`,
+	 * `"FLAGS"`, each optionally suffixed `".SILENT"`) into which of
+	 * `MailboxSession`'s three public STORE-family methods to call plus
+	 * whether `.SILENT` was requested. `null` for anything else (e.g.
+	 * `"+X-GM-LABELS"`) -- the caller keeps that `NotImplementedError`.
+	 */
+	private static parseStoreAction(
+		action: string,
+	): { operation: "add" | "remove" | "replace"; silent: boolean } | null {
+		const match = /^(\+|-)?FLAGS(\.SILENT)?$/i.exec(action);
+		if (!match) {
+			return null;
+		}
+		const operation = match[1] === "+" ? "add" : match[1] === "-" ? "remove" : "replace";
+		return { operation, silent: match[2] !== undefined };
+	}
+
+	/** Shared `store()`/`uidStore()` implementation -- see `store()`'s own
+	 *  doc comment for the full translation rationale. */
+	private async runStore(
+		grain: "uid" | "seq",
+		seq: string,
+		action: string,
+		flags: string[],
+		opts?: StoreOptions,
+	): Promise<StoreResult> {
+		const parsed = ComplianceDriver.parseStoreAction(action);
+		if (!parsed) {
+			throw new NotImplementedError(`STORE action ${action}`);
+		}
+		if (opts?.unchangedSince !== undefined) {
+			throw new NotImplementedError("STORE (UNCHANGEDSINCE store modifier)");
+		}
+		const session = this.requireMailboxSession();
+		const target = grain === "uid" ? session : session.seq;
+		const storeOpts = parsed.silent ? { silent: true } : undefined;
+		if (parsed.operation === "add") {
+			return target.addFlags(seq, flags, storeOpts);
+		}
+		if (parsed.operation === "remove") {
+			return target.removeFlags(seq, flags, storeOpts);
+		}
+		return target.setFlags(seq, flags, storeOpts);
 	}
 
 	/** Bridges every event the pre-`ImapClient` driver bridged from a bare

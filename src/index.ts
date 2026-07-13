@@ -25,7 +25,12 @@ export type { ClientState } from "./client/state";
 export type { CapabilityView } from "./client/capabilities";
 
 export { MailboxSession } from "./client/mailbox";
-export type { MailboxClosedReason, MailboxSessionEvents, SequenceFacet } from "./client/mailbox";
+export type {
+	MailboxClosedReason,
+	MailboxFlagsUpdate,
+	MailboxSessionEvents,
+	SequenceFacet,
+} from "./client/mailbox";
 
 export type { SelectOptions, SelectResult } from "./commands/select";
 
@@ -35,6 +40,9 @@ export type { SelectOptions, SelectResult } from "./commands/select";
 // resolve to.
 export type { SearchCriteria } from "./commands/search-criteria";
 export type { SearchOptions, SearchResult } from "./commands/search";
+
+// STORE / UID STORE + addFlags/removeFlags/setFlags (spec §5b, M3.6).
+export type { StoreModifiers, StoreOperation, StoreResult } from "./commands/store";
 
 // Shared UID/sequence-number argument type (spec §5.1, M3.3) — used by
 // every message-operation method's `uids`/`seq` parameters.

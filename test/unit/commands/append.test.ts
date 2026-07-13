@@ -72,6 +72,35 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 		});
 	});
 
+	describe("\\Recent refusal (RFC 3501 §2.3.2, RFC3501-2.3.2-2 names APPEND — M3.6 adjudication, supersedes M2.11 pass-through)", () => {
+		test("rejects a flags list containing \\Recent (RangeError, zero bytes; message names the flag and RFC section)", () => {
+			expect(
+				() => new AppendCommand("INBOX", "body", { flags: ["\\Seen", "\\Recent"] }),
+			).toThrow(RangeError);
+			expect(() => new AppendCommand("INBOX", "body", { flags: ["\\Recent"] })).toThrow(
+				/\\Recent.*RFC 3501 §2\.3\.2/s,
+			);
+		});
+
+		test("refusal is case-insensitive", () => {
+			expect(() => new AppendCommand("INBOX", "body", { flags: ["\\RECENT"] })).toThrow(
+				RangeError,
+			);
+			expect(() => new AppendCommand("INBOX", "body", { flags: ["\\recent"] })).toThrow(
+				RangeError,
+			);
+		});
+
+		test("does not refuse other flags, or keywords merely containing 'recent'", () => {
+			expect(
+				() =>
+					new AppendCommand("INBOX", "body", {
+						flags: ["\\Seen", "$Forwarded", "$RecentlyRead"],
+					}),
+			).not.toThrow();
+		});
+	});
+
 	describe("write()", () => {
 		test("plain message: mailbox + synchronizing literal, no flags/date", () => {
 			const cmd = new AppendCommand("INBOX", Buffer.from("Subject: hi\r\n\r\nbody\r\n"));

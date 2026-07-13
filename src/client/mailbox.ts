@@ -6,8 +6,13 @@ import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
 import type { SearchCriteria } from "../commands/search-criteria";
+import { StoreCommand } from "../commands/store";
+import type { StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
 import { UnselectCommand } from "../commands/unselect";
 import { CapabilityError, StateError } from "../errors";
+import { SequenceSet } from "../protocol/sequence-set";
+import type { SequenceInput } from "../protocol/sequence-set";
+import type { Flag } from "../protocol/vocabularies";
 import type { ClientState } from "./state";
 
 /**
@@ -96,16 +101,23 @@ export interface MailboxFlagsUpdate {
 
 /**
  * The sequence-number-grain mirror facet (spec §5b: "`MailboxSession.seq`
- * ... exposing the same method shapes over sequence numbers"). M3.7 (this
- * task) creates this interface with its first verb, `search()` — per the
- * M3 plan's shared design note, later message-op tasks (fetch/store/copy/
- * move/expunge) add their own methods here ADDITIVELY, in their own task,
- * never as an ahead-of-time stub. Every method here issues the bare
+ * ... exposing the same method shapes over sequence numbers"; "unavailable
+ * under UIDONLY, RFC 9586 -- every method rejects
+ * CapabilityError('UIDONLY active')" -- that gate is not implemented yet,
+ * RFC 9586 not being an M3 target; the shape is ready for it, same
+ * inert-shape precedent as `StoreModifiers`). Created at M3.7 with its
+ * first verb, `search()`; M3.6 added the STORE-family mirrors — per the M3
+ * plan's shared design note, later message-op tasks (fetch/copy/move/
+ * expunge) add their own methods here ADDITIVELY, in their own task, never
+ * as an ahead-of-time stub. Every method here issues the bare
  * (non-`UID`-prefixed) wire verb over sequence numbers, exactly mirroring
  * its `MailboxSession` UID-grain counterpart's shape.
  */
 export interface SequenceFacet {
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
+	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 }
 
 export interface MailboxSessionEvents {
@@ -140,10 +152,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	/** Sequence-number-grain mirror facet (spec §5b) — see `SequenceFacet`'s
 	 *  own doc comment. Constructed once, alongside every other field, in
 	 *  this constructor; its methods delegate back into this same session via
-	 *  the `MailboxSession.runSearch` static (same "static may reach private
-	 *  members" access-widening trick this file already documents for
-	 *  `markClosed`/`applyExists`/etc., since `SeqFacet` is declared in this
-	 *  module but is not itself a `MailboxSession`). */
+	 *  the `MailboxSession.runSearch`/`.runStore` statics (same "static may
+	 *  reach private members" access-widening trick this file already
+	 *  documents for `markClosed`/`applyExists`/etc., since `SeqFacet` is
+	 *  declared in this module but is not itself a `MailboxSession`). */
 	public readonly seq: SequenceFacet;
 
 	constructor(name: string, snapshot: SelectResult, driver: MailboxSessionDriver) {
@@ -320,6 +332,74 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		MailboxSession.markClosed(this, "unselected");
 	}
 
+	// -- message ops: STORE family (spec §5b, M3.6) ---------------------------
+	// UID grain (settled default, proposal §6.2): `uids` are UIDs, the wire
+	// command is `UID STORE`. `.seq`'s mirrors (`SeqFacet` below) call the
+	// same `runStore` static with `kind: "seq"` instead, sending bare
+	// `STORE` over sequence numbers. See `StoreCommand`'s doc comment
+	// (src/commands/store.ts) for the silent-vs-non-silent design decision:
+	// `opts.silent` defaults to `false`; the server's FETCH FLAGS echo (own or
+	// external) flows through the ordinary `flags` event / `updates()` stream
+	// either way, never through `StoreResult`.
+
+	/** `+FLAGS` (RFC 3501/9051 §6.4.6/§6.4.9, spec §5b). Adds `flags` to every
+	 *  message in `uids` without disturbing any flag not named. */
+	public async addFlags(
+		uids: SequenceInput,
+		flags: Flag[],
+		opts?: StoreModifiers,
+	): Promise<StoreResult> {
+		return MailboxSession.runStore(this, "uid", uids, "add", flags, opts);
+	}
+
+	/** `-FLAGS` (RFC 3501/9051 §6.4.6/§6.4.9, spec §5b). Removes `flags` from
+	 *  every message in `uids` without disturbing any flag not named. */
+	public async removeFlags(
+		uids: SequenceInput,
+		flags: Flag[],
+		opts?: StoreModifiers,
+	): Promise<StoreResult> {
+		return MailboxSession.runStore(this, "uid", uids, "remove", flags, opts);
+	}
+
+	/** Bare `FLAGS` (RFC 3501/9051 §6.4.6/§6.4.9, spec §5b). Replaces every
+	 *  message's flag set in `uids` with exactly `flags`. */
+	public async setFlags(
+		uids: SequenceInput,
+		flags: Flag[],
+		opts?: StoreModifiers,
+	): Promise<StoreResult> {
+		return MailboxSession.runStore(this, "uid", uids, "replace", flags, opts);
+	}
+
+	/** Shared STORE/UID STORE implementation behind `addFlags`/`removeFlags`/
+	 *  `setFlags` and their `.seq` mirrors -- `kind` picks the wire verb
+	 *  (`UID STORE` vs bare `STORE`) and stamps the `SequenceSet` accordingly
+	 *  (`SequenceSet.withKind`, spec §5.1). A `static` for the same
+	 *  facet-delegation reason as `runSearch` above (so `SeqFacet`, a
+	 *  separate class in this module, can reach it). Rejects `StateError`
+	 *  (zero bytes written) once this session is closed, same guard
+	 *  `close()`/`unselect()` use. `StoreCommand`'s own constructor is where
+	 *  `opts.unchangedSince` throws `CapabilityError` (CONDSTORE-inert this
+	 *  milestone) -- this method does no capability gating of its own beyond
+	 *  the state check. */
+	static async runStore(
+		session: MailboxSession,
+		kind: "uid" | "seq",
+		input: SequenceInput,
+		operation: StoreOperation,
+		flags: Flag[],
+		opts?: StoreModifiers,
+	): Promise<StoreResult> {
+		session.assertOpen(
+			kind === "uid"
+				? "addFlags/removeFlags/setFlags"
+				: "seq.addFlags/seq.removeFlags/seq.setFlags",
+		);
+		const set = SequenceSet.from(input).withKind(kind);
+		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts));
+	}
+
 	/** Shared precondition for every message-op/deselection method (spec §5b:
 	 *  "`closed`... all methods reject `StateError`"). Reads the live client
 	 *  state through the driver seam rather than guessing, so the error's
@@ -349,7 +429,7 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * `applyExists`/etc. below, applied for a facet-delegation reason rather
 	 * than a cross-module one).
 	 */
-	static runSearch(
+	static async runSearch(
 		session: MailboxSession,
 		criteria: SearchCriteria,
 		opts: SearchOptions | undefined,
@@ -435,5 +515,17 @@ class SeqFacet implements SequenceFacet {
 
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this.session, criteria, opts, false);
+	}
+
+	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult> {
+		return MailboxSession.runStore(this.session, "seq", seqs, "add", flags, opts);
+	}
+
+	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult> {
+		return MailboxSession.runStore(this.session, "seq", seqs, "remove", flags, opts);
+	}
+
+	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult> {
+		return MailboxSession.runStore(this.session, "seq", seqs, "replace", flags, opts);
 	}
 }
