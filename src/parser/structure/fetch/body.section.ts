@@ -1,6 +1,27 @@
 import { ParsingError } from "../../../errors";
+import { LiteralBodyStream } from "../../../literal-body-stream";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
-import { getNStringValue, matchesFormat } from "../../utility";
+import {
+	getNStringValue,
+	isLiteralStreamToken,
+	matchesFormat,
+} from "../../utility";
+
+/**
+ * §11.4/§5.4: a FETCH body section (or RFC822.HEADER) whose literal was
+ * above the streaming threshold. `MessageBodySection` (below) holds onto
+ * this instead of eagerly draining it into a string -- the point of
+ * streaming the literal in the first place is to let a large FETCH body
+ * part reach the caller without being fully buffered in memory. The
+ * `FetchedPart` public surface that decides buffer-vs-stream per
+ * `maxInlineSize` (§5.4) is M3.5's job; this is the parse-time shape it
+ * will consume.
+ */
+export interface StreamedBodyContents {
+	readonly stream: LiteralBodyStream;
+	/** Declared literal length in octets, as sent by the server (`{n}`). */
+	readonly length: number;
+}
 
 export class MessageBodySection {
 	public static getBodySectionInfo(tokens: LexerTokenList) {
@@ -41,7 +62,17 @@ export class MessageBodySection {
 
 		const hasText = matchesFormat(sectionTokens, [
 			{ sp: true },
-			[{ type: TokenTypes.nil }, { type: TokenTypes.string }],
+			[
+				{ type: TokenTypes.nil },
+				{ type: TokenTypes.string },
+				// §11.4: a body section's literal may have been streamed
+				// (above the streaming threshold) instead of buffered --
+				// this is the ONE place in the parser that keeps it lazy
+				// rather than draining it eagerly (see `body.ts`/`header.ts`
+				// for how each caller of `getBodySectionInfo` handles the
+				// resulting `stream` field).
+				{ type: TokenTypes.literalStream },
+			],
 		]);
 
 		if (!hasText) {
@@ -51,17 +82,31 @@ export class MessageBodySection {
 			);
 		}
 
+		const valueToken = sectionTokens[1];
+		const stream: StreamedBodyContents | undefined = isLiteralStreamToken(
+			valueToken,
+		)
+			? {
+					stream: valueToken.getTrueValue().stream,
+					length: valueToken.getTrueValue().length,
+			  }
+			: undefined;
+
 		return {
 			type,
 			offset,
-			text: getNStringValue(sectionTokens[1]),
+			text: stream ? undefined : getNStringValue(valueToken),
+			stream,
 			length: endBrackIndex + 1 + (hasOffset ? 5 : 2),
 		};
 	}
 
 	constructor(
 		public readonly kind: string,
-		public readonly contents: string,
+		/** `undefined` exactly when `stream` is set (§11.4: a body section
+		 *  whose literal streamed instead of being buffered). */
+		public readonly contents: string | undefined,
 		public readonly offset?: number,
+		public readonly stream?: StreamedBodyContents,
 	) {}
 }

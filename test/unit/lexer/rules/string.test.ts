@@ -1,5 +1,7 @@
 import { TokenizationError } from "../../../../src/errors";
 import { StringRule } from "../../../../src/lexer/rules/string";
+import { CRLFToken, OperatorToken } from "../../../../src/lexer/tokens/control";
+import { NumberToken } from "../../../../src/lexer/tokens/number";
 import {
 	LiteralStringToken,
 	QuotedStringToken,
@@ -207,5 +209,54 @@ describe("StringRule", () => {
 		expect(QuotedStringTokenMock.mock.instances).toHaveLength(0);
 		expect(LiteralStringTokenMock.mock.instances).toHaveLength(0);
 		expect(match).toBeNull();
+	});
+
+	// `matchIncludingEOL` bug fix (M3.2, spec §11.4 proof addendum): checked
+	// `expectCloseBrack.value === "{"` where it plainly meant the CLOSE
+	// brace "}" -- a token immediately preceded by an open brace can never
+	// itself BE an open brace, so the old code could never return non-zero
+	// here. As found, this exact 4-token-tail shape (a literal announcement
+	// that tokenized as 4 SEPARATE raw tokens rather than being consumed
+	// whole by `StringRule.match()`) is unreachable through the real
+	// `Lexer._transform` pipeline -- `NewlineTranform` always delivers
+	// complete, CRLF-terminated lines, and `StringRule.match()` always
+	// either fully matches a complete `{n}\r\n` announcement or throws,
+	// never leaves one as 4 loose tokens -- but `matchIncludingEOL` is
+	// itself directly unit-testable regardless of whether the full pipeline
+	// can construct its input, so the bug is verified fixed here.
+	describe("#matchIncludingEOL (bug fix)", () => {
+		test("recognizes a literal announcement tokenized as 4 separate tokens (open brace, number, CLOSE brace, EOL) and returns the declared length", () => {
+			const tokens = [
+				new OperatorToken("{"),
+				new NumberToken("42"),
+				new OperatorToken("}"),
+				new CRLFToken("\r\n"),
+			];
+
+			expect(rule.matchIncludingEOL(tokens)).toBe(42);
+		});
+
+		test("does not match when the third token isn't a close brace", () => {
+			const tokens = [
+				new OperatorToken("{"),
+				new NumberToken("42"),
+				new OperatorToken(")"), // NOT "}"
+				new CRLFToken("\r\n"),
+			];
+
+			expect(rule.matchIncludingEOL(tokens)).toBe(0);
+		});
+
+		test("returns 0 for a token list shorter than 4 or not shaped like an announcement", () => {
+			expect(rule.matchIncludingEOL([new CRLFToken("\r\n")])).toBe(0);
+			expect(
+				rule.matchIncludingEOL([
+					new OperatorToken("("),
+					new NumberToken("1"),
+					new OperatorToken(")"),
+					new CRLFToken("\r\n"),
+				]),
+			).toBe(0);
+		});
 	});
 });

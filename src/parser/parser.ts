@@ -84,7 +84,19 @@ class Parser extends Transform {
 		let error: Error | undefined;
 		try {
 			const resp = this.parseTokens(tokens);
-			this.push(resp);
+			// M3.1/M3.2 (spec §11.4 resolution): deliberately NOT
+			// `this.push(resp)`-ing onto this Transform's own Readable side
+			// any more -- the events below are and always were the only
+			// real consumer (the router, via `connection.ts`). Pushing here
+			// used to accumulate unconsumed objects until the objectMode
+			// default `highWaterMark` (16) made `push()` return `false`,
+			// which `.pipe()` (lexer -> parser) honored by pausing its
+			// source, cascading all the way back to the socket -- the M2.2
+			// 16-response deadlock. `connection.ts` used to paper over this
+			// with `parser.resume()`; removing the `push()` call instead
+			// removes the whole deadlock class at the root, and leaves this
+			// stream's Readable side genuinely unused (still a `Transform`
+			// for pipeline plumbing, but nothing is ever pushed onto it).
 			if (resp instanceof UntaggedResponse) {
 				this.emit("untagged", resp);
 			} else if (resp instanceof ContinueResponse) {

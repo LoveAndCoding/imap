@@ -1,7 +1,11 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { decodeWords } from "../../encoding";
 import { RE_ENCWORD_FOLDING_BOUNDARY } from "../../matchers";
-import { getNStringValue, matchesFormat } from "../../utility";
+import {
+	drainReadableSync,
+	getNStringValue,
+	matchesFormat,
+} from "../../utility";
 import { MessageBodySection } from "./body.section";
 
 export class MessageHeader {
@@ -92,12 +96,22 @@ export function match(
 			type,
 			offset,
 			text,
+			stream,
 			length,
 		} = MessageBodySection.getBodySectionInfo(tokens);
 
 		if (type?.startsWith("HEADER")) {
+			// §11.4: `MessageHeader` parses its content synchronously
+			// (line/field splitting via string ops) -- no lazy-stream
+			// surface for headers in M3.2, so a streamed HEADER section (a
+			// realistic, not just adversarial, case for a message with an
+			// unusually large header block) is eagerly drained via the
+			// shared defensive helper rather than losing its content.
+			const headerText = stream
+				? drainReadableSync(stream.stream).toString("utf8")
+				: text;
 			return {
-				match: new MessageHeader(text ?? undefined, offset),
+				match: new MessageHeader(headerText ?? undefined, offset),
 				length,
 			};
 		}
@@ -106,7 +120,14 @@ export function match(
 	const isRFCHeaderMatch = matchesFormat(tokens, [
 		{ type: TokenTypes.atom, value: "RFC822.HEADER" },
 		{ sp: true },
-		[{ type: TokenTypes.nil }, { type: TokenTypes.string }],
+		[
+			{ type: TokenTypes.nil },
+			{ type: TokenTypes.string },
+			// §11.4: a streamed header literal is eagerly drained inside
+			// `getNStringValue` (shared helper) below -- see the BODY[HEADER]
+			// branch above for the rationale.
+			{ type: TokenTypes.literalStream },
+		],
 	]);
 
 	if (isRFCHeaderMatch) {

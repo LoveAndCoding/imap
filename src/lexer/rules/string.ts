@@ -78,7 +78,19 @@ export class StringRule implements ILexerRule<string> {
 			expectOpenBrack.isType(TokenTypes.operator) &&
 			expectOpenBrack.value === "{" &&
 			expectCloseBrack.isType(TokenTypes.operator) &&
-			expectCloseBrack.value === "{" &&
+			// BUG FIX (M3.2, spec §11.4 proof addendum): this was `=== "{"`,
+			// which can never be true for a token immediately preceded by an
+			// open brace -- it plainly meant the CLOSE brace "}". As found,
+			// this branch (detecting a literal announcement that tokenized
+			// as 4 separate raw tokens, rather than being consumed whole by
+			// `StringRule.match()`) was unreachable under the pre-M3.2
+			// architecture anyway, since `NewlineTranform` always delivers
+			// complete CRLF-terminated lines and `StringRule.match()` always
+			// either fully matches a complete `{n}\r\n` announcement or
+			// throws (never leaves it as loose tokens) -- see
+			// `test/unit/lexer/rules/string.test.ts` for the reachability
+			// note. Fixed regardless, on defense-in-depth grounds.
+			expectCloseBrack.value === "}" &&
 			expectCRLF.isType(TokenTypes.eol) &&
 			expectNumber.isType(TokenTypes.number)
 		) {

@@ -1,6 +1,7 @@
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import {
+	getNStringValue,
 	matchesFormat,
 	pairedArrayLoopGenerator,
 	splitSpaceSeparatedList,
@@ -40,7 +41,13 @@ export class IDResponse {
 			if (
 				!keyTokens ||
 				keyTokens.length !== 1 ||
-				!keyTokens[0].isType(TokenTypes.string)
+				!(
+					keyTokens[0].isType(TokenTypes.string) ||
+					// §11.4 defensive rule: an absurdly large ID key literal
+					// still parses (drained via `getNStringValue`'s shared
+					// helper below) rather than desyncing/hanging.
+					keyTokens[0].isType(TokenTypes.literalStream)
+				)
 			) {
 				throw new ParsingError("Invalid ID response key", tokens);
 			}
@@ -49,7 +56,8 @@ export class IDResponse {
 				valueTokens.length !== 1 ||
 				!(
 					valueTokens[0].isType(TokenTypes.string) ||
-					valueTokens[0].isType(TokenTypes.nil)
+					valueTokens[0].isType(TokenTypes.nil) ||
+					valueTokens[0].isType(TokenTypes.literalStream)
 				)
 			) {
 				throw new ParsingError("Invalid ID response value", tokens);
@@ -57,7 +65,10 @@ export class IDResponse {
 			const [key] = keyTokens;
 			const [value] = valueTokens;
 
-			this.details.set(key.getTrueValue(), value.getTrueValue());
+			this.details.set(
+				getNStringValue(key) as string,
+				getNStringValue(value),
+			);
 		}
 	}
 }

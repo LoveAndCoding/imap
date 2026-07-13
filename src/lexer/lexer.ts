@@ -2,6 +2,10 @@ import { Transform } from "stream";
 
 import { TokenizationError } from "../errors";
 import {
+	isLiteralStreamMarker,
+	LiteralStreamMarker,
+} from "../newline.transform";
+import {
 	AtomRule,
 	CRLFRule,
 	NilRule,
@@ -10,7 +14,15 @@ import {
 	SPRule,
 	StringRule,
 } from "./rules";
+import { LiteralStreamToken } from "./tokens/literal-stream";
 import { ILexerRule, ILexerToken, LexerTokenList } from "./types";
+
+// A completed-so-far buffer ending in a literal announcement -- mirrors
+// `newline.transform.ts`'s own `ANNOUNCE_TAIL`, duplicated locally rather
+// than imported to keep the lexer's marker-resolution logic self-contained
+// (the two layers deliberately don't share a literal-parsing implementation,
+// only the marker *shape*).
+const LITERAL_ANNOUNCEMENT_TAIL = /(~?\{(\d+)\+?\})\r\n$/;
 
 type PrioritizedRule = {
 	order: number;
@@ -80,6 +92,19 @@ class Lexer extends Transform {
 
 	protected buffer: string;
 	protected rules: PrioritizedRule[];
+	/**
+	 * §11.4: tokens already resolved for the response line CURRENTLY being
+	 * accumulated, up to and including a `LiteralStreamToken` for a
+	 * streamed literal whose announcement has been seen but whose trailing
+	 * wire text (e.g. the closing `)` and CRLF after a FETCH body literal)
+	 * hasn't arrived yet. Emitted together with the rest of the line's
+	 * tokens once that trailing text completes tokenization -- the
+	 * lexer emits the COMPLETE line's tokens without waiting for the
+	 * stream's BYTES to finish (the FETCH bridge, M3.4, wants a live
+	 * stream in an otherwise-normal, complete response), not by fragmenting
+	 * the response itself into multiple `tokenized` events.
+	 */
+	private pendingPrefix: LexerTokenList = [];
 
 	constructor(protected useDefaultRules = true) {
 		super({
@@ -115,9 +140,10 @@ class Lexer extends Transform {
 	}
 
 	public _flush(done: (error?: Error) => void) {
-		if (this.buffer.length) {
+		if (this.buffer.length || this.pendingPrefix.length) {
 			const leftover = this.buffer;
 			this.buffer = "";
+			this.pendingPrefix = [];
 			return done(
 				new TokenizationError(
 					"Stream closed before tokenization finished",
@@ -130,16 +156,49 @@ class Lexer extends Transform {
 	}
 
 	public isBufferEmpty() {
-		return !this.buffer.length;
+		return !this.buffer.length && !this.pendingPrefix.length;
 	}
 
 	public _transform(
-		line: string | Buffer,
+		line: string | Buffer | LiteralStreamMarker,
 		_: BufferEncoding,
 		done: (error?: Error) => void,
 	) {
+		// §11.4 marker contract: intercept a streamed-literal marker BEFORE
+		// the `line.toString()` path below (which would otherwise stringify
+		// it to garbage). The marker carries a live `Readable` whose bytes
+		// are being fed independently by `NewlineTranform` -- it is NOT
+		// waited on here; only the CURRENT buffer's trailing announcement is
+		// resolved into a `LiteralStreamToken` and folded into
+		// `pendingPrefix`, which is emitted together with the rest of the
+		// line's tokens once the trailing wire text (e.g. the `)` and CRLF
+		// after a FETCH body literal) completes tokenization below.
+		if (isLiteralStreamMarker(line)) {
+			try {
+				this.resolvePendingLiteralStream(line);
+			} catch (e) {
+				return done(e instanceof Error ? e : new Error(String(e)));
+			}
+			return done();
+		}
+
 		try {
-			this.buffer += line.toString();
+			// §11.4 encoding fix: decode as `latin1`, NOT the previous
+			// default (`utf8`). One JS code unit per octet makes literal
+			// buffering byte-accurate (StringRule's `{n}`-octet-count slice
+			// now genuinely counts octets, since code units and octets are
+			// the same number here) and reversible even for invalid UTF-8
+			// (which the old per-chunk UTF-8 decode collapsed irrecoverably
+			// into U+FFFD before a token even existed to fix it in). Plain
+			// ASCII content -- the overwhelming case for atoms/quoted
+			// strings/keywords -- decodes identically either way, so this is
+			// a no-op for everything except literal bodies and any
+			// (RFC9051 UTF8-mode) raw non-ASCII quoted-string/atom content;
+			// `LiteralStringToken.getTrueValue()`/`QuotedStringToken`'s
+			// UTF-7 decode re-derive UTF-8 text from this byte-accurate
+			// buffer at the point of use instead of relying on it having
+			// already been (lossily) decoded here.
+			this.buffer += line.toString("latin1");
 			const matchedTokens = this.tokenize(this.buffer);
 			let partialMatchAtEnd = false;
 			for (const { rule } of this.rules) {
@@ -152,8 +211,12 @@ class Lexer extends Transform {
 			// then we have a full tokenized buffer.
 			if (!partialMatchAtEnd) {
 				this.buffer = "";
-				this.push(matchedTokens);
-				this.emit("tokenized", matchedTokens);
+				const fullTokens = this.pendingPrefix.length
+					? [...this.pendingPrefix, ...matchedTokens]
+					: matchedTokens;
+				this.pendingPrefix = [];
+				this.push(fullTokens);
+				this.emit("tokenized", fullTokens);
 			}
 		} catch (e) {
 			// If we couldn't tokenize the line, it probably
@@ -162,6 +225,59 @@ class Lexer extends Transform {
 			// if it needs to.
 		}
 		done();
+	}
+
+	/**
+	 * Resolves a streamed-literal marker against `this.buffer`'s trailing
+	 * announcement: everything up to the announcement tokenizes normally
+	 * (it's ordinary, already-complete wire text); the announcement itself
+	 * becomes a `LiteralStreamToken` wrapping the marker's live stream. Both
+	 * get appended to `pendingPrefix` and `this.buffer` is reset so the
+	 * NEXT chunk(s) -- the wire text after the literal body -- continue
+	 * accumulating normally.
+	 *
+	 * I-6 (tolerance): a marker that doesn't correspond to a real pending
+	 * announcement in the buffer, or whose declared length disagrees with
+	 * the announcement's, is a malformed/inconsistent literal framing claim
+	 * -- this throws (a real `TokenizationError`, propagated as a normal
+	 * parse error by `_transform` above), never silently desyncs.
+	 */
+	private resolvePendingLiteralStream(marker: LiteralStreamMarker): void {
+		const match = LITERAL_ANNOUNCEMENT_TAIL.exec(this.buffer);
+		if (!match) {
+			throw new TokenizationError(
+				"Received a streamed-literal marker with no pending literal announcement in the lexer buffer",
+				this.buffer,
+			);
+		}
+		const declaredLength = parseInt(match[2], 10);
+		if (declaredLength !== marker.byteLength) {
+			throw new TokenizationError(
+				`Streamed-literal marker declared ${marker.byteLength} octet(s) but the pending announcement declared ${declaredLength}`,
+				this.buffer,
+			);
+		}
+
+		const announcementText = match[0];
+		const remainder = this.buffer.slice(
+			0,
+			this.buffer.length - announcementText.length,
+		);
+		this.buffer = "";
+
+		const remainderTokens = remainder.length
+			? this.tokenize(remainder)
+			: [];
+		const streamToken = new LiteralStreamToken(announcementText, {
+			stream: marker.literalStream,
+			length: marker.byteLength,
+		});
+
+		this.pendingPrefix = [
+			...this.pendingPrefix,
+			...remainderTokens,
+			streamToken,
+		];
 	}
 
 	public tokenize(content: string): LexerTokenList {

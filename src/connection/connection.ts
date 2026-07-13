@@ -644,7 +644,19 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * all. Rebuilding the chain fresh every attempt is the fix.
 	 */
 	private resetProcessingPipeline(): void {
-		this.processingPipeline = new NewlineTranform({ allowHalfOpen: true });
+		this.processingPipeline = new NewlineTranform({
+			allowHalfOpen: true,
+			// §11.4/§5.4 (M3.1 resolution): explicit socket-level
+			// backpressure keyed to live literal-stream consumption, NOT
+			// pipe-chain backpressure (see the removed `parser.resume()`
+			// note below for why that's abandoned as a mechanism). Reads
+			// `this.socket` lazily -- this transform is (re)built before a
+			// socket exists for this connect() attempt.
+			socketControl: {
+				pause: () => this.socket?.pause(),
+				resume: () => this.socket?.resume(),
+			},
+		});
 		this.lexer = new Lexer();
 		this.parser = new Parser();
 
@@ -668,31 +680,17 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			this.router.routeUnknown(resp);
 		});
 
-		// `Parser` is a `Transform` (objectMode): every parsed response is
-		// BOTH emitted as one of the custom events above AND `push()`-ed onto
-		// its own Readable side (`parser.ts`'s `_transform`). Nothing has ever
-		// consumed that Readable side directly -- all routing goes through the
-		// custom events -- so those pushed objects accumulate, unconsumed,
-		// forever. That's latent and harmless for a short session, but once
-		// enough responses cross the stream's `highWaterMark` (16 objects,
-		// objectMode's default), `Readable.push()` starts returning `false`;
-		// `.pipe()` (lexer -> parser) honors that backpressure signal and
-		// pauses its source, which cascades all the way back to the
-		// `processingPipeline -> lexer` and `socket -> processingPipeline`
-		// pipes -- silently stalling ALL further response parsing for the
-		// rest of the connection's lifetime (no error, no close, just a
-		// permanent hang partway through whatever multi-line response happens
-		// to cross the threshold). A session that issues enough commands in a
-		// row (SELECT's ~6-8-line response family made this newly reachable:
-		// two SELECTs in one connection is enough) hits this every time,
-		// deterministically, once the cumulative response count crosses 16 --
-		// this was previously unreachable simply because no prior milestone's
-		// tests chained enough commands on one connection to cross it.
-		// `.resume()` puts the Readable side in flowing mode with no 'data'
-		// listener, which per Node's stream docs discards the data as fast as
-		// it arrives -- exactly right here, since the custom events above are
-		// the only consumer that matters.
-		this.parser.resume();
+		// NOTE (M2.2 -> M3.2): `Parser` used to `push()` every parsed
+		// response onto its own (unconsumed) Readable side, which
+		// deadlocked the whole pipeline past ~16 cumulative responses on one
+		// connection once objectMode's default `highWaterMark` was crossed
+		// (fixed at the time by a `parser.resume()` call here that discarded
+		// backpressure entirely). `parser.ts` no longer `push()`es at all --
+		// see its `_transform` doc comment -- which removes the deadlock
+		// class at the root instead of suppressing it, and makes the
+		// `.resume()` call that used to sit here unnecessary. Real
+		// backpressure (§5.4's "don't advance past a live stream") is now
+		// handled at the socket level by `NewlineTranform`, wired above.
 	}
 
 	/**

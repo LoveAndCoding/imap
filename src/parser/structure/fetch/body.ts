@@ -1,6 +1,7 @@
 import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import {
+	drainReadableSync,
 	getNStringValue,
 	matchesFormat,
 	splitSpaceSeparatedList,
@@ -152,19 +153,35 @@ export function match(
 			type,
 			offset,
 			text,
+			stream,
 			length,
 		} = MessageBodySection.getBodySectionInfo(tokens);
 
 		if (!type) {
+			// BODY[] (whole message, no section): no true lazy-stream
+			// support yet -- that's the per-part `FetchedPart` surface M3.5
+			// builds around `BODY[section]` specifically. A streamed whole
+			// message is eagerly drained here via the same shared
+			// defensive helper as any other unexpectedly-large literal, so
+			// it still parses correctly (not lazily, until M3.5 revisits
+			// whole-message streaming) instead of losing data.
+			const wholeBody = stream
+				? drainReadableSync(stream.stream).toString("utf8")
+				: text;
 			return {
 				// A NIL body section (no `text` token match) is an empty body
-				match: MessageBody.createFromFullBody(text ?? "", offset),
+				match: MessageBody.createFromFullBody(wholeBody ?? "", offset),
 				length,
 			};
 		} else if (!type.startsWith("HEADER")) {
 			// We let the header matcher handle header related sections
 			return {
-				match: new MessageBodySection(type, text ?? "", offset),
+				match: new MessageBodySection(
+					type,
+					stream ? undefined : text ?? "",
+					offset,
+					stream,
+				),
 				length,
 			};
 		}
@@ -181,7 +198,11 @@ export function match(
 			!shouldBeSp.isType(TokenTypes.space) ||
 			!(
 				shouldBeNString.isType(TokenTypes.nil) ||
-				shouldBeNString.isType(TokenTypes.string)
+				shouldBeNString.isType(TokenTypes.string) ||
+				// §11.4: an RFC822/RFC822.TEXT literal above the streaming
+				// threshold arrives as a stream token; see the branches
+				// below for how each form consumes it.
+				shouldBeNString.isType(TokenTypes.literalStream)
 			)
 		) {
 			throw new ParsingError(
@@ -191,17 +212,35 @@ export function match(
 		}
 
 		const type = typeToken.getTrueValue().toUpperCase();
-		const contents = getNStringValue(shouldBeNString);
 		if (type === "RFC822") {
-			// Same as BODY[]. A NIL contents value is an empty body
+			// Same as BODY[]: whole-message form -- eagerly drained via
+			// `getNStringValue`'s shared helper when streamed (see the
+			// BODY[]-with-stream note above for why whole-message laziness
+			// is deferred to M3.5's FetchedPart surface).
+			const contents = getNStringValue(shouldBeNString);
+			// A NIL contents value is an empty body
 			return {
 				match: MessageBody.createFromFullBody(contents ?? ""),
 				length: 3,
 			};
 		} else if (type === "RFC822.TEXT") {
-			// Same as BODY[TEXT]
+			// Same as BODY[TEXT]: a section, so it keeps the lazy stream
+			// field when streamed (§11.4), exactly like BODY[section].
+			if (shouldBeNString.isType(TokenTypes.literalStream)) {
+				const payload = shouldBeNString.getTrueValue();
+				return {
+					match: new MessageBodySection("TEXT", undefined, undefined, {
+						stream: payload.stream,
+						length: payload.length,
+					}),
+					length: 3,
+				};
+			}
 			return {
-				match: new MessageBodySection("TEXT", contents ?? ""),
+				match: new MessageBodySection(
+					"TEXT",
+					getNStringValue(shouldBeNString) ?? "",
+				),
 				length: 3,
 			};
 		}
