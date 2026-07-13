@@ -3,6 +3,7 @@ import type * as tls from "node:tls";
 import { TypedEmitter } from "tiny-typed-emitter";
 
 import {
+	AppendCommand,
 	CapabilityCommand,
 	CreateCommand,
 	DeleteCommand,
@@ -23,6 +24,7 @@ import {
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
+import type { AppendOptions, AppendResult, AppendSource } from "../commands/append";
 import type { CreateMailboxOptions } from "../commands/create";
 import type { IdResponseMap } from "../commands/id";
 import type { ListOptions } from "../commands/list";
@@ -507,6 +509,31 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	/** UNSUBSCRIBE (spec §3.2, RFC 3501 §6.3.7/RFC 9051 §6.3.8). */
 	public async unsubscribe(mailbox: string): Promise<void> {
 		await this.run(new UnsubscribeCommand(mailbox));
+	}
+
+	/**
+	 * APPEND (spec §3.2/§5.4, RFC 3501 §6.3.11/RFC 9051 §6.3.12) — M2.11,
+	 * single-message form only (`appendMany`/MULTIAPPEND is RFC 3502, M3 —
+	 * deliberately not stubbed here, same "no stub methods ahead of their
+	 * milestone" rule as `MailboxSession`'s message-op methods). The mailbox
+	 * name goes through the M2.1 codec inside `CommandWriter.mailbox()`; the
+	 * message argument (`AppendSource`) never does — see that type's doc
+	 * comment for the Buffer-verbatim/string-UTF-8 semantics.
+	 *
+	 * `AppendCommand` is handed the live `CapabilityView` for exactly one
+	 * wire-form decision: whether a message carrying 8-bit header/body
+	 * octets must be wrapped in the RFC 6855 `UTF8(...)` data extension
+	 * (RFC6855-4-1) — the same probe-passing convention `list()` already
+	 * uses for its own capability-gated wire-form choices.
+	 */
+	public async append(
+		mailbox: string,
+		message: AppendSource,
+		opts?: AppendOptions,
+	): Promise<AppendResult> {
+		return this.run(
+			new AppendCommand(mailbox, message, opts, this.capabilityRegistry.view),
+		);
 	}
 	//    M2.9: STATUS; M2.10: NAMESPACE) --------------------------------------
 	//    M2.7/M2.8: LIST/LSUB) ------------------------------------------------

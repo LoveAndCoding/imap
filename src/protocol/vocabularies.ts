@@ -48,3 +48,22 @@ export type SpecialUse =
 	| "\\Sent"
 	| "\\Trash" // RFC 6154
 	| "\\Important"; // RFC 8457
+
+/**
+ * `SystemFlag` — the five RFC 3501/9051 §2.3.2 flags every server-side flag
+ * vocabulary carries by construction (`\Recent` is deliberately excluded:
+ * §2.3.2 says it "can not be altered by the client", so it is never a legal
+ * member of a client-SENT flag list — see `RFC3501-2.3.2-2`). `Flag` widens
+ * this to the **open** grade (§5.6): a mailbox's keyword flags are an
+ * unbounded, server-defined vocabulary (`\*` in `PERMANENTFLAGS` licenses
+ * client-invented keywords), so unlike `SpecialUse` there is no strict/open
+ * split here — every flag-taking parameter (`AppendOptions.flags`, and the
+ * M3 `addFlags`/`removeFlags`/`setFlags` trio) takes the same `Flag[]`.
+ */
+export type SystemFlag =
+	| "\\Seen"
+	| "\\Answered"
+	| "\\Flagged"
+	| "\\Deleted"
+	| "\\Draft";
+export type Flag = SystemFlag | (string & {}); // keywords are open by design

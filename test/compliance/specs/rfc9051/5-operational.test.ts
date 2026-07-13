@@ -415,7 +415,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-2"],
 		profiles: ["rev2"],
 		title: "client completes continuation-request negotiation before sending the next command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -32,10 +32,13 @@
  *
  * OBSERVATION: the STATUS-side entries (3.1-1, 3.2-2) are REAL as of M2.9;
  * the LIST-STATUS batching entry (3.2-1) and the APPEND entries (4-1, 4-2)
- * remain self-actualizing — driver.list()/append() still throw
- * NotImplementedError (M2.7/M2.11). The scripted server pins the exact wire
- * forms from RFC 7889's own worked examples (§3.1, §3.2, §4) so each
- * matcher is non-vacuous once implemented.
+ * are now REAL as of M2.7/M2.11 too — driver.list()/append() are both wired.
+ * The scripted server pins the exact wire forms from RFC 7889's own worked
+ * examples (§3.1, §3.2, §4). NOTE on 4-2: it currently passes, but see that
+ * test's own doc comment — the pass currently rides on a separate,
+ * pre-existing connection-layer defect (LITERAL+/LITERAL- never actually
+ * engage in production) rather than genuine APPENDLIMIT-awareness in
+ * `AppendCommand`.
  * RFC7889-2-1 is different: capability parsing itself is fully implemented
  * (Session.capabilities is a real CapabilityList populated from the server's
  * CAPABILITY response, and driver.hasCapability(name) does an exact,
@@ -44,6 +47,7 @@
  */
 import { expect } from "vitest";
 
+import { NotImplementedError } from "../../driver/errors";
 import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -151,27 +155,42 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §4: "the server SHALL reject the APPEND command with a tagged TOOBIG
 // response code" — the client's reciprocal duty is to accept this as a
-// well-formed, expected APPEND-failure outcome. append() throws today.
+// well-formed, expected APPEND-failure outcome.
 complianceTest(
 	{
 		reqs: ["RFC7889-4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO [TOOBIG] to an over-limit APPEND as a well-formed failure",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(appendlimitCaps(ctx.profile), { profile: ctx.profile }),
+				// APPEND is authenticated-state (RFC 3501/9051 §6.3.11/§6.3.12) —
+				// log in first.
+				...sessionPrelude(appendlimitCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("APPEND", { args: /^INBOX/i })),
 				reply("NO [TOOBIG] Message too large"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		const big = Buffer.alloc(1024, "x");
-		await driver.append("INBOX", big); // throws NotImplementedError today
+		// The server intentionally answers NO [TOOBIG] — append() MUST reject;
+		// the client's duty is accepting this as a well-formed failure (not
+		// crashing/hanging), not that the call succeeds.
+		let appendError: unknown;
+		try {
+			await driver.append("INBOX", big);
+		} catch (err) {
+			if (err instanceof NotImplementedError) throw err;
+			appendError = err;
+		}
+		expect(appendError, "append() must reject on a tagged NO [TOOBIG]").toBeDefined();
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();
@@ -293,12 +312,31 @@ complianceTest(
 // client's APPEND literal is a synchronizing literal (no trailing '+' on the
 // literal length prefix) rather than a LITERAL+/LITERAL- non-synchronizing
 // one, avoiding the wasted-upload scenario this RFC's §1 motivates.
+//
+// M2.11 IMPLEMENTATION NOTE (not a full pass on the merits — flagged for
+// follow-up): `AppendCommand` has no dedicated logic for this SHOULD; it
+// always calls the shared `CommandWriter.literal()`, whose LITERAL+/LITERAL-
+// selection is purely capability-driven (spec §7.2), with no notion of "is
+// the append limit known". This row currently passes because of a SEPARATE,
+// pre-existing defect: `src/connection/execute-command.ts`'s `CommandWriter`
+// capability probe reads `connection.capabilityRegistry.value` (no such
+// property exists on `CapabilityRegistry` — it's `.view`) AND that registry
+// is only ever populated by the STARTTLS path, never by the ordinary
+// CAPABILITY/LOGIN/ENABLE flow `ImapClient` itself tracks — so in practice
+// `CommandWriter` never sees LITERAL+/LITERAL- as advertised at all today,
+// and every literal this library sends ends up synchronizing regardless of
+// what the server offered. That bug (out of scope for M2.11 — it is a
+// connection-layer defect, not an APPEND one, and fixing it touches every
+// command that emits a literal) is why rev2's LITERAL- advertisement here
+// never actually engages the non-sync path this test is pinning against. If
+// that connection-layer bug is fixed independently, this specific
+// assertion will need real APPENDLIMIT-awareness in `AppendCommand` to keep
+// passing under rev2 (LITERAL- alone, no known limit).
 complianceTest(
 	{
 		reqs: ["RFC7889-4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client avoids non-synchronizing literals for APPEND when the upload limit is unknown",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -307,30 +345,38 @@ complianceTest(
 		const caps = ctx.profile === "rev2" ? ["IMAP4rev2", "LITERAL-"] : ["IMAP4rev1"];
 		server.arm([
 			[
-				...sessionPrelude(caps, { profile: ctx.profile }),
+				// APPEND is authenticated-state — log in first.
+				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
 				expectLine({
 					description: "APPEND with a SYNCHRONIZING literal (no trailing '+'/'-' on the length prefix)",
 					match: (line: string) => {
-						const m = /^\S+ APPEND INBOX \{(\d+)([+-]?)\}$/i.exec(line);
+						const m = /^(\S+) APPEND (INBOX \{(\d+)([+-]?)\})$/i.exec(line);
 						if (!m) {
 							return { ok: false, reason: `expected APPEND ... {<n>} with no non-sync suffix, got: '${line}'` };
 						}
-						const [, , suffix] = m;
+						const [, tag, args, , suffix] = m;
 						if (suffix === "+" || suffix === "-") {
 							return {
 								ok: false,
 								reason: `literal length suffix '${suffix}' is a non-synchronizing literal (RFC 7888) — must avoid this when the upload limit is unknown (RFC7889-4-2)`,
 							};
 						}
-						return { ok: true };
+						// A custom matcher must report tag/verb/args itself (unlike
+						// the `command()` helper) or the harness never records this
+						// line into commandLines/lastTag, and the following reply()
+						// step has no tag to answer — leaving the client's APPEND
+						// promise hung until the vitest timeout instead of the
+						// intended NO/OK outcome.
+						return { ok: true, tag, verb: "APPEND", args };
 					},
 				}),
 				reply("OK APPEND completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		const body = Buffer.from("Subject: test\r\n\r\nHello.\r\n", "utf8");
-		await driver.append("INBOX", body); // throws NotImplementedError today
+		await driver.append("INBOX", body);
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();

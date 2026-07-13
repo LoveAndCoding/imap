@@ -1,3 +1,4 @@
+export * from "./append";
 export * from "./authenticate";
 export * from "./base";
 export * from "./capability";

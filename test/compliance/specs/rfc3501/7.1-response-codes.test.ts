@@ -254,7 +254,6 @@ complianceTest(
 		reqs: ["RFC3501-7.1-3"],
 		profiles: ["rev1"],
 		title: "client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

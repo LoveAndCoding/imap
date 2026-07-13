@@ -231,23 +231,24 @@ complianceTest(
 // RFC3516-4.4-1 — APPEND NUL-containing data via the <literal8> (~{n}) syntax
 // ═════════════════════════════════════════════════════════════════════════════
 // A client appending binary content uses the literal8 '~{n}' framing (vs the
-// ordinary '{n}' literal) to carry NUL octets. driver.append({binary:true}) throws
-// today → unimplemented. The scripted server records commandLines[i].binary[j] for
-// a ~{n} literal, so once implemented we assert the client emitted a literal8, not
-// an ordinary literal. rev1-only (rev2 folds literal8 transmission into core).
+// ordinary '{n}' literal) to carry NUL octets. driver.append({binary:true})
+// (M2.11) is exercised here. The scripted server records
+// commandLines[i].binary[j] for a ~{n} literal, so we assert the client
+// emitted a literal8, not an ordinary literal. rev1-only (rev2 folds literal8
+// transmission into core).
 complianceTest(
 	{
 		reqs: ["RFC3516-4.4-1"],
 		profiles: ["rev1"],
 		title: "APPEND with a ~{n} literal8 (NUL-containing binary data)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "BINARY"]),
+				// APPEND is authenticated-state (RFC 3501 §6.3.11) — log in first.
+				...sessionPrelude(["IMAP4rev1", "BINARY"], { login: true }),
 				// The literal marker must be a literal8 (~{n}), not an ordinary {n};
 				// the harness LITERAL_RE captures the leading '~' and flags binary.
 				expectLine(command("APPEND", { args: /^"?Binary-Box"? ~\{\d+\}(\+)?$/i })),
@@ -255,10 +256,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		// Message with an embedded NUL — only a literal8 can carry it.
 		await driver.append("Binary-Box", Buffer.from([0x00, 0x01, 0x02, 0x00, 0xff]), {
 			binary: true,
-		}); // throws NotImplementedError today
+		});
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();

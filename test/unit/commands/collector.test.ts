@@ -156,4 +156,29 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			value: "F123abc",
 		});
 	});
+
+	// M2.11 (APPEND): APPENDUID (RFC 4315 UIDPLUS), TOOBIG/BADURL (RFC 4469/7889).
+	test("APPENDUID carries typed uidValidity/uid numbers", () => {
+		const tagged = parseLine(`A1 OK [APPENDUID 38505 3955] APPEND completed${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "APPENDUID",
+			uidValidity: 38505,
+			uid: 3955,
+		});
+	});
+
+	test("TOOBIG is an argument-less typed variant", () => {
+		const tagged = parseLine(`A1 NO [TOOBIG] Message too large${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({ name: "TOOBIG" });
+	});
+
+	test("BADURL carries the offending URL, quotes stripped", () => {
+		const tagged = parseLine(
+			`A1 NO [BADURL "/Sent;UIDVALIDITY=385759045/;UID=20"] append failed${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "BADURL",
+			url: "/Sent;UIDVALIDITY=385759045/;UID=20",
+		});
+	});
 });

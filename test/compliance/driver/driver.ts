@@ -6,6 +6,7 @@ import * as tls from "node:tls";
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
 import { Connection, ImapClient } from "../../../src/index";
 import type {
+	AppendResult as ClientAppendResult,
 	ImapClientConfig,
 	ListOptions,
 	MailboxInfo,
@@ -580,12 +581,27 @@ export class ComplianceDriver {
 	public async status(mailbox: string, items: string[]): Promise<MailboxStatusResult> {
 		return this.requireClient().status(mailbox, items as StatusItem[]);
 	}
+	/**
+	 * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) -- delegates to
+	 * `ImapClient.append()` (M2.11), zero protocol logic here (I-4). Only the
+	 * single-message form is wired: `opts.catenate` (RFC 4469 CATENATE, and
+	 * by extension MULTIAPPEND, RFC 3502) stays `NotImplementedError` --
+	 * explicitly out of scope for M2.11 (M3 work) -- checked BEFORE
+	 * touching the client so no bytes go out for an unsupported request.
+	 */
 	public async append(
-		_mailbox: string,
-		_message: Buffer,
-		_opts?: AppendOptions,
-	): Promise<never> {
-		throw new NotImplementedError("APPEND");
+		mailbox: string,
+		message: Buffer,
+		opts?: AppendOptions,
+	): Promise<ClientAppendResult> {
+		if (opts?.catenate) {
+			throw new NotImplementedError("APPEND CATENATE");
+		}
+		return this.requireClient().append(mailbox, message, {
+			flags: opts?.flags,
+			internalDate: opts?.date ? new Date(opts.date) : undefined,
+			binary: opts?.binary,
+		});
 	}
 	public async check(): Promise<never> {
 		throw new NotImplementedError("CHECK");

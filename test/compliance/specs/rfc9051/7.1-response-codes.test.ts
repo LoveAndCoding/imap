@@ -731,14 +731,13 @@ complianceTest(
 // MAY: it is intentionally NOT scripted as mandatory steps (that would upgrade
 // the MAY to a MUST). The binding minimum is that the client surfaces the failure
 // to its caller — append() rejects — instead of crashing, hanging, or treating
-// the NO as session-fatal. driver.append() is unimplemented today → unimplemented.
+// the NO as session-fatal. driver.append() (M2.11) is exercised here.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-6"],
 		profiles: ["rev2"],
 		title:
 			"client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional in rev2)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -427,7 +427,6 @@ complianceTest(
 		reqs: ["RFC9051-6.3.12-1"],
 		profiles: ["rev2"],
 		title: "APPEND literal argument is in RFC 5322 message format (headers + body)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -480,7 +479,6 @@ complianceTest(
 		reqs: ["RFC9051-6.3.12-2"],
 		profiles: ["rev2"],
 		title: "client MAY issue NOOP after APPEND when the server omits untagged EXISTS",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

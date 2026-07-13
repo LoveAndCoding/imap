@@ -493,7 +493,7 @@ complianceTest(
 // ── RFC3501-5.5-2: continuation MUST be negotiated before next command ────
 // When the first command uses a synchronizing literal, the client MUST wait
 // for the "+" continuation before sending the next command. driver.append()
-// is the natural surface (uses a literal). It is unimplemented today.
+// (M2.11) is the literal-bearing surface exercised here.
 // The test scripts the correct sequence: APPEND literal → continuation → payload
 // → NOOP (next command only AFTER the APPEND completes).
 complianceTest(
@@ -501,7 +501,6 @@ complianceTest(
 		reqs: ["RFC3501-5.5-2"],
 		profiles: ["rev1"],
 		title: "client completes continuation-request negotiation before sending the next command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -528,10 +527,12 @@ complianceTest(
 		await server.assertCompleted();
 		// When implemented: NOOP must arrive after APPEND's tagged OK.
 		// commandLines is in wire order; APPEND must precede NOOP.
-		const appendIdx = server.commandLines.findIndex(
-			(l) => l.args.startsWith("INBOX") || l.args.includes("{"),
-		);
-		const noopIdx = server.commandLines.findIndex((l) => l.args === "");
+		const appendIdx = server.commandLines.findIndex((l) => l.verb === "APPEND");
+		// `l.args === ""` (the original finder) also matches the earlier
+		// CAPABILITY command (which likewise carries no args), always
+		// returning index 0 regardless of where NOOP actually lands — match
+		// by verb instead, which is unambiguous.
+		const noopIdx = server.commandLines.findIndex((l) => l.verb === "NOOP");
 		if (appendIdx !== -1 && noopIdx !== -1) {
 			expect(noopIdx, "NOOP must appear after APPEND in the command sequence").toBeGreaterThan(appendIdx);
 		}

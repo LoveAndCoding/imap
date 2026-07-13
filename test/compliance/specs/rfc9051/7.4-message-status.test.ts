@@ -528,9 +528,8 @@ defineAcceptanceTable({
 // asserts no client record up to and including the continuation contains the
 // payload sentinel. A conforming client physically cannot trip this.
 //
-// driver.append() — the natural literal-bearing surface — is unimplemented
-// today (throws NotImplementedError → expectFailure: "unimplemented"). When it
-// lands, this test verifies the full §7.6 discipline under the rev2 preset.
+// driver.append() (M2.11) is the literal-bearing surface exercised here,
+// verifying the full §7.6 discipline under the rev2 preset.
 const PAYLOAD_SENTINEL = "LITERAL-PAYLOAD-SENTINEL";
 
 complianceTest(
@@ -539,7 +538,6 @@ complianceTest(
 		profiles: ["rev2"],
 		title:
 			"client does not transmit synchronizing-literal octets until the server sends the continuation request",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

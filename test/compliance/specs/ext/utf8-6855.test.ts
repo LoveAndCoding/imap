@@ -38,9 +38,12 @@
  *
  * SELF-ACTUALIZATION: login(), enable(), and authenticate() are implemented,
  * so the duties driven purely by those verbs (3-1/3-3, 3-2, 5-1/5-2, 6-1/6-2)
- * now exercise the real wire form. search() ('SEARCH') and append() ('APPEND')
- * still throw NotImplementedError today, so the 3-4 and 4-1/4-2 duties remain
- * 'unimplemented'. The scripted server validates the exact wire form (the
+ * now exercise the real wire form. append() ('APPEND', M2.11) is implemented
+ * too, so 4-1/4-2 now pass for real (`AppendCommand` wraps the message
+ * literal in the RFC 6855 UTF8(...) data extension whenever UTF8=ACCEPT is
+ * enabled and the message carries 8-bit octets). search() ('SEARCH') still
+ * throws NotImplementedError today, so 3-4 remains 'unimplemented'. The
+ * scripted server validates the exact wire form (the
  * "ENABLE UTF8=ACCEPT" argument, the "UTF8 (" literal8 ")" APPEND syntax, the
  * absence of a SEARCH CHARSET, the ENABLE-argument-never-UTF8=ONLY rule) so
  * the matchers become genuine assertions as each surface lands.
@@ -179,13 +182,11 @@ complianceTest(
 // "UTF8 (" literal8 ")" data extension (4-1); it MAY reuse the same syntax in a
 // CATENATE part (4-2). The matcher accepts the APPEND line ONLY when the UTF8(
 // ...) wrapper is present around a literal8 ('~{n}' binary literal) announcement.
-// append() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC6855-4-1", "RFC6855-4-2"],
 		profiles: ["rev1"],
 		title: "APPEND of a UTF-8-header message uses the 'UTF8 (' literal8 ')' data extension",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -210,9 +211,9 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.enable(["UTF8=ACCEPT"]);
 		const utf8Headers = Buffer.from("Subject: café\r\nFrom: тест@example.com\r\n\r\nbody\r\n", "utf8");
-		await driver.append("INBOX", utf8Headers); // throws NotImplementedError today
+		await driver.append("INBOX", utf8Headers);
 		await server.assertCompleted();
-		// When implemented: the APPEND carried a UTF8( literal8 ) wrapper.
+		// The APPEND carried a UTF8( literal8 ) wrapper.
 		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(appendLine).toBeDefined();
 		expect(

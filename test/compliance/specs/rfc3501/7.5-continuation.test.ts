@@ -31,11 +31,11 @@
  *   physically cannot trip this: it sends the payload only after reading
  *   "+ Ready", which is always recorded first.
  *
- *   driver.append() — the natural literal-bearing surface — is unimplemented
- *   today (expectFailure: "unimplemented"). When it lands, this test verifies
- *   the full §7.5 discipline: announcement line, wait, then exactly the
- *   announced octets (the harness's exact-count consumption ensures a short
- *   or long payload corrupts the following line and fails the script).
+ *   driver.append() (M2.11) is the literal-bearing surface exercised here,
+ *   verifying the full §7.5 discipline: announcement line, wait, then
+ *   exactly the announced octets (the harness's exact-count consumption
+ *   ensures a short or long payload corrupts the following line and fails
+ *   the script).
  */
 import { expect } from "vitest";
 
@@ -58,7 +58,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"client does not transmit literal octets until the server sends the continuation request",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
