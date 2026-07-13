@@ -262,7 +262,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.9-1"],
 		profiles: ["rev2"],
 		title: "client accepts a UID-flagged ESEARCH response to UID SEARCH (numbers are UIDs)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

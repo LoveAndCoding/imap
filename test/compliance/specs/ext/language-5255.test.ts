@@ -108,7 +108,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -761,7 +761,6 @@ complianceTest(
 		reqs: ["RFC5255-4.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client's SEARCH result interpretation on SUBJECT/FROM/etc. is governed by the active I18NLEVEL comparator",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -773,7 +772,13 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
-				expectLine(command("SEARCH", { args: /^SUBJECT "STRASSE"$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
+				// Either wire form is spec-legal (astring = 1*ASTRING-CHAR / string,
+				// RFC 3501/9051 §9): "STRASSE" is all ATOM-CHAR, so a bare atom is
+				// as valid as a quoted string. Accept both, mirroring the same
+				// bare-vs-quoted tolerance fuzzy-6203.test.ts's matchers already use
+				// for this exact ambiguity (e.g. FROM user@example.com).
+				expectLine(command("SEARCH", { args: /^SUBJECT (?:STRASSE|"STRASSE")$/i })),
 				// Under i;unicode-casemap, "STRASSE" (SS) case/normalization-matches
 				// a subject containing the German sharp-S "STRASSE"/"straße" — a
 				// result only the active (non-default) comparator would surface.
@@ -781,8 +786,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.search([{ header: ["SUBJECT", "STRASSE"] }]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search([{ header: ["SUBJECT", "STRASSE"] }]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();

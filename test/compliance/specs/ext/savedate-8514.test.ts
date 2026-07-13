@@ -34,7 +34,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -121,14 +121,14 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 			reqs: [reqMap[key]],
 			profiles: ["rev1", "rev2"],
 			title: `SEARCH ${key} <date> command form`,
-			expectFailure: "unimplemented",
 			timeout: 5000,
 		},
 		async () => {
 			const server = await f.startServer();
 			server.arm([
 				[
-					...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+					...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+					...selectExchange("INBOX", { exists: 5 }),
 					// search-key =/ "<KEY>" SP date — the atom then an IMAP date.
 					expectLine(
 						command("SEARCH", { args: new RegExp(`^${key} 28-Dec-2014$`, "i") }),
@@ -137,7 +137,9 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 				],
 			]);
 			const driver = await f.connectPlain(server);
-			await driver.search({ key, date: "28-Dec-2014" }); // throws NotImplementedError today
+			await driver.login("user", "pass");
+			await driver.select("INBOX");
+			await driver.search({ key, date: "28-Dec-2014" });
 			await server.assertCompleted();
 			const search = server.commandLines.find((l) => l.verb === "SEARCH");
 			expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -166,14 +168,20 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				// search-key =/ "SAVEDATESUPPORTED" — no date argument follows.
 				expectLine(command("SEARCH", { args: /^SAVEDATESUPPORTED$/i })),
 				reply("OK SEARCH completed", ["* SEARCH 1 2 3 4"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search({ key: "SAVEDATESUPPORTED" }); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// SAVEDATESUPPORTED has no SearchCriteria field of its own (spec §5.3
+		// models only the three date-taking SAVED* keys) -- driver.search()
+		// throws NotImplementedError before touching the wire.
+		await driver.search({ key: "SAVEDATESUPPORTED" });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();

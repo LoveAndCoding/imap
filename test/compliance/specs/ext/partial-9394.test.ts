@@ -64,7 +64,7 @@ import type { ScriptedServer } from "../../harness/scripted-server";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -117,14 +117,14 @@ complianceTest(
 		reqs: ["RFC9394-3.1-1", "RFC9394-4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID SEARCH RETURN (PARTIAL 1:500) form: mandatory 1-based same-sign range, no '*'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(partialCaps(ctx.profile)),
+				...sessionPrelude(partialCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 30 }),
 				expectLine(
 					command("UID SEARCH", {
 						// partial-range-first = nz-number ":" nz-number (no MINUS, no *).
@@ -137,8 +137,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Once a PARTIAL surface exists this drives 'UID SEARCH RETURN (PARTIAL 1:500) UNDELETED'.
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -157,14 +158,14 @@ complianceTest(
 		reqs: ["RFC9394-3.1-2", "RFC9394-4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID SEARCH RETURN (PARTIAL -1:-100) form: both newest-first endpoints minus-prefixed",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(partialCaps(ctx.profile)),
+				...sessionPrelude(partialCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 30 }),
 				expectLine(
 					command("UID SEARCH", {
 						// partial-range-last: MINUS on BOTH endpoints; $Junk stays bare.
@@ -177,9 +178,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.uidSearch(["UNDELETED", "UNKEYWORD $Junk"], {
 			return: ["PARTIAL -1:-100"],
-		}); // throws today
+		});
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -197,14 +200,14 @@ complianceTest(
 		reqs: ["RFC9394-3.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "emitted RETURN list never pairs PARTIAL with ALL or repeats PARTIAL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(partialCaps(ctx.profile)),
+				...sessionPrelude(partialCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 30 }),
 				expectLine({
 					description: "UID SEARCH whose RETURN list has at most one PARTIAL/ALL option",
 					match: (line) => {
@@ -229,7 +232,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 23500:24000"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 23500:24000"] });
 		await server.assertCompleted();
 		expect(server.transcript.clientLines()).not.toMatch(
 			/RETURN \([^)]*\b(?:PARTIAL|ALL)\b[^)]*\b(?:PARTIAL|ALL)\b/i,

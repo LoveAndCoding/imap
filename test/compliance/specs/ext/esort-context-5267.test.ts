@@ -86,7 +86,7 @@ import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -385,7 +385,8 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				// Whatever search the client issues, its RETURN list (if any) must
 				// not contain the ungated context options.
 				expectLine({
@@ -406,7 +407,13 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["UPDATE"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// UPDATE has no client surface yet (RFC 5267 CONTEXT/ESORT is out of
+		// scope this milestone) -- driver.uidSearch() throws NotImplementedError
+		// before touching the wire, which trivially (and honestly) also
+		// satisfies this MUST NOT.
+		await driver.uidSearch(["UNDELETED"], { return: ["UPDATE"] });
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -664,13 +671,18 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(command("UID SEARCH", { args: /^RETURN \([^)]*UPDATE[^)]*\) .+$/i })),
 				reply("OK UID SEARCH completed", ['* ESEARCH (TAG "B01") UID COUNT 2']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["DELETED"], { return: ["UPDATE", "COUNT"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// UPDATE has no client surface yet (see RFC5267-4.1-1 above) --
+		// driver.uidSearch() throws NotImplementedError before touching the wire.
+		await driver.uidSearch(["DELETED"], { return: ["UPDATE", "COUNT"] });
 		await server.assertCompleted();
 		// When implemented: every tagged command in the session used a distinct tag.
 		const tags = server.commandTags;
@@ -779,14 +791,14 @@ complianceTest(
 		reqs: ["RFC5267-4.4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "PARTIAL search return option carries a mandatory 1-based nz-number:nz-number range",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(
 					command("UID SEARCH", {
 						args: /^RETURN \(PARTIAL [1-9][0-9]*:[1-9][0-9]*\) .+$/i,
@@ -796,7 +808,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -815,14 +829,14 @@ complianceTest(
 		reqs: ["RFC5267-4.4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "emitted RETURN list never pairs PARTIAL with ALL or repeats PARTIAL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine({
 					description: "UID SEARCH whose RETURN list has at most one PARTIAL/ALL option",
 					match: (line) => {
@@ -845,7 +859,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] });
 		await server.assertCompleted();
 		// When implemented: the transcript never shows a doubled PARTIAL/ALL.
 		expect(server.transcript.clientLines()).not.toMatch(

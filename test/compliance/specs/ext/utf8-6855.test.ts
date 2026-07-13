@@ -144,7 +144,6 @@ complianceTest(
 		reqs: ["RFC6855-3-4"],
 		profiles: ["rev1"],
 		title: "client omits a CHARSET specification from SEARCH after enabling UTF8=ACCEPT",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

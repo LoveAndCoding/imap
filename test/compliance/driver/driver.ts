@@ -13,6 +13,9 @@ import type {
 	MailboxSession,
 	MailboxStatusResult,
 	NamespaceSet,
+	SearchCriteria,
+	SearchOptions as RealSearchOptions,
+	SearchResult,
 	SpecialUse,
 	StatusItem,
 } from "../../../src/index";
@@ -162,6 +165,260 @@ function withAuthzid(inner: SaslMechanism, authzid: string | undefined): SaslMec
 		step: (challenge, ctx) => inner.step(challenge, merge(ctx)),
 		finish: (data, ctx) => inner.finish(data, merge(ctx)),
 	};
+}
+
+// ---------------------------------------------------------------------------
+// SEARCH / UID SEARCH ad hoc -> real `SearchCriteria`/`SearchOptions`
+// translation (M3.7). These `driver.search()`/`driver.uidSearch()` call
+// sites were scripted well before the real, spec-typed `SearchCriteria`
+// existed, so each spec file guessed its own convenient placeholder shape
+// for "criteria" (a raw pre-formed SEARCH-key wire-text array, a plain
+// object already close to the real shape, or one of a couple of small ad
+// hoc conventions for a field the real type expresses differently, e.g.
+// `{ save: true }` instead of `return: ["SAVE"]`). This translator accepts
+// every one of those observed shapes and produces a real `SearchCriteria`/
+// `SearchOptions` pair -- same "translate the driver's own wire-shaped
+// option strings onto the public option shape" rule `list()` below already
+// follows for LIST's ad hoc `selectOptions`/`returnOptions` strings. A
+// genuinely unsupported request (an extension key with no `SearchCriteria`
+// field at all, e.g. RFC 5466 FILTER or RFC 5267 UPDATE/CONTEXT -- neither
+// is in the M3.7 §5.3 type) throws `NotImplementedError`, the same "public
+// API cannot express this" outcome `list()` uses for an out-of-vocabulary
+// LIST option.
+
+const IMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function stripAdHocQuotes(s: string): string {
+	const t = s.trim();
+	if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+		return t.slice(1, -1);
+	}
+	return t;
+}
+
+/** Parses an RFC 3501/9051 `date-text` literal (e.g. `"28-Dec-2014"`) as
+ *  scripted by the ad hoc SAVEDATE/SINCE-family test conventions. */
+function parseImapDateLiteral(s: string): Date {
+	const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(s.trim());
+	const monthIndex = m ? IMAP_MONTHS.findIndex((mo) => mo.toLowerCase() === m[2].toLowerCase()) : -1;
+	if (!m || monthIndex < 0) {
+		throw new NotImplementedError(`SEARCH date literal ${JSON.stringify(s)}`);
+	}
+	return new Date(Date.UTC(Number(m[3]), monthIndex, Number(m[1])));
+}
+
+/** RFC 3501/9051 §6.4.4's named header search-keys (FROM/TO/CC/BCC/SUBJECT)
+ *  are semantically identical to a generic `HEADER <field> <value>` search
+ *  on that same field -- several fixtures (e.g. RFC 5255 §4.2-1's ad hoc
+ *  `{ header: ["SUBJECT", "STRASSE"] }`) pin the MORE SPECIFIC dedicated
+ *  key's wire form, so this recognizes those five field names and routes to
+ *  the real `SearchCriteria`'s own dedicated field rather than its generic
+ *  `header` array. */
+const NAMED_HEADER_FIELDS: Readonly<Record<string, "to" | "from" | "cc" | "bcc" | "subject">> = {
+	TO: "to",
+	FROM: "from",
+	CC: "cc",
+	BCC: "bcc",
+	SUBJECT: "subject",
+};
+
+function mapAdHocHeaderField(field: string, value: string): Record<string, unknown> {
+	const named = NAMED_HEADER_FIELDS[field.toUpperCase()];
+	return named ? { [named]: value } : { header: [{ field, value }] };
+}
+
+/** RFC 8514's ad hoc `{ key: "SAVEDBEFORE" | "SAVEDON" | "SAVEDSINCE" |
+ *  "SAVEDATESUPPORTED", date?: string }` convention (savedate-8514.test.ts).
+ *  `SAVEDATESUPPORTED` has no `SearchCriteria` field of its own (spec §5.3
+ *  models only the three date-taking SAVED* keys) -- it stays honestly
+ *  unimplemented. */
+function fromAdHocSavedateKey(key: string, dateStr: unknown): Record<string, unknown> {
+	const date = typeof dateStr === "string" ? parseImapDateLiteral(dateStr) : undefined;
+	const upper = key.toUpperCase();
+	if (upper === "SAVEDBEFORE" && date) return { savedBefore: date };
+	if (upper === "SAVEDON" && date) return { savedateOn: date };
+	if (upper === "SAVEDSINCE" && date) return { savedateSince: date };
+	throw new NotImplementedError(`SEARCH key ${JSON.stringify(key)} (no SearchCriteria field for it)`);
+}
+
+/** One ad hoc object entry (top-level criteria object field, or an array
+ *  element already shaped as an object) -> its real `SearchCriteria`
+ *  fragment. `header`/`modseq` are the two field NAMES the ad hoc fixtures
+ *  spell differently than the real type (`header` needs the named-field
+ *  recognition above; `modseq` is RFC 7162 §3.1.5's
+ *  `{ entryName, entryType, value }` shape vs. the real `modSeq: { since,
+ *  entry, type }`); everything else passes through unchanged -- the bulk of
+ *  the ad hoc object fixtures (`{ all: true }`, `{ text: "café" }`, `{ from:
+ *  "boss" }`, ...) already spell real `SearchCriteria` field names.
+ */
+function normalizeAdHocField(key: string, value: unknown): Record<string, unknown> {
+	if (key === "header") {
+		const [field, fieldValue] = value as [string, string];
+		return mapAdHocHeaderField(field, fieldValue);
+	}
+	if (key === "modseq") {
+		const { entryName, entryType, value: since } = value as {
+			entryName?: string;
+			entryType?: string;
+			value: bigint;
+		};
+		const modSeq: Record<string, unknown> = { since };
+		if (entryName !== undefined) modSeq.entry = entryName;
+		if (entryType !== undefined) modSeq.type = entryType;
+		return { modSeq };
+	}
+	return { [key]: value };
+}
+
+function mergeAdHocObject(target: Record<string, unknown>, obj: Record<string, unknown>): void {
+	for (const [k, v] of Object.entries(obj)) {
+		Object.assign(target, normalizeAdHocField(k, v));
+	}
+}
+
+/**
+ * Parses ONE raw pre-formed SEARCH-key wire-text fragment (the majority ad
+ * hoc convention across the compliance suite, e.g. `"FUZZY SUBJECT work"`,
+ * `"X-GM-MSGID 1278455344230334865"`, `"UNSEEN"`, `"SINCE 1-Feb-1994"`) into
+ * its real `SearchCriteria` fragment. Recognizes exactly the key spellings
+ * these fixtures actually use; anything else (e.g. `"FILTER on-vacation"` --
+ * RFC 5466, no `SearchCriteria` field at all) throws `NotImplementedError`.
+ */
+function parseAdHocSearchToken(token: string): Record<string, unknown> {
+	const s = token.trim();
+	let m: RegExpExecArray | null;
+	if ((m = /^FUZZY\s+(.+)$/i.exec(s))) {
+		return { fuzzy: parseAdHocSearchToken(m[1]) };
+	}
+	if ((m = /^UNKEYWORD\s+(\S+)$/i.exec(s))) {
+		return { not: { keyword: stripAdHocQuotes(m[1]) } };
+	}
+	if ((m = /^KEYWORD\s+(\S+)$/i.exec(s))) {
+		return { keyword: stripAdHocQuotes(m[1]) };
+	}
+	if ((m = /^X-GM-MSGID\s+(\S+)$/i.exec(s))) return { gmailMessageId: m[1] };
+	if ((m = /^X-GM-THRID\s+(\S+)$/i.exec(s))) return { gmailThreadId: m[1] };
+	if ((m = /^X-GM-LABELS\s+(\S+)$/i.exec(s))) return { gmailLabels: stripAdHocQuotes(m[1]) };
+	if ((m = /^X-GM-RAW\s+(.+)$/i.exec(s))) return { gmailRaw: stripAdHocQuotes(m[1]) };
+	if ((m = /^YOUNGER\s+(-?\d+)$/i.exec(s))) return { younger: Number(m[1]) };
+	if ((m = /^OLDER\s+(-?\d+)$/i.exec(s))) return { older: Number(m[1]) };
+	if ((m = /^LARGER\s+(\d+)$/i.exec(s))) return { larger: Number(m[1]) };
+	if ((m = /^SMALLER\s+(\d+)$/i.exec(s))) return { smaller: Number(m[1]) };
+	if ((m = /^HEADER\s+(\S+)\s+(.+)$/i.exec(s))) return mapAdHocHeaderField(m[1], stripAdHocQuotes(m[2]));
+	if ((m = /^FROM\s+(.+)$/i.exec(s))) return { from: stripAdHocQuotes(m[1]) };
+	if ((m = /^TO\s+(.+)$/i.exec(s))) return { to: stripAdHocQuotes(m[1]) };
+	if ((m = /^CC\s+(.+)$/i.exec(s))) return { cc: stripAdHocQuotes(m[1]) };
+	if ((m = /^BCC\s+(.+)$/i.exec(s))) return { bcc: stripAdHocQuotes(m[1]) };
+	if ((m = /^SUBJECT\s+(.+)$/i.exec(s))) return { subject: stripAdHocQuotes(m[1]) };
+	if ((m = /^BODY\s+(.+)$/i.exec(s))) return { body: stripAdHocQuotes(m[1]) };
+	if ((m = /^TEXT\s+(.+)$/i.exec(s))) return { text: stripAdHocQuotes(m[1]) };
+	if ((m = /^SINCE\s+(.+)$/i.exec(s))) return { since: parseImapDateLiteral(m[1]) };
+	if ((m = /^BEFORE\s+(.+)$/i.exec(s))) return { before: parseImapDateLiteral(m[1]) };
+	if ((m = /^SENTSINCE\s+(.+)$/i.exec(s))) return { sentSince: parseImapDateLiteral(m[1]) };
+	if ((m = /^SENTBEFORE\s+(.+)$/i.exec(s))) return { sentBefore: parseImapDateLiteral(m[1]) };
+	if ((m = /^SENTON\s+(.+)$/i.exec(s))) return { sentOn: parseImapDateLiteral(m[1]) };
+	if ((m = /^ON\s+(.+)$/i.exec(s))) return { on: parseImapDateLiteral(m[1]) };
+	if (/^ANSWERED$/i.test(s)) return { answered: true };
+	if (/^UNANSWERED$/i.test(s)) return { answered: false };
+	if (/^FLAGGED$/i.test(s)) return { flagged: true };
+	if (/^UNFLAGGED$/i.test(s)) return { flagged: false };
+	if (/^DELETED$/i.test(s)) return { deleted: true };
+	if (/^UNDELETED$/i.test(s)) return { deleted: false };
+	if (/^SEEN$/i.test(s)) return { seen: true };
+	if (/^UNSEEN$/i.test(s)) return { seen: false };
+	if (/^DRAFT$/i.test(s)) return { draft: true };
+	if (/^UNDRAFT$/i.test(s)) return { draft: false };
+	if (/^RECENT$/i.test(s)) return { recent: true };
+	if (/^OLD$/i.test(s)) return { recent: false };
+	if (/^ALL$/i.test(s)) return { all: true };
+	throw new NotImplementedError(`SEARCH criteria token ${JSON.stringify(token)}`);
+}
+
+/** A `RETURN (...)` option token from the ad hoc `SearchOptions.return`
+ *  array: the closed MIN/MAX/ALL/COUNT vocabulary, `"PARTIAL m:n"` (RFC
+ *  9394 -- extracted into the real `SearchOptions.partial` field, not
+ *  `.return`), or `"SAVE"` (extracted into `saveRequested`, so it merges
+ *  with the ad hoc criteria-object `{ save: true }` convention below into
+ *  one real `return` array with no duplicate). Anything else (RFC 6203
+ *  RELEVANCY, RFC 5267 UPDATE/CONTEXT -- neither in the M3.7 §5.3
+ *  `SearchOptions.return` union) throws `NotImplementedError`. */
+function parseAdHocReturnItem(
+	item: string,
+): { atom: "MIN" | "MAX" | "ALL" | "COUNT" } | { save: true } | { partial: { from: number; to: number } } {
+	const upper = item.trim().toUpperCase();
+	if (upper === "MIN" || upper === "MAX" || upper === "ALL" || upper === "COUNT") {
+		return { atom: upper };
+	}
+	if (upper === "SAVE") {
+		return { save: true };
+	}
+	const partialMatch = /^PARTIAL\s+(-?\d+):(-?\d+)$/i.exec(item.trim());
+	if (partialMatch) {
+		return { partial: { from: Number(partialMatch[1]), to: Number(partialMatch[2]) } };
+	}
+	throw new NotImplementedError(`SEARCH RETURN option ${JSON.stringify(item)}`);
+}
+
+/** Translates one `driver.search()`/`driver.uidSearch()` call's ad hoc
+ *  `(criteria, opts)` pair into the real, spec-typed `SearchCriteria`/
+ *  `SearchOptions` `MailboxSession.search()`/`.seq.search()` actually take. */
+function translateAdHocSearch(
+	rawCriteria: unknown,
+	rawOpts: SearchOptions | undefined,
+): { criteria: SearchCriteria; opts: RealSearchOptions } {
+	const criteria: Record<string, unknown> = {};
+	let charset = rawOpts?.charset;
+	let saveRequested = false;
+	const returnAtoms: Array<"MIN" | "MAX" | "ALL" | "COUNT"> = [];
+	let partial: { from: number; to: number } | undefined;
+
+	if (typeof rawCriteria === "string") {
+		criteria.seq = rawCriteria;
+	} else if (Array.isArray(rawCriteria)) {
+		for (const el of rawCriteria) {
+			if (typeof el === "string") {
+				mergeAdHocObject(criteria, parseAdHocSearchToken(el));
+			} else if (el && typeof el === "object") {
+				mergeAdHocObject(criteria, el as Record<string, unknown>);
+			} else {
+				throw new NotImplementedError(`SEARCH criteria element ${JSON.stringify(el)}`);
+			}
+		}
+	} else if (rawCriteria && typeof rawCriteria === "object") {
+		const obj = rawCriteria as Record<string, unknown>;
+		if (typeof obj.key === "string") {
+			mergeAdHocObject(criteria, fromAdHocSavedateKey(obj.key, obj.date));
+		} else {
+			for (const [k, v] of Object.entries(obj)) {
+				if (k === "charset") {
+					charset = v as string;
+				} else if (k === "save") {
+					if (v) saveRequested = true;
+				} else {
+					mergeAdHocObject(criteria, { [k]: v });
+				}
+			}
+		}
+	} else {
+		throw new NotImplementedError(`SEARCH criteria ${JSON.stringify(rawCriteria)}`);
+	}
+
+	const returnGiven = rawOpts?.return !== undefined;
+	for (const item of rawOpts?.return ?? []) {
+		const parsed = parseAdHocReturnItem(item);
+		if ("atom" in parsed) returnAtoms.push(parsed.atom);
+		else if ("save" in parsed) saveRequested = true;
+		else partial = parsed.partial;
+	}
+
+	const opts: RealSearchOptions = {};
+	if (charset !== undefined) opts.charset = charset;
+	if (returnGiven || saveRequested) {
+		opts.return = saveRequested ? [...returnAtoms, "SAVE"] : [...returnAtoms];
+	}
+	if (partial) opts.partial = partial;
+
+	return { criteria: criteria as SearchCriteria, opts };
 }
 
 /**
@@ -634,8 +891,28 @@ export class ComplianceDriver {
 	public async expunge(): Promise<never> {
 		throw new NotImplementedError("EXPUNGE");
 	}
-	public async search(_criteria: unknown, _opts?: SearchOptions): Promise<never> {
-		throw new NotImplementedError("SEARCH");
+	/**
+	 * SEARCH (RFC 3501/9051 §6.4.4 + ESEARCH/SEARCHRES/PARTIAL/WITHIN/
+	 * SAVEDATE/OBJECTID/X-GM-EXT-1/FUZZY families) -- M3.7. Sequence-number
+	 * grain (spec §6.2's UID-grain-default convention): wired to
+	 * `client.mailbox!.seq.search(...)`, mirroring `fetch`/`store`/`copy`/
+	 * `move`/`expunge`'s own bare-verb -> `.seq.<verb>` convention. Zero
+	 * protocol logic here (I-4) -- `translateAdHocSearch()` above only maps
+	 * this file's pre-existing ad hoc scripted-wire-form criteria/options
+	 * onto the real, spec-typed `SearchCriteria`/`SearchOptions`
+	 * `MailboxSession.seq.search()` actually takes.
+	 */
+	public async search(criteria: unknown, opts?: SearchOptions): Promise<SearchResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("search() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(criteria, opts);
+		return session.seq.search(realCriteria, realOpts);
 	}
 	public async fetch(_seq: string, _items: string[], _opts?: FetchOptions): Promise<never> {
 		throw new NotImplementedError("FETCH");
@@ -661,8 +938,20 @@ export class ComplianceDriver {
 	): Promise<never> {
 		throw new NotImplementedError("UID FETCH");
 	}
-	public async uidSearch(_criteria: unknown, _opts?: SearchOptions): Promise<never> {
-		throw new NotImplementedError("UID SEARCH");
+	/** UID SEARCH -- M3.7. UID grain: wired to `client.mailbox!.search(...)`
+	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
+	 *  `search()`'s doc comment above for the ad hoc-translation rationale. */
+	public async uidSearch(criteria: unknown, opts?: SearchOptions): Promise<SearchResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("uidSearch() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(criteria, opts);
+		return session.search(realCriteria, realOpts);
 	}
 	public async uidStore(
 		_seq: string,

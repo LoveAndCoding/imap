@@ -15,6 +15,8 @@ export * from "./namespace";
 export * from "./lsub";
 export * from "./noop";
 export * from "./rename";
+export * from "./search";
+export * from "./search-criteria";
 export * from "./select";
 export * from "./starttls";
 export * from "./subscribe";

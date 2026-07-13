@@ -3,6 +3,9 @@ import { TypedEmitter } from "tiny-typed-emitter";
 import type { Command } from "../commands/base";
 import { CloseCommand } from "../commands/close";
 import type { SelectResult } from "../commands/select";
+import { SearchCommand } from "../commands/search";
+import type { SearchOptions, SearchResult } from "../commands/search";
+import type { SearchCriteria } from "../commands/search-criteria";
 import { UnselectCommand } from "../commands/unselect";
 import { CapabilityError, StateError } from "../errors";
 import type { ClientState } from "./state";
@@ -91,6 +94,20 @@ export interface MailboxFlagsUpdate {
 	modSeq?: bigint;
 }
 
+/**
+ * The sequence-number-grain mirror facet (spec §5b: "`MailboxSession.seq`
+ * ... exposing the same method shapes over sequence numbers"). M3.7 (this
+ * task) creates this interface with its first verb, `search()` — per the
+ * M3 plan's shared design note, later message-op tasks (fetch/store/copy/
+ * move/expunge) add their own methods here ADDITIVELY, in their own task,
+ * never as an ahead-of-time stub. Every method here issues the bare
+ * (non-`UID`-prefixed) wire verb over sequence numbers, exactly mirroring
+ * its `MailboxSession` UID-grain counterpart's shape.
+ */
+export interface SequenceFacet {
+	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
+}
+
 export interface MailboxSessionEvents {
 	exists: (count: number, prev: number) => void;
 	expunge: (seq: number) => void;
@@ -120,6 +137,15 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	private readonly _mailboxId: string | null;
 	private readonly driver: MailboxSessionDriver;
 
+	/** Sequence-number-grain mirror facet (spec §5b) — see `SequenceFacet`'s
+	 *  own doc comment. Constructed once, alongside every other field, in
+	 *  this constructor; its methods delegate back into this same session via
+	 *  the `MailboxSession.runSearch` static (same "static may reach private
+	 *  members" access-widening trick this file already documents for
+	 *  `markClosed`/`applyExists`/etc., since `SeqFacet` is declared in this
+	 *  module but is not itself a `MailboxSession`). */
+	public readonly seq: SequenceFacet;
+
 	constructor(name: string, snapshot: SelectResult, driver: MailboxSessionDriver) {
 		super();
 		this.name = name;
@@ -135,6 +161,7 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		this._highestModSeq = snapshot.noModSeq ? null : snapshot.highestModSeq;
 		this._mailboxId = snapshot.mailboxId;
 		this.driver = driver;
+		this.seq = new SeqFacet(this);
 	}
 
 	/** `true` once this session has been deselected (reselected, closed,
@@ -213,6 +240,26 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return this._mailboxId;
 	}
 
+	// -- message operations (spec §5b, UID grain) ------------------------------
+
+	/**
+	 * SEARCH / UID SEARCH (spec §5.3/§5b; RFC 3501/9051 §6.4.4, RFC 4731
+	 * ESEARCH, RFC 5182 SEARCHRES, RFC 9394 PARTIAL). UID grain (spec §6.2's
+	 * settled default) — the wire verb is always `UID SEARCH`; see `seq`
+	 * for the bare `SEARCH` (sequence-number grain) mirror. Every criteria
+	 * key's capability gate (`SearchCriteria`'s extension fields) and this
+	 * command's own `SearchOptions.return`/`.partial` gates are enforced by
+	 * `SearchCommand`'s constructor, before any bytes are written (I-9) —
+	 * this method contributes no additional protocol logic of its own (I-4),
+	 * only the open-session precondition and the live capability probe.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition as `close()`/`unselect()`.
+	 */
+	public async search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
+		return MailboxSession.runSearch(this, criteria, opts, true);
+	}
+
 	// -- deselection (spec §5b) -----------------------------------------------
 
 	/**
@@ -273,12 +320,16 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		MailboxSession.markClosed(this, "unselected");
 	}
 
-	/** Shared precondition for `close()`/`unselect()` (spec §5b: "`closed`...
-	 *  all methods reject `StateError`"). Reads the live client state through
-	 *  the driver seam rather than guessing, so the error's `state` field is
-	 *  accurate even if this session outlives the client dropping further
-	 *  (e.g. logout) after having already been deselected. */
-	private assertOpen(method: "close" | "unselect"): void {
+	/** Shared precondition for every message-op/deselection method (spec §5b:
+	 *  "`closed`... all methods reject `StateError`"). Reads the live client
+	 *  state through the driver seam rather than guessing, so the error's
+	 *  `state` field is accurate even if this session outlives the client
+	 *  dropping further (e.g. logout) after having already been deselected.
+	 *  `method` is a free-form label (not a closed union) so each new verb
+	 *  task can pass its own method name without editing this signature --
+	 *  additive, merge-friendly, same spirit as `SequenceFacet` growing one
+	 *  method per task. */
+	private assertOpen(method: string): void {
 		if (this._closed) {
 			throw new StateError(
 				`MailboxSession.${method}(): this session for "${this.name}" is ` +
@@ -287,6 +338,26 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 				{ state: this.driver.currentState(), required: ["selected"] },
 			);
 		}
+	}
+
+	/**
+	 * Shared SEARCH/UID SEARCH implementation for both `search()` (UID grain)
+	 * and `seq.search()` (sequence-number grain) — a `static` (rather than a
+	 * private instance method) so `SeqFacet` below, a separate class in this
+	 * module, can reach it without this being a public instance method on
+	 * `MailboxSession` itself (same access-widening trick as `markClosed`/
+	 * `applyExists`/etc. below, applied for a facet-delegation reason rather
+	 * than a cross-module one).
+	 */
+	static runSearch(
+		session: MailboxSession,
+		criteria: SearchCriteria,
+		opts: SearchOptions | undefined,
+		uid: boolean,
+	): Promise<SearchResult> {
+		session.assertOpen(uid ? "search" : "seq.search");
+		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
+		return session.driver.run(new SearchCommand(criteria, opts, probe, uid));
 	}
 
 	// -- internal driver surface (ImapClient's §8.3 state-tracker lane ONLY) --
@@ -347,5 +418,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const prev = session._uidValidity;
 		session._uidValidity = next;
 		session.emit("uidValidityChanged", next, prev);
+	}
+}
+
+/**
+ * `SequenceFacet` implementation backing `MailboxSession.seq` (spec §5b).
+ * A thin delegator: every method forwards to the SAME shared static
+ * (`MailboxSession.runSearch`, etc.) the UID-grain method uses, passing
+ * `uid: false` so the wire verb is the bare (non-`UID`-prefixed) form. Kept
+ * as its own class (rather than an object literal built in the
+ * constructor) so future verbs land here as ordinary additional methods —
+ * additive, merge-friendly, matching `SequenceFacet`'s own doc comment.
+ */
+class SeqFacet implements SequenceFacet {
+	constructor(private readonly session: MailboxSession) {}
+
+	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
+		return MailboxSession.runSearch(this.session, criteria, opts, false);
 	}
 }

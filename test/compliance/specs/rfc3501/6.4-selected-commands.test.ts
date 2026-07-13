@@ -222,7 +222,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.4-1"],
 		profiles: ["rev1"],
 		title: "SEARCH with CHARSET places the CHARSET clause before the search criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -277,7 +276,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.4-2"],
 		profiles: ["rev1"],
 		title: "client treats NO [BADCHARSET] response as unsupported-charset (not a protocol error) and keeps session alive",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

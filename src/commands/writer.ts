@@ -634,14 +634,24 @@ export class CommandWriter {
 		});
 	}
 
-	/** RFC 3501/9051 date-text, quoted, e.g. `"12-Jul-2026"`. Rendered in UTC
-	 *  (see `dateText`'s doc comment for why). */
+	/**
+	 * RFC 3501/9051 date-text, e.g. `12-Jul-2026` (M3.7, first real caller —
+	 * SEARCH's date-valued keys: BEFORE/ON/SINCE/SENTBEFORE/SENTON/SENTSINCE,
+	 * RFC 8514's SAVEDBEFORE/SAVEDON/SAVEDSINCE). `date = date-text / DQUOTE
+	 * date-text DQUOTE` (RFC 3501/9051 §9) legally permits either form — bare
+	 * is emitted here (unlike `dateTime()` below, which MUST quote: its
+	 * grammar embeds a space between the date and time-of-day, so bare
+	 * emission would tokenize as two atoms). Bare is also the form every RFC
+	 * worked example for these search-keys uses verbatim (e.g. RFC 3501
+	 * §6.4.4's "SINCE 1-Feb-1994", RFC 8514 §4.3's "SAVEDBEFORE 28-Dec-2014").
+	 * Rendered in UTC (see `dateText`'s doc comment for why).
+	 */
 	date(d: Date): this {
 		return this.atomic(() => {
 			if (!(d instanceof Date) || Number.isNaN(d.getTime())) {
 				throw new RangeError("date: expected a valid Date");
 			}
-			this.emitValue(Buffer.from(`"${dateText(d)}"`, "ascii"));
+			this.emitValue(Buffer.from(dateText(d), "ascii"));
 			return this;
 		});
 	}

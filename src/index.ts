@@ -25,9 +25,16 @@ export type { ClientState } from "./client/state";
 export type { CapabilityView } from "./client/capabilities";
 
 export { MailboxSession } from "./client/mailbox";
-export type { MailboxClosedReason, MailboxSessionEvents } from "./client/mailbox";
+export type { MailboxClosedReason, MailboxSessionEvents, SequenceFacet } from "./client/mailbox";
 
 export type { SelectOptions, SelectResult } from "./commands/select";
+
+// SEARCH / UID SEARCH (spec §5.3/§5b, M3.7): the criteria compiler's typed
+// input, the command's own RETURN/CHARSET/PARTIAL options, and the ESEARCH-
+// or-classic-SEARCH result shape `MailboxSession.search()`/`.seq.search()`
+// resolve to.
+export type { SearchCriteria } from "./commands/search-criteria";
+export type { SearchOptions, SearchResult } from "./commands/search";
 
 // Shared UID/sequence-number argument type (spec §5.1, M3.3) — used by
 // every message-operation method's `uids`/`seq` parameters.

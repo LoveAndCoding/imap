@@ -62,7 +62,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -105,14 +105,17 @@ complianceTest(
 		reqs: ["RFC6203-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FUZZY search-key form: FUZZY directly prefixes exactly one search key (per-key scope)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY"])),
+				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 10 }),
 				expectLine(
 					command("SEARCH", {
 						args: /^FUZZY SUBJECT (?:work|"work") FROM (?:user@example\.com|"user@example\.com")$/i,
@@ -122,7 +125,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(["FUZZY SUBJECT work", "FROM user@example.com"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["FUZZY SUBJECT work", "FROM user@example.com"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -140,14 +145,17 @@ complianceTest(
 		reqs: ["RFC6203-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FUZZY wraps a non-string search key (FUZZY ANSWERED) alongside an exact key",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY"])),
+				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 6 }),
 				expectLine(
 					command("SEARCH", { args: /^SUBJECT (?:xyz|"xyz") FUZZY ANSWERED$/i }),
 				),
@@ -155,7 +163,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(['SUBJECT "xyz"', "FUZZY ANSWERED"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(['SUBJECT "xyz"', "FUZZY ANSWERED"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -172,14 +182,14 @@ complianceTest(
 		reqs: ["RFC6203-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit FUZZY or RELEVANCY when SEARCH=FUZZY is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(capsFor(ctx.profile, [])),
+				...sessionPrelude(capsFor(ctx.profile, []), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
 				expectLine({
 					description: "SEARCH without FUZZY/RELEVANCY tokens",
 					match: (line) => {
@@ -198,8 +208,17 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(["FUZZY SUBJECT work"]); // throws today
-		await server.assertCompleted();
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// A spec-compliant client MAY satisfy this MUST NOT either by omitting
+		// FUZZY/RELEVANCY and completing a plain SEARCH, or by refusing the
+		// request locally before any bytes are written (I-9) -- this client
+		// does the latter (`SearchCriteria.fuzzy`'s SEARCH=FUZZY gate). Both
+		// outcomes are compliant, so the request is swallowed here rather than
+		// awaited bare; `assertCompleted()` is deliberately NOT called since
+		// the scripted SEARCH/reply step is never consumed when the client
+		// refuses locally (same pattern as esearch-4731.test.ts's RFC4731-1-1).
+		await driver.search(["FUZZY SUBJECT work"]).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"FUZZY/RELEVANCY must not be emitted absent SEARCH=FUZZY",
@@ -226,7 +245,8 @@ complianceTest(
 		server.arm([
 			[
 				// Fixed scenario for both legs: FUZZY yes, result-option carrier no.
-				...sessionPrelude(["IMAP4rev1", "SEARCH=FUZZY"]),
+				...sessionPrelude(["IMAP4rev1", "SEARCH=FUZZY"], { login: true }),
+				...selectExchange("INBOX", { exists: 5 }),
 				expectLine({
 					description: "SEARCH without a RETURN result-option list",
 					match: (line) => {
@@ -245,7 +265,14 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// RELEVANCY itself has no client surface yet (RFC 6203 is out of scope
+		// this milestone) -- driver.search() throws NotImplementedError before
+		// touching the wire, which trivially (and honestly) also satisfies
+		// this MUST NOT; genuinely wiring RELEVANCY is future work, not this
+		// gate's own duty.
+		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] });
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -273,7 +300,11 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY", "ESEARCH"])),
+				...sessionPrelude(capsFor(ctx.profile, ["SEARCH=FUZZY", "ESEARCH"]), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 12 }),
 				expectLine({
 					description: "SEARCH whose RELEVANCY return option is paired with a FUZZY key",
 					match: (line) => {
@@ -294,7 +325,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// RELEVANCY has no client surface yet (see RFC6203-4-2 above) --
+		// driver.search() throws NotImplementedError before touching the wire.
+		await driver.search(['FUZZY TEXT "Helo"'], { return: ["RELEVANCY", "ALL"] });
 		await server.assertCompleted();
 		expect(server.transcript.clientLines()).not.toMatch(
 			/RETURN \([^)]*RELEVANCY[^)]*\) (?!.*\bFUZZY\b)/i,

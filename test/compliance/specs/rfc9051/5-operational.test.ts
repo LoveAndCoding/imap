@@ -550,7 +550,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-5"],
 		profiles: ["rev2"],
 		title: "client keeps UID SEARCH sequence-number args bound to pre-EXPUNGE numbering",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

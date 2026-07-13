@@ -62,7 +62,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -145,7 +145,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-msgid-4"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH X-GM-MSGID <id> command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -153,13 +152,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
 				expectLine(command("SEARCH", { args: /^X-GM-MSGID 1278455344230334865$/i })),
 				reply("OK SEARCH (Success)", ["* SEARCH 1"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.search(["X-GM-MSGID 1278455344230334865"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["X-GM-MSGID 1278455344230334865"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -218,7 +219,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-thrid-4"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH X-GM-THRID <id> command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -226,13 +226,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("SEARCH", { args: /^X-GM-THRID 1266894439832287888$/i })),
 				reply("OK Search (Success)", ["* SEARCH 2 3 4"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.search(["X-GM-THRID 1266894439832287888"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["X-GM-THRID 1266894439832287888"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -333,7 +335,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-labels-8"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH X-GM-LABELS <label> command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -341,13 +342,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 2 }),
 				expectLine(command("SEARCH", { args: /^X-GM-LABELS foo$/i })),
 				reply("OK SEARCH (Success)", ["* SEARCH 1 2"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.search(["X-GM-LABELS foo"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["X-GM-LABELS foo"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -368,7 +371,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-raw-1", "X-GM-EXT-1-raw-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'SEARCH X-GM-RAW "<gmail query>" passes the query through as one opaque string argument',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -376,6 +378,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 5 }),
 				expectLine(
 					command("SEARCH", { args: /^X-GM-RAW "has:attachment in:unread"$/i }),
 				),
@@ -383,8 +386,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.search(['X-GM-RAW "has:attachment in:unread"']); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(['X-GM-RAW "has:attachment in:unread"']);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();

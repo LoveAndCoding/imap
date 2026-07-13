@@ -470,12 +470,12 @@ describe("CommandWriter", () => {
 		const fixed = new Date(Date.UTC(2026, 6, 12, 3, 5, 9)); // 12-Jul-2026 03:05:09 UTC
 		const singleDigitDay = new Date(Date.UTC(2026, 6, 5, 0, 0, 0));
 
-		test("date() exact string", () => {
-			expect(flat(writer().date(fixed))).toBe('"12-Jul-2026"');
+		test("date() exact string (bare — no quotes; RFC 3501/9051 §9's date alternation permits either)", () => {
+			expect(flat(writer().date(fixed))).toBe("12-Jul-2026");
 		});
 
 		test("date() does not pad a single-digit day", () => {
-			expect(flat(writer().date(singleDigitDay))).toBe('"5-Jul-2026"');
+			expect(flat(writer().date(singleDigitDay))).toBe("5-Jul-2026");
 		});
 
 		test("dateTime() exact string", () => {

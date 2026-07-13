@@ -856,7 +856,16 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		return {
 			run: (command) => this.run(command),
 			currentState: () => this.stateMachine.current,
-			hasCapability: (cap) => this.capabilityRegistry.view.has(cap),
+			// `effectiveCapability()`, not the raw registry view directly (M3.7,
+			// found wiring SEARCH's UTF-8-vs-CHARSET rule): every OTHER capability
+			// name behaves identically either way, but UTF8=ACCEPT's wire effects
+			// are licensed only once ENABLEd, never by bare advertisement (see
+			// `effectiveCapability()`'s own doc comment/RFC 6855 §3) — a
+			// `MailboxSession` verb gating on UTF8=ACCEPT (e.g. `search()`
+			// suppressing its auto-CHARSET-UTF-8 default once the session has
+			// truly enabled it) needs the SAME "enabled, not merely advertised"
+			// semantics `CommandWriter`'s own injected probe already has.
+			hasCapability: (cap) => this.effectiveCapability(cap),
 			deselect: (session) => {
 				if (this._mailboxSession !== session) {
 					return;

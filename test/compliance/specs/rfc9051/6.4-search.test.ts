@@ -67,7 +67,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-1"],
 		profiles: ["rev2"],
 		title: "pure IMAP4rev2 client ignores a legacy untagged SEARCH response and uses ESEARCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -111,7 +110,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-2"],
 		profiles: ["rev2"],
 		title: "client accepts an item-less ESEARCH (no match) as a valid empty result",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -150,7 +148,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-3"],
 		profiles: ["rev2"],
 		title: "client accepts an ESEARCH ALL result delivered in non-ascending order (no ordering assumption)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -191,7 +188,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-4"],
 		profiles: ["rev2"],
 		title: "client completes SEARCH RETURN (SAVE) on the tagged OK alone (ESEARCH suppressed)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -232,7 +228,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-5"],
 		profiles: ["rev2"],
 		title: "SEARCH with CHARSET places the CHARSET clause before the search criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -272,7 +267,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-6"],
 		profiles: ["rev2"],
 		title: "client encodes SEARCH string criteria as UTF-8 (CHARSET UTF-8 or no CHARSET, never a legacy charset)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -323,7 +317,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-7"],
 		profiles: ["rev2"],
 		title: "client treats tagged NO [BADCHARSET] as unsupported-charset (not a protocol error) and keeps the session alive",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -428,7 +421,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4.3-1"],
 		profiles: ["rev2"],
 		title: "client accepts tagged NO [NOTSAVED] to SEARCH RETURN (SAVE) and does not reuse a stale '$'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
