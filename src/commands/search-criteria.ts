@@ -94,6 +94,45 @@ function assertCap(
 	}
 }
 
+/**
+ * P1 fix (M3-phase-boundary review, RFC 5182 §2.1): "the client MUST NOT
+ * use" the `"$"` SEARCHRES sentinel unless the server has advertised
+ * SEARCHRES (or the caller is on an IMAP4rev2 server, RFC 9051 §6.4.4's
+ * fold-in of SEARCHRES into base core with no separate capability token,
+ * same absorption pattern this codebase already applies to ESEARCH's RETURN
+ * syntax). Previously enforced only inside `MailboxSession.runFetch()` (spec
+ * §5.4) -- every OTHER sequence-set-accepting entry point (`runStore`,
+ * `runCopyOrMove`, `runExpunge`'s UID EXPUNGE argument, and this module's own
+ * `uid`/`seq` `SearchCriteria` keys) accepted a bare `"$"` with no gate at
+ * all. Factored here (rather than into the dependency-free `protocol/
+ * sequence-set.ts`, which deliberately has zero imports of its own, per that
+ * module's own doc comment) since this module already imports
+ * `CapabilityError` and already sits on `MailboxSession`'s existing import
+ * graph (`client/mailbox.ts` already imports `SearchCriteria` from here).
+ *
+ * Called AT POINT OF USE, before any bytes reach the wire for the argument
+ * in question (I-9) -- every call site below either throws before writing
+ * ANY of its own command's bytes (this module's own `compileCriteria`, whose
+ * caller pre-compiles once against a throwaway writer for exactly this
+ * reason) or before constructing/dispatching the `Command` at all (every
+ * `MailboxSession` call site).
+ */
+export function assertSearchResSentinelAllowed(
+	set: { toString(): string },
+	caps: SearchCapabilityProbe,
+	context: string,
+): void {
+	if (set.toString() === "$" && !caps.has("SEARCHRES") && !caps.has("IMAP4rev2")) {
+		throw new CapabilityError(
+			`${context}: the "$" SEARCHRES sequence-set sentinel requires the SEARCHRES ` +
+				"capability (RFC 5182 §2.1) or an IMAP4rev2 server (RFC 9051 §6.4.4, which " +
+				"folds SEARCHRES into the base command set with no separate capability " +
+				"token), neither of which the server has advertised",
+			{ capability: "SEARCHRES", rfc: "RFC5182" },
+		);
+	}
+}
+
 function assertNzInteger(value: unknown, context: string): number {
 	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
 		throw new RangeError(`${context}: expected a positive non-zero integer, got ${JSON.stringify(value)}`);
@@ -127,6 +166,27 @@ function estimateKeyCount(criteria: SearchCriteria): number {
 			count += Math.max((criteria.header ?? []).length, 1);
 		} else if (key === "and") {
 			count += (criteria.and ?? []).reduce((sum, c) => sum + estimateKeyCount(c), 0);
+		} else if (key === "not") {
+			// C1 fix (M3-phase-boundary review): `compileNot`'s bare-keyword-
+			// negation special case (see `isBareKeywordNegation` below) emits
+			// ONE `UNKEYWORD <kw>` search-key PER value, not the single
+			// `NOT (...)`-wrapped token every other `not` payload compiles to
+			// -- undercounting this (the old code fell through to the generic
+			// `+= 1` branch below) let a `{ not: { keyword: [...] } }` operand
+			// nested inside `or`/`fuzzy`/another `not` go out on the wire
+			// UNPARENTHESIZED whenever the array had more than one element
+			// (`compileAsSingleKey` only wraps in `(...)` when this function
+			// reports more than one token), silently changing which trailing
+			// key the server ANDs the negation with. A generic (non-bare-
+			// keyword) `not` payload still counts as exactly 1 -- it always
+			// compiles to a single self-wrapping `NOT <key>`/`NOT (...)` token
+			// regardless of how many keys the wrapped payload itself has.
+			const payload = criteria.not as SearchCriteria;
+			count += isBareKeywordNegation(payload)
+				? Array.isArray(payload.keyword)
+					? Math.max(payload.keyword.length, 1)
+					: 1
+				: 1;
 		} else {
 			count += 1;
 		}
@@ -269,16 +329,24 @@ export function compileCriteria(
 				}
 				break;
 			}
-			case "uid":
+			case "uid": {
+				const uidSet = SequenceSet.from(value as SequenceInput).withKind("uid");
+				// P1 fix: gated BEFORE `w.atom("UID")`/`w.sequenceSet()` write a
+				// single byte for this key (I-9).
+				assertSearchResSentinelAllowed(uidSet, caps, "SearchCriteria.uid");
 				w.atom("UID");
-				w.sequenceSet(SequenceSet.from(value as SequenceInput).withKind("uid"));
+				w.sequenceSet(uidSet);
 				break;
-			case "seq":
+			}
+			case "seq": {
 				// Bare sequence-set search-key (RFC 3501/9051 §9 search-key's last
 				// alternative: a plain `sequence-set` matches by MESSAGE SEQUENCE
 				// NUMBER, distinct from the keyed "UID <sequence-set>" form above).
-				w.sequenceSet(SequenceSet.from(value as SequenceInput).withKind("seq"));
+				const seqSet = SequenceSet.from(value as SequenceInput).withKind("seq");
+				assertSearchResSentinelAllowed(seqSet, caps, "SearchCriteria.seq");
+				w.sequenceSet(seqSet);
 				break;
+			}
 			case "from":
 				w.atom("FROM");
 				w.astring(value as string);

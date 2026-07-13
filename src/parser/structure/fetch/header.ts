@@ -15,6 +15,35 @@ export class MessageHeader {
 		header?: string,
 		public readonly offset?: number,
 		decode = true,
+		/**
+		 * C2 fix (M3-phase-boundary review): when this `MessageHeader` came
+		 * from a `BODY[HEADER]`/`BODY[HEADER.FIELDS...]`/
+		 * `BODY[HEADER.FIELDS.NOT...]` section match (as opposed to the
+		 * legacy top-level `RFC822.HEADER` form, which never sets these), the
+		 * exact section-type atom the server echoed -- "HEADER",
+		 * "HEADER.FIELDS", or "HEADER.FIELDS.NOT" (matching
+		 * `composeSectionSpecKey`'s key space exactly, per
+		 * `MessageBodySection.getBodySectionInfo`'s own `type` extraction,
+		 * which reads only the bare atom immediately after `[`, never the
+		 * parenthesized field-name list that may follow it). `undefined` for
+		 * every other construction path (the plain `RFC822.HEADER` form, and
+		 * every direct call in `header.test.ts`) -- `MessageBody.
+		 * addMessageBodyPiece` uses THIS field's presence to decide whether to
+		 * also materialize a `MessageBodySection` for `.sections` (so
+		 * `FetchedMessage.part()` can reach it), in addition to the ordinary
+		 * `header.mergeIn()` this class's fields have always driven.
+		 */
+		public readonly sectionKind?: string,
+		/** Raw (undecoded, pre-`parseHeaderBlock`) section content paired with
+		 *  `sectionKind` above -- exactly what the server sent for this
+		 *  section, the same "echoed back verbatim" contract every other
+		 *  `MessageBodySection.contents` value already carries. `""` (never
+		 *  `undefined`) whenever `sectionKind` is set, matching
+		 *  `MessageBodySection`'s own `contents: string | undefined` contract
+		 *  (`undefined` there is reserved for "streamed instead", which never
+		 *  applies here -- headers are always eagerly drained, see this
+		 *  file's `match()` below). */
+		public readonly rawContents?: string,
 	) {
 		this.fields = new Map();
 		if (header) {
@@ -111,7 +140,12 @@ export function match(
 				? drainReadableSync(stream.stream).toString("utf8")
 				: text;
 			return {
-				match: new MessageHeader(headerText ?? undefined, offset),
+				// C2 fix: `type` ("HEADER"/"HEADER.FIELDS"/"HEADER.FIELDS.NOT")
+				// and the raw section content are threaded through so
+				// `MessageBody.addMessageBodyPiece` can ALSO materialize a
+				// `MessageBodySection` for this response -- see
+				// `MessageHeader`'s own constructor doc comment.
+				match: new MessageHeader(headerText ?? undefined, offset, true, type, headerText ?? ""),
 				length,
 			};
 		}

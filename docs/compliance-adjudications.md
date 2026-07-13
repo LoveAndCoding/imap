@@ -208,3 +208,45 @@ or auto-refusal) is deliberately never automated, and the compliance rows
 stay `unimplemented` on that half indefinitely. A caller that wants this
 policy composes it themselves from `FetchedMessage.flags` +
 `addFlags`/`removeFlags`, which this library provides.
+
+---
+
+## RFC9394-3.3-1 — deferred (out of M3 scope, revisit at M5)
+
+**Requirement:** "The PARTIAL extension also extends the UID FETCH command
+with a PARTIAL FETCH modifier. The PARTIAL FETCH modifier has the same
+syntax as the PARTIAL SEARCH result option. The presence of the PARTIAL
+FETCH modifier instructs the server to only return FETCH results for
+messages in the specified range." (MAY-level: a keyword-less grant of an
+optional modifier, gated on the PARTIAL capability alone.)
+
+**Decision:** `UID FETCH (PARTIAL m:n)` is deliberately out of scope for
+this milestone. The modern-api spec's §5.4 `FetchModifiers` type
+(`src/client/fetch.ts`) only declares `changedSince`/`vanished` (RFC 7162/
+5162, CONDSTORE/QRESYNC) — it has no `partial` field, so a TypeScript
+caller has no surface to even express the modifier, and `MailboxSession.
+fetch()`/`.seq.fetch()` have no code path that could emit it. The
+compliance test suite's own driver shim guards the same gap explicitly:
+`test/compliance/driver/driver.ts` throws
+`NotImplementedError("UID FETCH (PARTIAL m:n fetch modifier, RFC 9394
+§3.3)")` for both the UID-grain and (mirrored) bare-FETCH translation
+paths, matching every other not-yet-wired modifier's "no public API for
+this" signal (e.g. STORE's `UNCHANGEDSINCE`, FETCH's own
+`CHANGEDSINCE`/`VANISHED`) rather than a silent no-op.
+
+**Rationale:** RFC 9394 §3.1's own PARTIAL search return option (paging a
+SEARCH result set) IS implemented (`SearchOptions.partial`,
+`src/commands/search.ts`) — this adjudication is scoped narrowly to §3.3's
+separate UID-FETCH-modifier extension of the same PARTIAL syntax, which the
+M3 plan's message-operations milestone never listed as an exit criterion
+(FETCH's own modifier surface this milestone shipped is CONDSTORE/QRESYNC
+only, per `FetchModifiers`' own doc comment). Implementing it would require
+extending `FetchModifiers`/`FetchCommand`'s wire compiler with a new
+`(PARTIAL m:n)` modifier and threading a capability gate for `PARTIAL`/
+`CONTEXT=SEARCH` (RFC 9394 §3.3's own gate, mirroring §3.1's SEARCH-side
+gate) — a self-contained addition better scoped to a dedicated extension
+task than folded silently into this phase's fixes.
+
+**Revisit:** M5's extension-families pass (the milestone that already owns
+CONTEXT=SEARCH/CONTEXT=SORT and the rest of RFC 9394's currently-untested
+rows) re-decides whether `FetchModifiers` gains a `partial` field.

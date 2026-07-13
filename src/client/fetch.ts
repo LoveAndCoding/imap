@@ -171,18 +171,42 @@ export interface FetchEnvelope {
  *  on both variants). */
 export type BodyStructure = MessageBodyMultipartStructure | MessageBodyStructure;
 
+/**
+ * One FETCH body/BINARY part (spec §5.4). BACKPRESSURE CONTRACT for a LIVE
+ * (not-yet-buffered) part reached through `fetch()`'s async iterator
+ * (`MailboxSession.fetch()`/`.seq.fetch()`): the iterator does not advance
+ * past the message this part belongs to until this part has been "consumed
+ * or destroyed" -- concretely, one of:
+ *
+ *  1. NEVER ENGAGED at all (neither `stream()` nor `buffer()` ever called):
+ *     the instant the caller asks the iterator for the NEXT message
+ *     (`iter.next()`), this part is destroyed automatically (S2 fix,
+ *     M3-phase-boundary review) -- advancing without touching a part is
+ *     read as relinquishing it, not as a request to keep it alive
+ *     unobserved. An abandoned iterator (`break`/`return`) destroys it too,
+ *     via the same mechanism, slightly earlier in that path.
+ *  2. ENGAGED (`stream()` or `buffer()` was called) but not yet finished:
+ *     this part keeps gating the iterator exactly as always -- requesting
+ *     the next message before finishing a part you started reading is a
+ *     documented CALLER ERROR (the iterator will not advance until you
+ *     either finish draining it or destroy the underlying stream
+ *     yourself), not a case this contract papers over.
+ *  3. Finished (drained to `end`, or destroyed) the ordinary way.
+ */
 export interface FetchedPart {
 	section: string;
 	/** Literal size as sent (bigint, spec §11.3 number64 class). */
 	size: bigint;
 	/** Rejects if this part was already handed out via `stream()` (see this
 	 *  interface's own class doc comment on `FetchedPartImpl` for the exact
-	 *  rule). Resolves immediately for an already-buffered part. */
+	 *  rule). Resolves immediately for an already-buffered part. Counts as
+	 *  "engaging" this part for the backpressure contract above. */
 	buffer(): Promise<Buffer>;
 	/** Node `Readable` (spec's `ReadableStream<Uint8Array> | Readable` widened
 	 *  form -- this implementation always hands back a Node `Readable`, the
 	 *  native type every literal in this codebase is already represented
-	 *  as). Replays from the cached buffer for an already-buffered part. */
+	 *  as). Replays from the cached buffer for an already-buffered part.
+	 *  Counts as "engaging" this part for the backpressure contract above. */
 	stream(): Readable;
 	readonly buffered: boolean;
 }
@@ -208,6 +232,14 @@ export interface FetchedMessage {
 	 *  binarySize` is otherwise a request-only field with nowhere for its
 	 *  answer to surface; additive, doesn't change any listed field's shape. */
 	binarySizes?: ReadonlyMap<string, bigint>;
+	/** Looks up one requested body/BINARY part by its section-spec string
+	 *  (the same string passed as `BodyPartRequest.section`, or the implicit
+	 *  "HEADER.FIELDS"/"HEADER.FIELDS.NOT" key for a `.fields` request -- spec
+	 *  §5.4). CASE-INSENSITIVE (C3 fix, M3-phase-boundary review): both this
+	 *  lookup argument and every part's own stored key are normalized to the
+	 *  same canonical uppercase form (`normalizeSectionSpec()`), so
+	 *  `part("text")` and `part("TEXT")` always resolve the same entry --
+	 *  matching the parser's own case-insensitive section-atom handling. */
 	part(section: string): FetchedPart | undefined;
 	parts(): FetchedPart[];
 }
@@ -239,6 +271,14 @@ class FetchedPartImpl implements FetchedPart {
 	private wasStreamed = false;
 	private liveStream: LiteralBodyStream | undefined;
 	private drainPromise: Promise<Buffer> | undefined;
+	/** S2 fix: `true` once the caller has actually engaged this part (called
+	 *  either `stream()` or `buffer()`) -- distinct from `wasStreamed`, which
+	 *  ONLY tracks the narrower "handed out a live `Readable`" fact `buffer()`
+	 *  itself checks. `MailboxSession`'s `driveFetch()` reads this (via
+	 *  `destroyIfUnengaged()` below) to tell an ignored live part (the
+	 *  consumer never touched it at all) apart from one the consumer started
+	 *  consuming and is still gating on -- see this class's own doc comment. */
+	private engaged = false;
 
 	/** Resolves once this part's content is fully accounted for -- either
 	 *  buffered up front, drained via `buffer()`, or handed out (and,
@@ -287,6 +327,7 @@ class FetchedPartImpl implements FetchedPart {
 	}
 
 	async buffer(): Promise<Buffer> {
+		this.engaged = true;
 		if (this.cached !== undefined) {
 			return this.cached;
 		}
@@ -310,6 +351,7 @@ class FetchedPartImpl implements FetchedPart {
 	}
 
 	stream(): Readable {
+		this.engaged = true;
 		if (this.cached !== undefined) {
 			// `Readable.from(buffer)` would iterate the Buffer BYTE BY BYTE (a
 			// Buffer is itself iterable over its octets) -- wrapping it in a
@@ -329,6 +371,33 @@ class FetchedPartImpl implements FetchedPart {
 		if (this.cached === undefined && this.liveStream && !this.liveStream.destroyed) {
 			this.liveStream.destroy();
 		}
+	}
+
+	/** @internal S2 fix (M3-phase-boundary review): destroys this part's live
+	 *  stream ONLY IF the caller never engaged it (neither `stream()` nor
+	 *  `buffer()` was ever called) -- a no-op for an engaged-but-still-
+	 *  draining part, which keeps gating `driveFetch()`'s backpressure await
+	 *  exactly as before (finishing a part you started reading, after
+	 *  requesting the next message, is a documented caller error, not
+	 *  something this method papers over). Called by `driveFetch()` the
+	 *  instant the consumer asks for the NEXT message (`iter.next()`) --
+	 *  advancing past a message the caller never touched a given part of is
+	 *  "relinquishing" it, per spec §5.4's "consumed or destroyed" contract,
+	 *  the same way an abandoned iterator's `destroyLiveParts()` relinquishes
+	 *  every part unconditionally. */
+	destroyIfUnengaged(): void {
+		if (!this.engaged) {
+			this.destroy();
+		}
+	}
+
+	/** @internal marks this part "engaged" WITHOUT touching `stream()`/
+	 *  `buffer()` -- used by `fetchOneOf()` (mailbox.ts) to exempt a
+	 *  `fetchOne()`/`seq.fetchOne()` result from `destroyIfUnengaged()` above.
+	 *  See `FetchedMessageImpl.protectLiveParts()`'s own doc comment for why
+	 *  that call is needed at all. */
+	markEngaged(): void {
+		this.engaged = true;
 	}
 }
 
@@ -370,6 +439,32 @@ function toEnvelope(env: ParserEnvelope): FetchEnvelope {
 
 function toBigInt(n: number | bigint): bigint {
 	return typeof n === "bigint" ? n : BigInt(n);
+}
+
+/**
+ * C3 fix (M3-phase-boundary review): canonicalizes a section-spec string to
+ * the SAME form the parser already uses as `MessageBodySection.kind`
+ * (`src/parser/structure/fetch/body.section.ts`'s own `getBodySectionInfo`
+ * calls the identical `.toUpperCase()` on the server's echoed section atom)
+ * -- a plain `.toUpperCase()` is exactly "uppercase the alpha components,
+ * leave numeric components intact" (spec §5.4's compose-side requirement),
+ * since `.toUpperCase()` is already a no-op on digits and `.`/`,` separators;
+ * `"4.2.text"` -> `"4.2.TEXT"` needs no special per-segment splitting.
+ *
+ * Used on BOTH sides of the section-key contract so they can never drift
+ * apart again: `commands/fetch.ts`'s `composeSectionSpec()`/
+ * `composeSectionSpecKey()` apply it when building the wire token and the
+ * `forcedStreamSections`/`buildFetchedMessage()` map key respectively, and
+ * `FetchedMessageImpl.part()` below applies it to the CALLER's lookup
+ * argument -- so `part("text")` and `part("TEXT")` are guaranteed to resolve
+ * the same entry regardless of which case either side used. Exported (not
+ * module-private) so `commands/fetch.ts` -- which already imports types
+ * from this module -- can reuse the identical implementation rather than a
+ * second, driftable copy (this module intentionally never imports FROM
+ * `commands/fetch.ts`, so this is the one direction that avoids a cycle).
+ */
+export function normalizeSectionSpec(section: string): string {
+	return section.toUpperCase();
 }
 
 /**
@@ -540,7 +635,12 @@ export class FetchedMessageImpl implements FetchedMessage {
 	}
 
 	part(section: string): FetchedPart | undefined {
-		return this.partsMap.get(section);
+		// C3 fix: normalize the LOOKUP argument too, so `part("text")` and
+		// `part("TEXT")` resolve the same entry regardless of which case the
+		// caller used -- `partsMap`'s own keys are always the canonical
+		// uppercase form already (`composeSectionSpecKey()`'s side of this
+		// same fix, and the parser's own `MessageBodySection.kind`).
+		return this.partsMap.get(normalizeSectionSpec(section));
 	}
 
 	parts(): FetchedPart[] {
@@ -560,6 +660,42 @@ export class FetchedMessageImpl implements FetchedMessage {
 	destroyLiveParts(): void {
 		for (const part of this.partsMap.values()) {
 			part.destroy();
+		}
+	}
+
+	/** @internal S2 fix (M3-phase-boundary review): destroys every live part
+	 *  of THIS message the caller never engaged (neither `.stream()` nor
+	 *  `.buffer()` called) -- `driveFetch()` calls this the instant the
+	 *  consumer requests the next message, so a part nobody asked for can
+	 *  never deadlock the backpressure gate (`livePartSettledPromises()`
+	 *  below) waiting on a stream that will never be read or destroyed
+	 *  otherwise. A part the consumer DID engage is left alone -- it keeps
+	 *  gating exactly as before. */
+	destroyUnengagedLiveParts(): void {
+		for (const part of this.partsMap.values()) {
+			part.destroyIfUnengaged();
+		}
+	}
+
+	/** @internal S2 fix support (M3-phase-boundary review): marks EVERY live
+	 *  part of this message "engaged" without actually reading from any of
+	 *  them -- exempts this message from `destroyUnengagedLiveParts()` above.
+	 *  `MailboxSession`'s `fetchOneOf()` calls this on the single message it
+	 *  hands back the instant it's obtained, BEFORE starting its own
+	 *  background drain of the rest of the (normally-exhausted) iterator --
+	 *  that background drain calls `.next()` on the SAME underlying
+	 *  `driveFetch()` generator fetchOneOf's real caller's message came from,
+	 *  which would otherwise look exactly like "the consumer requested the
+	 *  next message" and destroy this message's own not-yet-engaged parts
+	 *  out from under fetchOneOf()'s actual (still-forthcoming) caller.
+	 *  `fetchOne()`/`.seq.fetchOne()` hand a message back whole, live parts
+	 *  intact, for their own caller to use exactly like any other
+	 *  `FetchedMessage` (see `fetchOneOf()`'s own doc comment) -- there is no
+	 *  "next message" of ITS OWN for this one to be relinquished in favor of,
+	 *  so the auto-destroy contract doesn't apply to it at all. */
+	protectLiveParts(): void {
+		for (const part of this.partsMap.values()) {
+			part.markEngaged();
 		}
 	}
 }

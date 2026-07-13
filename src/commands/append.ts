@@ -393,11 +393,16 @@ export class AppendCommand extends Command<AppendResult> {
 
 		if (this.catenateParts) {
 			// RFC 4469 §5: "CATENATE" SP "(" cat-part *(SP cat-part) ")". A URL
-			// cat-part is technically an `astring` (bare atom is legal grammar),
-			// but every RFC 4469 worked example quotes it (§4.1's own sample) --
-			// `quotedOrLiteral()` matches that idiom by never emitting a bare
-			// atom for a URL, unlike `astring()`/`mailbox()` elsewhere in this
-			// writer, which prefer the bare form when legal.
+			// cat-part is an `astring`, so a bare atom would be an equally legal
+			// wire form -- quoting it is a style/simplicity choice, not a
+			// normative requirement (§4.1's own worked example happens to quote
+			// it, but the grammar doesn't mandate that). `quotedOrLiteral()`
+			// follows that quoted idiom by never emitting a bare atom for a
+			// URL, unlike `astring()`/`mailbox()` elsewhere in this writer,
+			// which prefer the bare form when legal -- simpler than adding a
+			// second atom-safety check purely to save a couple of quote bytes
+			// on a value that's virtually never ATOM-CHAR-safe anyway (IMAP
+			// URLs are full of `/`, `:`, `;` -- all outside ATOM-CHAR).
 			w.atom("CATENATE");
 			w.list((inner) => {
 				for (const part of this.catenateParts!) {

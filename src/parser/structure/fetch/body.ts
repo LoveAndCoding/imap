@@ -56,6 +56,31 @@ export class MessageBody {
 	public addMessageBodyPiece(piece: MessageBodyPiece) {
 		if (piece instanceof MessageHeader) {
 			this.header.mergeIn(piece);
+			// C2 fix (M3-phase-boundary review): a BODY[HEADER]/
+			// BODY[HEADER.FIELDS...]/BODY[HEADER.FIELDS.NOT...] response
+			// arrives as a `MessageHeader` (its content parses line-by-line
+			// into `header.fields`, merged above -- unchanged, back-compat),
+			// but until this fix that was the ONLY place its data went:
+			// `buildFetchedMessage` (client/fetch.ts) only ever reads
+			// `body.sections`/`.binarySections`, never `body.header`, so
+			// `FetchedMessage.part("HEADER.FIELDS")` returned `undefined`
+			// despite the data having genuinely arrived. `piece.sectionKind`
+			// is only set by `header.ts`'s `match()` for exactly this
+			// section-response shape (never for the legacy top-level
+			// `RFC822.HEADER` form, which has no section identity to key a
+			// part by) -- when present, ALSO materialize a
+			// `MessageBodySection` carrying the raw section text under that
+			// same key, so `part()`'s existing `body.sections`-only lookup
+			// (`composeSectionSpecKey`'s key space) can reach it. The
+			// pre-existing multi-header-part-per-command conflation
+			// (`mergeIn`'s own design, e.g. two different HEADER.FIELDS
+			// requests in one command) is UNCHANGED/still a documented
+			// limitation -- not fixed here.
+			if (piece.sectionKind !== undefined) {
+				this.sections.push(
+					new MessageBodySection(piece.sectionKind, piece.rawContents ?? "", piece.offset),
+				);
+			}
 		} else if (
 			piece instanceof MessageBodyMultipartStructure ||
 			piece instanceof MessageBodyStructure

@@ -186,6 +186,26 @@ export async function executeCommand<T>(
 			return await Command.acceptResult(command, collector);
 		}
 		throw Command.mapError(command, tagged);
+	} catch (err) {
+		// S1 FIX: guarantee the collector always reaches a terminal state on
+		// ANY error path out of the two awaits above -- `performWrite` throwing
+		// (teardown racing a synchronizing-literal gate) or the top-level
+		// `Promise.race` throwing (teardown winning against `taggedPromise`).
+		// Without this, `collector.settle()` above never runs, and a `live()`
+		// consumer still parked awaiting the next claim/settlement
+		// (`FetchCommand.messages()`, M3.5's streaming bridge) would suspend
+		// forever instead of surfacing this failure -- hanging the caller's
+		// `for await` rather than rejecting it with the `ConnectionError`
+		// `teardownPromise` carries (M3-phase-boundary review finding S1). A
+		// NO/BAD tagged response already reached `collector.settle()` a few
+		// lines up before `Command.mapError` ever runs, so `collector.settled`
+		// is already `true` by the time THAT throw reaches here -- `abort()`
+		// is a documented no-op in that case; this only actually fires for a
+		// genuine mid-command failure.
+		if (!collector.settled) {
+			collector.abort(err instanceof Error ? err : new Error(String(err)));
+		}
+		throw err;
 	} finally {
 		settled = true;
 		unregisterTeardown();

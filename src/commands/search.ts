@@ -310,7 +310,14 @@ export class SearchCommand extends Command<SearchResult> {
 	 * limitation for two concurrent LISTs, this command cannot perfectly
 	 * attribute a legacy response when more than one SEARCH is genuinely
 	 * concurrent; the guarantee is only that a SEARCH never steals a line
-	 * while NOT in flight.
+	 * while NOT in flight. S3 fix (M3-phase-boundary review, RFC3501-5.5):
+	 * `MailboxSession.runSearch()`'s `chainFamily()` call means two of a
+	 * session's OWN search()/seq.search() calls never actually overlap on the
+	 * wire in the first place (the second's dispatch is deferred until the
+	 * first's tagged response has arrived) -- this method's own remaining
+	 * ambiguity is only ever exercised by a caller reaching `SearchCommand`
+	 * directly via the `client.run()` escape hatch, bypassing that
+	 * serialization.
 	 */
 	protected claims(resp: UntaggedResponse, ctx: ClaimContext): boolean {
 		if (resp.type === "SEARCH" && resp.content instanceof SearchResponse) {

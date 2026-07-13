@@ -234,6 +234,10 @@ export class ResponseCollector {
 	private taggedResp: TaggedResponse | undefined;
 	private settledFlag: boolean;
 	private waiters: Array<() => void> = [];
+	/** S1 fix: set only by `abort()` below -- distinguishes an ERROR
+	 *  completion (connection teardown mid-command, never a tagged response)
+	 *  from an ordinary `settle()` completion for `live()`'s consumer. */
+	private abortErr: Error | undefined;
 
 	/**
 	 * @param claimed Initial claimed responses (defaults to none — the live
@@ -285,6 +289,39 @@ export class ResponseCollector {
 		this.wake();
 	}
 
+	/**
+	 * ABORT (S1 fix, M3-phase-boundary review): marks this collector
+	 * permanently done WITHOUT a tagged response ever having arrived --
+	 * `execute-command.ts` calls this from its own error path (a connection
+	 * teardown racing a still-in-flight command, spec CRITICAL-2) so a
+	 * `live()` consumer parked mid-iteration (`FetchCommand.messages()`,
+	 * M3.5) settles too, instead of waiting forever for a claim or
+	 * settlement that can now never come. Every claim already pushed before
+	 * the abort is still yielded first (`live()` drains its buffered
+	 * backlog before observing this) -- only the "wait for more" tail of
+	 * the generator turns into a rejection, carrying `err` verbatim (e.g.
+	 * the connection's own `ConnectionError`) rather than a bespoke
+	 * sentinel, so the caller's `for await` surfaces the SAME error
+	 * `driver.run()`'s own rejected promise would have.
+	 *
+	 * A no-op once already settled (via `settle()` or a prior `abort()`) --
+	 * whichever completion reaches this collector first wins, same
+	 * single-terminal-state discipline `settle()` itself relies on
+	 * (`execute-command.ts` never calls both for the same invocation).
+	 * `tagged()` keeps throwing its existing defensive assertion after an
+	 * abort (spec: no tagged response was ever supplied) -- callers that
+	 * reach `tagged()` at all only do so from `accept()`, which never runs
+	 * on this path (see `execute-command.ts`'s own catch-and-rethrow).
+	 */
+	abort(err: Error): void {
+		if (this.settledFlag) {
+			return;
+		}
+		this.abortErr = err;
+		this.settledFlag = true;
+		this.wake();
+	}
+
 	private wake(): void {
 		const pending = this.waiters;
 		this.waiters = [];
@@ -322,6 +359,15 @@ export class ResponseCollector {
 				}
 			}
 			if (this.settledFlag) {
+				// S1 fix: an abort()-driven completion surfaces as a REJECTION
+				// here (once every already-buffered claim has been drained
+				// above) rather than a quiet generator return -- see abort()'s
+				// own doc comment for why this is the one shape that lets a
+				// FETCH `for await` loop observe the connection failure instead
+				// of concluding as if the command had simply run out of data.
+				if (this.abortErr) {
+					throw this.abortErr;
+				}
 				return;
 			}
 			await new Promise<void>((resolve) => {

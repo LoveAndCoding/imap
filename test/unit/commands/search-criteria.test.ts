@@ -265,6 +265,32 @@ describe("compileCriteria (spec §5.3)", () => {
 		test("not: {} throws RangeError (at least one criterion required)", () => {
 			expect(() => compile({ not: {} })).toThrow(RangeError);
 		});
+
+		describe("C1 fix: estimateKeyCount correctly counts a bare-keyword-negation's emitted UNKEYWORD keys, so nesting it parenthesizes correctly", () => {
+			test("or: [{ not: { keyword: [...] } }, other] parenthesizes the multi-UNKEYWORD operand", () => {
+				expect(
+					compile({ or: [{ not: { keyword: ["a", "b"] } }, { seen: true }] }),
+				).toBe("OR (UNKEYWORD a UNKEYWORD b) SEEN");
+			});
+
+			test("fuzzy: { not: { keyword: [...] } } parenthesizes the multi-UNKEYWORD operand", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(compile({ fuzzy: { not: { keyword: ["a", "b"] } } }, caps)).toBe(
+					"FUZZY (UNKEYWORD a UNKEYWORD b)",
+				);
+			});
+
+			test("double-not: not wrapping a bare-keyword-negation payload still parenthesizes exactly one level deep", () => {
+				expect(compile({ not: { not: { keyword: ["a", "b"] } } })).toBe(
+					"NOT (UNKEYWORD a UNKEYWORD b)",
+				);
+			});
+
+			test("single-keyword array negation nested in fuzzy stays bare (no unnecessary parens)", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(compile({ fuzzy: { not: { keyword: ["a"] } } }, caps)).toBe("FUZZY UNKEYWORD a");
+			});
+		});
 	});
 
 	describe("or (n-ary, nested pairs)", () => {

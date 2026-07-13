@@ -1,5 +1,5 @@
 import type { BodyPartRequest, FetchedMessage, FetchItems, FetchRequest } from "../client/fetch";
-import { buildFetchedMessage } from "../client/fetch";
+import { buildFetchedMessage, normalizeSectionSpec } from "../client/fetch";
 import { CapabilityError } from "../errors";
 import { Fetch } from "../parser";
 import type { UntaggedResponse } from "../parser";
@@ -83,11 +83,46 @@ function composeAstringToken(s: string): string {
 
 const HEADER_FIELDS_RE = /^HEADER\.FIELDS(\.NOT)?$/i;
 
+/**
+ * Resolves whether a `BodyPartRequest` with `.fields` set is the
+ * HEADER.FIELDS or HEADER.FIELDS.NOT form -- shared by `composeSectionSpec`
+ * (the wire token) and `composeSectionSpecKey` (the `part()` lookup key) so
+ * both apply the identical C4 fix (M3-phase-boundary review): when the
+ * caller ALSO set `.section` alongside `.fields`, it must agree with the
+ * HEADER.FIELDS family (case-insensitive) -- silently preferring `.fields`
+ * and ignoring an inconsistent `.section` (e.g. `{section:"TEXT",
+ * fields:[...]}`) would hide a caller bug that looks like it requested one
+ * section but wire-compiled to a completely different one. An explicit
+ * `.section: "HEADER.FIELDS.NOT"` is authoritative for the NOT-ness even
+ * without `.not: true` -- `.section`, when given at all alongside `.fields`,
+ * is treated as the caller's canonical intent for which of the two forms
+ * this is.
+ */
+function resolveHeaderFieldsNot(part: BodyPartRequest): boolean {
+	let isNot = part.not === true;
+	if (part.section !== undefined) {
+		const normalized = normalizeSectionSpec(part.section);
+		if (normalized !== "HEADER.FIELDS" && normalized !== "HEADER.FIELDS.NOT") {
+			throw new RangeError(
+				`BodyPartRequest: 'section' (${JSON.stringify(part.section)}) conflicts with ` +
+					"'fields' -- when 'fields' is set, 'section' (if also given) must be " +
+					"HEADER.FIELDS or HEADER.FIELDS.NOT (case-insensitive, spec §5.4)",
+			);
+		}
+		if (normalized === "HEADER.FIELDS.NOT") {
+			isNot = true;
+		}
+	}
+	return isNot;
+}
+
 /** Builds the bracket CONTENT (everything between `[` and `]`, exclusive)
  *  for one `BodyPartRequest` -- spec §5.4's `section` examples (`""`,
- *  `"1.2"`, `"HEADER"`, `"1.MIME"`, `"HEADER.FIELDS"`, `"TEXT"`) are used
- *  verbatim; `HEADER.FIELDS`/`HEADER.FIELDS.NOT` additionally require
- *  `fields` and append the parenthesized header-name list. */
+ *  `"1.2"`, `"HEADER"`, `"1.MIME"`, `"HEADER.FIELDS"`, `"TEXT"`) are
+ *  normalized to their canonical uppercase form (C3 fix -- see
+ *  `normalizeSectionSpec`'s own doc comment in `client/fetch.ts`);
+ *  `HEADER.FIELDS`/`HEADER.FIELDS.NOT` additionally require `fields` and
+ *  append the parenthesized header-name list. */
 function composeSectionSpec(part: BodyPartRequest): string {
 	if (part.fields !== undefined) {
 		if (!Array.isArray(part.fields) || part.fields.length === 0) {
@@ -96,7 +131,7 @@ function composeSectionSpec(part: BodyPartRequest): string {
 					"HEADER.FIELDS/HEADER.FIELDS.NOT",
 			);
 		}
-		const keyword = part.not ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
+		const keyword = resolveHeaderFieldsNot(part) ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
 		const list = part.fields.map(composeAstringToken).join(" ");
 		return `${keyword} (${list})`;
 	}
@@ -109,7 +144,7 @@ function composeSectionSpec(part: BodyPartRequest): string {
 				"(spec §5.4: HEADER.FIELDS/HEADER.FIELDS.NOT need the header-name list)",
 		);
 	}
-	return part.section;
+	return normalizeSectionSpec(part.section);
 }
 
 function writeBodyPartItem(
@@ -269,12 +304,20 @@ function collectForcedStreamSections(request: FetchRequest): ReadonlySet<string>
 /** The section-string KEY `buildFetchedMessage()` will use for this part's
  *  response (the server's echo, sans `HEADER.FIELDS`'s own field list --
  *  see `src/client/fetch.ts`'s `FetchedMessage.part()` doc comment for the
- *  parser-level limitation this works around). */
+ *  parser-level limitation this works around). C3 fix: normalized to the
+ *  same canonical uppercase form `composeSectionSpec()`/the parser's own
+ *  `MessageBodySection.kind` use, via the shared `normalizeSectionSpec()`.
+ *  C4 fix: shares `resolveHeaderFieldsNot()`'s conflict detection with
+ *  `composeSectionSpec()` so an inconsistent `.section` alongside `.fields`
+ *  is caught here too (this function runs during `FetchCommand`'s
+ *  constructor, via `collectForcedStreamSections()`, ahead of
+ *  `composeSectionSpec()`'s own call in the same constructor -- either one
+ *  throwing satisfies "zero bytes written on refusal", I-9). */
 function composeSectionSpecKey(part: BodyPartRequest): string {
 	if (part.fields !== undefined) {
-		return part.not ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
+		return resolveHeaderFieldsNot(part) ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
 	}
-	return part.section;
+	return normalizeSectionSpec(part.section);
 }
 
 function compileFetchWire(
@@ -338,12 +381,26 @@ function compileFetchWire(
  *
  * Default claiming (`Command`'s own default `claims()`, unoverridden here):
  * matches every untagged response of type "FETCH" while this command is in
- * flight -- the same "first in-flight claimant wins, in write order"
- * limitation every other message-op command documents (e.g.
- * `SearchCommand`'s own doc comment): a genuinely concurrent unrelated FETCH
- * FLAGS update landing while THIS fetch is also in flight is attributed
- * here rather than the state-tracker lane, a standing, accepted protocol-
- * level ambiguity, not something this command can perfectly disambiguate.
+ * flight -- taken alone, that's the same "first in-flight claimant wins, in
+ * write order" limitation every other message-op command documents (e.g.
+ * `SearchCommand`'s own doc comment). S3 fix (M3-phase-boundary review,
+ * RFC3501-5.5): `MailboxSession`/`.seq` never actually let two of ITS OWN
+ * fetch()/seq.fetch()/fetchOne() calls overlap on the wire in the first
+ * place -- `MailboxSession.runFetch()`'s `chainFamily()` call defers a
+ * second same-session fetch's dispatch until the first's tagged response has
+ * already arrived (see that method's own doc comment), so THIS class's
+ * `claims()` is never actually asked to disambiguate two of the session's
+ * own concurrent FETCHes. The residual ambiguity this comment used to warn
+ * about in full is now narrowed to exactly one case: a genuinely unrelated
+ * FETCH FLAGS update the SERVER pushes unsolicited (RFC 3501/9051 §7.4.2)
+ * while this command is in flight, which lands here rather than the
+ * state-tracker lane -- a standing, accepted protocol-level ambiguity no
+ * client-side bookkeeping can perfectly disambiguate, since that push
+ * carries no correlator of its own either. A caller reaching `FetchCommand`
+ * directly via the `client.run()` escape hatch (bypassing `MailboxSession`
+ * entirely) is on its own for the same reason `SearchCommand`'s escape-hatch
+ * callers are: nothing outside `MailboxSession` enforces the family-level
+ * serialization above.
  */
 export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	readonly verb: string;

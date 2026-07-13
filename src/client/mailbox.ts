@@ -11,6 +11,7 @@ import { MoveCommand } from "../commands/move";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
+import { assertSearchResSentinelAllowed } from "../commands/search-criteria";
 import type { SearchCriteria } from "../commands/search-criteria";
 import { StoreCommand } from "../commands/store";
 import type { StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
@@ -181,6 +182,27 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	private _highestModSeq: bigint | null;
 	private readonly _mailboxId: string | null;
 	private readonly driver: MailboxSessionDriver;
+
+	/**
+	 * S3 fix (M3-phase-boundary review, RFC3501-5.5's client-side pipelining
+	 * duty): "in flight" markers for the two response-families whose untagged
+	 * responses a concurrently-in-flight SIBLING of the same family cannot be
+	 * unambiguously attributed between (classic `* SEARCH` carries no
+	 * correlator at all; `* nn FETCH` carries no per-command tag either) —
+	 * keyed `"fetch"` / `"search"`, at most one entry each, always holding the
+	 * MOST RECENT same-family command's own completion promise (settling the
+	 * instant that command's tagged response arrives, i.e. the router has
+	 * unregistered its claimant and it can no longer have anything
+	 * mis-attributed to or from it — NOT gated on how long the caller takes
+	 * to locally finish iterating/reading the result afterwards). See
+	 * `chainFamily()` below for how `runFetch`/`runSearch` use this to
+	 * serialize DISPATCH (not full consumption) of a second same-family
+	 * command behind the first, while leaving every OTHER command family
+	 * (STORE, COPY/MOVE, EXPUNGE — already queue-serial or claim-nothing, per
+	 * `FetchCommand`'s own doc comment) free to pipeline against a fetch/
+	 * search exactly as before.
+	 */
+	private readonly familyChains = new Map<string, Promise<unknown>>();
 
 	/** Sequence-number-grain mirror facet (spec §5b) — see `SequenceFacet`'s
 	 *  own doc comment. Constructed once, alongside every other field, in
@@ -479,6 +501,14 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 				: "seq.addFlags/seq.removeFlags/seq.setFlags",
 		);
 		const set = SequenceSet.from(input).withKind(kind);
+		// P1 fix (M3-phase-boundary review): the "$" SEARCHRES gate (see
+		// `assertSearchResSentinelAllowed()`'s own doc comment) applies here
+		// too -- previously only `runFetch()` enforced it.
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			kind === "uid" ? "addFlags/removeFlags/setFlags()" : "seq.addFlags/seq.removeFlags/seq.setFlags()",
+		);
 		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts));
 	}
 
@@ -597,6 +627,14 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			);
 		}
 		const set = SequenceSet.from(input).withKind("uid");
+		// P1 fix (M3-phase-boundary review): the "$" SEARCHRES gate applies to
+		// UID EXPUNGE's argument too (see `assertSearchResSentinelAllowed()`'s
+		// own doc comment).
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			`${label}(uids)`,
+		);
 		return session.driver.run(new ExpungeCommand(set, true));
 	}
 
@@ -643,6 +681,14 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			);
 		}
 		const set = SequenceSet.from(input).withKind(kind);
+		// P1 fix (M3-phase-boundary review): the "$" SEARCHRES gate applies to
+		// COPY/MOVE's sequence-set argument too (see
+		// `assertSearchResSentinelAllowed()`'s own doc comment).
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			`${label}()`,
+		);
 		const command = isMove
 			? new MoveCommand(set, dest, kind === "uid")
 			: new CopyCommand(set, dest, kind === "uid");
@@ -686,7 +732,47 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<SearchResult> {
 		session.assertOpen(uid ? "search" : "seq.search");
 		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
-		return session.driver.run(new SearchCommand(criteria, opts, probe, uid));
+		const command = new SearchCommand(criteria, opts, probe, uid);
+		// S3 fix: serialize against any OTHER search()/seq.search() currently
+		// in flight on this session (same "search" family -- see
+		// `familyChains`'s own doc comment); a fetch/store/etc. concurrently
+		// in flight is untouched, `chainFamily` only ever looks at this one
+		// family's own slot.
+		return MailboxSession.chainFamily(session, "search", () => session.driver.run(command));
+	}
+
+	/**
+	 * S3 fix (M3-phase-boundary review): serializes DISPATCH of same-`family`
+	 * commands on `session` -- see `familyChains`'s own doc comment for
+	 * exactly what "in flight" means here and why gating on the prior
+	 * command's own completion (not the caller's consumption pace) is the
+	 * correct and sufficient fix for RFC3501-5.5's ambiguity duty. The very
+	 * first call for a family (nothing in `familyChains` yet) dispatches
+	 * IMMEDIATELY/synchronously -- `runFetch()`'s own doc comment's "kicks off
+	 * dispatch by the time this call returns" claim stays true for the
+	 * overwhelmingly common single-in-flight case; only a genuinely
+	 * overlapping second (or later) same-family call is deferred behind the
+	 * one ahead of it. `dispatch`'s own rejection (a tagged NO/BAD, or a
+	 * teardown) is exactly what THIS call's returned promise carries --
+	 * swallowed only in the copy stashed back into `familyChains` for the
+	 * NEXT same-family caller to wait on, so one command's failure can never
+	 * leak into an unrelated sibling's result.
+	 */
+	private static chainFamily<T>(
+		session: MailboxSession,
+		family: string,
+		dispatch: () => Promise<T>,
+	): Promise<T> {
+		const prior = session.familyChains.get(family);
+		const started = prior === undefined ? dispatch() : prior.then(dispatch, dispatch);
+		session.familyChains.set(
+			family,
+			started.then(
+				() => undefined,
+				() => undefined,
+			),
+		);
+		return started;
 	}
 
 	/**
@@ -718,24 +804,16 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const set = SequenceSet.from(input).withKind(kind);
 		// RFC 5182 §2.1's "$" SEARCHRES sentinel gate AT POINT OF USE (I-9):
 		// `SequenceSet` itself deliberately leaves this "gated on capability
-		// elsewhere" (its own doc comment) -- this is that "elsewhere". Folded
-		// into rev2 core with no separate token (RFC 9051 §6.4.4, same
-		// absorption pattern as ESEARCH's RETURN syntax); rev1 needs the real
-		// SEARCHRES capability.
-		if (
-			set.toString() === "$" &&
-			!session.driver.hasCapability("SEARCHRES") &&
-			!session.driver.hasCapability("IMAP4rev2")
-		) {
-			throw new CapabilityError(
-				`${kind === "uid" ? "fetch" : "seq.fetch"}(): the "$" SEARCHRES sequence-set ` +
-					"sentinel requires the SEARCHRES capability (RFC 5182 §2.1) or an " +
-					"IMAP4rev2 server (RFC 9051 §6.4.4, which folds SEARCHRES into the base " +
-					"command set with no separate capability token), neither of which the " +
-					"server has advertised",
-				{ capability: "SEARCHRES", rfc: "RFC5182" },
-			);
-		}
+		// elsewhere" (its own doc comment) -- this is that "elsewhere". P1 fix
+		// (M3-phase-boundary review): factored into the shared
+		// `assertSearchResSentinelAllowed()` helper (`commands/search-
+		// criteria.ts`) so every sequence-set-accepting entry point applies
+		// the identical gate -- see that helper's own doc comment.
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			kind === "uid" ? "fetch()" : "seq.fetch()",
+		);
 		const probe: FetchCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
 		const command = new FetchCommand(set, items, kind === "uid", session.driver.maxInlineSize(), probe);
 		// Kicks off the actual submission/dispatch (write, wait-for-tagged,
@@ -749,7 +827,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		// directly here -- errors (a tagged NO/BAD) surface through
 		// `driveFetch()`'s own `await resultPromise` instead, once every
 		// already-claimed message has been yielded.
-		const resultPromise = session.driver.run(command);
+		//
+		// S3 fix: `chainFamily` defers this dispatch behind any OTHER
+		// fetch()/seq.fetch() already in flight on this session (same "fetch"
+		// family -- see `familyChains`'s own doc comment) -- transparent here
+		// (still synchronous for the common no-overlap case): a search/store/
+		// etc. concurrently in flight is untouched.
+		const resultPromise = MailboxSession.chainFamily(session, "fetch", () => session.driver.run(command));
 		return { [Symbol.asyncIterator]: () => driveFetch(command, resultPromise) };
 	}
 
@@ -934,6 +1018,21 @@ async function* driveFetch(
 			}
 			current = next.value as FetchedMessageImpl;
 			yield current;
+			// S2 fix (M3-phase-boundary review): reaching here means the
+			// consumer resumed this generator by asking for the NEXT message
+			// (`iter.next()`) -- a genuine abandon (`.return()`) unwinds
+			// straight to the `finally` below instead, never resuming past the
+			// `yield` above. Advancing past a message the caller never
+			// engaged one of its own live parts for (`stream()`/`buffer()`
+			// never called) is "relinquishing" that part, per spec §5.4's
+			// "consumed or destroyed" contract -- destroy it now so the
+			// backpressure await just below can't deadlock on a stream nobody
+			// asked for. A part the consumer DID engage (started reading via
+			// `stream()`, or is mid-`buffer()`) is left alone: it keeps gating
+			// exactly as before -- requesting the next message before
+			// finishing a part you started is a documented caller error, not
+			// something this call papers over.
+			current.destroyUnengagedLiveParts();
 			await Promise.all(current.livePartSettledPromises());
 			current = undefined;
 		}
@@ -991,15 +1090,32 @@ async function drainAbandoned(iter: AsyncGenerator<FetchedMessage, void, void>):
  * response to what should be a single-UID request, or a caller reuses
  * `fetchOne()` against a range) is still drained in the background via
  * ordinary `.next()` calls -- NORMAL completion, not abandonment -- so
- * `driveFetch()`'s own advance-gate/backpressure and final settle/cleanup
- * still run exactly as they would for a fully-consumed `fetch()` call; this
- * background drain simply won't ask for message 2 until message 1's own
- * live parts (if any) are consumed or destroyed by whoever ends up doing
- * that, typically this call's own caller.
+ * `driveFetch()`'s own final settle/cleanup still runs exactly as it would
+ * for a fully-consumed `fetch()` call.
+ *
+ * S2 FIX INTERACTION (M3-phase-boundary review): that background drain's
+ * OWN `.next()` call resumes the SAME `driveFetch()` generator instance
+ * `first` came from, right past ITS `yield` -- indistinguishable, from
+ * `driveFetch()`'s point of view, from "the consumer requested the next
+ * message" (the exact signal `destroyUnengagedLiveParts()` now acts on,
+ * spec §5.4's "consumed or destroyed"). Left alone, that background drain
+ * would destroy `first`'s own not-yet-engaged live parts BEFORE this
+ * function's real caller (below) ever gets `first.value` back — silently
+ * reintroducing the same "cleanup runs before the caller can read it"
+ * problem `.next()`-not-`.return()` was already chosen to avoid above, just
+ * moved one step later. `protectLiveParts()` (called BEFORE the background
+ * drain starts) marks every one of `first.value`'s live parts "engaged"
+ * without reading them, exempting it from that pass entirely — this
+ * function's own contract already promises live parts "intact" for the real
+ * caller, so there is no "next message" of fetchOne()'s own for `first` to
+ * ever be relinquished in favor of.
  */
 async function fetchOneOf(iterable: AsyncIterable<FetchedMessage>): Promise<FetchedMessage | null> {
 	const it = iterable[Symbol.asyncIterator]();
 	const first = await it.next();
+	if (!first.done) {
+		(first.value as FetchedMessageImpl).protectLiveParts();
+	}
 	void (async () => {
 		try {
 			for (;;) {

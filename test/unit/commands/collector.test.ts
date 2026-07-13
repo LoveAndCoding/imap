@@ -223,6 +223,55 @@ describe("ResponseCollector live/incremental bridge (M3.4, spec §7.3)", () => {
 		expect(c.untagged()).toEqual([late]);
 	});
 
+	// S4 (M3-phase-boundary review): regression coverage for push-after-settle
+	// specifically against an ALREADY-COMPLETED `live()` consumer (the test
+	// above only pins the `untagged()` snapshot-reader half of this same
+	// tolerance posture). A `live()` generator that has already run to
+	// completion (its `for await` loop already returned, because `settle()`
+	// fired and every buffered claim was drained) cannot be "woken" back up
+	// by a later `push()` -- there is no pending `waiters` entry left to
+	// resolve, so the late claim is silently dropped from THAT consumer's
+	// point of view, exactly like `Command`'s claimant registry has already
+	// been torn down for the command that generator belonged to
+	// (`execute-command.ts`'s `finally` block) by the time any such push
+	// could even occur in production.
+	test("S4: push() after settle() is silently dropped for an ALREADY-COMPLETED live() consumer -- tolerated by design, never resurrects a finished generator", async () => {
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		const late = parseLine(`* 9 EXISTS${CRLF}`) as UntaggedResponse;
+		const c = new ResponseCollector();
+
+		const seen: UntaggedResponse[] = [];
+		const consuming = (async () => {
+			for await (const resp of c.live()) {
+				seen.push(resp);
+			}
+		})();
+
+		c.settle(tagged);
+		await consuming; // the live() consumer has now fully completed (returned)
+
+		// A late push() after this consumer already finished must never
+		// throw: `Router.routeUntagged` calls `push()` SYNCHRONOUSLY while
+		// dispatching every response to whichever command claimed it (see
+		// `collector.ts`'s own `push()` doc comment) -- a throwing `push()`
+		// here would be a synchronous exception raised in the middle of
+		// routing the NEXT response for a completely unrelated, still-live
+		// command, which would be far worse than silently tolerating an
+		// unexpected late claim from a non-conformant server (I-6). The
+		// collector has no way to "un-complete" a generator that has
+		// already returned control to its own caller anyway, so surfacing
+		// an error here couldn't even reach code that might act on it.
+		expect(() => c.push(late)).not.toThrow();
+		// DROPPED from the already-finished consumer's perspective: `seen`
+		// never grows after the loop returned, no matter what gets pushed
+		// afterward.
+		expect(seen).toEqual([]);
+		// It's still recorded in the collector's own snapshot state though
+		// (same tolerance posture the test above pins for `untagged()`) --
+		// just nobody still-listening via `live()` ever observes it.
+		expect(c.untagged()).toEqual([late]);
+	});
+
 	test("tagged() throws if called before settle() -- a defensive assertion no shipped accept() can trigger", () => {
 		const c = new ResponseCollector();
 		expect(() => c.tagged()).toThrow(/tagged response arrived/);

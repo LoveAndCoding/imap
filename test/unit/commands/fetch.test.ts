@@ -259,6 +259,84 @@ describe("FetchCommand (RFC 3501/9051 §6.4.5/§6.4.9, M3.5)", () => {
 			).toThrow(RangeError);
 		});
 
+		describe("C3 fix: section-spec case is normalized to canonical uppercase (M3-phase-boundary review)", () => {
+			test("a lowercase section is uppercased on the wire", async () => {
+				const { connection, written, router } = makeFakeConnection();
+				const cmd = new FetchCommand(
+					seqSet(1),
+					{ bodyParts: [{ section: "text", peek: true }] },
+					true,
+					1024,
+					ALL_CAPS,
+				);
+				const resultPromise = executeCommand(connection, cmd, "A1");
+				await flushMicrotasks();
+				expect(Buffer.concat(written).toString("ascii")).toBe(
+					`A1 UID FETCH 1 (BODY.PEEK[TEXT])${CRLF}`,
+				);
+				router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+				await resultPromise;
+			});
+
+			test("a mixed-case compound section keeps numeric components intact, uppercases the alpha ones", async () => {
+				const { connection, written, router } = makeFakeConnection();
+				const cmd = new FetchCommand(
+					seqSet(1),
+					{ bodyParts: [{ section: "1.2.text", peek: true }] },
+					true,
+					1024,
+					ALL_CAPS,
+				);
+				const resultPromise = executeCommand(connection, cmd, "A1");
+				await flushMicrotasks();
+				expect(Buffer.concat(written).toString("ascii")).toBe(
+					`A1 UID FETCH 1 (BODY.PEEK[1.2.TEXT])${CRLF}`,
+				);
+				router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+				await resultPromise;
+			});
+
+			// NOTE: `stream:true`'s interaction with a lowercase-requested
+			// section requires an actual `LiteralBodyStream` token (only
+			// produced by the real streaming `NewlineTranform`/`Lexer` pipeline
+			// above `DEFAULT_STREAM_THRESHOLD`, never by this file's one-shot
+			// `parseLine()`/fake-connection harness) -- covered end-to-end in
+			// `test/unit/client/mailbox-fetch.test.ts`'s own C3 test instead.
+		});
+
+		describe("C4 fix: composeSectionSpec throws on an inconsistent section+fields combination (M3-phase-boundary review)", () => {
+			test("{section:\"TEXT\", fields:[...]} throws RangeError naming the conflict", () => {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ bodyParts: [{ section: "TEXT", fields: ["X"] }] },
+							true,
+							1024,
+							ALL_CAPS,
+						),
+				).toThrow(RangeError);
+			});
+
+			test("{section:\"HEADER.FIELDS.NOT\", fields:[...]} (no explicit not:true) renders HEADER.FIELDS.NOT (X)", async () => {
+				const { connection, written, router } = makeFakeConnection();
+				const cmd = new FetchCommand(
+					seqSet(1),
+					{ bodyParts: [{ section: "HEADER.FIELDS.NOT", fields: ["X"], peek: true }] },
+					true,
+					1024,
+					ALL_CAPS,
+				);
+				const resultPromise = executeCommand(connection, cmd, "A1");
+				await flushMicrotasks();
+				expect(Buffer.concat(written).toString("ascii")).toBe(
+					`A1 UID FETCH 1 (BODY.PEEK[HEADER.FIELDS.NOT (X)])${CRLF}`,
+				);
+				router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+				await resultPromise;
+			});
+		});
+
 		test("gmail sub-items emitted in msgId/threadId/labels order", async () => {
 			const { connection, written, router } = makeFakeConnection();
 			const cmd = new FetchCommand(
