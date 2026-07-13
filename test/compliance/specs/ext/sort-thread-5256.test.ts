@@ -81,7 +81,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -342,20 +342,22 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.SORT-1", "RFC5256-BASE.6.4.SORT-2"],
 		profiles: ["rev1", "rev2"],
 		title: "SORT command form: parenthesized criteria, then MANDATORY charset, then search keys",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(command("SORT", { args: new RegExp(`^\\(SUBJECT\\) ${cs("US-ASCII")} ALL$`, "i") })),
 				reply("OK SORT completed", ["* SORT 2 3 4 1"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["SUBJECT"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["SUBJECT"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();
@@ -373,14 +375,14 @@ complianceTest(
 		reqs: ["RFC5256-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SORT criteria grammar: REVERSE composes with a following sort-key inside the parenthesized list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX"),
 				// (REVERSE SIZE DATE): REVERSE modifies SIZE; DATE is a second,
 				// unreversed criterion in the same list.
 				expectLine(
@@ -392,7 +394,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["REVERSE", "SIZE", "DATE"], ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["REVERSE", "SIZE", "DATE"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();
@@ -413,20 +417,22 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.SORT-3"],
 		profiles: ["rev1", "rev2"],
 		title: "SORT declares the UTF-8 charset when driven with UTF-8 criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(command("SORT", { args: new RegExp(`^\\(SUBJECT\\) ${cs("UTF-8")} ALL$`, "i") })),
 				reply("OK SORT completed", ["* SORT 1 2"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["SUBJECT"], ["ALL"], "UTF-8"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["SUBJECT"], ["ALL"], "UTF-8");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();
@@ -444,14 +450,14 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.SORT-4"],
 		profiles: ["rev1", "rev2"],
 		title: "UID SORT command form: identical (criteria) charset keys arguments; UID results",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("UID SORT", { args: new RegExp(`^\\(DATE\\) ${cs("US-ASCII")} ALL$`, "i") }),
 				),
@@ -459,7 +465,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const uidSort = server.commandLines.find((l) => l.verb === "UID SORT");
 		expect(uidSort, "UID SORT must have been emitted").toBeDefined();
@@ -477,14 +485,14 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.SORT-5"],
 		profiles: ["rev1", "rev2"],
 		title: "client tolerates an untagged EXPUNGE interleaved into a UID SORT response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX", { exists: 3 }),
 				expectLine(command("UID SORT")),
 				// EXPUNGE first, then the SORT data, then the tagged OK — the
 				// renumbering happens mid-response.
@@ -492,7 +500,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["ARRIVAL"], ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSort(["ARRIVAL"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		// When implemented: the interleaved EXPUNGE must not abort the command —
 		// the script only completes if the client consumed the full response.
@@ -512,14 +522,16 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.THREAD-1", "RFC5256-BASE.6.4.THREAD-2"],
 		profiles: ["rev1", "rev2"],
 		title: "THREAD command form: bare algorithm atom, then MANDATORY charset, then search keys",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT", "THREAD=ORDEREDSUBJECT", "THREAD=REFERENCES"]),
+				...sessionPrelude(["IMAP4rev1", "SORT", "THREAD=ORDEREDSUBJECT", "THREAD=REFERENCES"], {
+					login: true,
+				}),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("THREAD", { args: new RegExp(`^REFERENCES ${cs("US-ASCII")} ALL$`, "i") }),
 				),
@@ -527,7 +539,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.thread("REFERENCES", ["ALL"], "US-ASCII"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.thread("REFERENCES", ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const thread = server.commandLines.find((l) => l.verb === "THREAD");
 		expect(thread, "THREAD must have been emitted").toBeDefined();
@@ -542,14 +556,14 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.THREAD-3"],
 		profiles: ["rev1", "rev2"],
 		title: "THREAD declares the UTF-8 charset when driven with UTF-8 criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "THREAD=REFERENCES"]),
+				...sessionPrelude(["IMAP4rev1", "THREAD=REFERENCES"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("THREAD", { args: new RegExp(`^REFERENCES ${cs("UTF-8")} ALL$`, "i") }),
 				),
@@ -557,7 +571,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.thread("REFERENCES", ["ALL"], "UTF-8"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.thread("REFERENCES", ["ALL"], "UTF-8");
 		await server.assertCompleted();
 		const thread = server.commandLines.find((l) => l.verb === "THREAD");
 		expect(thread, "THREAD must have been emitted").toBeDefined();
@@ -576,14 +592,16 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.THREAD-4", "RFC5256-5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "UID THREAD command form: registered algorithm atom, charset, one or more search keys",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT", "THREAD=REFERENCES"]),
+				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT", "THREAD=REFERENCES"], {
+					login: true,
+				}),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("UID THREAD", {
 						args: new RegExp(`^ORDEREDSUBJECT ${cs("US-ASCII")} ALL$`, "i"),
@@ -593,7 +611,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidThread("ORDEREDSUBJECT", ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidThread("ORDEREDSUBJECT", ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const uidThread = server.commandLines.find((l) => l.verb === "UID THREAD");
 		expect(uidThread, "UID THREAD must have been emitted").toBeDefined();
@@ -611,20 +631,22 @@ complianceTest(
 		reqs: ["RFC5256-BASE.6.4.THREAD-5"],
 		profiles: ["rev1", "rev2"],
 		title: "client tolerates an untagged EXPUNGE interleaved into a UID THREAD response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "THREAD=REFERENCES"]),
+				...sessionPrelude(["IMAP4rev1", "THREAD=REFERENCES"], { login: true }),
+				...selectExchange("INBOX", { exists: 3 }),
 				expectLine(command("UID THREAD")),
 				reply("OK UID THREAD completed", ["* 3 EXPUNGE", "* THREAD (23764 23765)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidThread("REFERENCES", ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidThread("REFERENCES", ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		expect(server.commandLines.some((l) => l.verb === "UID THREAD")).toBe(true);
 	},
@@ -641,20 +663,22 @@ complianceTest(
 		reqs: ["RFC5256-1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues THREAD only with an algorithm advertised via THREAD=<alg>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT"]),
+				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(command("THREAD", { args: /^ORDEREDSUBJECT /i })),
 				reply("OK THREAD completed", ["* THREAD (1)(2 3)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.thread("ORDEREDSUBJECT", ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.thread("ORDEREDSUBJECT", ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		// When implemented: only the advertised algorithm may have been used.
 		expect(
@@ -680,24 +704,32 @@ complianceTest(
 		profiles: ["rev1", "rev2"],
 		title:
 			"client treats descendents of a child in an ORDEREDSUBJECT THREAD response as siblings of that child",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT"]),
+				...sessionPrelude(["IMAP4rev1", "THREAD=ORDEREDSUBJECT"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(command("THREAD", { args: /^ORDEREDSUBJECT /i })),
 				// Illegally deep for ORDEREDSUBJECT: 166 → 167 → 168 (grandchild).
 				reply("OK THREAD completed", ["* THREAD (166 167 168)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: the delivered thread should expose 167 AND 168 as
-		// siblings under 166 (the SHOULD-normalized shape), not a 3-deep chain.
-		await driver.thread("ORDEREDSUBJECT", ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// The delivered thread exposes 167 AND 168 as siblings under 166 (the
+		// SHOULD-normalized shape, RFC5256-BASE.6.4.THREAD-6), not a 3-deep chain
+		// -- `ThreadCommand`'s ORDEREDSUBJECT flattening (`commands/message/
+		// thread.ts`) is what produces this.
+		const threads = await driver.thread("ORDEREDSUBJECT", ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		expect(server.commandLines.some((l) => l.verb === "THREAD")).toBe(true);
+		expect(threads).toHaveLength(1);
+		expect(threads[0].seq).toBe(166);
+		expect(threads[0].children.map((c) => c.seq)).toEqual([167, 168]);
+		expect(threads[0].children.every((c) => c.children.length === 0)).toBe(true);
 	},
 );

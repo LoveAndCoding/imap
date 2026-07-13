@@ -99,3 +99,42 @@ export function assertNoRecentFlag(flags: readonly string[], context: string): v
 		}
 	}
 }
+
+/**
+ * `SortBase` — the **client-sent, strict** grade (§5.6): RFC 5256 §5's seven
+ * `sort-key` atoms (`ARRIVAL`/`CC`/`DATE`/`FROM`/`SIZE`/`SUBJECT`/`TO`) plus
+ * RFC 5957 §5's two-atom `sort-key =/` extension (`DISPLAYFROM`/
+ * `DISPLAYTO`). `SortKey` widens this with RFC 5256 §5's `sort-criterion =
+ * ["REVERSE" SP] sort-key` production — a template-literal union rather than
+ * a separate `{ reverse: boolean; key: SortBase }` object shape, since the
+ * spec's own `MailboxSession.sort()` signature (§5b) takes `SortKey[]`
+ * directly as the ordered sort-criteria list (M4.9).
+ *
+ * `DISPLAYFROM`/`DISPLAYTO` are gated at the command layer (M4.9's
+ * `SortCommand`) on the `SORT=DISPLAY` capability specifically — separate
+ * from the bare `SORT` capability every other `SortBase` member needs — per
+ * RFC 5957 §1's "the server MUST also support the base... SORT... extension"
+ * (SORT=DISPLAY implies, but does not replace, the base SORT gate).
+ */
+export type SortBase =
+	| "ARRIVAL"
+	| "CC"
+	| "DATE"
+	| "FROM"
+	| "SIZE"
+	| "SUBJECT"
+	| "TO" // RFC 5256 §5
+	| "DISPLAYFROM"
+	| "DISPLAYTO"; // RFC 5957 §5, gated on SORT=DISPLAY
+export type SortKey = SortBase | `REVERSE ${SortBase}`;
+
+/**
+ * `ThreadAlgorithm` — the **client-sent, strict** grade (§5.6): RFC 5256
+ * §5's `thread-alg = "ORDEREDSUBJECT" / "REFERENCES" / thread-alg-ext`,
+ * restricted to the two atoms this document itself registers
+ * (`thread-alg-ext` admits future IANA-registered algorithms, gated for the
+ * client by the per-algorithm `THREAD=<alg>` capability duty, RFC5256-1-2 —
+ * out of scope until a later milestone actually registers a third atom).
+ * `MailboxSession.thread()`'s `algorithm` parameter (spec §5b, M4.9).
+ */
+export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";

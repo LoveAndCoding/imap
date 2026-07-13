@@ -8,6 +8,9 @@ import { ExpungeCommand } from "../commands/expunge";
 import { FetchCommand } from "../commands/fetch";
 import type { FetchCapabilityProbe } from "../commands/fetch";
 import { MoveCommand } from "../commands/move";
+import { SortCommand } from "../commands/message/sort";
+import { ThreadCommand } from "../commands/message/thread";
+import type { ThreadNode } from "../commands/message/thread";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
@@ -19,7 +22,7 @@ import { UnselectCommand } from "../commands/unselect";
 import { CapabilityError, StateError } from "../errors";
 import { SequenceSet } from "../protocol/sequence-set";
 import type { SequenceInput } from "../protocol/sequence-set";
-import type { Flag } from "../protocol/vocabularies";
+import type { Flag, SortKey, ThreadAlgorithm } from "../protocol/vocabularies";
 import type { FetchModifiers, FetchRequest, FetchedMessage, FetchedMessageImpl } from "./fetch";
 import type { ClientState } from "./state";
 
@@ -130,6 +133,13 @@ export interface SequenceFacet {
 	fetch(seqs: SequenceInput, items: FetchRequest, opts?: FetchModifiers): AsyncIterable<FetchedMessage>;
 	fetchOne(seq: number, items: FetchRequest, opts?: FetchModifiers): Promise<FetchedMessage | null>;
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
+	/** Bare `SORT` (RFC 5256, spec §5b, M4.9) -- sequence-number-grain mirror
+	 *  of `MailboxSession.sort()`; see that method's doc comment. */
+	sort(sort: SortKey[], criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
+	/** Bare `THREAD` (RFC 5256, spec §5b, M4.9) -- sequence-number-grain
+	 *  mirror of `MailboxSession.thread()`; delivered `ThreadNode`s carry
+	 *  `seq`, never `uid`. */
+	thread(algorithm: ThreadAlgorithm, criteria: SearchCriteria, opts?: SearchOptions): Promise<ThreadNode[]>;
 	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
@@ -326,6 +336,57 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 */
 	public async search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this, criteria, opts, true);
+	}
+
+	// -- message ops: SORT/THREAD (spec §5.6/§5b, M4.9) -----------------------
+
+	/**
+	 * SORT / UID SORT (RFC 5256 §3 BASE.6.4.SORT; RFC 5957 SORT=DISPLAY). UID
+	 * grain (spec §6.2's settled default) — the wire verb is always `UID
+	 * SORT`; see `seq.sort()` for the bare `SORT` mirror. Reuses the same
+	 * `SearchCriteria` compiler (M3) SEARCH itself uses for its trailing
+	 * search-key argument (spec §5.3) — SORT/THREAD add only the leading
+	 * sort-criteria/algorithm argument and a MANDATORY charset (unlike
+	 * SEARCH's optional one, RFC 5256 §3), both handled by `SortCommand`.
+	 * Returns the same `SearchResult` shape as `search()`: `uids` carries the
+	 * server's SORTED order verbatim (never re-sorted or deduplicated by this
+	 * library).
+	 *
+	 * Capability gates (`SORT`, plus `SORT=DISPLAY` for the two RFC 5957
+	 * criteria) and value validation happen in `SortCommand`'s constructor,
+	 * before any bytes are written (I-9) — this method contributes no
+	 * additional protocol logic of its own (I-4).
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public async sort(sort: SortKey[], criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
+		return MailboxSession.runSort(this, sort, criteria, opts, true);
+	}
+
+	/**
+	 * THREAD / UID THREAD (RFC 5256 §3 BASE.6.4.THREAD). UID grain (spec
+	 * §6.2's settled default) — the wire verb is always `UID THREAD`; see
+	 * `seq.thread()` for the bare `THREAD` mirror. `algorithm` must be one the
+	 * server has advertised via its own `THREAD=<algorithm>` capability token
+	 * (RFC5256-1-2) — `ThreadCommand`'s constructor enforces this, zero bytes
+	 * written on refusal (I-9).
+	 *
+	 * Returns `ThreadNode[]` (spec §5b/§5.6 — see `ThreadNode`'s own doc
+	 * comment, `commands/message/thread.ts`, for the M4.9 spec-gap resolution
+	 * this shape settles): each delivered node carries `uid` (never `seq`,
+	 * this grain), except the RFC's "missing-parent" orphan form, which
+	 * carries neither.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed.
+	 */
+	public async thread(
+		algorithm: ThreadAlgorithm,
+		criteria: SearchCriteria,
+		opts?: SearchOptions,
+	): Promise<ThreadNode[]> {
+		return MailboxSession.runThread(this, algorithm, criteria, opts, true);
 	}
 
 	// -- message ops: FETCH (spec §5.4/§5b, M3.5) ------------------------------
@@ -742,6 +803,49 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	}
 
 	/**
+	 * Shared SORT/UID SORT implementation for both `sort()` (UID grain) and
+	 * `seq.sort()` (sequence-number grain) — same static-widening/facet-
+	 * delegation reason as `runSearch` above. The untagged `* SORT` response
+	 * carries no per-command correlator either (same ambiguity `runSearch`'s
+	 * own doc comment describes for classic `* SEARCH`), so this serializes
+	 * DISPATCH against any other `sort()`/`seq.sort()` in flight on THIS
+	 * session via its own `"sort"` `chainFamily` slot — distinct from
+	 * `"search"`'s (a concurrently in-flight `search()` is unaffected: the two
+	 * response types, `SEARCH` and `SORT`, are never confusable with each
+	 * other on the wire either).
+	 */
+	static async runSort(
+		session: MailboxSession,
+		sortKeys: SortKey[],
+		criteria: SearchCriteria,
+		opts: SearchOptions | undefined,
+		uid: boolean,
+	): Promise<SearchResult> {
+		session.assertOpen(uid ? "sort" : "seq.sort");
+		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
+		const command = new SortCommand(sortKeys, criteria, opts, probe, uid);
+		return MailboxSession.chainFamily(session, "sort", () => session.driver.run(command));
+	}
+
+	/**
+	 * Shared THREAD/UID THREAD implementation for both `thread()` (UID grain)
+	 * and `seq.thread()` (sequence-number grain) — same rationale as
+	 * `runSort` above, its own independent `"thread"` `chainFamily` slot.
+	 */
+	static async runThread(
+		session: MailboxSession,
+		algorithm: ThreadAlgorithm,
+		criteria: SearchCriteria,
+		opts: SearchOptions | undefined,
+		uid: boolean,
+	): Promise<ThreadNode[]> {
+		session.assertOpen(uid ? "thread" : "seq.thread");
+		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
+		const command = new ThreadCommand(algorithm, criteria, opts, probe, uid);
+		return MailboxSession.chainFamily(session, "thread", () => session.driver.run(command));
+	}
+
+	/**
 	 * S3 fix (M3-phase-boundary review): serializes DISPATCH of same-`family`
 	 * commands on `session` -- see `familyChains`'s own doc comment for
 	 * exactly what "in flight" means here and why gating on the prior
@@ -931,6 +1035,19 @@ class SeqFacet implements SequenceFacet {
 
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this.session, criteria, opts, false);
+	}
+
+	/** Sequence-number-grain SORT -- see `MailboxSession.sort()`'s doc
+	 *  comment; identical behavior (bare `SORT`, not `UID SORT`). */
+	sort(sort: SortKey[], criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
+		return MailboxSession.runSort(this.session, sort, criteria, opts, false);
+	}
+
+	/** Sequence-number-grain THREAD -- see `MailboxSession.thread()`'s doc
+	 *  comment; identical behavior (bare `THREAD`, not `UID THREAD`) --
+	 *  delivered `ThreadNode`s carry `seq`, never `uid`. */
+	thread(algorithm: ThreadAlgorithm, criteria: SearchCriteria, opts?: SearchOptions): Promise<ThreadNode[]> {
+		return MailboxSession.runThread(this.session, algorithm, criteria, opts, false);
 	}
 
 	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult> {

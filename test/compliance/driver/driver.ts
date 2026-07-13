@@ -21,9 +21,12 @@ import type {
 	SearchCriteria,
 	SearchOptions as RealSearchOptions,
 	SearchResult,
+	SortKey,
 	SpecialUse,
 	StatusItem,
 	StoreResult,
+	ThreadAlgorithm,
+	ThreadNode,
 } from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
@@ -425,6 +428,38 @@ function translateAdHocSearch(
 	if (partial) opts.partial = partial;
 
 	return { criteria: criteria as SearchCriteria, opts };
+}
+
+/**
+ * Translates one `driver.sort()`/`driver.uidSort()` call's ad hoc, flattened
+ * sort-criteria token array (e.g. `["REVERSE", "SIZE", "DATE"]`, scripted
+ * well before the real, spec-typed `SortKey` existed) into the real
+ * `SortKey[]` `MailboxSession.sort()`/`.seq.sort()` actually take (`["REVERSE
+ * SIZE", "DATE"]`, spec §5.6's `SortKey = SortBase | \`REVERSE ${SortBase}\``
+ * template-literal union) -- same "pre-existing ad hoc convention -> real
+ * typed shape" rule `translateAdHocSearch()` above already follows. A
+ * trailing, argument-less "REVERSE" throws `NotImplementedError` (a
+ * malformed script the real, spec-typed API cannot even express, since
+ * `SortKey`'s template form always pairs REVERSE with a following atom).
+ */
+function translateAdHocSortCriteria(rawCriteria: string[]): SortKey[] {
+	const out: SortKey[] = [];
+	for (let i = 0; i < rawCriteria.length; i++) {
+		const token = rawCriteria[i];
+		if (token.toUpperCase() === "REVERSE") {
+			const next = rawCriteria[i + 1];
+			if (next === undefined) {
+				throw new NotImplementedError(
+					`SORT criteria ${JSON.stringify(rawCriteria)} (trailing REVERSE with no following sort-key)`,
+				);
+			}
+			out.push(`REVERSE ${next.toUpperCase()}` as SortKey);
+			i++;
+		} else {
+			out.push(token.toUpperCase() as SortKey);
+		}
+	}
+	return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1441,33 +1476,69 @@ export class ComplianceDriver {
 
 	// ---- Phase 5: search/sort/sync/events ----------------------------------
 	// SORT/THREAD (RFC 5256, +DISPLAY RFC 5957, +ESORT/CONTEXT RFC 5267)
-	public async sort(
-		_criteria: string[],
-		_searchKeys: unknown,
-		_charset?: string,
-	): Promise<never> {
-		throw new NotImplementedError("SORT");
+	/**
+	 * SORT (RFC 5256 §3 BASE.6.4.SORT; RFC 5957 SORT=DISPLAY) -- M4.9.
+	 * Sequence-number grain (spec §6.2's UID-grain-default convention): wired
+	 * to `client.mailbox!.seq.sort(...)`, mirroring `search()`/`fetch()`/etc.'s
+	 * own bare-verb -> `.seq.<verb>` convention. `criteria` is this file's
+	 * pre-existing ad hoc flattened sort-criteria token array (translated by
+	 * `translateAdHocSortCriteria()` above); `searchKeys`/`charset` reuse
+	 * `translateAdHocSearch()` exactly as `search()` does, with the explicit
+	 * `charset` argument (SORT/THREAD's charset is MANDATORY on the wire,
+	 * unlike SEARCH's optional one) taking precedence over anything
+	 * `searchKeys` itself might otherwise carry. Zero protocol logic here
+	 * (I-4) -- both translators only map this file's pre-existing ad hoc
+	 * wire-shaped tokens onto the real, spec-typed shapes `MailboxSession.seq.
+	 * sort()` actually takes.
+	 */
+	public async sort(criteria: string[], searchKeys: unknown, charset?: string): Promise<SearchResult> {
+		const session = this.requireMailboxSession();
+		const sortKeys = translateAdHocSortCriteria(criteria);
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
+			searchKeys,
+			charset !== undefined ? { charset } : undefined,
+		);
+		return session.seq.sort(sortKeys, realCriteria, realOpts);
 	}
-	public async uidSort(
-		_criteria: string[],
-		_searchKeys: unknown,
-		_charset?: string,
-	): Promise<never> {
-		throw new NotImplementedError("UID SORT");
+	/** UID SORT -- M4.9. UID grain: wired to `client.mailbox!.sort(...)`
+	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
+	 *  `sort()`'s doc comment above for the ad hoc-translation rationale. */
+	public async uidSort(criteria: string[], searchKeys: unknown, charset?: string): Promise<SearchResult> {
+		const session = this.requireMailboxSession();
+		const sortKeys = translateAdHocSortCriteria(criteria);
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
+			searchKeys,
+			charset !== undefined ? { charset } : undefined,
+		);
+		return session.sort(sortKeys, realCriteria, realOpts);
 	}
-	public async thread(
-		_algorithm: string,
-		_searchKeys: unknown,
-		_charset?: string,
-	): Promise<never> {
-		throw new NotImplementedError("THREAD");
+	/**
+	 * THREAD (RFC 5256 §3 BASE.6.4.THREAD) -- M4.9. Sequence-number grain,
+	 * same convention as `sort()` above: wired to `client.mailbox!.seq.
+	 * thread(...)`. `algorithm` is the raw wire-form algorithm atom these
+	 * scripts pass directly (`"ORDEREDSUBJECT"`/`"REFERENCES"`) -- `Thread
+	 * Command`'s own constructor validates it against the registered
+	 * algorithm set and gates it on the matching `THREAD=<algorithm>`
+	 * capability (RFC5256-1-2), zero bytes written on refusal (I-9); this
+	 * driver method performs no validation of its own (I-4).
+	 */
+	public async thread(algorithm: string, searchKeys: unknown, charset?: string): Promise<ThreadNode[]> {
+		const session = this.requireMailboxSession();
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
+			searchKeys,
+			charset !== undefined ? { charset } : undefined,
+		);
+		return session.seq.thread(algorithm as ThreadAlgorithm, realCriteria, realOpts);
 	}
-	public async uidThread(
-		_algorithm: string,
-		_searchKeys: unknown,
-		_charset?: string,
-	): Promise<never> {
-		throw new NotImplementedError("UID THREAD");
+	/** UID THREAD -- M4.9. UID grain: wired to `client.mailbox!.thread(...)`
+	 *  directly, mirroring `thread()`'s doc comment above. */
+	public async uidThread(algorithm: string, searchKeys: unknown, charset?: string): Promise<ThreadNode[]> {
+		const session = this.requireMailboxSession();
+		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(
+			searchKeys,
+			charset !== undefined ? { charset } : undefined,
+		);
+		return session.thread(algorithm as ThreadAlgorithm, realCriteria, realOpts);
 	}
 
 	// NOTIFY (RFC 5465)

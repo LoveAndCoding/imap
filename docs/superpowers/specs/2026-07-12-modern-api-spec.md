@@ -600,6 +600,20 @@ export type SortBase =
 	| "DISPLAYFROM" | "DISPLAYTO";              // RFC 5957, gated
 export type SortKey = SortBase | `REVERSE ${SortBase}`;
 export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";
+
+// [Amended at M4.9: ThreadNode was referenced by §5b but never defined —
+// definition adopted from the implementation decision — see the M4 plan doc
+// M4.9.] Recursive shape adapted from the internal RFC 5256 §5 thread-list
+// parser (`parser/structure/thread.ts`'s `ThreadResponse`/`ThreadMessage`).
+// Exactly one of `uid`/`seq` is populated, per the grain of the facet call
+// that produced it (`thread()` → `uid`; `seq.thread()` → `seq`) — except the
+// RFC's own "missing-parent" orphan form (a `thread-nested` group with no
+// leading `nz-number`), where neither is populated.
+export interface ThreadNode {
+	uid?: number;
+	seq?: number;
+	children: ThreadNode[];
+}
 ```
 
 Applied through the surface: `create()`'s `specialUse` is strict

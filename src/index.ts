@@ -41,6 +41,16 @@ export type { SelectOptions, SelectResult } from "./commands/select";
 export type { SearchCriteria } from "./commands/search-criteria";
 export type { SearchOptions, SearchResult } from "./commands/search";
 
+// SORT / UID SORT + THREAD / UID THREAD (spec §5.6/§5b, M4.9): RFC 5256's
+// core SORT/THREAD extensions plus RFC 5957's SORT=DISPLAY criteria. Reuse
+// `SearchCriteria`/`SearchOptions`/`SearchResult` above for their own
+// search-key argument and result shape; `SortKey`/`ThreadAlgorithm` are the
+// two commands' own closed vocabularies (§5.6), and `ThreadNode` is the
+// spec-gap resolution `commands/message/thread.ts` documents (spec §5b
+// referenced `ThreadNode[]` but never defined it).
+export type { SortBase, SortKey, ThreadAlgorithm } from "./protocol/vocabularies";
+export type { ThreadNode } from "./commands/message/thread";
+
 // STORE / UID STORE + addFlags/removeFlags/setFlags (spec §5b, M3.6).
 export type { StoreModifiers, StoreOperation, StoreResult } from "./commands/store";
 

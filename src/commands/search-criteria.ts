@@ -530,6 +530,26 @@ export function compileCriteria(
 	}
 }
 
+/**
+ * Resolves the MANDATORY charset argument SORT/UID SORT and THREAD/UID
+ * THREAD's wire grammar requires (M4.9; RFC 5256 §5: `search-criteria =
+ * charset 1*(SP search-key)` — no optional-CHARSET-clause escape hatch the
+ * way plain SEARCH has, RFC5256-BASE.6.4.SORT-2/THREAD-2: "The charset
+ * argument is mandatory (unlike SEARCH)"). An explicit `opts.charset` wins
+ * outright; otherwise this defaults to `"UTF-8"` when `criteria` carries any
+ * non-ASCII string (mirroring `search.ts`'s `normalizeSearchOptions` own
+ * auto-UTF-8 default) or `"US-ASCII"` otherwise. Unlike SEARCH's
+ * `charsetToEmit` (which may resolve to `undefined`, omitting the clause
+ * entirely), this function never returns anything other than a concrete
+ * charset string — SORT/THREAD's grammar has no "omit it" alternative.
+ */
+export function resolveMandatoryCharset(explicit: string | undefined, criteria: SearchCriteria): string {
+	if (explicit !== undefined) {
+		return explicit;
+	}
+	return criteriaHasNonAscii(criteria) ? "UTF-8" : "US-ASCII";
+}
+
 /** Recursively scans every string-shaped value in `criteria` (including
  *  nested `fuzzy`/`not`/`or`/`and`) for a code point above `0x7F` — the
  *  input `needsUtf8Charset` (search.ts) uses to decide whether an
