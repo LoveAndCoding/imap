@@ -48,11 +48,14 @@ between closes; last updated: M3 in progress, after M3.1+M3.3.)*
     tasks).
   - M3.2 (literal streaming implementation) IN FLIGHT — main tree
     (lexer/newline/parser/connection files).
-  - M3.7 (SEARCH compiler + verb) IN FLIGHT — isolated worktree; merge
-    serially AFTER M3.2 lands (M3.7 owns `mailbox.ts`/`driver.ts` additions;
-    creates the `seq` facet if first to land a verb).
+  - M3.7 (SEARCH), M3.6 (STORE), M3.8 (COPY/MOVE) IN FLIGHT — three
+    isolated worktrees, all instructed to keep `mailbox.ts`/`driver.ts`/
+    `index.ts` changes purely additive and to create the `seq` facet
+    minimally if first to land it. Merge order: M3.2 (main tree) → M3.7 →
+    M3.6 → M3.8, orchestrator resolves the additive overlaps at each merge
+    and re-runs the full gates before each commit.
   - Remaining: M3.4 (collector FETCH bridge, needs M3.2), M3.5 FETCH,
-    M3.6 STORE, M3.8 COPY/MOVE, M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE,
+    M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE (needs M3.2),
     M3.11 response-code sweep + milestone close.
 - **Compliance right now:** 602 pass / 2 violations (both adjudicated,
   `docs/compliance-adjudications.md`) / problems []. Checked-in reports
