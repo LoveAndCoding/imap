@@ -169,10 +169,12 @@ test("authenticate(mechanism) drives exactly that mechanism against the scripted
 	await server.assertCompleted();
 });
 
+// `uidExpunge()` (M3.9) and `uidMove()` (M3.8) are both implemented now --
+// see the dedicated "expunge()/uidExpunge() ... require a selected mailbox"
+// test below for their real (StateError, not NotImplementedError) behavior
+// on a driver with no selected mailbox.
 test("Phase 4 verbs throw NotImplementedError", async () => {
 	driver = new ComplianceDriver();
-	await expect(driver.uidExpunge("1:*")).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.uidMove("1", "Dest")).rejects.toBeInstanceOf(NotImplementedError);
 	await expect(driver.replace("1", "Dest", Buffer.from("x"))).rejects.toBeInstanceOf(
 		NotImplementedError,
 	);
@@ -200,6 +202,26 @@ test("Phase 4 verbs throw NotImplementedError", async () => {
 	await expect(driver.multiAppend("INBOX", [{ message: Buffer.from("a") }])).rejects.toBeInstanceOf(
 		NotImplementedError,
 	);
+});
+
+// M3.9: expunge()/uidExpunge() are real now (delegating to
+// MailboxSession.seq.expunge()/.expunge()), not NotImplementedError stubs.
+// uidMove() (M3.8) is included here too: it was still (incorrectly) listed as
+// NotImplementedError above even though it has been wired since M3.8. No
+// connect()/login() here (deliberately -- this file's connect()+login()
+// tests are flaky/environment-sensitive under this sandbox's networking,
+// independent of this change): with no client at all, `requireClient()`
+// throws its own plain `Error` before either method's `StateError` guard is
+// ever reached, but that alone already proves neither is the old
+// `NotImplementedError` stub -- the deep behavior (StateError message,
+// UIDPLUS gate, `exists`/event bookkeeping, return-value ordering) is
+// covered without network flakiness in test/unit/client/mailbox-verbs.test.ts
+// and test/unit/commands/expunge.test.ts.
+test("expunge()/uidExpunge()/uidMove() are wired (no longer NotImplementedError)", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.expunge()).rejects.not.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidExpunge("1:*")).rejects.not.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidMove("1", "Dest")).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
 test("Phase 4 widened signatures still throw NotImplementedError", async () => {

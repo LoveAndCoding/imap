@@ -4,6 +4,7 @@ import type { Command } from "../commands/base";
 import { CloseCommand } from "../commands/close";
 import { CopyCommand } from "../commands/copy";
 import type { CopyResult } from "../commands/copy";
+import { ExpungeCommand } from "../commands/expunge";
 import { MoveCommand } from "../commands/move";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
@@ -123,6 +124,23 @@ export interface SequenceFacet {
 	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	copy(seqs: SequenceInput, dest: string): Promise<CopyResult>;
 	move(seqs: SequenceInput, dest: string): Promise<CopyResult>;
+	/**
+	 * Bare EXPUNGE only (spec §5b, M3.9) -- deliberately NOT a mechanical
+	 * "same shape, sequence-number grain" mirror of `MailboxSession.expunge()`
+	 * the way every method above it is. UID EXPUNGE's one and only argument
+	 * (RFC 4315 §2.1) is a set of UIDs -- there is no such thing as a
+	 * "sequence-number-grain UID EXPUNGE": mixing sequence numbers into that
+	 * argument would silently resolve to the WRONG messages against a
+	 * server's UID space, a footgun this facet must not offer a signature for
+	 * at all. Bare EXPUNGE, by contrast, already has NO argument in either
+	 * grain (RFC 3501/9051 §6.4.3: "Arguments: none") -- there is nothing
+	 * left to be "sequence-number-grain" ABOUT once the UID-grain form is
+	 * excluded, so `seq.expunge()` simply always issues bare EXPUNGE, taking
+	 * no parameter. See `MailboxSession.expunge()`'s own doc comment for the
+	 * full no-arg/with-arg dispatch this method's zero-argument shape falls
+	 * out of.
+	 */
+	expunge(): Promise<number[]>;
 }
 
 export interface MailboxSessionEvents {
@@ -458,6 +476,72 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return MailboxSession.runCopyOrMove(this, uids, dest, "uid", true);
 	}
 
+	// -- message ops: EXPUNGE (spec §5b, M3.9) --------------------------------
+
+	/**
+	 * EXPUNGE / UID EXPUNGE (RFC 3501/9051 §6.4.3 / RFC 4315 §2.1) -- M3.9.
+	 * `uids` UNDEFINED (the no-arg call, `expunge()`) issues bare `EXPUNGE`:
+	 * every message in this mailbox carrying `\Deleted` is permanently
+	 * removed. `uids` GIVEN issues `UID EXPUNGE <uids>` (UIDPLUS, RFC 4315,
+	 * gated on the `UIDPLUS` capability -- `CapabilityError`, zero bytes
+	 * written, I-9, when absent -- NEVER a client-side emulation via bare
+	 * EXPUNGE, per spec §5b's explicit native-command-only posture already
+	 * established for `move()` above): only messages inside `uids` that ALSO
+	 * carry `\Deleted` are removed, leaving every other `\Deleted` message in
+	 * the mailbox untouched.
+	 *
+	 * Resolves the sequence numbers of every message this command's own
+	 * untagged EXPUNGE responses reported, in wire arrival order --
+	 * `ExpungeCommand`'s own doc comment (src/commands/expunge.ts) works
+	 * through why this is safe to read directly off the claimed responses
+	 * without this method (or the command) ALSO touching `exists`/emitting
+	 * `MailboxSessionEvents.expunge` itself: `ImapClient`'s
+	 * `applyMailboxLiveUpdate` state-tracker lane is the ONE place
+	 * `MailboxSession.applyExpunge` is called, unconditionally of any
+	 * command's `claims()`, so the returned array and the `expunge` event
+	 * stream are always two views of the identical underlying wire data,
+	 * never a double-counted one.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public async expunge(uids?: SequenceInput): Promise<number[]> {
+		return MailboxSession.runExpunge(this, uids, "expunge");
+	}
+
+	/**
+	 * Shared EXPUNGE/UID EXPUNGE dispatch for both `expunge()` above and
+	 * `SeqFacet.expunge()` below (same static-widening reason as
+	 * `runSearch`/`runStore`/`runCopyOrMove`). `input === undefined` always
+	 * issues bare EXPUNGE regardless of which entry point called this --
+	 * this is exactly how `seq.expunge()` ends up "always the bare form"
+	 * (`SequenceFacet.expunge()`'s own doc comment): it simply calls this
+	 * static with `undefined`, the very same argument-less path
+	 * `MailboxSession.expunge()` takes when its own caller passes nothing.
+	 * `label` only affects the `StateError`/`CapabilityError` message text.
+	 */
+	static async runExpunge(
+		session: MailboxSession,
+		input: SequenceInput | undefined,
+		label: "expunge" | "seq.expunge",
+	): Promise<number[]> {
+		session.assertOpen(label);
+		if (input === undefined) {
+			return session.driver.run(new ExpungeCommand(undefined, false));
+		}
+		if (!session.driver.hasCapability("UIDPLUS")) {
+			throw new CapabilityError(
+				`${label}(uids) requires the UIDPLUS capability (RFC 4315 §2.1) for ` +
+					"UID EXPUNGE -- which the server has not advertised; call " +
+					`${label}() with no argument for the capability-free bare EXPUNGE ` +
+					"form instead",
+				{ capability: "UIDPLUS", rfc: "RFC4315" },
+			);
+		}
+		const set = SequenceSet.from(input).withKind("uid");
+		return session.driver.run(new ExpungeCommand(set, true));
+	}
+
 	/**
 	 * Package-private (same static-widening convention as `applyExists`/
 	 * `applyExpunge`/etc. below, and `commands/base.ts`'s own
@@ -655,5 +739,13 @@ class SeqFacet implements SequenceFacet {
 	 *  `MOVE`, not `UID MOVE`) rather than UIDs. */
 	move(seqs: SequenceInput, dest: string): Promise<CopyResult> {
 		return MailboxSession.runCopyOrMove(this.session, seqs, dest, "seq", true);
+	}
+
+	/** Bare EXPUNGE, no argument -- see `SequenceFacet.expunge()`'s own doc
+	 *  comment for why this facet does NOT mirror `MailboxSession.expunge()`'s
+	 *  optional-UID-argument shape (UID EXPUNGE's argument is UIDs only;
+	 *  there is no sequence-number-grain form of it to expose here). */
+	expunge(): Promise<number[]> {
+		return MailboxSession.runExpunge(this.session, undefined, "seq.expunge");
 	}
 }

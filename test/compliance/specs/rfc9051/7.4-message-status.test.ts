@@ -61,7 +61,7 @@ import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -240,6 +240,54 @@ complianceTest(
 		const expungeEvent = await waitForUntagged(driver, "EXPUNGE");
 		// Remembering means recording the expunged message sequence number.
 		expect(contentOf<ParsedExpunge>(expungeEvent).sequenceNumber).toBe(3);
+	},
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §7.5.1 — EXPUNGE remembered via the client's OWN EXPUNGE command (M3.9)
+// ═════════════════════════════════════════════════════════════════════════════
+// The test above proves RFC9051-7.5.1-1 at the raw connection level (an
+// unsolicited EXPUNGE arriving with no command in flight at all). This is a
+// materially different, deeper angle on the SAME duty, authored fresh for
+// M3.9 (bare EXPUNGE has zero dedicated catalog entries of its own — RFC 9051
+// §6.4.3 carries no client-binding statements, confirmed in
+// test/compliance/catalog/rfc9051/s6-selected.ts — so its client-facing
+// contract is exactly this "the EXPUNGE response MUST be remembered" duty):
+// the client issues bare EXPUNGE itself (through a real, selected
+// MailboxSession) and must remember EVERY one of the untagged EXPUNGE
+// responses its own command elicits, applying each EXACTLY once to
+// `MailboxSession.exists`/the `expunge` event stream — not zero (dropped) and
+// not twice (double-counted, the same hazard `MoveCommand`'s M3.8 doc comment
+// worked through for its own EXPUNGE-adjacent case).
+complianceTest(
+	{
+		reqs: ["RFC9051-7.5.1-1"],
+		profiles: ["rev2"],
+		title: "client remembers every EXPUNGE update elicited by its own bare EXPUNGE command, exactly once each",
+		timeout: 5000,
+	},
+	async () => {
+		const server = await f.startServer();
+		server.arm([
+			[
+				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
+				...selectExchange("INBOX", { profile: "rev2", exists: 5 }),
+				expectLine(command("EXPUNGE", { args: null })),
+				reply("OK EXPUNGE completed", ["* 3 EXPUNGE", "* 3 EXPUNGE", "* 3 EXPUNGE"]),
+			],
+		]);
+		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
+		const session = await driver.select("INBOX");
+		expect(session.exists).toBe(5);
+		const result = await driver.expunge();
+		await server.assertCompleted();
+		// The command's own return value remembers all three removals, in wire
+		// order.
+		expect(result).toEqual([3, 3, 3]);
+		// `exists` decrements by exactly 3 (5 -> 2) -- never 6/(5 -> -1) or any
+		// other double-counted outcome.
+		expect(session.exists).toBe(2);
 	},
 );
 

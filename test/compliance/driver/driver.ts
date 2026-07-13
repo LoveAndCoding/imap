@@ -890,8 +890,29 @@ export class ComplianceDriver {
 		}
 		await session.close();
 	}
-	public async expunge(): Promise<never> {
-		throw new NotImplementedError("EXPUNGE");
+	/**
+	 * EXPUNGE (RFC 3501/9051 §6.4.3) -- M3.9. Bare (non-UID-prefixed) verb:
+	 * per the M3 plan's driver-wiring convention, delegates to
+	 * `MailboxSession.seq.expunge()` -- which, per that method's own doc
+	 * comment, is the SAME bare-EXPUNGE path `MailboxSession.expunge()`
+	 * itself takes when called with no argument (there is no seq-grain
+	 * "argument form" of EXPUNGE to route to instead, unlike `copy()`/
+	 * `move()` above). Zero protocol logic here (I-4).
+	 *
+	 * No selected mailbox: same rationale as `copy()`/`move()` above --
+	 * `StateError` mirrors what `MailboxSession.seq.expunge()` would itself
+	 * produce, and this file may not import `ExpungeCommand` directly.
+	 */
+	public async expunge(): Promise<number[]> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("expunge() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.seq.expunge();
 	}
 	/**
 	 * SEARCH (RFC 3501/9051 §6.4.4 + ESEARCH/SEARCHRES/PARTIAL/WITHIN/
@@ -1086,8 +1107,23 @@ export class ComplianceDriver {
 
 	// ---- Phase 4: mailbox/listing/metadata + message operations ------------
 	// UIDPLUS (RFC 4315) / MOVE (RFC 6851) / REPLACE (RFC 8508)
-	public async uidExpunge(_seq: string): Promise<never> {
-		throw new NotImplementedError("UID EXPUNGE");
+	/**
+	 * UID EXPUNGE (RFC 4315 §2.1) -- M3.9. UID-prefixed verb: delegates to
+	 * `MailboxSession.expunge(uids)` (UID grain) directly, zero protocol
+	 * logic here (I-4) -- mirrors `uidCopy()`/`uidMove()`'s no-selected-
+	 * mailbox rationale above; the UIDPLUS capability gate lives entirely in
+	 * `MailboxSession`/`ExpungeCommand`.
+	 */
+	public async uidExpunge(seq: string): Promise<number[]> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("uidExpunge() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.expunge(seq);
 	}
 	/**
 	 * UID MOVE (RFC 6851 §3 / RFC 9051 §6.4.8) -- M3.8. UID-prefixed verb:

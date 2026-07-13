@@ -11,7 +11,7 @@ import { DeleteCommand } from "../../../src/commands/delete";
 import { RenameCommand } from "../../../src/commands/rename";
 import { SubscribeCommand } from "../../../src/commands/subscribe";
 import { UnsubscribeCommand } from "../../../src/commands/unsubscribe";
-import { CapabilityError, ServerNoError } from "../../../src/errors";
+import { CapabilityError, ServerNoError, StateError } from "../../../src/errors";
 
 const CRLF = "\r\n";
 
@@ -627,6 +627,157 @@ describe("MailboxSession.copy()/move() + seq facet (spec §5b, M3.8)", () => {
 		// test/unit/commands/copy.test.ts and test/unit/commands/move.test.ts.
 		await mailbox.copy(1, "Archive");
 		await mailbox.move(1, "Archive");
+		await server.assertCompleted();
+	});
+});
+
+// -- M3.9: EXPUNGE / UID EXPUNGE ----------------------------------------------
+
+describe("MailboxSession.expunge() + seq facet (spec §5b, M3.9)", () => {
+	let server: ScriptedServer | undefined;
+	let client: ImapClient | undefined;
+
+	afterEach(async () => {
+		await client?.close({ force: true }).catch(() => undefined);
+		await server?.close();
+		server = undefined;
+		client = undefined;
+	});
+
+	test("expunge(): bare EXPUNGE, resolves the expunged sequence numbers in wire order", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(5),
+			expectLine(command("EXPUNGE", { args: null })),
+			reply("OK EXPUNGE completed", ["* 3 EXPUNGE", "* 3 EXPUNGE", "* 3 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		expect(mailbox.exists).toBe(5);
+
+		const expungeEvents: number[] = [];
+		mailbox.on("expunge", (seq) => expungeEvents.push(seq));
+
+		const result = await mailbox.expunge();
+		await server.assertCompleted();
+
+		// No-double-apply verification (same shape as move()'s own test above):
+		// 3 EXPUNGE lines -> the returned array and the event stream both see
+		// exactly 3 entries, all "3" (each removal renumbers the mailbox so the
+		// next \Deleted message is again reported as seq 3), and `exists`
+		// decrements by exactly 3 (5 -> 2), never 6/(5 -> -1) or any other
+		// double-counted outcome. `ExpungeCommand` claims the untagged EXPUNGE
+		// responses itself (to build this return value) AND `ImapClient`'s
+		// ordinary untagged-EXPUNGE state-tracker lane still applies each one
+		// exactly once (claiming and the live broadcast are independent
+		// consumers of the same response, per `ExpungeCommand`'s own doc
+		// comment) -- the return value and the event stream agree because both
+		// are reading the identical sequence of wire lines.
+		expect(result).toEqual([3, 3, 3]);
+		expect(expungeEvents).toEqual([3, 3, 3]);
+		expect(mailbox.exists).toBe(2);
+	});
+
+	test("seq.expunge(): identical bare EXPUNGE -- no seq-grain argument exists for this verb", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(3),
+			expectLine(command("EXPUNGE", { args: null })),
+			reply("OK EXPUNGE completed", ["* 2 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.seq.expunge();
+		await server.assertCompleted();
+
+		expect(result).toEqual([2]);
+		expect(mailbox.exists).toBe(2);
+	});
+
+	test("expunge(uids): UID EXPUNGE <sequence-set> when UIDPLUS is advertised (RFC 4315 §2.1)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "UIDPLUS"], [
+			...selectInboxSteps(5),
+			// [3,4,5] canonicalizes (SequenceSet, M3.3) to the coalesced "3:5".
+			expectLine(command("UID EXPUNGE", { args: "3:5" })),
+			reply("OK UID EXPUNGE completed", ["* 3 EXPUNGE", "* 3 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.expunge([3, 4, 5]);
+		await server.assertCompleted();
+
+		expect(result).toEqual([3, 3]);
+		expect(mailbox.exists).toBe(3);
+	});
+
+	test("expunge(uids): CapabilityError, zero bytes written, when UIDPLUS is not advertised (RFC 4315 -- never emulated via bare EXPUNGE)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// Deliberately NO UID EXPUNGE (and no bare EXPUNGE either) in the
+		// script: any EXPUNGE-family command reaching the wire would be an
+		// unscripted-command failure below.
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.expunge([1, 2]);
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(CapabilityError);
+		expect((caught as CapabilityError).capability).toBe("UIDPLUS");
+		expect((caught as CapabilityError).rfc).toBe("RFC4315");
+		// Connection still healthy and NOTHING was written for the gated call.
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("expunge()/seq.expunge() reject StateError (zero bytes written) once the session is closed", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("CLOSE", { args: null })),
+			reply("OK CLOSE completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.close();
+
+		await expect(mailbox.expunge()).rejects.toBeInstanceOf(StateError);
+		await expect(mailbox.seq.expunge()).rejects.toBeInstanceOf(StateError);
+		await server.assertCompleted();
+	});
+
+	test("queueMode is serial for EXPUNGE (spec §6.1) -- declared on the command class wired here", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "UIDPLUS"], [
+			...selectInboxSteps(),
+			expectLine(command("EXPUNGE", { args: null })),
+			reply("OK EXPUNGE completed"),
+			expectLine(command("UID EXPUNGE", { args: "1" })),
+			reply("OK UID EXPUNGE completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		// Sequential (not concurrent) awaits are the only thing this test can
+		// observe about "serial" from the outside; queueMode's actual
+		// declaration is pinned directly against the command class in
+		// test/unit/commands/expunge.test.ts.
+		await mailbox.expunge();
+		await mailbox.expunge(1);
 		await server.assertCompleted();
 	});
 });
