@@ -4,7 +4,7 @@
 
 ## Description
 
-@lovely-inbox/imap is an IMAP client module for [node.js](http://nodejs.org/). This project is based on the [node-imap](https://github.com/mscdex/node-imap) project, which has been rewritten in Typescript and modernization improvements added.
+@lovely-inbox/imap is an IMAP client module for [node.js](http://nodejs.org/). This project is based on the [node-imap](https://github.com/mscdex/node-imap) project, which has been rewritten in TypeScript with a modern, Promise/async-iterable API (`ImapClient`) built on top of it.
 
 This module does not perform any magic such as auto-decoding of messages/attachments or parsing of email addresses (all mail header values are left as-is).
 
@@ -18,7 +18,440 @@ This module does not perform any magic such as auto-decoding of messages/attachm
 
     npm install @lovely-inbox/imap
 
-## Examples
+## Quickstart
+
+```typescript
+import { ImapClient } from "@lovely-inbox/imap";
+
+const client = new ImapClient({
+	host: "imap.gmail.com",
+	tls: "on", // implicit TLS, port 993 (the default)
+	auth: {
+		user: "mygmailname@gmail.com",
+		pass: "mygmailpassword",
+	},
+});
+
+await client.connect(); // connects, negotiates TLS, authenticates, ENABLEs
+const mailbox = await client.select("INBOX");
+
+for await (const message of mailbox.fetch("1:10", {
+	envelope: true,
+	flags: true,
+})) {
+	console.log(message.seq, message.envelope?.subject, [...(message.flags ?? [])]);
+}
+
+await client.logout();
+```
+
+`connect()` runs the whole login ritual for you: TCP/TLS connect, read the
+greeting, negotiate STARTTLS if configured, authenticate (if `auth` was
+supplied), send `ID`, and `ENABLE` whatever extensions apply. `select()`
+returns a `MailboxSession` -- every message operation (fetch/search/flags/
+copy/move/expunge) lives on that session, not on the client, because they
+only make sense against a currently-selected mailbox.
+
+## API
+
+### `ImapClient`
+
+`new ImapClient(config: ImapClientConfig)` validates `config` synchronously
+(throws `TypeError`/`RangeError` on bad input) and returns a disconnected
+client. Nothing is sent over the wire until `connect()` is called.
+
+-   **connect()** - `Promise<void>` - Runs the connection ritual described
+    above. Rejects (and guarantees the connection is torn back down,
+    `client.state === "disconnected"`) on any failure.
+
+-   **authenticate(auth?: ImapAuthConfig)** - `Promise<void>` - Explicit
+    authentication, for a client that connected without `auth` in its config
+    (e.g. to inspect the greeting/capabilities before choosing credentials).
+    Legal only in the `"not-authenticated"` state.
+
+-   **logout()** - `Promise<void>` - Sends `LOGOUT`, then tears down the
+    socket. Idempotent -- safe to call more than once.
+
+-   **close(opts?: { force?: boolean })** - `Promise<void>` - Tears down the
+    socket without sending `LOGOUT`.
+
+-   **state** - `ClientState` - One of `"disconnected"`, `"connecting"`,
+    `"not-authenticated"`, `"authenticated"`, `"selected"`, `"logout"`.
+
+-   **capabilities** - `CapabilityView` - Read-only view of the server's
+    advertised capabilities.
+
+-   **supports(capability: string)** - `boolean` - Case-insensitive
+    capability check.
+
+-   **secure** - `boolean` - Whether the current transport is TLS (implicit
+    or post-STARTTLS).
+
+-   **serverId** - `ReadonlyMap<string, string | null> | null` - The
+    server's `ID` response, if the server advertised `ID` and sending it
+    wasn't disabled via `config.id: false`.
+
+-   **enabled** - `ReadonlySet<string>` - Every capability this client has
+    successfully `ENABLE`d so far.
+
+-   **mailbox** - `MailboxSession | null` - The currently selected mailbox
+    session, or `null` if none is selected.
+
+-   **noop()** - `Promise<void>` - Sends `NOOP`.
+
+-   **select(mailbox: string, opts?: SelectOptions)** /
+    **examine(mailbox: string, opts?: SelectOptions)** - `Promise<MailboxSession>` -
+    Opens `mailbox` read-write (`select`) or read-only (`examine`). Selecting
+    a new mailbox while one is already open transparently deselects the old
+    one first (its `closed` event fires with reason `"reselected"`).
+
+-   **create(mailbox: string, opts?: CreateMailboxOptions)** -
+    **delete(mailbox: string)** -
+    **rename(from: string, to: string)** -
+    **subscribe(mailbox: string)** -
+    **unsubscribe(mailbox: string)** - `Promise<void>` each - Mailbox
+    management. `opts.specialUse` on `create()` requires the
+    `CREATE-SPECIAL-USE` capability (RFC 6154).
+
+-   **list(opts?: ListOptions)** - `Promise<MailboxInfo[]>` - Unified LIST
+    (RFC 5258/9051), including `RETURN (STATUS ...)`, `SUBSCRIBED`,
+    `SELECT-RECURSIVEMATCH`, and remote-mailbox options where the server
+    supports them.
+
+-   **lsub(ref: string, pattern: string)** - `Promise<MailboxInfo[]>` -
+    Legacy LSUB (rev1 only); on an IMAP4rev2 server, use
+    `list({ subscribed: true })` instead.
+
+-   **status(mailbox: string, items: StatusItem[])** -
+    `Promise<MailboxStatusResult>` - STATUS against a mailbox *other than*
+    the currently selected one (this method throws `StateError` if you pass
+    the name of the mailbox you already have selected -- read
+    `client.mailbox`'s live snapshot instead).
+
+-   **namespaces()** - `Promise<NamespaceSet>` - NAMESPACE (RFC 2342),
+    gated on the `NAMESPACE` capability or an IMAP4rev2 server.
+
+-   **append(mailbox: string, message: AppendSource, opts?: AppendOptions)** -
+    `Promise<AppendResult>` - Appends one RFC-822 message (a `Buffer` or
+    `string`, sent verbatim/UTF-8 respectively) to `mailbox`.
+
+-   **appendMany(mailbox: string, messages: AppendMessageEntry[])** -
+    `Promise<AppendResult[]>` - MULTIAPPEND (RFC 3502): appends several
+    messages in one round trip, each with its own flags/internal date. A
+    single-entry array transparently degrades to a plain `append()` call, so
+    it never requires the `MULTIAPPEND` capability for a one-message batch.
+
+-   **enableExtensions(caps: string[])** - `Promise<string[]>` - Manual
+    `ENABLE`, beyond whatever `config.extensions` already requested at
+    connect time.
+
+-   **id, secure, enabled** - see above.
+
+-   **run(command: Command<T>)** - `Promise<T>` - The Layer-2 escape hatch:
+    submits any hand-built `Command` (from `@lovely-inbox/imap/commands`)
+    through the same state/capability gating every built-in method uses.
+    Useful for an IMAP extension this library doesn't wrap yet.
+
+-   **connection** - `Connection` - The Layer-1 escape hatch (see
+    [Legacy API](#legacy-api) below); reading its socket/event state directly
+    is only for advanced cases.
+
+### `MailboxSession`
+
+Returned by `client.select()`/`client.examine()`. All message-identifying
+methods below operate on **UIDs** by default; `session.seq` exposes the
+identical set of methods over **sequence numbers** instead (see
+[The `seq` facet](#the-seq-facet)).
+
+Live snapshot fields (updated as untagged responses arrive while this
+mailbox is selected): `name`, `readOnly`, `exists`, `recent`, `flags`,
+`permanentFlags`, `canCreateKeywords`, `uidValidity`, `uidNext`,
+`uidNotSticky`, `highestModSeq`, `mailboxId`, `closed`.
+
+-   **search(criteria: SearchCriteria, opts?: SearchOptions)** -
+    `Promise<SearchResult>` - See [Searching](#searching).
+
+-   **fetch(uids: SequenceInput, items: FetchRequest, opts?: FetchModifiers)** -
+    `AsyncIterable<FetchedMessage>` - See [Fetching](#fetching-messages).
+
+-   **fetchOne(uid: number, items: FetchRequest, opts?: FetchModifiers)** -
+    `Promise<FetchedMessage | null>` - Convenience single-UID form of
+    `fetch()`. Resolves `null` if the server has nothing to say about that
+    UID (e.g. it was already expunged).
+
+-   **addFlags(uids, flags: Flag[], opts?: StoreModifiers)** -
+    **removeFlags(uids, flags: Flag[], opts?: StoreModifiers)** -
+    **setFlags(uids, flags: Flag[], opts?: StoreModifiers)** -
+    `Promise<StoreResult>` each - `+FLAGS`/`-FLAGS`/`FLAGS` (STORE/UID
+    STORE). See [Flags](#flags).
+
+-   **copy(uids: SequenceInput, dest: string)** -
+    **move(uids: SequenceInput, dest: string)** - `Promise<CopyResult>` each -
+    See [Copying and moving](#copying-and-moving).
+
+-   **expunge(uids?: SequenceInput)** - `Promise<number[]>` - No argument:
+    bare `EXPUNGE` (every `\Deleted` message in the mailbox). With `uids`:
+    `UID EXPUNGE` (RFC 4315 UIDPLUS, gated on the `UIDPLUS` capability) --
+    only the named, `\Deleted`-flagged messages are removed. Resolves the
+    sequence numbers of every message that was actually removed.
+
+-   **close()** - `Promise<void>` - `CLOSE`: silently expunges every
+    `\Deleted` message, then deselects.
+
+-   **unselect()** - `Promise<void>` - `UNSELECT` (RFC 3691, or base
+    protocol under IMAP4rev2): deselects with **no** expunge side effect.
+
+-   **seq** - `SequenceFacet` - see [The `seq` facet](#the-seq-facet).
+
+Every method above rejects `StateError` once the session has closed
+(deselected via reselect, `close()`, `unselect()`, or a dropped connection).
+
+### Searching
+
+`search()`/`seq.search()` take a typed `SearchCriteria` object instead of
+node-imap's nested-array DSL. Every key is implicitly ANDed together;
+`or`/`and`/`not`/`fuzzy` nest other `SearchCriteria` objects for compound
+queries:
+
+```typescript
+// Unread messages from a given sender, OR anything flagged, in the last week:
+const result = await mailbox.search({
+	or: [
+		{ seen: false, from: "boss@example.com" },
+		{ flagged: true },
+	],
+	since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+});
+console.log(result.uids); // number[] (or a compact ESEARCH range form, see SearchResult)
+```
+
+A simpler, single-field example:
+
+```typescript
+const uids = (await mailbox.search({ subject: "invoice", seen: false })).uids;
+```
+
+Extension criteria (`older`/`younger`/`modSeq`/`emailId`/`threadId`/
+`savedateOn`/`gmailRaw`/etc.) each throw `CapabilityError` synchronously,
+before any bytes are written, if the server hasn't advertised the RFC that
+defines them.
+
+### Fetching messages
+
+`fetch()` returns an `AsyncIterable<FetchedMessage>` -- nothing is sent
+until you start iterating it:
+
+```typescript
+for await (const msg of mailbox.fetch("1:*", {
+	envelope: true,
+	flags: true,
+	bodyStructure: true,
+})) {
+	console.log(msg.uid, msg.envelope?.subject);
+}
+```
+
+`items` also accepts the legacy `"fast" | "all" | "full"` macro strings, or
+a `bodyParts` list to fetch specific `BODY[...]`/`BINARY[...]` sections:
+
+```typescript
+const msg = await mailbox.fetchOne(42, {
+	bodyParts: [{ section: "HEADER.FIELDS", fields: ["FROM", "TO", "SUBJECT"] }],
+});
+const headerBytes = await msg?.part("HEADER.FIELDS")?.buffer();
+```
+
+### Streaming large bodies
+
+Every fetched body part (`FetchedPart`) can be read either way:
+
+-   **buffer()** - `Promise<Buffer>` - Drains the whole part into memory.
+    Resolves immediately for a part that was already small enough to have
+    been eagerly buffered.
+-   **stream()** - `Readable` - A live stream. Once `stream()` has been
+    called on a part, a later `buffer()` call on that same part rejects (the
+    live stream is treated as an irrevocable hand-off).
+
+Whether a part starts out buffered or live depends on
+`config.maxInlineSize` (default 1 MiB): any part at or under that size is
+buffered automatically; anything larger stays a live stream you must read
+or destroy. Pass `stream: true` on an individual `BodyPartRequest` to force
+a live stream regardless of size (useful for large attachments you want to
+pipe straight to disk without ever holding the whole thing in memory):
+
+```typescript
+for await (const msg of mailbox.fetch(uid, {
+	bodyParts: [{ section: "", stream: true }],
+})) {
+	const part = msg.part("");
+	part?.stream().pipe(fs.createWriteStream(`msg-${msg.uid}.eml`));
+}
+```
+
+Iterating `fetch()` applies backpressure: the next message is not pulled
+off the wire until every live part of the current message has been
+consumed (via `buffer()` or by reading `stream()` to its end) or destroyed
+-- so a `for await` loop that reads each part before moving on never leaves
+sockets paused indefinitely.
+
+### Flags
+
+```typescript
+await mailbox.addFlags([101, 102], ["\\Seen"]);
+await mailbox.removeFlags("101:110", ["\\Flagged"]);
+await mailbox.setFlags(101, ["\\Seen", "\\Answered"]);
+```
+
+`addFlags`/`removeFlags` only touch the named flags, leaving every other
+flag on the message untouched; `setFlags` replaces the message's entire
+flag set.
+
+### Copying and moving
+
+```typescript
+const copyResult = await mailbox.copy("1:5", "Archive");
+const moveResult = await mailbox.move([10, 11, 12], "Trash");
+
+console.log(moveResult.uidValidity, moveResult.sourceUids, moveResult.destUids);
+```
+
+`CopyResult`'s three fields (`uidValidity`/`sourceUids`/`destUids`) are only
+populated when the server supports `UIDPLUS` (RFC 4315) -- they stay
+`undefined`, never throw, otherwise. `move()` requires the `MOVE`
+capability (RFC 6851) or an IMAP4rev2 server; this library never emulates
+MOVE client-side via COPY + STORE(\Deleted) + EXPUNGE.
+
+### Appending
+
+```typescript
+// Single message:
+const result = await client.append("INBOX", rfc822Buffer, {
+	flags: ["\\Seen"],
+	internalDate: new Date(),
+});
+
+// Several messages in one round trip (MULTIAPPEND, RFC 3502):
+const results = await client.appendMany("INBOX", [
+	{ message: rfc822BufferA, flags: ["\\Seen"] },
+	{ message: rfc822BufferB, flags: ["\\Flagged"] },
+]);
+```
+
+Both resolve `AppendResult`/`AppendResult[]` carrying `APPENDUID` (the new
+message's UID) when the server supports `UIDPLUS`; `undefined` otherwise.
+
+### The `seq` facet
+
+Every UID-grain message method on `MailboxSession` has an identical
+sequence-number-grain mirror under `.seq`:
+
+```typescript
+// UID grain (recommended -- see below):
+await mailbox.fetchOne(4001, { envelope: true });
+
+// Sequence-number grain:
+await mailbox.seq.fetchOne(1, { envelope: true });
+```
+
+Prefer the UID-grain methods (`mailbox.fetch`/`.search`/etc., not `.seq.*`)
+for almost everything: UIDs are stable identifiers that survive across a
+session (barring a `UIDVALIDITY` change, which `MailboxSession` surfaces via
+the `uidValidityChanged` event), while sequence numbers shift every time a
+message is expunged. Reach for `.seq` only when you already have a
+sequence number in hand -- e.g. reacting to an `expunge` event, or scripting
+against a known, small, stable range right after `select()`.
+
+### Events
+
+`MailboxSession` emits:
+
+```typescript
+mailbox.on("exists", (count, prev) => {
+	/* new mail arrived, or EXPUNGE changed the count */
+});
+mailbox.on("expunge", (seq) => {
+	/* a message at this sequence number was removed -- renumber any cached seqs above it */
+});
+mailbox.on("flags", (update) => {
+	/* update.seq, update.uid?, update.flags, update.modSeq? */
+});
+mailbox.on("uidValidityChanged", (next, prev) => {
+	/* cached UIDs from before this point are no longer valid */
+});
+mailbox.on("closed", (reason) => {
+	/* "closed" | "unselected" | "reselected" | "disconnected" */
+});
+```
+
+`ImapClient` itself emits `stateChange`, `capabilitiesChanged`, `alert`,
+`unhandled`, `close`, and `error`.
+
+### TLS and authentication configuration
+
+```typescript
+const client = new ImapClient({
+	host: "imap.example.com",
+	tls: "on", // "on" (implicit TLS, default) | "starttls" (required) |
+	           // "opportunistic" (upgrade if offered, else plaintext) | "off"
+	tlsOptions: { minVersion: "TLSv1.2" }, // passed to node:tls -- merged, never
+	                                       // used to weaken identity checks
+	auth: {
+		user: "me@example.com",
+		pass: "hunter2",
+		// or: accessToken: "<bearer token>" for OAUTHBEARER/XOAUTH2
+		// mechanisms: ["CRAM-MD5", "PLAIN"] to override the default preference order
+	},
+	allowInsecureAuth: false, // refuse to send credentials over cleartext (RFC 8314 §5)
+	timeouts: { connect: 10_000, greeting: 10_000 },
+	maxInlineSize: 1024 * 1024, // fetch part buffering cutoff, see "Streaming large bodies"
+});
+```
+
+Available SASL mechanisms: `PLAIN`, `OAUTHBEARER`, `XOAUTH2`, `CRAM-MD5`,
+and `EXTERNAL`, with a `LOGIN` fallback when the server hasn't disabled it
+(`LOGINDISABLED`) and a password is available. By default, a client
+configured with `pass` tries `PLAIN` (falling back to `LOGIN`); a client
+configured with `accessToken` tries `OAUTHBEARER` then `XOAUTH2`. Pass
+`auth.mechanisms` to control the preference order explicitly, or to reach
+`CRAM-MD5`/`EXTERNAL`, which are not tried automatically.
+
+Sending credentials (`LOGIN`, or any SASL mechanism without
+`requiresSecureTransport: false`) over a connection that isn't TLS-secured
+throws `TlsError` unless `allowInsecureAuth` is set.
+
+### Errors
+
+Every error this library throws is (or extends) `ImapError`:
+`ConnectionError`, `TlsError`, `ProtocolError`, `CommandError` (with
+`ServerNoError`/`ServerBadError` subclasses for tagged NO/BAD responses),
+`AuthError`, `CapabilityError`, and `StateError`. A `CapabilityError` always
+means the server hasn't advertised something this call needs; a
+`StateError` always means the client/session wasn't in a legal state for
+the call -- both are thrown synchronously, before any bytes reach the wire,
+wherever this library can determine that in advance.
+
+### Roadmap
+
+Not yet implemented (tracked for later milestones):
+
+-   `IDLE` / a live `updates()` stream
+-   CONDSTORE/QRESYNC (`changedSince`/`vanished` fetch modifiers, `modSeq`
+    search criteria beyond capability probing, `HIGHESTMODSEQ` change
+    tracking)
+-   `NOTIFY` (RFC 5465)
+-   `UIDONLY` (RFC 9586)
+-   Compression (`config.compress`, accepted/validated today, inert until
+    then)
+
+## Legacy API
+
+`require("@lovely-inbox/imap")` (or `import { Connection } from
+"@lovely-inbox/imap"`) also still exports **`Connection`** -- the original,
+lower-level, event/callback-based API this library was rewritten from
+(based on [node-imap](https://github.com/mscdex/node-imap)). `ImapClient`
+(documented above) is the modern, actively-developed surface; `Connection`
+is kept for backward compatibility and as `ImapClient`'s own Layer-1 escape
+hatch (`client.connection`), but new code should use `ImapClient` instead.
 
 -   Fetch the 'date', 'from', 'to', 'subject' message headers and the message structure of the first 3 messages in the Inbox:
 
@@ -195,8 +628,6 @@ openInbox(function (err, box) {
 });
 ```
 
-## API
-
 #### Data types
 
 -   _MessageSource_ can be a single message identifier, a message identifier range (e.g. `'2504:2507'` or `'*'` or `'2504:*'`), an _array_ of message identifiers, or an _array_ of message identifier ranges.
@@ -346,8 +777,6 @@ Lastly, here are the system flags defined by RFC3501 that may be added/removed:
 
 It should be noted however that the IMAP server can limit which flags can be permanently modified for any given message. If in doubt, check the mailbox's **permFlags** first.
 Additional custom flags may be provided by the server. If available, these will also be listed in the mailbox's **permFlags**.
-
-require('imap') returns one object: **Connection**.
 
 ### Connection Events
 
@@ -725,9 +1154,7 @@ require('imap') returns one object: **Connection**.
 
         -   **addKeywordsSince**(< _MessageSource_ >source, < _mixed_ >keywords, < _string_ >modseq, < _function_ >callback) - _(void)_ - Adds keyword(s) to message(s) that have not changed since `modseq`. `keywords` is either a single keyword or an _array_ of keywords. `callback` has 1 parameter: < _Error_ >err.
 
-        -   **delKeywordsSince**(< _MessageSource_ >source, < _mixed_ >keywords, < _string_ >modseq, < _function_ >callback) - _(void)_ - Removes keyword(s) from message(s) that have not changed since `modseq`. `keywords` is either a single keyword or an _array_ of keywords. `callback` has 1 parameter: < _Error_ >err.
-
-        -   **setKeywordsSince**(< _MessageSource_ >source, < _mixed_ >keywords, < _string_ >modseq, < _function_ >callback) - _(void)_ - Sets keyword(s) for message(s) that have not changed since `modseq`. `keywords` is either a single keyword or an _array_ of keywords. `callback` has 1 parameter: < _Error_ >err.
+        -   **delKeywordsSince**(< _MessageSource_ >source, < _mixed_ >keywords, < _string_ >modseq, < _function_ >callback) - _(void)_ - Sets keyword(s) for message(s) that have not changed since `modseq`. `keywords` is either a single keyword or an _array_ of keywords. `callback` has 1 parameter: < _Error_ >err.
 
 -   **RFC4731**
 
@@ -765,12 +1192,3 @@ require('imap') returns one object: **Connection**.
         -   Additional Connection instance methods (seqno-based counterpart exists):
 
             -   **thread**(< _string_ >algorithm, < _array_ >searchCriteria, < _function_ >callback) - _(void)_ - Performs a regular search with `searchCriteria` and groups the resulting search results using the given `algorithm` (e.g. 'references', 'orderedsubject'). `callback` has 2 parameters: < _Error_ >err, < _array_ >UIDs. `UIDs` is a nested array.
-
-### TODO
-
-Several things not yet implemented in no particular order:
-
--   Support additional IMAP commands/extensions:
-    -   NOTIFY (via NOTIFY extension -- RFC5465)
-    -   STATUS addition to LIST (via LIST-STATUS extension -- RFC5819)
-    -   QRESYNC (RFC5162)
