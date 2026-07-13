@@ -31,7 +31,14 @@ export type { SelectOptions, SelectResult } from "./commands/select";
 
 // Mailbox-management option types (spec §3.2/§5.6, M2.3).
 export type { CreateMailboxOptions } from "./commands/create";
-export type { SpecialUse } from "./protocol/vocabularies";
+export type { Flag, SpecialUse, SystemFlag } from "./protocol/vocabularies";
+// APPEND (spec §3.2/§5.4, M2.11 — single-message form only).
+export type {
+	AppendCapabilityProbe,
+	AppendOptions,
+	AppendResult,
+	AppendSource,
+} from "./commands/append";
 // Mailbox-management shared types (spec §3.2/§5.2 — M2.7/M2.8 LIST/LSUB,
 // M2.9 STATUS, M2.10 NAMESPACE; `StatusItem` is also LIST's
 // RETURN (STATUS ...) vocabulary).

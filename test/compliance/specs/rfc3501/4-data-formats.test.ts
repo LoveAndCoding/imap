@@ -26,22 +26,21 @@
  *   (correctly formed atoms and numbers on the wire).
  *
  * RFC3501-4.3-1, RFC3501-4.3-2: The synchronizing literal wait is observable
- *   via the harness literal support (implemented in Task 2). We connect at the
- *   raw level (ScriptedServer + net.Socket) to inject a literal and verify the
- *   harness emits the continuation before the client sends the payload.
- *   NOTE: The current high-level driver does NOT use literals (the ID command
- *   uses quoted-string syntax). These tests use the driver.append() verb which
- *   should use literals — NotImplementedError today. Tests are annotated
- *   expectFailure: "unimplemented" for the driver-level path.
- *   An additional raw-socket test verifies the harness mechanics directly.
+ *   via the harness literal support (implemented in Task 2) — driver.append()
+ *   (M2.11) is the literal-bearing verb these two tests drive; both pass for
+ *   real now (the harness's continuation-before-payload sequencing is
+ *   exercised end to end).
  *
  * RFC3501-4.3-3: Quoted-string constraints are verified by inspecting the
  *   command text produced for the ID command (field/value pairs are quoted
  *   strings).
  *
- * RFC3501-4.3.1-1..3: Binary/8-bit obligations. No current driver command
- *   sends binary data; driver.append() is the natural target. Annotated
- *   unimplemented.
+ * RFC3501-4.3.1-1/-3: Binary/8-bit obligations driven through driver.append()
+ *   (M2.11); both pass (neither test asserts a specific encoding choice, only
+ *   that the exchange completes). RFC3501-4.3.1-2 (NUL-containing binary data
+ *   MUST be encoded) is a documented, deliberate M2.11 scope exception — see
+ *   that test's own doc comment: `AppendSource` is Buffer-verbatim by design,
+ *   so this row is annotated `expectFailure: "violation"` rather than flipped.
  */
 import { expect } from "vitest";
 
@@ -108,7 +107,6 @@ complianceTest(
 		reqs: ["RFC3501-4.2-1"],
 		profiles: ["rev1"],
 		title: "numeric arguments in commands use digit-only tokens",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -122,7 +120,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.append() not implemented yet.
+		// APPEND is authenticated-state (RFC 3501 §6.3.11); the armed script
+		// above expects LOGIN (`login: true`) — drive it.
+		await driver.login("user", "pass");
 		await driver.append("INBOX", Buffer.from("Subject: t\r\n\r\n"));
 		await server.assertCompleted();
 		// When implemented: the literal size in the APPEND line must be digits only.
@@ -149,7 +149,6 @@ complianceTest(
 		reqs: ["RFC3501-4.3-1"],
 		profiles: ["rev1"],
 		title: "client waits for continuation request before sending literal octet data",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -163,8 +162,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.append() is not implemented; when it is, it MUST use a
-		// synchronizing literal and wait for the continuation.
+		// APPEND is authenticated-state; the armed script expects LOGIN.
+		await driver.login("user", "pass");
 		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nbody\r\n"));
 		await server.assertCompleted();
 		// When implemented: the APPEND literal must be synchronizing (not LITERAL+)
@@ -188,7 +187,6 @@ complianceTest(
 		reqs: ["RFC3501-4.3-2"],
 		profiles: ["rev1"],
 		title: "zero-octet literal {0} still requires a continuation wait",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -202,9 +200,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.append() is not implemented; when it is, it MUST use a
-		// synchronizing literal {0} and wait for the continuation even for
-		// empty messages.
+		// APPEND is authenticated-state; the armed script expects LOGIN.
+		await driver.login("user", "pass");
 		await driver.append("INBOX", Buffer.alloc(0));
 		await server.assertCompleted();
 		// When implemented: the literal size must be {0} and it must be synchronizing.
@@ -280,7 +277,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"client transmitting 8-bit data in literals identifies the CHARSET",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -293,6 +289,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		// APPEND is authenticated-state; the armed script expects LOGIN.
+		await driver.login("user", "pass");
 		// 8-bit content in the message body; driver should handle CHARSET identification.
 		const body = Buffer.from("Subject: café\r\n\r\nBody with 8-bit: é\r\n", "utf8");
 		await driver.append("INBOX", body);
@@ -302,14 +300,25 @@ complianceTest(
 
 // ── RFC3501-4.3.1-2: binary data (NUL-containing) MUST be encoded ─────────
 // A message buffer containing \x00 bytes must be encoded (e.g., BASE64)
-// before transmission, never sent as a raw literal. Driver.append() is the
-// surface; unimplemented today.
+// before transmission, never sent as a raw literal.
+//
+// M2.11 SCOPE NOTE (still fails, now for a different/documented reason):
+// `AppendCommand`'s `AppendSource` is explicitly Buffer-verbatim (see its
+// doc comment in src/commands/append.ts) — this library never inspects or
+// re-encodes a caller-supplied `Buffer`'s content (MIME/base64 transfer
+// encoding is a message-AUTHORING concern the caller's own layer owns, not
+// something an IMAP client silently does to bytes it was handed). This
+// duty is therefore a deliberate, out-of-scope gap for this milestone
+// (carried forward, not silently dropped) rather than a bug: expect this
+// row to remain a documented "violation" (a NUL byte does reach the wire
+// inside the literal) until/unless a future milestone adds an opt-in
+// content-encoding facility.
 complianceTest(
 	{
 		reqs: ["RFC3501-4.3.1-2"],
 		profiles: ["rev1"],
 		title: "binary data (NUL-containing strings) is encoded before transmission",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -322,6 +331,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		// APPEND is authenticated-state; the armed script expects LOGIN.
+		await driver.login("user", "pass");
 		// Buffer with a NUL byte — client MUST encode this (e.g., BASE64).
 		const binaryBody = Buffer.from([
 			0x53, 0x75, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x3a,
@@ -353,7 +364,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"client handles strings with excessive CTL characters without error",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -366,6 +376,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		// APPEND is authenticated-state; the armed script expects LOGIN.
+		await driver.login("user", "pass");
 		// String with many CTL characters — client MAY treat as binary.
 		const ctlBody = Buffer.concat([
 			Buffer.from("Subject: test\r\n\r\n"),

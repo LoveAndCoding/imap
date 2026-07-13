@@ -57,15 +57,14 @@
  *   SHOULD NOT (anti-pattern) and 6.3.10-2 is MUST NOT (explicit prohibition of the
  *   new-message-check use case).
  *
- * RFC3501-6.3.11-1: driver.append() with a proper RFC-2822 message (header block +
- *   CRLF separator + body). The harness literal machinery records the literal payload;
- *   after the call, assert the literal contains at minimum one "Header: value" line
- *   (self-actualizing). driver.append() is unimplemented today.
+ * RFC3501-6.3.11-1: driver.append() (M2.11) with a proper RFC-2822 message
+ *   (header block + CRLF separator + body). The harness literal machinery
+ *   records the literal payload; after the call, assert the literal contains
+ *   at minimum one "Header: value" line.
  *
  * RFC3501-6.3.11-2: Script APPEND ok → NOOP. The server response to APPEND omits
  *   the untagged EXISTS notification. The client MAY (and should, per the spec's
- *   guidance) issue a NOOP to solicit the EXISTS. Scripts the correct sequence;
- *   both driver.append() and driver.noop() are unimplemented today.
+ *   guidance) issue a NOOP to solicit the EXISTS. Scripts the correct sequence.
  */
 import { expect } from "vitest";
 
@@ -380,7 +379,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.11-1"],
 		profiles: ["rev1"],
 		title: "APPEND literal argument is in RFC-2822 message format (headers + body)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -441,7 +439,6 @@ complianceTest(
 		reqs: ["RFC3501-6.3.11-2"],
 		profiles: ["rev1"],
 		title: "client MAY issue NOOP after APPEND when server omits untagged EXISTS notification",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

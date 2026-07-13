@@ -70,7 +70,6 @@ complianceTest(
 		reqs: ["RFC3501-2.3.2-2"],
 		profiles: ["rev1"],
 		title: "APPEND command never includes \\Recent in flags parameter",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -84,13 +83,17 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.append() is not yet implemented.
+		// APPEND is an authenticated-state command (RFC 3501 §6.3.11) — the
+		// scripted exchange above already arms a LOGIN step (`login: true`);
+		// this call actually drives it.
+		await driver.login("user", "pass");
 		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nBody\r\n"));
 		await server.assertCompleted();
 
-		// When implemented: no client-sent command may include \Recent in its args —
-		// the client cannot include \Recent in the APPEND flags parameter (or any command).
-		// Note: args excludes the verb, so we assert across all command lines.
+		// No client-sent command may include \Recent in its args — the client
+		// cannot include \Recent in the APPEND flags parameter (or any
+		// command). Note: args excludes the verb, so we assert across all
+		// command lines.
 		for (const l of server.commandLines) expect(l.args).not.toMatch(/\\Recent\b/i);
 	},
 );

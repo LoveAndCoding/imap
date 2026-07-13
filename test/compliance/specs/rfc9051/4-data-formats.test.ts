@@ -172,7 +172,6 @@ complianceTest(
 		reqs: ["RFC9051-4.2-1"],
 		profiles: ["rev2"],
 		title: "numeric arguments in commands use digit-only tokens",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -211,7 +210,6 @@ complianceTest(
 		reqs: ["RFC9051-4.3-1"],
 		profiles: ["rev2"],
 		title: "client waits for continuation before sending >4096-octet literal data",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -255,7 +253,6 @@ complianceTest(
 		reqs: ["RFC9051-4.3-2", "RFC9051-4.3-3"],
 		profiles: ["rev2"],
 		title: "client never sends a non-synchronizing literal larger than 4096 octets",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -355,7 +352,6 @@ complianceTest(
 		reqs: ["RFC9051-4.3-5"],
 		profiles: ["rev2"],
 		title: "zero-octet literal APPEND completes through the literal protocol",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -392,7 +388,6 @@ complianceTest(
 		reqs: ["RFC9051-4.3.1-1"],
 		profiles: ["rev2"],
 		title: "client transmitting 8-bit data in literals identifies the CHARSET",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -476,12 +471,20 @@ defineAcceptanceTable({
 // textual form (e.g., base64) before transmitting — unencoded binary strings
 // are not permitted (the literal8 carve-out applies to server FETCH
 // responses, not client APPEND under the rev2 base).
+//
+// M2.11 SCOPE NOTE (still fails, now for a different/documented reason):
+// `AppendCommand`'s `AppendSource` is explicitly Buffer-verbatim (see its
+// doc comment in src/commands/append.ts) — content re-encoding is a
+// message-AUTHORING concern the caller's own layer owns, not something this
+// IMAP client does to bytes it was handed. Deliberate, documented, carried-
+// forward gap — expect this row to remain a "violation" (the NUL byte does
+// reach the wire) rather than flip.
 complianceTest(
 	{
 		reqs: ["RFC9051-4.3.1-3", "RFC9051-4.3.1-4"],
 		profiles: ["rev2"],
 		title: "binary data (NUL-containing strings) is encoded before transmission",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -523,7 +526,6 @@ complianceTest(
 		reqs: ["RFC9051-4.3.1-5"],
 		profiles: ["rev2"],
 		title: "client handles strings with excessive CTL characters without error",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

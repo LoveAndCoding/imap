@@ -34,4 +34,16 @@ export type TypedResponseCode =
 	/** RFC 7889: `value` is the advertised limit; `null` when the code
 	 *  carried no (or a non-numeric) argument. */
 	| { name: "APPENDLIMIT"; value: bigint | null }
+	/** RFC 4315 (UIDPLUS): tagged OK on a successful APPEND. `uid` is the
+	 *  single assigned UID -- correct for the single-message APPEND this
+	 *  codebase implements (M2.11); MULTIAPPEND's multi-UID form is M3. */
+	| { name: "APPENDUID"; uidValidity: number; uid: number }
+	/** RFC 4469 (CATENATE) / RFC 7889 (APPENDLIMIT): tagged NO when an
+	 *  APPEND's resulting message would exceed a size limit. Carries no
+	 *  argument. */
+	| { name: "TOOBIG" }
+	/** RFC 4469 (CATENATE): tagged NO when a CATENATE URL part could not be
+	 *  fetched/resolved. `url` is the offending IMAP URL, verbatim (quotes
+	 *  stripped if the server quoted it). */
+	| { name: "BADURL"; url: string }
 	| { name: string; args: string | null };

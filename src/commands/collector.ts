@@ -1,4 +1,5 @@
 import {
+	AppendUIDTextCode,
 	AtomTextCode,
 	CapabilityTextCode,
 	NumberTextCode,
@@ -6,8 +7,19 @@ import {
 	TaggedResponse,
 	UntaggedResponse,
 } from "../parser";
+import { UID } from "../parser/structure/uid";
 import type { TextCode } from "../parser/structure/text.code";
 import type { TypedResponseCode } from "../protocol/response-codes";
+
+/** Strips one layer of surrounding DQUOTEs, mirroring `commands/status.ts`'s
+ *  private helper of the same shape (BADURL's `url-resp-text` argument is a
+ *  quoted `astring`, e.g. `"/Sent;UIDVALIDITY=.../;UID=20"`). */
+function stripQuotes(s: string): string {
+	if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+		return s.slice(1, -1);
+	}
+	return s;
+}
 
 /**
  * Converts one of the parser's internal `TextCode` variants into the public
@@ -30,6 +42,18 @@ export function toTypedResponseCode(
 		return null;
 	}
 	const name = String((code as { kind: unknown }).kind).toUpperCase();
+	if (code instanceof AppendUIDTextCode) {
+		// RFC 4315 (UIDPLUS): single-message APPEND always carries exactly one
+		// `uniqueid` here (never a range/set -- that's MULTIAPPEND's grammar,
+		// RFC 3502, M3). `first` is defensively checked rather than assumed:
+		// an `UID` instance with a numeric `.id` is the only grammar-legal
+		// shape; `0` is never a real IMAP UID (nz-number) and documents "the
+		// server sent something this parse can't have produced" without
+		// inventing an error for tolerated-but-odd data (I-6).
+		const first = code.uids.set[0];
+		const uid = first instanceof UID && typeof first.id === "number" ? first.id : 0;
+		return { name: "APPENDUID", uidValidity: code.uidvalidity, uid };
+	}
 	if (code instanceof PermanentFlagsTextCode) {
 		return { name: "PERMANENTFLAGS", flags: code.flags.flags.map((f) => f.name) };
 	}
@@ -64,6 +88,17 @@ export function toTypedResponseCode(
 				return { name: "USEATTR" };
 			case "MAILBOXID":
 				return { name: "MAILBOXID", value: code.contents?.[0] ?? null };
+			case "TOOBIG":
+				// RFC 4469/RFC 7889: argument-less tagged-NO code (over-size
+				// APPEND, either the CATENATE 4-GB ceiling or an APPENDLIMIT
+				// rejection).
+				return { name: "TOOBIG" };
+			case "BADURL": {
+				// RFC 4469 §5: `badurl-response-code = "BADURL" SP url-resp-text`
+				// -- a single quoted-astring argument (the offending IMAP URL).
+				const raw = code.contents?.[0];
+				return { name: "BADURL", url: raw ? stripQuotes(raw) : "" };
+			}
 			case "APPENDLIMIT": {
 				// RFC 7889 (M2.9): the same atom that serves as a STATUS item
 				// also appears as a resp-code carrying the advertised limit.
@@ -88,11 +123,12 @@ export function toTypedResponseCode(
 			args: code.capabilities.capabilities.map((cap) => cap.fullValue).join(" "),
 		};
 	}
-	// Every other known TextCode variant (APPENDUID/COPYUID/MODIFIED) carries
-	// its own structured payload rather than a flat string; a typed variant
-	// for each (spec §5.5) is future work, landing with the command that
-	// first needs it. Surface the code's name with no rendered args rather
-	// than guessing at a string representation.
+	// Every other known TextCode variant with a structured (non-flat-string)
+	// payload -- COPYUID/MODIFIED -- gets its own typed variant (spec §5.5)
+	// as future work, landing with the command that first needs it
+	// (APPENDUID's own variant landed with M2.11's APPEND, above). Surface
+	// the code's name with no rendered args rather than guessing at a string
+	// representation.
 	return { name, args: null };
 }
 

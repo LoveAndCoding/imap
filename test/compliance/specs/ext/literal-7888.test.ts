@@ -26,16 +26,21 @@
  * RFC 7888 source ids specifically; no double-scoring of the rev2-core ids.
  *
  * OBSERVATION SURFACE: LITERAL+/- has no dedicated driver verb — the client
- * emits literals through commands whose arguments require literal syntax. The
- * driver's only literal-bearing verb is append(), which throws
- * NotImplementedError('APPEND') today, so every duty here self-actualizes to
- * 'unimplemented'. The scripted server records each emitted literal's octet
- * count, payload, and whether it carried the '+' non-synchronizing marker
- * (commandLines[].literals / .nonSync), so once APPEND (and non-sync literal
- * support) exists the marker/size assertions ARE the genuine checks. The
- * matchers are deliberately tight enough to reject a plausible wrong impl: a
- * '{n+}' emitted with neither capability advertised (3-1), a '{n+}' over 4096
- * on a LITERAL- connection (5-1/5-2), or a non-canonical literal sigil (5-3).
+ * emits literals through commands whose arguments require literal syntax.
+ * APPEND (M2.11) is the only literal-bearing verb the driver wires. The
+ * scripted server records each emitted literal's octet count, payload, and
+ * whether it carried the '+' non-synchronizing marker (commandLines[].literals
+ * / .nonSync), so the marker/size assertions are genuine checks. The matchers
+ * are deliberately tight enough to reject a plausible wrong impl: a '{n+}'
+ * emitted with neither capability advertised (3-1), a '{n+}' over 4096 on a
+ * LITERAL- connection (5-1/5-2), or a non-canonical literal sigil (5-3).
+ *
+ * STATUS as of M2.11: 3-1/5-1/5-2 pass genuinely (they assert the ABSENCE of
+ * a non-sync marker, which holds regardless of capability advertisement).
+ * 3-2/5-3 (LITERAL+ eagerness) still fail — see that test's own doc comment
+ * for the pre-existing, out-of-scope connection-layer defect responsible
+ * (`src/connection/execute-command.ts`'s capability probe never actually
+ * sees advertised capabilities in production).
  */
 import { expect } from "vitest";
 
@@ -64,13 +69,12 @@ function literalMarkers(args: string): Array<{ size: number; nonSync: boolean }>
 // The server here does NOT advertise LITERAL+ or LITERAL-, so the client is
 // restricted to synchronizing '{n}' literals. Any literal the client emits for
 // an APPEND payload MUST carry no '+' marker (nonSync === false) and the marker
-// regex must show a bare '{n}'. append() throws today → unimplemented.
+// regex must show a bare '{n}'.
 complianceTest(
 	{
 		reqs: ["RFC7888-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client uses only synchronizing '{n}' literals when neither LITERAL+ nor LITERAL- is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -85,10 +89,10 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		await driver.append("INBOX", Buffer.from("Subject: t\r\n\r\n")); // throws today
+		await driver.append("INBOX", Buffer.from("Subject: t\r\n\r\n"));
 		await server.assertCompleted();
-		// When implemented: no '{n+}' non-synchronizing marker may appear on a
-		// connection where neither LITERAL+ nor LITERAL- was advertised.
+		// No '{n+}' non-synchronizing marker may appear on a connection where
+		// neither LITERAL+ nor LITERAL- was advertised.
 		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(appendLine).toBeDefined();
 		expect(appendLine!.literals.length).toBeGreaterThanOrEqual(1);
@@ -111,13 +115,31 @@ complianceTest(
 // auto-continues plain '{n}' synchronizing literals), so a completed APPEND
 // whose literal carried the '+' marker proves the client did not block waiting
 // for a continuation it was never sent (3-2). The marker is the canonical
-// '{n+}' sigil, unchanged (5-3). append() throws today → unimplemented.
+// '{n+}' sigil, unchanged (5-3).
+//
+// M2.11 FINDING (still fails — pre-existing connection-layer defect, not an
+// APPEND bug): `AppendCommand` correctly delegates literal-form selection to
+// `CommandWriter.literal()` (spec §7.2's LITERAL+-first rule), but the
+// PRODUCTION capability probe wired up in
+// `src/connection/execute-command.ts` reads
+// `connection.capabilityRegistry.value` — `CapabilityRegistry` has no
+// `value` property (only `.view`) — AND `connection.capabilityRegistry` is
+// only ever populated around STARTTLS, never by the ordinary CAPABILITY/
+// LOGIN/ENABLE flow `ImapClient` tracks on its OWN, separate registry. Net
+// effect: `CommandWriter.has(...)` always returns `false` in real usage, so
+// LITERAL+ is never actually honored and every literal this library emits
+// is synchronizing — this test's non-sync assertion is the first place in
+// the compliance suite that observably depends on the broken path, since
+// APPEND is the first command whose tests pin the literal announcement's
+// exact wire form. Fixing it is a connection-layer change out of this
+// milestone's scope (affects every literal-emitting command, not just
+// APPEND) — tracked as a carry-forward, not silently left unexplained.
 complianceTest(
 	{
 		reqs: ["RFC7888-3-2", "RFC7888-5-3"],
 		profiles: ["rev1", "rev2"],
 		title: "LITERAL+: a '{n+}' literal completes without any continuation round trip and keeps the '+' sigil",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -133,13 +155,14 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		await driver.append("INBOX", Buffer.from("Subject: small\r\n\r\nbody\r\n")); // throws today
+		await driver.append("INBOX", Buffer.from("Subject: small\r\n\r\nbody\r\n"));
 		await server.assertCompleted();
 		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(appendLine).toBeDefined();
 		expect(appendLine!.literals.length).toBeGreaterThanOrEqual(1);
-		// When implemented: under LITERAL+ the client used the non-synchronizing
-		// form for at least one literal, and it carried the canonical '{n+}' sigil.
+		// Under LITERAL+ the client should use the non-synchronizing form for
+		// at least one literal, carrying the canonical '{n+}' sigil (see the
+		// M2.11 finding above for why this currently still fails).
 		const markers = literalMarkers(appendLine!.args);
 		expect(markers.length).toBeGreaterThanOrEqual(1);
 		expect(
@@ -161,13 +184,12 @@ complianceTest(
 // MUST be sent as a synchronizing literal (5-2). Observable via the markers: no
 // '{n+}' with n > 4096, and any n > 4096 announcement uses the bare '{n}'
 // synchronizing form. Driven with a >4096-octet payload to make the cap
-// non-vacuous. append() throws today → unimplemented.
+// non-vacuous.
 complianceTest(
 	{
 		reqs: ["RFC7888-5-1", "RFC7888-5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "LITERAL-: a literal larger than 4096 octets is sent synchronizing, never as '{n+}'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -183,7 +205,7 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		const bigBody = Buffer.from(`Subject: big\r\n\r\n${"z".repeat(6000)}\r\n`);
-		await driver.append("INBOX", bigBody); // throws today
+		await driver.append("INBOX", bigBody);
 		await server.assertCompleted();
 		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(appendLine).toBeDefined();
