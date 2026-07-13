@@ -117,15 +117,21 @@ export abstract class Command<TResult> {
 	 *  `claims()` attributed to this command plus the tagged response
 	 *  itself (spec §7.3's `ResponseCollector`).
 	 *
-	 *  SEAM (documented, not implemented here): the spec's FETCH streaming
-	 *  bridge — exposing a claimed FETCH response's pending literal as a
-	 *  stream *during* collection, before the tagged OK — lands with the
-	 *  FETCH command in M3. Nothing in this milestone's collector/queue
-	 *  prevents that: `accept()` already runs against the SAME
-	 *  `ResponseCollector` instance that received every claimed response in
-	 *  arrival order, so a future FETCH command can start consuming/
-	 *  streaming literal data out of claimed responses before its own
-	 *  `accept()` is ever called.
+	 *  M3.4 note: `execute-command.ts` now builds the `ResponseCollector`
+	 *  LIVE — it exists (empty) before this command's first claim and is
+	 *  fed via `push()` in arrival order as the router attributes responses
+	 *  to it, well before `accept()` is ever invoked. The collector's
+	 *  `live()` async generator (see `commands/collector.ts`) is the FETCH
+	 *  streaming bridge itself: a consumer holding a reference to the SAME
+	 *  live collector (which a future streaming command's own machinery can
+	 *  obtain, e.g. by capturing it out of an overridden `claims()`
+	 *  invocation context, or via whatever hook M3.5 adds for this purpose)
+	 *  can observe a claimed FETCH response — including one carrying a
+	 *  still-arriving literal stream (M3.2) — the instant it is pushed,
+	 *  rather than waiting for `accept()`'s single post-tagged invocation.
+	 *  `accept()` itself is unchanged: still invoked exactly once, after the
+	 *  tagged response settles the collector, seeing the complete
+	 *  arrival-ordered snapshot every existing command already relies on.
 	 *
 	 *  May return `TResult` directly OR a `Promise<TResult>` (widened by
 	 *  M1.7b for `AuthenticateCommand`): a SASL mechanism's `finish()` step

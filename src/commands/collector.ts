@@ -171,42 +171,171 @@ export function toTypedResponseCode(
  * (spec §7.3): every untagged response `claims()` returned `true` for (in
  * arrival order), plus the tagged response that completed the command.
  *
- * SEAM (documented, not implemented here): the FETCH streaming bridge — a
- * claimed FETCH response with a pending literal exposed as a stream
- * *during* collection, before the tagged OK — lands with the FETCH command
- * in M3. This class already hands `accept()` the exact list of claimed
- * responses in arrival order, so nothing here needs to change shape for
- * that later addition; a future `FetchCommand.accept()` can inspect/consume
- * live data out of the same `claimed` array this constructor is given.
+ * TWO USE SHAPES, one class:
+ *
+ *  - LEGACY/SNAPSHOT (every command through M3.3, unaffected): construct
+ *    with the complete `claimed` array and the `tagged` response already in
+ *    hand — `new ResponseCollector(claimed, tagged)`. The instance is
+ *    immediately "settled" (see `settled` below); `untagged()`/`first()`/
+ *    `tagged()`/`codes()` behave exactly as before M3.4, byte-identical.
+ *
+ *  - LIVE/INCREMENTAL, the M3.4 FETCH streaming bridge (spec §7.3: "a
+ *    claimed FETCH response with a pending literal exposed as a stream
+ *    *during* collection, before the tagged OK, so `fetch()` can yield
+ *    incrementally"): construct empty (`new ResponseCollector()`) BEFORE
+ *    the command's tagged response is known, then feed it as the router
+ *    attributes each response via `push()`, and finally `settle(tagged)`
+ *    once the tagged response arrives. A consumer calls `live()` — an async
+ *    generator — to observe each claimed response THE INSTANT it is
+ *    pushed, rather than waiting for `settle()`. This is what lets a
+ *    consumer engage with a claimed FETCH response's still-arriving literal
+ *    stream (`src/literal-body-stream.ts`) while the command is still in
+ *    flight: engaging early is what activates that stream's socket
+ *    backpressure (§5.4's "the iterator does not advance past a message
+ *    until its live streams are consumed or destroyed").
+ *
+ *  `execute-command.ts` now always builds the live shape (constructs the
+ *  collector empty, feeds it via `push()` as the router claims responses,
+ *  calls `settle()` once the tagged response resolves) — this is the ONE
+ *  instance production code ever builds. By the time any command's
+ *  `accept()` runs (still only invoked once, after `settle()`, unchanged
+ *  from pre-M3.4), the snapshot-reading methods below see the exact same
+ *  complete, arrival-ordered list they always did — every existing command
+ *  is unaffected. `live()` is additive: nothing calls it yet (FETCH, M3.5,
+ *  is the first consumer), so no existing behavior changes shape.
  */
 export class ResponseCollector {
-	private readonly claimed: readonly UntaggedResponse[];
-	private readonly taggedResp: TaggedResponse;
+	private readonly claimedList: UntaggedResponse[];
+	private taggedResp: TaggedResponse | undefined;
+	private settledFlag: boolean;
+	private waiters: Array<() => void> = [];
 
-	constructor(claimed: readonly UntaggedResponse[], tagged: TaggedResponse) {
-		this.claimed = claimed;
+	/**
+	 * @param claimed Initial claimed responses (defaults to none — the live
+	 *  shape starts empty and grows via `push()`).
+	 * @param tagged When provided, the collector is constructed already
+	 *  SETTLED (the legacy/snapshot shape above) — omit it to build a live
+	 *  collector that `push()`/`settle()` will feed after construction.
+	 */
+	constructor(claimed: readonly UntaggedResponse[] = [], tagged?: TaggedResponse) {
+		this.claimedList = [...claimed];
 		this.taggedResp = tagged;
+		this.settledFlag = tagged !== undefined;
+	}
+
+	/** Whether `settle()` has run (or `tagged` was supplied at construction):
+	 *  no further claims will ever be pushed, and `tagged()` is safe to call.
+	 *  A `live()` consumer uses this internally to know when to stop; it is
+	 *  also exposed here for any external caller than wants to poll it. */
+	get settled(): boolean {
+		return this.settledFlag;
+	}
+
+	/**
+	 * LIVE APPEND (spec §7.3): appends one more claimed response, in the
+	 * exact order the router attributed it (§8.3's arrival-order invariant
+	 * — `execute-command.ts` calls this synchronously, in routing order, the
+	 * instant `Router.routeUntagged` claims a response for this command).
+	 * Wakes any consumer currently blocked in `live()` awaiting the next
+	 * claim. Tolerated (never throws) even if called after `settle()` —
+	 * same defensive posture as the rest of this codebase's response
+	 * handling (I-6): a non-conformant server sending data after a
+	 * command's own tagged response is unusual but not a reason to crash
+	 * the router's synchronous dispatch of the NEXT response in the same
+	 * tick.
+	 */
+	push(resp: UntaggedResponse): void {
+		this.claimedList.push(resp);
+		this.wake();
+	}
+
+	/**
+	 * Marks collection complete: the command's tagged response is now known
+	 * and no more claims are expected. Wakes any `live()` consumer still
+	 * waiting so it can observe completion instead of hanging forever.
+	 */
+	settle(tagged: TaggedResponse): void {
+		this.taggedResp = tagged;
+		this.settledFlag = true;
+		this.wake();
+	}
+
+	private wake(): void {
+		const pending = this.waiters;
+		this.waiters = [];
+		for (const resolve of pending) {
+			resolve();
+		}
+	}
+
+	/**
+	 * Incremental observation (spec §7.3, the FETCH streaming bridge): an
+	 * async generator yielding every claimed response (optionally filtered
+	 * to one `.type`, matching `untagged()`'s filter) in the SAME order the
+	 * router attributed them (§8.3) — regardless of whether an earlier
+	 * yielded response's own literal stream (M3.2) has finished arriving.
+	 * This generator never waits on stream completion; it only waits on the
+	 * NEXT claim (or settlement) — a slow consumer draining one response's
+	 * stream does not reorder what this yields next, it just delays when
+	 * the consumer comes back to ask for it.
+	 *
+	 * Completes (the generator returns) once `settle()` has run and every
+	 * buffered claim has been yielded. Safe to call before any claim has
+	 * arrived — it simply awaits the first `push()`/`settle()`. Each call
+	 * to `live()` gets its own independent cursor (fan-out, not a
+	 * single-reader queue), though no consumer needs more than one today.
+	 */
+	async *live(type?: string): AsyncGenerator<UntaggedResponse, void, void> {
+		const wanted = type === undefined ? undefined : type.toUpperCase();
+		let i = 0;
+		for (;;) {
+			while (i < this.claimedList.length) {
+				const next = this.claimedList[i];
+				i++;
+				if (wanted === undefined || next.type === wanted) {
+					yield next;
+				}
+			}
+			if (this.settledFlag) {
+				return;
+			}
+			await new Promise<void>((resolve) => {
+				this.waiters.push(resolve);
+			});
+		}
 	}
 
 	/** Every claimed untagged response, optionally filtered to one `.type`
-	 *  (case-insensitive), in arrival order. */
+	 *  (case-insensitive), in arrival order — a point-in-time snapshot (for
+	 *  a still-live, unsettled collector: whatever has been pushed so far).
+	 *  Every existing caller only calls this once `settle()` has already
+	 *  run (a command's `accept()`, invoked once the tagged response
+	 *  arrives, unchanged from pre-M3.4), so the snapshot is always
+	 *  complete for them. */
 	untagged(type?: string): UntaggedResponse[] {
 		if (type === undefined) {
-			return [...this.claimed];
+			return [...this.claimedList];
 		}
 		const wanted = type.toUpperCase();
-		return this.claimed.filter((resp) => resp.type === wanted);
+		return this.claimedList.filter((resp) => resp.type === wanted);
 	}
 
 	/** The first claimed untagged response of `.type` (case-insensitive), or
-	 *  `undefined` if none was claimed. */
+	 *  `undefined` if none was claimed (yet, for a still-live collector). */
 	first(type: string): UntaggedResponse | undefined {
 		const wanted = type.toUpperCase();
-		return this.claimed.find((resp) => resp.type === wanted);
+		return this.claimedList.find((resp) => resp.type === wanted);
 	}
 
-	/** The tagged response that completed this command. */
+	/** The tagged response that completed this command. Throws if called
+	 *  before `settle()` — every existing caller (a command's `accept()`)
+	 *  only ever runs after settlement, so this is a defensive assertion on
+	 *  a state that should be unreachable in practice, not a new
+	 *  control-flow path any shipped code exercises. */
 	tagged(): TaggedResponse {
+		if (!this.taggedResp) {
+			throw new Error("ResponseCollector.tagged() called before the tagged response arrived");
+		}
 		return this.taggedResp;
 	}
 
@@ -214,14 +343,16 @@ export class ResponseCollector {
 	 *  the tagged line's own code if present, in arrival order (spec §7.3). */
 	codes(): TypedResponseCode[] {
 		const out: TypedResponseCode[] = [];
-		for (const resp of this.claimed) {
+		for (const resp of this.claimedList) {
 			const content = resp.content as { text?: { code?: TextCode } } | undefined;
 			const code = toTypedResponseCode(content?.text?.code);
 			if (code) {
 				out.push(code);
 			}
 		}
-		const taggedCode = toTypedResponseCode(this.taggedResp.status.text?.code);
+		const taggedCode = this.taggedResp
+			? toTypedResponseCode(this.taggedResp.status.text?.code)
+			: null;
 		if (taggedCode) {
 			out.push(taggedCode);
 		}

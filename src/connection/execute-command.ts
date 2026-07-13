@@ -2,7 +2,7 @@ import { Command } from "../commands/base";
 import { ResponseCollector } from "../commands/collector";
 import { CommandWriter, WireSegment } from "../commands/writer";
 import { ConnectionError } from "../errors";
-import { TaggedResponse, UntaggedResponse } from "../parser";
+import { TaggedResponse } from "../parser";
 import { CRLF } from "./constants";
 import type Connection from "./connection";
 
@@ -67,11 +67,23 @@ export async function executeCommand<T>(
 	});
 	const unregisterTeardown = connection.onTeardown((err) => rejectTeardown(err));
 
-	const claimed: UntaggedResponse[] = [];
+	// M3.4: the collector is built LIVE, not as a post-hoc snapshot — it
+	// exists (empty) before this command has received a single response, and
+	// is fed via `push()` in the exact order the router attributes claims to
+	// it (spec §8.3's arrival-order invariant). This is what lets a future
+	// streaming command (FETCH, M3.5) observe a claimed response — including
+	// one carrying a still-arriving literal stream (M3.2) — via
+	// `collector.live()` while this command is still in flight, instead of
+	// only after the tagged response below resolves. Every command through
+	// M3.3 is unaffected: none of them call `live()`, and `untagged()`/
+	// `first()`/`codes()`/`tagged()` (called from `accept()`, still only
+	// invoked once below, after `settle()`) see the exact same complete,
+	// arrival-ordered contents they always did.
+	const collector = new ResponseCollector();
 	const unregisterClaimant = router.registerClaimant({
 		claims: (resp) => Command.claimsResponse(command, resp, { tag }),
 		push: (resp) => {
-			claimed.push(resp);
+			collector.push(resp);
 		},
 	});
 
@@ -152,13 +164,21 @@ export async function executeCommand<T>(
 		// hasn't arrived yet (e.g. mid-AUTHENTICATE, after a continuation but
 		// before any tagged reply), `taggedPromise` alone would never settle.
 		const tagged = await Promise.race([taggedPromise, teardownPromise]);
+		// Settle the SAME live collector instance regardless of outcome (OK,
+		// NO, or BAD): a `live()` consumer must be able to observe completion
+		// no matter how the command finished, not only on success. Discarded
+		// immediately in the error branch below -- no existing command's
+		// `accept()` runs on a NO/BAD tagged response (unchanged from
+		// pre-M3.4: `Command.mapError` was, and still is, the only thing that
+		// sees a non-OK tagged response here).
+		collector.settle(tagged);
 		if (tagged.status.status === "OK") {
 			// `accept()` may itself be async (spec §7.1's widened contract, M1.7b
 			// — e.g. `AuthenticateCommand` awaiting a SASL mechanism's `finish()`,
 			// which can reject the command's promise even though the server
 			// already said OK); `await`ing a synchronous return is a no-op, so
 			// every pre-existing synchronous `accept()` is unaffected.
-			return await Command.acceptResult(command, new ResponseCollector(claimed, tagged));
+			return await Command.acceptResult(command, collector);
 		}
 		throw Command.mapError(command, tagged);
 	} finally {

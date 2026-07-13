@@ -88,6 +88,159 @@ describe("ResponseCollector (spec §7.3)", () => {
 	});
 });
 
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+describe("ResponseCollector live/incremental bridge (M3.4, spec §7.3)", () => {
+	test("the legacy two-arg constructor is immediately settled -- byte-identical to pre-M3.4 behavior", () => {
+		const claimed = [parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse];
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		const c = new ResponseCollector(claimed, tagged);
+
+		expect(c.settled).toBe(true);
+		expect(c.untagged()).toEqual(claimed);
+		expect(c.tagged()).toBe(tagged);
+	});
+
+	test("live() replays everything already pushed before settle(), in push order, then completes", async () => {
+		const a = parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse;
+		const b = parseLine(`* 2 FETCH (FLAGS (\\Answered))${CRLF}`) as UntaggedResponse;
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+
+		const c = new ResponseCollector();
+		expect(c.settled).toBe(false);
+		c.push(a);
+		c.push(b);
+		c.settle(tagged);
+
+		const seen: UntaggedResponse[] = [];
+		for await (const resp of c.live()) {
+			seen.push(resp);
+		}
+		expect(seen).toEqual([a, b]);
+	});
+
+	test("a live() consumer awaiting the next claim resolves the instant push() is called -- BEFORE settle()", async () => {
+		const a = parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse;
+		const c = new ResponseCollector();
+
+		const iter = c.live();
+		const pending = iter.next();
+		let settledFlag = false;
+		void pending.then(() => {
+			settledFlag = true;
+		});
+
+		// Nothing pushed yet -- the generator must still be suspended.
+		await flushMicrotasks();
+		await flushMicrotasks();
+		expect(settledFlag).toBe(false);
+		expect(c.settled).toBe(false);
+
+		c.push(a);
+		const result = await pending;
+		expect(result).toEqual({ value: a, done: false });
+		// Still not settled -- push() alone never settles the collector.
+		expect(c.settled).toBe(false);
+	});
+
+	test("settle() ends live() once every buffered claim has been yielded, rather than hanging forever", async () => {
+		const a = parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse;
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		const c = new ResponseCollector();
+		c.push(a);
+
+		const seen: UntaggedResponse[] = [];
+		let finished = false;
+		const consuming = (async () => {
+			for await (const resp of c.live()) {
+				seen.push(resp);
+			}
+			finished = true;
+		})();
+
+		await flushMicrotasks();
+		await flushMicrotasks();
+		// The one buffered claim was yielded already, but the generator is
+		// now blocked awaiting either the next push() or settle().
+		expect(seen).toEqual([a]);
+		expect(finished).toBe(false);
+
+		c.settle(tagged);
+		await consuming;
+		expect(finished).toBe(true);
+		expect(seen).toEqual([a]);
+	});
+
+	test("live(type) filters incrementally, matching untagged(type)'s case-insensitive semantics", async () => {
+		const fetchResp = parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse;
+		const capResp = parseLine(`* CAPABILITY IMAP4rev1${CRLF}`) as UntaggedResponse;
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+
+		const c = new ResponseCollector();
+		c.push(capResp);
+		c.push(fetchResp);
+		c.settle(tagged);
+
+		const seen: UntaggedResponse[] = [];
+		for await (const resp of c.live("fetch")) {
+			seen.push(resp);
+		}
+		expect(seen).toEqual([fetchResp]);
+	});
+
+	test("multiple concurrent live() iterators each independently observe every push (fan-out, not a single-reader queue)", async () => {
+		const a = parseLine(`* 1 FETCH (FLAGS (\\Seen))${CRLF}`) as UntaggedResponse;
+		const b = parseLine(`* 2 FETCH (FLAGS (\\Answered))${CRLF}`) as UntaggedResponse;
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+
+		const c = new ResponseCollector();
+		const collectAll = async () => {
+			const out: UntaggedResponse[] = [];
+			for await (const resp of c.live()) {
+				out.push(resp);
+			}
+			return out;
+		};
+		const first = collectAll();
+		const second = collectAll();
+
+		await flushMicrotasks();
+		c.push(a);
+		c.push(b);
+		c.settle(tagged);
+
+		expect(await first).toEqual([a, b]);
+		expect(await second).toEqual([a, b]);
+	});
+
+	test("push() after settle() is tolerated, never throws (I-6 tolerance posture)", () => {
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		const late = parseLine(`* 9 EXISTS${CRLF}`) as UntaggedResponse;
+		const c = new ResponseCollector();
+		c.settle(tagged);
+
+		expect(() => c.push(late)).not.toThrow();
+		expect(c.untagged()).toEqual([late]);
+	});
+
+	test("tagged() throws if called before settle() -- a defensive assertion no shipped accept() can trigger", () => {
+		const c = new ResponseCollector();
+		expect(() => c.tagged()).toThrow(/tagged response arrived/);
+	});
+
+	test("codes() reads whatever has been pushed so far when called before settle() (no tagged-line code yet)", () => {
+		const statusResp = parseLine(
+			`* OK [PERMANENTFLAGS (\\Seen \\Deleted)] flags${CRLF}`,
+		) as UntaggedResponse;
+		const c = new ResponseCollector();
+		c.push(statusResp);
+
+		const codes = c.codes();
+		expect(codes).toHaveLength(1);
+		expect(codes[0].name).toBe("PERMANENTFLAGS");
+	});
+});
+
 describe("toTypedResponseCode (spec §5.5)", () => {
 	test("null/undefined code maps to null", () => {
 		expect(toTypedResponseCode(undefined)).toBeNull();
