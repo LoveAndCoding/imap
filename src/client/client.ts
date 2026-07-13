@@ -14,6 +14,7 @@ import {
 	LogoutCommand,
 	MultiAppendCommand,
 	NamespaceCommand,
+	NotifyCommand,
 	LsubCommand,
 	NoopCommand,
 	RenameCommand,
@@ -39,6 +40,7 @@ import type {
 	NamespaceSet,
 	StatusItem,
 } from "../protocol/mailbox";
+import type { NotifySpec } from "../protocol/vocabularies";
 import Connection from "../connection";
 import { ConnectionTimeout, TLSSocketError } from "../connection/errors";
 import { TLSSetting } from "../connection/types";
@@ -140,6 +142,38 @@ export interface ImapClientEvents {
  * unit test — this is a deliberate, documented simplification, not a
  * best-effort guess against an external format.
  */
+/**
+ * M4.13: scans a just-accepted `NotifySpec`'s event-groups for a SELECTED
+ * (never SELECTED-DELAYED, see `_notifyState`'s own doc comment for why)
+ * event-group carrying `MessageNew`/`MessageExpunge` — the two flags
+ * `MailboxSession`'s RFC5465-5.2-4/-5.3-2 guards read. `NotifyCommand`'s own
+ * constructor has already enforced RFC5465-5-2 (MessageNew/MessageExpunge
+ * always together) by the time this runs, so in practice both resulting
+ * flags are always equal — see `_notifyState`'s doc comment for why they
+ * stay two separately-named fields regardless.
+ */
+function computeSelectedMessageEventState(spec: NotifySpec): {
+	selectedMessageNew: boolean;
+	selectedMessageExpunge: boolean;
+} {
+	let selectedMessageNew = false;
+	let selectedMessageExpunge = false;
+	for (const group of spec.set) {
+		if (group.mailboxes !== "SELECTED" || group.events === "NONE") {
+			continue;
+		}
+		for (const entry of group.events) {
+			const name: string = typeof entry === "string" ? entry : entry.event;
+			if (name === "MessageNew") {
+				selectedMessageNew = true;
+			} else if (name === "MessageExpunge") {
+				selectedMessageExpunge = true;
+			}
+		}
+	}
+	return { selectedMessageNew, selectedMessageExpunge };
+}
+
 function extractByeText(err: unknown): string | undefined {
 	if (err instanceof Error) {
 		const match = /BYE greeting:\s*([\s\S]*)$/.exec(err.message);
@@ -174,6 +208,36 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  only once it completes, so this never points at a stale/half-built
 	 *  session. */
 	private _mailboxSession: MailboxSession | null = null;
+
+	/**
+	 * M4.13 (RFC 5465 §5.2/§5.3): whether the MOST RECENTLY successful
+	 * `notify()` registered a SELECTED (never SELECTED-DELAYED -- see below)
+	 * event-group carrying `MessageNew`/`MessageExpunge`. Tracked here (on
+	 * the client instance, not per-`MailboxSession`) because NOTIFY itself is
+	 * mailbox-independent and this state must survive a reselect. Updated
+	 * ONLY after `notify()`'s own command settles successfully (a rejected
+	 * NOTIFY -- tagged NO/BAD -- leaves whatever registration was already in
+	 * effect completely undisturbed, RFC 5465 §3.1); reset to both `false`
+	 * by a successful `NOTIFY NONE` (`notify(false)`).
+	 *
+	 * `SELECTED-DELAYED` is deliberately EXCLUDED from both flags: RFC 5465
+	 * §4 documents it as the escape hatch for a client that wants to keep
+	 * using MSNs/'*' (its EXISTS/EXPUNGE notifications are delayed rather
+	 * than immediate, so they never invalidate an MSN the client is already
+	 * composing a command against) -- only the immediate `SELECTED`
+	 * specifier creates the RFC5465-5.2-4/-5.3-2 hazards `MailboxSession`'s
+	 * `runFetch`/`runStore`/`runCopyOrMove` guard against (see those call
+	 * sites' own comments).
+	 *
+	 * Composition rule RFC5465-5-2 (enforced by `NotifyCommand`'s own
+	 * constructor) means `selectedMessageNew`/`selectedMessageExpunge` are
+	 * always equal in practice (MessageNew and MessageExpunge can only ever
+	 * be requested together) -- kept as two separately-named fields anyway,
+	 * mirroring the RFC's own two distinct textual prohibitions (§5.2 vs
+	 * §5.3), rather than collapsing them into one flag that would obscure
+	 * which requirement a given guard is enforcing.
+	 */
+	private _notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -736,6 +800,46 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/**
+	 * NOTIFY (RFC 5465 §3.1) — M4.13. Mailbox-INDEPENDENT (spans mailboxes,
+	 * unlike most of M4 — see `NotifyCommand`'s own doc comment), so this
+	 * lives on `ImapClient` rather than `MailboxSession`, same placement as
+	 * `namespaces()`/`list()` above. `spec === false` issues bare `NOTIFY
+	 * NONE` (cancels every registration); a `NotifySpec` issues `NOTIFY SET`
+	 * (replacing the current registration wholesale, RFC 5465 §3.1 — NOTIFY
+	 * is never additive across calls).
+	 *
+	 * Capability-gated on `NOTIFY` (never folded into IMAP4rev2 core, no
+	 * OR-with-rev2 branch — same two-layer explicit-check-plus-command-
+	 * declaration pattern `namespaces()` uses), `CapabilityError` with zero
+	 * bytes written (I-9) when absent. Every event-group composition rule
+	 * (RFC5465-5-1/-5-2/-6.1-1/-6.1-2/-8-1) is enforced by `NotifyCommand`'s
+	 * own constructor, also before any bytes are written.
+	 *
+	 * On success, updates `_notifyState` (RFC5465-5.2-4/-5.3-2's client-side
+	 * enforcement point — see `MailboxSession`'s `runFetch`/`runStore`/
+	 * `runCopyOrMove`) — NEVER on a rejected NOTIFY (tagged NO/BAD leaves the
+	 * previous registration, and therefore the previous `_notifyState`,
+	 * completely undisturbed, matching RFC 5465 §3.1's "replaces the current
+	 * list" only describing a SUCCESSFUL NOTIFY SET).
+	 */
+	public async notify(spec: NotifySpec | false): Promise<void> {
+		const view = this.capabilityRegistry.view;
+		if (!view.has("NOTIFY")) {
+			throw new CapabilityError(
+				"notify() requires the NOTIFY capability (RFC 5465 §3.1), which the server " +
+					"hasn't advertised",
+				{ capability: "NOTIFY", rfc: "RFC5465" },
+			);
+		}
+		const command = new NotifyCommand(spec, view);
+		await this.run(command);
+		this._notifyState =
+			spec === false
+				? { selectedMessageNew: false, selectedMessageExpunge: false }
+				: computeSelectedMessageEventState(spec);
+	}
+
+	/**
 	 * NAMESPACE (spec §3.2, RFC 2342 §5; rev2 core per RFC 9051 §6.3.10) —
 	 * M2.10. Capability-gated on `NAMESPACE` OR `IMAP4rev2` (rev2 folds the
 	 * command into core, with no separate token), rejecting
@@ -982,6 +1086,14 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			onQueuedBehindIsolated: (cb) =>
 				this.connection.onQueueContextQueuedBehindIsolated(cb),
 			idleRenewMs: () => this.config.timeouts.idleRenew,
+			// M4.13 (RFC 5465 §5.2/§5.3): live reads of `_notifyState` --
+			// `MailboxSession`'s `runFetch`/`runStore`/`runCopyOrMove` consult
+			// these to enforce the '*' suppression (RFC5465-5.2-4) and the MSN
+			// prohibition (RFC5465-5.3-2) for sequence-number-grain calls while
+			// a SELECTED NOTIFY registration is active. See `notify()`'s own doc
+			// comment and `_notifyState`'s field comment for the full rationale.
+			hasActiveNotifySelectedMessageNew: () => this._notifyState.selectedMessageNew,
+			hasActiveNotifySelectedMessageExpunge: () => this._notifyState.selectedMessageExpunge,
 		};
 	}
 

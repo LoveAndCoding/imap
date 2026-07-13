@@ -53,9 +53,17 @@ function fakeDriver(
 		run: overrides.run ?? defaultRun,
 		currentState: () => state,
 		hasCapability: overrides.hasCapability ?? (() => true),
+		maxInlineSize: () => 8192,
 		deselect: (session) => {
 			deselectCalls.push(session);
 		},
+		onQueuedBehindIsolated: () => () => {},
+		idleRenewMs: () => 28 * 60_000,
+		// M4.13 (RFC 5465): no test in this file exercises an active NOTIFY
+		// registration, so both default to `false` (the pre-M4.13 behavior
+		// for every seq-grain call here).
+		hasActiveNotifySelectedMessageNew: () => false,
+		hasActiveNotifySelectedMessageExpunge: () => false,
 		deselectCalls,
 	};
 }

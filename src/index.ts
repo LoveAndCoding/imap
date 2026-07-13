@@ -54,6 +54,21 @@ export type { SearchOptions, SearchResult } from "./commands/search";
 export type { SortBase, SortKey, ThreadAlgorithm } from "./protocol/vocabularies";
 export type { ThreadNode } from "./commands/message/thread";
 
+// NOTIFY (RFC 5465 §3.1/§8, M4.13): `ImapClient.notify()`'s own typed
+// argument shape. `NotifyMessageEvent`/`NotifyNonMessageEvent`/
+// `NotifyEventName` are the closed, client-sent-strict event-name
+// vocabulary (§5.6 judgment call -- see `protocol/vocabularies.ts`'s own
+// doc comment for why this isn't spec'd explicitly elsewhere).
+export type {
+	NotifyEventEntry,
+	NotifyEventGroup,
+	NotifyEventName,
+	NotifyMailboxFilter,
+	NotifyMessageEvent,
+	NotifyNonMessageEvent,
+	NotifySpec,
+} from "./protocol/vocabularies";
+
 // STORE / UID STORE + addFlags/removeFlags/setFlags (spec §5b, M3.6).
 export type { StoreModifiers, StoreOperation, StoreResult } from "./commands/store";
 

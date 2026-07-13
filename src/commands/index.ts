@@ -15,6 +15,7 @@ export * from "./login";
 export * from "./logout";
 export * from "./move";
 export * from "./namespace";
+export * from "./notify";
 export * from "./lsub";
 export * from "./noop";
 export * from "./rename";

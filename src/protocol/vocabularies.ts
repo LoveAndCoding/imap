@@ -143,3 +143,98 @@ export type SortKey = SortBase | `REVERSE ${SortBase}`;
  * `MailboxSession.thread()`'s `algorithm` parameter (spec §5b, M4.9).
  */
 export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";
+
+/**
+ * NOTIFY (RFC 5465 §5/§8, M4.13) — the **client-sent, strict** grade (§5.6).
+ * Not spec'd explicitly anywhere in the modern-api-spec document (the M4
+ * plan's own "Shared design note 3"-adjacent judgment call, recorded here
+ * rather than silently invented): §8's ABNF fixes a closed, eight-name
+ * `event` production —
+ *
+ *   event = message-event / "MailboxName" / "SubscriptionChange" /
+ *           "MailboxMetadataChange" / "ServerMetadataChange"
+ *   message-event = "MessageNew" [SP "(" fetch-att *(SP fetch-att) ")"] /
+ *                   "MessageExpunge" / "FlagChange" / "AnnotationChange"
+ *
+ * split here into `NotifyMessageEvent` (the four whose composition rules
+ * `NotifyCommand` enforces, RFC5465-5-1/-5-2/-6.1-2) and
+ * `NotifyNonMessageEvent` (the four that may NOT appear in a
+ * SELECTED/SELECTED-DELAYED event-group, RFC5465-6.1-2/-8-1).
+ */
+export type NotifyMessageEvent =
+	| "MessageNew"
+	| "MessageExpunge"
+	| "FlagChange"
+	| "AnnotationChange";
+export type NotifyNonMessageEvent =
+	| "MailboxName"
+	| "SubscriptionChange"
+	| "MailboxMetadataChange"
+	| "ServerMetadataChange";
+export type NotifyEventName = NotifyMessageEvent | NotifyNonMessageEvent;
+
+/**
+ * One `event` list entry (§8). A bare event name, OR — for `MessageNew`
+ * only, and only legal inside a SELECTED/SELECTED-DELAYED event-group
+ * (RFC5465-8-1) — an object carrying the optional parenthesized fetch-att
+ * list. `fetchAtts` are RAW, pre-formed wire tokens (e.g.
+ * `"BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]"`), not routed through the
+ * typed FETCH att compiler (`client/fetch.ts`'s `FetchRequest`) — that
+ * compiler is built around a `FetchedMessage` RESULT shape (parsing
+ * `FetchCommand`'s own response), and NOTIFY's fetch-atts are a pure,
+ * one-directional COMMAND-argument list with no corresponding typed result
+ * to parse against (the unsolicited FETCH they provoke is consumed by the
+ * existing state-tracker lane, not by this command). Reusing the compiler
+ * would mean inventing a fake `FetchedMessage`-shaped round trip for no
+ * benefit; a raw string escape hatch (mirroring `SelectOptions.qresync`'s
+ * own pre-`SequenceInput` placeholder precedent, Shared design note 7) is
+ * the honest, minimal choice — documented here rather than silently
+ * decided. Every string is written via `CommandWriter.raw()` (the same
+ * escape hatch `FetchCommand` itself uses for its own section-spec syntax),
+ * so the caller is responsible for wire-legal formatting.
+ */
+export type NotifyEventEntry =
+	| NotifyEventName
+	| { event: "MessageNew"; fetchAtts?: readonly string[] };
+
+/**
+ * `filter-mailboxes` (§8): the SELECTED-family pair (`SELECTED`/
+ * `SELECTED-DELAYED`, at most one per NOTIFY command, RFC5465-6.1-1) plus
+ * the five non-selected-family specifiers. `subtree`/`mailboxes` take a
+ * mailbox argument (§8 `mailboxes = mailbox / "(" mailbox *(SP mailbox)
+ * ")"`) — modeled as a small tagged-object pair since they're the only two
+ * specifiers with an argument; none of `notify-5465.test.ts`'s compliance
+ * rows exercise either, so this shape is a best-effort, largely untested
+ * extension of the tested surface (SELECTED/personal), recorded as such.
+ */
+export type NotifyMailboxFilter =
+	| "SELECTED"
+	| "SELECTED-DELAYED"
+	| "inboxes"
+	| "personal"
+	| "subscribed"
+	| { subtree: string | readonly string[] }
+	| { mailboxes: string | readonly string[] };
+
+/** One `event-group` (§8: `"(" filter-mailboxes SP events ")"`). `events`
+ *  is either the bare `NONE` suppression sentinel (RFC5465-5-3's
+ *  `(<filter-mailboxes> NONE)` snapshot form) or a non-empty parenthesized
+ *  event list. */
+export interface NotifyEventGroup {
+	mailboxes: NotifyMailboxFilter;
+	events: "NONE" | readonly NotifyEventEntry[];
+}
+
+/**
+ * `notify-set`'s payload (§8: `"SET" [SP "STATUS"] SP event-groups`).
+ * `ImapClient.notify()`'s own parameter type is `NotifySpec | false` (spec
+ * §3.2's sketch) — `false` is the separate `notify-none` wire form
+ * (`NotifyCommand` compiles it to the bare `NONE` atom), so this interface
+ * only ever models the SET half.
+ */
+export interface NotifySpec {
+	/** RFC5465-3.1-4's STATUS indicator: asks the server to send one STATUS
+	 *  response per watched non-selected mailbox before NOTIFY's tagged OK. */
+	status?: boolean;
+	set: readonly NotifyEventGroup[];
+}

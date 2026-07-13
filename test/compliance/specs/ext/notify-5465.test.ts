@@ -556,7 +556,6 @@ complianceTest(
 		reqs: ["RFC5465-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "NOTIFY SET command form with parenthesized event-groups",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -601,7 +600,6 @@ complianceTest(
 		reqs: ["RFC5465-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "NOTIFY NONE command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -636,7 +634,6 @@ complianceTest(
 		reqs: ["RFC5465-3.1-4"],
 		profiles: ["rev1", "rev2"],
 		title: "NOTIFY SET STATUS form; client accepts the STATUS burst before the tagged OK",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -684,7 +681,6 @@ complianceTest(
 		reqs: ["RFC5465-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "an event list containing FlagChange also contains MessageNew and MessageExpunge",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -727,7 +723,6 @@ complianceTest(
 		reqs: ["RFC5465-5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "no event list contains exactly one of MessageNew/MessageExpunge",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -768,7 +763,6 @@ complianceTest(
 		reqs: ["RFC5465-5-3"],
 		profiles: ["rev1", "rev2"],
 		title: "event suppression is encoded as the (SELECTED NONE) event-group form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -949,7 +943,6 @@ complianceTest(
 		reqs: ["RFC5465-5.2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "MessageNew fetch-atts avoid unpeeked BODY sections and numbered part specifiers",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1008,7 +1001,6 @@ complianceTest(
 		reqs: ["RFC5465-5.2-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client avoids '*' message references while SELECTED MessageNew is active",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {

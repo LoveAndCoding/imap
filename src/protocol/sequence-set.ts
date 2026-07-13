@@ -336,6 +336,21 @@ export class SequenceSet {
 		return new SequenceSet(kind, this.sentinel, this.finite, this.starred);
 	}
 
+	/**
+	 * Whether this set's canonical form includes a `"*"`-involving element
+	 * (a bare `"*"` singleton or an `N:*` open range) — RFC 3501/9051 §9's
+	 * seq-range `"*"`, "always the largest number in use". Pure structural
+	 * fact about the parsed set (no NOTIFY-specific knowledge lives here,
+	 * per this module's own "no dependency on MailboxSession" doc-comment
+	 * rule) — M4.13's client-side '*' suppression while a NOTIFY SET
+	 * (SELECTED (MessageNew ...)) registration is active (RFC5465-5.2-4) is
+	 * the one caller today (`MailboxSession`'s `runFetch`/`runStore`/
+	 * `runCopyOrMove`).
+	 */
+	hasOpenEnd(): boolean {
+		return this.starred !== undefined;
+	}
+
 	/** Canonical wire form (spec §5.1): sorted, coalesced, `"*"`-aware (see
 	 *  `canonicalize()`'s doc comment for the coalescing rules). */
 	toString(): string {

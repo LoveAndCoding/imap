@@ -19,6 +19,10 @@ import type {
 	MailboxSession,
 	MailboxStatusResult,
 	NamespaceSet,
+	NotifyEventEntry,
+	NotifyEventGroup,
+	NotifyMailboxFilter,
+	NotifySpec,
 	SearchCriteria,
 	SearchOptions as RealSearchOptions,
 	SearchResult,
@@ -498,6 +502,42 @@ function translateAdHocSortCriteria(rawCriteria: string[]): SortKey[] {
 		}
 	}
 	return out;
+}
+
+/**
+ * Translates one `driver.notify()` call's ad hoc spec shape (`{ none: true
+ * }` / `{ status?, set: [{ mailboxes, events }, ...] }` -- `notify-5465.
+ * test.ts`'s own scripted shape) into the real, spec-typed `NotifySpec |
+ * false` `ImapClient.notify()` takes (M4.13). Unlike `translateAdHocSearch`/
+ * `translateAdHocSortCriteria` above, this is a THIN translation: the ad hoc
+ * shape was scripted directly against the eventual typed shape (event-group
+ * objects already carry `mailboxes`/`events`, `events` entries are already
+ * either bare strings or `{ event, fetchAtts }` objects) -- there is no
+ * flattened/legacy wire-token form to reconstruct here, so this function's
+ * job is validating the ad hoc input's rough shape and asserting it into
+ * `NotifySpec`'s real type, not reshaping it.
+ */
+function translateAdHocNotify(spec: unknown): NotifySpec | false {
+	const s = spec as
+		| { none?: boolean; status?: boolean; set?: unknown[] }
+		| null
+		| undefined;
+	if (s?.none) {
+		return false;
+	}
+	if (!s || !Array.isArray(s.set)) {
+		throw new NotImplementedError(
+			`NOTIFY spec ${JSON.stringify(spec)} (expected { none: true } or { set: [...] })`,
+		);
+	}
+	const set: NotifyEventGroup[] = s.set.map((raw) => {
+		const g = raw as { mailboxes?: unknown; events?: unknown };
+		return {
+			mailboxes: g.mailboxes as NotifyMailboxFilter,
+			events: g.events === "NONE" ? "NONE" : (g.events as NotifyEventEntry[]),
+		};
+	});
+	return s.status !== undefined ? { status: s.status, set } : { set };
 }
 
 // ---------------------------------------------------------------------------
@@ -1638,9 +1678,16 @@ export class ComplianceDriver {
 		return session.thread(algorithm as ThreadAlgorithm, realCriteria, realOpts);
 	}
 
-	// NOTIFY (RFC 5465)
-	public async notify(_spec: unknown): Promise<never> {
-		throw new NotImplementedError("NOTIFY");
+	/**
+	 * NOTIFY (RFC 5465) -- M4.13. Wired to `client.notify(...)` directly
+	 * (client-level, not mailbox-scoped -- NOTIFY spans mailboxes, same
+	 * placement rationale `ImapClient.notify()`'s own doc comment gives).
+	 * `translateAdHocNotify()` asserts the scripted ad hoc shape into the
+	 * real, spec-typed `NotifySpec | false`.
+	 */
+	public async notify(spec: unknown): Promise<void> {
+		const client = this.requireClient();
+		await client.notify(translateAdHocNotify(spec));
 	}
 
 	// ---- Phase 6: i18n + misc + vendor family -------------------------------

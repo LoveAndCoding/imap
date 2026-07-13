@@ -19,7 +19,7 @@ import type { SearchCriteria } from "../commands/search-criteria";
 import { StoreCommand } from "../commands/store";
 import type { StoreCapabilityProbe, StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
 import { UnselectCommand } from "../commands/unselect";
-import { CapabilityError, StateError } from "../errors";
+import { CapabilityError, NotImplementedError, StateError } from "../errors";
 import { SequenceSet } from "../protocol/sequence-set";
 import type { SequenceInput } from "../protocol/sequence-set";
 import type { Flag, SortKey, ThreadAlgorithm } from "../protocol/vocabularies";
@@ -105,6 +105,28 @@ export interface MailboxSessionDriver {
 	 */
 	onQueuedBehindIsolated(cb: () => void): () => void;
 	idleRenewMs(): number;
+	/**
+	 * M4.13 (RFC 5465 §5.2/§5.3): whether the client's most recently
+	 * successful `notify()` registered a SELECTED (immediate, never
+	 * SELECTED-DELAYED) event-group carrying `MessageNew`/`MessageExpunge`
+	 * respectively. Consumed by `runFetch`/`runStore`/`runCopyOrMove` below
+	 * to enforce, for the sequence-number ("seq") grain specifically:
+	 *   - RFC5465-5.2-4: '*'-terminated sequence-set arguments are refused
+	 *     while `hasActiveNotifySelectedMessageNew()` is true (the highest
+	 *     MSN can change at any time once MessageNew is active, so '*' no
+	 *     longer denotes a stable message).
+	 *   - RFC5465-5.3-2: MSN-addressed commands altogether are refused while
+	 *     `hasActiveNotifySelectedMessageExpunge()` is true (an MSN can be
+	 *     invalidated between composing and parsing a command once immediate
+	 *     expunge notifications are active — "such a client cannot use
+	 *     FETCH, but has to use UID FETCH"). This library has no live
+	 *     sequence-number-to-UID cache to perform that translation safely
+	 *     and transparently, so this is an honest `NotImplementedError`
+	 *     refusal (see `assertSequenceGrainSafeUnderNotify`'s own doc
+	 *     comment), not a silent reinterpretation of the caller's numbers.
+	 */
+	hasActiveNotifySelectedMessageNew(): boolean;
+	hasActiveNotifySelectedMessageExpunge(): boolean;
 }
 
 /** `closed` event reasons (spec §5b). `"closed"`/`"unselected"` are wired by
@@ -176,6 +198,70 @@ export interface SequenceFacet {
 	 * out of.
 	 */
 	expunge(): Promise<number[]>;
+}
+
+/**
+ * M4.13 (RFC 5465 §5.2/§5.3): the sequence-number ("seq") grain enforcement
+ * point for both of NOTIFY's client-side prohibitions, called from
+ * `runFetch`/`runStore`/`runCopyOrMove` right after each stamps its
+ * `SequenceSet` with `kind` -- a no-op for `kind === "uid"` (neither
+ * prohibition constrains UID-addressed commands; the whole hazard is MSN
+ * instability, and UIDs are exactly the escape hatch RFC 5465 §5.3
+ * recommends). Order matters: the narrower, ACTIONABLE '*'-suppression
+ * check runs first (so a caller who happens to trip both conditions at once
+ * gets the more specific diagnostic), then the broader MSN prohibition.
+ *
+ * RFC5465-5.3-2's "such a client cannot use FETCH, but has to use UID
+ * FETCH" reads, on its face, like an instruction to transparently reissue
+ * the SAME call as its UID-grain counterpart. This library does not do that
+ * silently: the caller's `seqs` argument denotes MESSAGE SEQUENCE NUMBERS,
+ * and turning those same numeric values into a UID-addressed command
+ * without a live sequence-number-to-UID mapping (which this milestone does
+ * not build -- it would mean this library tracking a full local mirror of
+ * every message's current UID, keyed by its current MSN, updated on every
+ * EXISTS/EXPUNGE) would silently target different messages than the caller
+ * asked for whenever that assumption is wrong -- exactly the kind of
+ * "transform caller data instead of refusing it" anti-pattern this codebase
+ * avoids elsewhere (`assertNoRecentFlag`'s doc comment states the same
+ * refuse-don't-transform posture explicitly). Refusing with an honest
+ * `NotImplementedError` (mirroring `SortCommand`'s own PARTIAL-on-SORT
+ * precedent for "a real RFC-legal shape this milestone doesn't build") is
+ * the correct call here: the caller is told to re-address by UID with
+ * numbers IT already knows to be correct, rather than being handed results
+ * for messages it never asked about.
+ */
+function assertSequenceGrainSafeUnderNotify(
+	driver: MailboxSessionDriver,
+	set: SequenceSet,
+	kind: "uid" | "seq",
+	label: string,
+): void {
+	if (kind !== "seq") {
+		return;
+	}
+	if (driver.hasActiveNotifySelectedMessageNew() && set.hasOpenEnd()) {
+		throw new RangeError(
+			`${label}: '*'-terminated sequence-set arguments are refused while a NOTIFY SET ` +
+				"(SELECTED (MessageNew ...)) registration is active (RFC 5465 §5.2: the highest " +
+				"message sequence number can change at any time once MessageNew notifications " +
+				"are active, so '*' no longer denotes a stable message, RFC5465-5.2-4) -- address " +
+				"the intended message with a fixed number, or use the UID-grain method with a " +
+				"known UID instead",
+		);
+	}
+	if (driver.hasActiveNotifySelectedMessageExpunge()) {
+		throw new NotImplementedError(
+			`${label}: message-sequence-numbered commands while a NOTIFY SET (SELECTED ` +
+				"(MessageExpunge ...)) registration is active (RFC 5465 §5.3: an MSN can be " +
+				"invalidated between composing and parsing a command once immediate expunge " +
+				'notifications are active -- "such a client cannot use FETCH, but has to use UID ' +
+				'FETCH", RFC5465-5.3-2). Transparently reissuing this call by UID would need a ' +
+				"live sequence-number-to-UID cache this library does not maintain, and silently " +
+				"reinterpreting the same numbers as UIDs could target different messages than " +
+				"requested -- call the UID-grain method (fetch()/addFlags()/removeFlags()/" +
+				"setFlags()/copy()/move()) with known UIDs instead",
+		);
+	}
 }
 
 export interface MailboxSessionEvents {
@@ -768,6 +854,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			{ has: (cap) => session.driver.hasCapability(cap) },
 			kind === "uid" ? "addFlags/removeFlags/setFlags()" : "seq.addFlags/seq.removeFlags/seq.setFlags()",
 		);
+		// M4.13 (RFC 5465 §5.2/§5.3): the '*'-suppression/MSN-prohibition gate
+		// -- see `assertSequenceGrainSafeUnderNotify`'s own doc comment.
+		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, method);
 		const probe: StoreCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
 		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts, probe));
 	}
@@ -949,6 +1038,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			{ has: (cap) => session.driver.hasCapability(cap) },
 			`${label}()`,
 		);
+		// M4.13 (RFC 5465 §5.2/§5.3): the '*'-suppression/MSN-prohibition gate
+		// -- see `assertSequenceGrainSafeUnderNotify`'s own doc comment.
+		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, `${label}()`);
 		const command = isMove
 			? new MoveCommand(set, dest, kind === "uid")
 			: new CopyCommand(set, dest, kind === "uid");
@@ -1193,6 +1285,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			{ has: (cap) => session.driver.hasCapability(cap) },
 			kind === "uid" ? "fetch()" : "seq.fetch()",
 		);
+		// M4.13 (RFC 5465 §5.2/§5.3): the '*'-suppression/MSN-prohibition gate
+		// -- see `assertSequenceGrainSafeUnderNotify`'s own doc comment.
+		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, method);
 		const probe: FetchCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
 		const command = new FetchCommand(
 			set,
