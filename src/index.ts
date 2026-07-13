@@ -32,6 +32,9 @@ export type {
 	SequenceFacet,
 } from "./client/mailbox";
 
+// IDLE (spec §3.7/§5b, M4.1): `MailboxSession.idle()`'s return value.
+export type { IdleHandle } from "./client/idle-controller";
+
 export type { SelectOptions, SelectResult } from "./commands/select";
 
 // SEARCH / UID SEARCH (spec §5.3/§5b, M3.7): the criteria compiler's typed

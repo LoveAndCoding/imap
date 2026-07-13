@@ -17,6 +17,32 @@ type AsyncQueueEvents = {
 
 type CommandQueueEvents = {
 	idle: () => void;
+	/**
+	 * M4.1 (spec §3.7, Shared design note 4): fired synchronously from
+	 * `add()` whenever a newly submitted command is forced into a BRAND NEW
+	 * context because the current WAITING context is already isolated —
+	 * i.e. something wants to run but is structurally blocked behind an
+	 * isolated command (STARTTLS/AUTHENTICATE/IDLE/COMPRESS/LOGOUT) that has
+	 * no protocol-driven end of its own until something tells it to finish.
+	 * This is the ONLY generic queue-level signal for "a caller is waiting
+	 * behind you" — chosen (over routing every command submission through
+	 * `IdleController` itself, Shared design note 4's other option) because
+	 * the queue already has the structural knowledge this needs (which
+	 * context is active, exactly when something new lands behind it);
+	 * duplicating that inside `IdleController` would mean either wrapping
+	 * every call site capable of submitting a command (invasive, easy to
+	 * miss one) or polling. `IdleController` (`src/client/idle-controller.ts`)
+	 * is this event's sole consumer today: on this signal it resolves the
+	 * in-flight IDLE round's `onContinuation` promise, sending `DONE` (once
+	 * the server's own `+ idling` continuation has actually arrived) so the
+	 * newly queued context is freed to run once IDLE's tagged OK completes
+	 * and the isolated context drains — the queue's own structural ordering
+	 * (a context queued behind an isolated one never dispatches early)
+	 * already guarantees no bytes leak out of order; this event only
+	 * supplies the LIVENESS half (something must still decide to end the
+	 * isolated command) that guarantee doesn't provide by itself.
+	 */
+	contextQueuedBehindIsolated: () => void;
 };
 
 // Tag generator (moved from the old commands/base.ts — spec §7.1: the tag is
@@ -246,11 +272,15 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	 */
 	add<T>(command: Command<T>): Promise<T> {
 		const mode = command.queueMode;
-		if (
-			!this.waitingContext ||
-			this.waitingContext.isIsolated ||
-			(mode !== "pipeline" && this.waitingContext.size > 0)
-		) {
+		const waiting = this.waitingContext;
+		const needsNewContext =
+			!waiting || waiting.isIsolated || (mode !== "pipeline" && waiting.size > 0);
+		if (needsNewContext) {
+			if (waiting && waiting.isIsolated) {
+				// M4.1: notify before creating the new (structurally-blocked)
+				// context — see `contextQueuedBehindIsolated`'s own doc comment.
+				this.emit("contextQueuedBehindIsolated");
+			}
 			this.addQueueContext(mode !== "pipeline");
 		}
 

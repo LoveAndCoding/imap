@@ -9,6 +9,7 @@ export * from "./create";
 export * from "./delete";
 export * from "./enable";
 export * from "./id";
+export * from "./idle";
 export * from "./list";
 export * from "./login";
 export * from "./logout";

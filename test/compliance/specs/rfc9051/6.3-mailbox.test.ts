@@ -49,11 +49,10 @@
  * of M2.2/M2.9 (select() and status() are wired; status() blocks the
  * selected-mailbox case locally with StateError, and the missing expectLine +
  * transcript guard would catch any forbidden STATUS on the wire). The IDLE
- * prohibition tests still drive unimplemented verbs (idle throws
- * NotImplementedError) and remain annotated `unimplemented` — the driver
- * call rejects before any forbidden command could be attempted, so those
- * guards self-actualize when IDLE lands. This is disclosed here rather than
- * hidden behind a vacuous pass.
+ * tests are genuinely exercised as of M4.1 (`IdleController`/`IdleCommand`/
+ * `MailboxSession.idle()`) — `driver.idle()` drives a real isolated-context
+ * IDLE round, and both the script's expectLine + the transcript guards below
+ * would catch a forbidden interleaved command or a missing/mistimed DONE.
  */
 import { expect } from "vitest";
 
@@ -518,15 +517,13 @@ complianceTest(
 // only permitted output is the literal DONE line — no other command may be
 // interleaved (the server cannot distinguish a command from a continuation).
 // The script sends the "+" continuation and expects ONLY a DONE line; any other
-// command line is an unscripted-command failure. driver.idle() is unimplemented
-// today → the idle() call rejects first, so this is annotated `unimplemented`;
-// when idle() lands the script + transcript guard catch any interleaved command.
+// command line is an unscripted-command failure. M4.1: driver.idle() drives a
+// real IDLE round -- the script + transcript guard catch any interleaved command.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.13-1"],
 		profiles: ["rev2"],
 		title: "client MUST NOT send any other command while the server awaits DONE during IDLE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -568,13 +565,12 @@ complianceTest(
 // The sole defined mechanism to terminate an IDLE command is the client sending
 // a "DONE" continuation line. Drive the client to end an idle period and assert
 // the literal DONE line is emitted before the tagged IDLE completion.
-// driver.idle() is unimplemented today → annotated unimplemented.
+// M4.1: driver.idle() drives a real IDLE round.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.13-3"],
 		profiles: ["rev2"],
 		title: "client terminates an IDLE command by sending the DONE continuation",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

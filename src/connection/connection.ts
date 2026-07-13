@@ -592,6 +592,19 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		return this.commandQueue.add<T>(command);
 	}
 
+	/**
+	 * M4.1 (spec §3.7): subscribes to the queue's "another context was just
+	 * queued behind the currently-active isolated context" signal (see
+	 * `CommandQueue`'s `contextQueuedBehindIsolated` event, `connection/
+	 * queue.ts`, for the full design rationale) — `IdleController`'s only
+	 * way to learn that a command submission needs it to send `DONE`.
+	 * Returns an unsubscribe function.
+	 */
+	public onQueueContextQueuedBehindIsolated(cb: () => void): () => void {
+		this.commandQueue.on("contextQueuedBehindIsolated", cb);
+		return () => this.commandQueue.off("contextQueuedBehindIsolated", cb);
+	}
+
 	public send(toSend: string) {
 		this.socket!.write(toSend + CRLF, "utf8");
 	}

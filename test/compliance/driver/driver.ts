@@ -1314,8 +1314,33 @@ export class ComplianceDriver {
 		}
 		return session.copy(seq, mailbox);
 	}
-	public async idle(): Promise<never> {
-		throw new NotImplementedError("IDLE");
+	/**
+	 * IDLE (RFC 2177; folded into IMAP4rev2 base with no separate token, RFC
+	 * 9051 §6.3.13) -- M4.1. A one-shot compliance probe: opens an explicit
+	 * idle session against the selected mailbox, then immediately signals
+	 * `done()`. The actual `DONE` bytes only reach the wire once
+	 * `IdleCommand.onContinuation` observes the server's own `+ idling` line
+	 * (RFC 2177 §3) -- calling `done()` this early still produces the
+	 * correct wire ordering (`IDLE`, `+`, `DONE`, tagged OK) every
+	 * `ext/idle-2177.test.ts` scenario asserts on; it just means this probe
+	 * never idles longer than one round trip, which is exactly the shape
+	 * those scripted exchanges need from it. Same "requires a selected
+	 * mailbox" `StateError` guard `uidCopy()` above uses -- IDLE is legal in
+	 * the "authenticated" state too per RFC 2177 §3, but the only public
+	 * surface this milestone builds (`MailboxSession.idle()`) is
+	 * necessarily mailbox-scoped.
+	 */
+	public async idle(): Promise<void> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("idle() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		const handle = await session.idle();
+		await handle.done();
 	}
 	/**
 	 * UNSELECT (RFC 3691; RFC 9051 §6.4.2) -- M2.13. Delegates straight to

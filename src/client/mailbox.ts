@@ -24,6 +24,8 @@ import { SequenceSet } from "../protocol/sequence-set";
 import type { SequenceInput } from "../protocol/sequence-set";
 import type { Flag, SortKey, ThreadAlgorithm } from "../protocol/vocabularies";
 import type { FetchModifiers, FetchRequest, FetchedMessage, FetchedMessageImpl } from "./fetch";
+import { IdleController } from "./idle-controller";
+import type { IdleControllerDriver, IdleHandle } from "./idle-controller";
 import type { ClientState } from "./state";
 
 /**
@@ -91,6 +93,18 @@ export interface MailboxSessionDriver {
 	 *  succeeds, so a failed CLOSE/UNSELECT (tagged NO/BAD) leaves the
 	 *  client's selection completely undisturbed. */
 	deselect(session: MailboxSession): void;
+	/**
+	 * M4.1 (spec §3.7): the two `IdleControllerDriver` seams `idle()` needs
+	 * to construct a fresh `IdleController` per call -- subscribing to the
+	 * queue's "another context queued behind the active isolated one" signal
+	 * (`Connection.onQueueContextQueuedBehindIsolated()`) and reading
+	 * `timeouts.idleRenew`. Kept as two separate fields (rather than handing
+	 * back a whole `IdleControllerDriver` object) so this interface's own
+	 * "narrow, additive, one seam per need" shape stays consistent with
+	 * every other member here.
+	 */
+	onQueuedBehindIsolated(cb: () => void): () => void;
+	idleRenewMs(): number;
 }
 
 /** `closed` event reasons (spec §5b). `"closed"`/`"unselected"` are wired by
@@ -435,6 +449,53 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		opts?: FetchModifiers,
 	): Promise<FetchedMessage | null> {
 		return fetchOneOf(this.fetch(uid, items, opts));
+	}
+
+	// -- live updates: IDLE (spec §3.7/§5b, M4.1) ------------------------------
+
+	/**
+	 * IDLE (RFC 2177; folded into the base command set under IMAP4rev2 with
+	 * no separate capability token, RFC 9051 §6.3.13) -- M4.1's explicit
+	 * surface. Opens one IDLE session through a fresh `IdleController`
+	 * (`src/client/idle-controller.ts`) and hands back an `IdleHandle` the
+	 * caller uses to end it (`handle.done()`); the controller silently
+	 * renews (`DONE` + immediate re-IDLE) every `timeouts.idleRenew` (default
+	 * 28 minutes, under RFC 2177's 29-minute guidance) for as long as nothing
+	 * else asks it to stop. A command submitted through ANY OTHER method on
+	 * this client while this session is idling ends it automatically (spec
+	 * §3.7: `DONE`, await tagged completion, run the queued command) --
+	 * explicit mode does NOT re-enter IDLE afterward (only the managed
+	 * `updates({idle:true})` loop, M4.3, does); a caller that wants to keep
+	 * idling calls `idle()` again. See `IdleController`'s own doc comment for
+	 * the full renewal/interruption design and the Shared design note 4
+	 * queue-hook-vs-controller-mediated decision this implements.
+	 *
+	 * Capability gate (I-9, zero bytes written): `IDLE` under rev1, folded
+	 * into `IMAP4rev2` under rev2 with no separate token -- same OR-check
+	 * `unselect()` above uses for its own rev1-token-or-IMAP4rev2 dual.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public async idle(): Promise<IdleHandle> {
+		this.assertOpen("idle");
+		if (!this.driver.hasCapability("IDLE") && !this.driver.hasCapability("IMAP4rev2")) {
+			throw new CapabilityError(
+				"idle() requires the IDLE capability (RFC 2177 §3) or an " +
+					"IMAP4rev2 server (RFC 9051 §6.3.13, which folds IDLE into the " +
+					"base command set with no separate capability token) -- neither " +
+					"of which the server has advertised",
+				{ capability: "IDLE", rfc: "RFC2177" },
+			);
+		}
+		const idleDriver: IdleControllerDriver = {
+			run: (command) => this.driver.run(command),
+			onQueuedBehindIsolated: (cb) => this.driver.onQueuedBehindIsolated(cb),
+			idleRenewMs: () => this.driver.idleRenewMs(),
+		};
+		const controller = new IdleController(idleDriver);
+		await controller.start();
+		return { done: () => controller.done() };
 	}
 
 	// -- deselection (spec §5b) -----------------------------------------------

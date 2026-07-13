@@ -176,6 +176,65 @@ describe("CommandQueue", () => {
 			expect(q.queueContexts).toHaveLength(1);
 			expect(ctxMock.add).toHaveBeenCalledTimes(1);
 		});
+
+		// M4.1 (spec §3.7, Shared design note 4): the queue-level hook
+		// `IdleController` relies on to learn "something wants to run" while
+		// its own IDLE round holds the sole (isolated) context.
+		describe("contextQueuedBehindIsolated event", () => {
+			test("fires when a command is queued behind an already-isolated waiting context", () => {
+				const connMock: any = vi.fn();
+				const q = new CommandQueue(connMock);
+				const ctxMock: any = { isIsolated: true };
+				q.queueContexts.push(ctxMock);
+				let fired = 0;
+				q.on("contextQueuedBehindIsolated", () => fired++);
+
+				q.add(fakeCommand("pipeline"));
+
+				expect(fired).toBe(1);
+			});
+
+			test("does NOT fire for the very first context (empty queue)", () => {
+				const connMock: any = vi.fn();
+				const q = new CommandQueue(connMock);
+				let fired = 0;
+				q.on("contextQueuedBehindIsolated", () => fired++);
+
+				q.add(fakeCommand());
+
+				expect(fired).toBe(0);
+			});
+
+			test("does NOT fire when a serial command is forced into its own context behind a non-isolated one", () => {
+				const connMock: any = vi.fn();
+				const q = new CommandQueue(connMock);
+				const ctxMock: any = { isIsolated: false, size: 1 };
+				q.queueContexts.push(ctxMock);
+				let fired = 0;
+				q.on("contextQueuedBehindIsolated", () => fired++);
+
+				q.add(fakeCommand("serial"));
+
+				expect(fired).toBe(0);
+			});
+
+			test("fires once per additional command queued behind the same isolated context", () => {
+				const connMock: any = vi.fn();
+				const q = new CommandQueue(connMock);
+				const ctxMock: any = { isIsolated: true };
+				q.queueContexts.push(ctxMock);
+				let fired = 0;
+				q.on("contextQueuedBehindIsolated", () => fired++);
+
+				q.add(fakeCommand("pipeline"));
+				q.add(fakeCommand("pipeline"));
+
+				// The second command lands behind the FIRST new (non-isolated)
+				// context, not directly behind the isolated one anymore -- so only
+				// the first `add()` call fires the signal.
+				expect(fired).toBe(1);
+			});
+		});
 	});
 
 	describe("context lifecycle", () => {

@@ -928,6 +928,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 					this.stateMachine.transition("authenticated");
 				}
 			},
+			// M4.1 (spec §3.7): `IdleController`'s two seams, forwarded straight
+			// onto `Connection`/`ResolvedConfig` -- see `MailboxSessionDriver`'s
+			// own doc comment on these fields.
+			onQueuedBehindIsolated: (cb) =>
+				this.connection.onQueueContextQueuedBehindIsolated(cb),
+			idleRenewMs: () => this.config.timeouts.idleRenew,
 		};
 	}
 
