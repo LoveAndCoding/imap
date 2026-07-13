@@ -38,16 +38,24 @@ Per-task status:
 | Task | Status |
 |---|---|
 | M3.1 spike (design + proof) | **DONE** — "M3.1 RESOLUTION" + "M3.1 PROOF ADDENDUM" below (`6fcfd7a`, `dbc8ee7`) |
-| M3.2 literal streaming | IN FLIGHT (main tree) — bound by the proof addendum's obligations |
+| M3.2 literal streaming | **DONE** — `3265172`, zero row changes; engagement-gate deviation documented in-code |
 | M3.3 SequenceSet | **DONE** — `8d590b4`, zero row changes (unwired by design) |
-| M3.4 collector FETCH bridge | pending (needs M3.2) |
-| M3.5 FETCH engine | pending |
-| M3.6 STORE | verbs complete in worktree; REWORK in flight (\Recent refusal adjudication, see `docs/compliance-adjudications.md`); merge after M3.7 |
-| M3.7 SEARCH | **complete in worktree** (+60 rows, 0 regressions), snapshot `a8b3eef`; merge after M3.2 |
-| M3.8 COPY/MOVE | **complete in worktree** (+9 rows, 0 regressions), snapshot `d358554`; merge after M3.6 |
-| M3.9 EXPUNGE | pending |
-| M3.10 MULTIAPPEND/CATENATE | pending |
+| M3.4 collector FETCH bridge | IN FLIGHT (worktree) |
+| M3.5 FETCH engine | pending (needs M3.4) |
+| M3.6 STORE | **DONE** — `85a4e48`, +4 rows incl. the adjudicated \Recent refusal |
+| M3.7 SEARCH | **DONE** — `0aa5810`, +60 rows, 0 regressions |
+| M3.8 COPY/MOVE | **DONE** — `2549b99`, +9 rows; MOVE∨IMAP4rev2 gate |
+| M3.9 EXPUNGE | IN FLIGHT (worktree) |
+| M3.10 MULTIAPPEND/CATENATE | IN FLIGHT (worktree) |
 | M3.11 sweep + close | pending |
+
+Cumulative M3 ledger vs the M2 snapshot after the verb wave: **73 flips,
+all unimplemented→pass, zero regressions; 675 pass / 2 adjudicated
+violations / problems []** (verified per-row at each of the four serialized
+merges). The three seq facets created independently by M3.6/M3.7/M3.8 were
+unified at merge into one `SeqFacet` delegator class behind the
+`SequenceFacet` interface, with `async` statics (`runSearch`/`runStore`/
+`runCopyOrMove`) so facet methods reject rather than throw (§5b).
 
 ---
 

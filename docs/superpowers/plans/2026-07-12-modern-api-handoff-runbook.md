@@ -48,20 +48,20 @@ between closes; last updated: M3 in progress, after M3.1+M3.3.)*
     tasks).
   - M3.2 (literal streaming implementation) IN FLIGHT — main tree
     (lexer/newline/parser/connection files).
-  - M3.7 (SEARCH) COMPLETE in worktree `agent-a619ba2a01fbe82cb`
-    (WIP snapshot `a8b3eef`): +60 rows unimplemented→pass, 0 regressions,
-    7 documented deviations all accepted at review. M3.8 (COPY/MOVE)
-    COMPLETE in worktree `agent-a7253545b8c7119a9` (WIP snapshot
-    `d358554`): +9 rows, found+fixed the MOVE∨IMAP4rev2 capability gate.
-    M3.6 (STORE) verbs complete in worktree `agent-a7b303d9ec224efa8`
-    (WIP snapshot `169a758`); REWORK in flight for the adjudicated
-    \Recent client-side refusal (entry in `docs/compliance-adjudications.md`
-    — refusal mirrors the NUL precedent; the agent's original
-    unimplemented→violation flip was rejected). Merge order: M3.2 (main
-    tree) → M3.7 → M3.6 → M3.8; orchestrator resolves the overlapping
-    `seq`-facet/`assertOpen` additions in `mailbox.ts` (all three verb
-    tasks created facets independently) and re-runs full gates before
-    each commit.
+  - VERB WAVE LANDED: M3.2 (`3265172`), M3.7 (`0aa5810`, +60 rows),
+    M3.6 (`85a4e48`, +4 rows incl. the adjudicated \Recent refusal),
+    M3.8 (`2549b99`, +9 rows). Cumulative vs the M2 snapshot: 73 flips,
+    all unimplemented→pass, zero regressions; 675 pass / 2 adjudicated
+    violations / problems []. Merge lesson recorded: the three
+    independently-created seq facets were unified into one `SeqFacet`
+    delegator class behind the `SequenceFacet` INTERFACE (type-only
+    export), with `async` statics (`runSearch`/`runStore`/
+    `runCopyOrMove`) so facet methods reject rather than throw (§5b) —
+    follow that settled pattern for every later facet verb.
+  - SECOND WAVE IN FLIGHT (three worktrees, all instructed to verify
+    their base is `2549b99`+): M3.4 (collector streaming bridge — flips
+    nothing, prerequisite for M3.5), M3.9 (EXPUNGE — authors fresh bare-
+    EXPUNGE compliance coverage), M3.10 (MULTIAPPEND/CATENATE).
   - LANDMINE (new): freshly-created agent worktrees have been handed out
     checked out at WRONG BASE commits (`origin/main` or an ancient
     dependabot commit `0d68600`), not this branch's tip. All three verb
