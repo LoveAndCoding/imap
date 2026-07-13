@@ -29,6 +29,11 @@ export type { MailboxClosedReason, MailboxSessionEvents } from "./client/mailbox
 
 export type { SelectOptions, SelectResult } from "./commands/select";
 
+// Shared UID/sequence-number argument type (spec §5.1, M3.3) — used by
+// every message-operation method's `uids`/`seq` parameters.
+export { SequenceSet } from "./protocol/sequence-set";
+export type { SequenceInput, SequenceRange } from "./protocol/sequence-set";
+
 // Mailbox-management option types (spec §3.2/§5.6, M2.3).
 export type { CreateMailboxOptions } from "./commands/create";
 export type { Flag, SpecialUse, SystemFlag } from "./protocol/vocabularies";

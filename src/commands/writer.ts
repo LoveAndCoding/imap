@@ -242,12 +242,13 @@ function pickLiteralForm(
 }
 
 // Sequence-set wire grammar (RFC 3501/9051 §9 `sequence-set`) plus the
-// RFC 5182 "$" SEARCHRES sentinel. `SequenceSet` itself doesn't exist yet
-// (spec §5.1); until it lands, `sequenceSet()` only knows its argument as a
-// minimal `{ toString(): string }` shape (see below), so this regexp is the
-// writer's own defense-in-depth against a caller (or a future, buggy
-// `SequenceSet`) whose `toString()` doesn't actually produce a legal
-// sequence-set — the writer must never emit caller bytes verbatim untested.
+// RFC 5182 "$" SEARCHRES sentinel. `sequenceSet()` only requires its
+// argument to satisfy a minimal `{ toString(): string }` shape (see below) —
+// `SequenceSet` (spec §5.1, `src/protocol/sequence-set.ts`) is the real
+// producer, but this regexp stays as the writer's own defense-in-depth
+// against a caller (or a future, buggy `SequenceSet`) whose `toString()`
+// doesn't actually produce a legal sequence-set: this module never trusts
+// caller bytes verbatim, even bytes produced by `toString()`.
 const SEQUENCE_SET_RE = /^[0-9:,*$]+$/;
 
 /**
@@ -611,12 +612,14 @@ export class CommandWriter {
 	}
 
 	/**
-	 * Sequence set (spec §5.1/§7.2). `SequenceSet` doesn't exist yet, so this
-	 * is designed against the minimal structural interface it will satisfy:
-	 * anything with a `toString()`. The result is validated against the
-	 * sequence-set wire grammar (plus the "$" SEARCHRES sentinel) before
-	 * being emitted — this module never trusts caller bytes verbatim, even
-	 * bytes produced by `toString()`.
+	 * Sequence set (spec §5.1/§7.2). Accepts anything satisfying the minimal
+	 * structural interface — `SequenceSet` (spec §5.1) is the primary
+	 * producer, but this stays a structural type rather than a nominal
+	 * `SequenceSet` import so the writer has no dependency on the protocol
+	 * layer's parsing/canonicalization logic. The result is validated
+	 * against the sequence-set wire grammar (plus the "$" SEARCHRES
+	 * sentinel) before being emitted — this module never trusts caller
+	 * bytes verbatim, even bytes produced by `toString()`.
 	 */
 	sequenceSet(set: { toString(): string }): this {
 		return this.atomic(() => {
