@@ -7,6 +7,7 @@ import * as tls from "node:tls";
 import { Connection, ImapClient, StateError } from "../../../src/index";
 import type {
 	AppendResult as ClientAppendResult,
+	CopyResult,
 	ImapClientConfig,
 	ListOptions,
 	MailboxInfo,
@@ -954,11 +955,49 @@ export class ComplianceDriver {
 	): Promise<StoreResult> {
 		return this.runStore("seq", seq, action, flags, opts);
 	}
-	public async copy(_seq: string, _mailbox: string): Promise<never> {
-		throw new NotImplementedError("COPY");
+	/**
+	 * COPY (RFC 3501 §6.4.7 / RFC 9051 §6.4.7) -- M3.8. Bare (non-UID-prefixed)
+	 * verb: per the M3 plan's driver-wiring convention, delegates to
+	 * `MailboxSession.seq.copy()` (sequence-number grain), zero protocol logic
+	 * here (I-4). `_seq` is the scripted-wire-form sequence-set string, passed
+	 * straight through -- `SequenceSet.from()` (src/protocol/sequence-set.ts)
+	 * validates/re-serializes it.
+	 *
+	 * No selected mailbox: same rationale as `closeMailbox()`/`unselect()`
+	 * above -- `StateError` mirrors what `MailboxSession.seq.copy()` would
+	 * itself produce (every message-op method rejects `StateError` once
+	 * `closed`, and there is no session at all before a SELECT/EXAMINE
+	 * succeeds), and this file may not import `CopyCommand` directly.
+	 */
+	public async copy(seq: string, mailbox: string): Promise<CopyResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("copy() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.seq.copy(seq, mailbox);
 	}
-	public async move(_seq: string, _mailbox: string): Promise<never> {
-		throw new NotImplementedError("MOVE");
+	/**
+	 * MOVE (RFC 6851 §3 / RFC 9051 §6.4.8) -- M3.8. Bare (non-UID-prefixed)
+	 * verb: delegates to `MailboxSession.seq.move()` (sequence-number grain),
+	 * zero protocol logic here (I-4). The native-MOVE-only capability gate
+	 * (RFC6851-1-1, I-9) lives entirely in `MailboxSession`/`MoveCommand`, not
+	 * here -- see the same rationale as `copy()` above for the no-selected-
+	 * mailbox `StateError`.
+	 */
+	public async move(seq: string, mailbox: string): Promise<CopyResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("move() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.seq.move(seq, mailbox);
 	}
 	public async uidFetch(
 		_seq: string,
@@ -994,8 +1033,22 @@ export class ComplianceDriver {
 	): Promise<StoreResult> {
 		return this.runStore("uid", seq, action, flags, opts);
 	}
-	public async uidCopy(_seq: string, _mailbox: string): Promise<never> {
-		throw new NotImplementedError("UID COPY");
+	/**
+	 * UID COPY (RFC 3501 §6.4.7 / RFC 9051 §6.4.7) -- M3.8. UID-prefixed verb:
+	 * delegates to `MailboxSession.copy()` (UID grain) directly, zero protocol
+	 * logic here (I-4) -- mirrors `copy()`'s no-selected-mailbox rationale
+	 * above.
+	 */
+	public async uidCopy(seq: string, mailbox: string): Promise<CopyResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("uidCopy() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.copy(seq, mailbox);
 	}
 	public async idle(): Promise<never> {
 		throw new NotImplementedError("IDLE");
@@ -1036,8 +1089,23 @@ export class ComplianceDriver {
 	public async uidExpunge(_seq: string): Promise<never> {
 		throw new NotImplementedError("UID EXPUNGE");
 	}
-	public async uidMove(_seq: string, _mailbox: string): Promise<never> {
-		throw new NotImplementedError("UID MOVE");
+	/**
+	 * UID MOVE (RFC 6851 §3 / RFC 9051 §6.4.8) -- M3.8. UID-prefixed verb:
+	 * delegates to `MailboxSession.move()` (UID grain) directly, zero protocol
+	 * logic here (I-4) -- mirrors `move()`'s no-selected-mailbox rationale
+	 * above; the native-MOVE-only capability gate lives in `MailboxSession`/
+	 * `MoveCommand`.
+	 */
+	public async uidMove(seq: string, mailbox: string): Promise<CopyResult> {
+		const client = this.requireClient();
+		const session = client.mailbox;
+		if (!session) {
+			throw new StateError("uidMove() requires a selected mailbox", {
+				state: client.state,
+				required: ["selected"],
+			});
+		}
+		return session.move(seq, mailbox);
 	}
 	public async replace(
 		_seq: string,

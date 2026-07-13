@@ -2,14 +2,40 @@ import {
 	AppendUIDTextCode,
 	AtomTextCode,
 	CapabilityTextCode,
+	CopyUIDTextCode,
 	NumberTextCode,
 	PermanentFlagsTextCode,
 	TaggedResponse,
 	UntaggedResponse,
 } from "../parser";
-import { UID } from "../parser/structure/uid";
+import { UID, UIDRange } from "../parser/structure/uid";
+import type { UIDSet } from "../parser/structure/uid";
 import type { TextCode } from "../parser/structure/text.code";
 import type { TypedResponseCode } from "../protocol/response-codes";
+
+/** Expands a parsed `UIDSet` (individual UIDs and `a:b` ranges, per RFC
+ *  3501/9051 §9 `uid-set`) into an ascending flat list of concrete numbers,
+ *  used by the `COPYUID` handling below. RFC 4315's `resp-code-copy` grammar
+ *  never legitimately puts `"*"` in either uid-set here (that placeholder is
+ *  a `sequence-set`-only wildcard, meaningless once the server has assigned
+ *  real destination UIDs) -- a `"*"`-bearing element is skipped rather than
+ *  guessed at, tolerating a non-conformant server without inventing a number
+ *  (I-6). */
+function expandUidSet(set: UIDSet): number[] {
+	const out: number[] = [];
+	for (const el of set.set) {
+		if (el instanceof UIDRange) {
+			if (typeof el.startId === "number" && typeof el.endId === "number") {
+				for (let n = el.startId; n <= el.endId; n++) {
+					out.push(n);
+				}
+			}
+		} else if (typeof el.id === "number") {
+			out.push(el.id);
+		}
+	}
+	return out;
+}
 
 /** Strips one layer of surrounding DQUOTEs, mirroring `commands/status.ts`'s
  *  private helper of the same shape (BADURL's `url-resp-text` argument is a
@@ -53,6 +79,14 @@ export function toTypedResponseCode(
 		const first = code.uids.set[0];
 		const uid = first instanceof UID && typeof first.id === "number" ? first.id : 0;
 		return { name: "APPENDUID", uidValidity: code.uidvalidity, uid };
+	}
+	if (code instanceof CopyUIDTextCode) {
+		return {
+			name: "COPYUID",
+			uidValidity: code.uidvalidity,
+			sourceUids: expandUidSet(code.fromUIDs),
+			destUids: expandUidSet(code.toUIDs),
+		};
 	}
 	if (code instanceof PermanentFlagsTextCode) {
 		return { name: "PERMANENTFLAGS", flags: code.flags.flags.map((f) => f.name) };
@@ -124,11 +158,11 @@ export function toTypedResponseCode(
 		};
 	}
 	// Every other known TextCode variant with a structured (non-flat-string)
-	// payload -- COPYUID/MODIFIED -- gets its own typed variant (spec §5.5)
-	// as future work, landing with the command that first needs it
-	// (APPENDUID's own variant landed with M2.11's APPEND, above). Surface
-	// the code's name with no rendered args rather than guessing at a string
-	// representation.
+	// payload -- MODIFIED -- gets its own typed variant (spec §5.5) as
+	// future work, landing with the command that first needs it (APPENDUID's
+	// own variant landed with M2.11's APPEND above; COPYUID's landed with
+	// M3.8's COPY/MOVE above). Surface the code's name with no rendered args
+	// rather than guessing at a string representation.
 	return { name, args: null };
 }
 

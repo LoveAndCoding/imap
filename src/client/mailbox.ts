@@ -2,6 +2,9 @@ import { TypedEmitter } from "tiny-typed-emitter";
 
 import type { Command } from "../commands/base";
 import { CloseCommand } from "../commands/close";
+import { CopyCommand } from "../commands/copy";
+import type { CopyResult } from "../commands/copy";
+import { MoveCommand } from "../commands/move";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
@@ -118,6 +121,8 @@ export interface SequenceFacet {
 	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	copy(seqs: SequenceInput, dest: string): Promise<CopyResult>;
+	move(seqs: SequenceInput, dest: string): Promise<CopyResult>;
 }
 
 export interface MailboxSessionEvents {
@@ -152,10 +157,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	/** Sequence-number-grain mirror facet (spec §5b) — see `SequenceFacet`'s
 	 *  own doc comment. Constructed once, alongside every other field, in
 	 *  this constructor; its methods delegate back into this same session via
-	 *  the `MailboxSession.runSearch`/`.runStore` statics (same "static may
-	 *  reach private members" access-widening trick this file already
-	 *  documents for `markClosed`/`applyExists`/etc., since `SeqFacet` is
-	 *  declared in this module but is not itself a `MailboxSession`). */
+	 *  the `MailboxSession.runSearch`/`.runStore`/`.runCopyOrMove` statics
+	 *  (same "static may reach private members" access-widening trick this
+	 *  file already documents for `markClosed`/`applyExists`/etc., since
+	 *  `SeqFacet` is declared in this module but is not itself a
+	 *  `MailboxSession`). */
 	public readonly seq: SequenceFacet;
 
 	constructor(name: string, snapshot: SelectResult, driver: MailboxSessionDriver) {
@@ -400,6 +406,107 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts));
 	}
 
+	// -- message ops: COPY/MOVE (spec §5b, M3.8) ------------------------------
+
+	/**
+	 * COPY / UID COPY (RFC 3501 §6.4.7 / RFC 9051 §6.4.7) -- M3.8. Copies
+	 * `uids` into `dest`; the source mailbox is left untouched (contrast
+	 * `move()` below). `dest` goes through the same `CommandWriter.mailbox()`
+	 * mUTF-7/UTF-8 codec every other mailbox-name argument in this codebase
+	 * uses (M2.1) -- `CopyCommand.write()` is where that actually happens,
+	 * not here.
+	 *
+	 * Returns `CopyResult` (RFC 4315 UIDPLUS's `COPYUID`, spec §5.4/§5b) --
+	 * every field stays `undefined`, never a thrown error, when the server
+	 * lacks UIDPLUS.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public async copy(uids: SequenceInput, dest: string): Promise<CopyResult> {
+		return MailboxSession.runCopyOrMove(this, uids, dest, "uid", false);
+	}
+
+	/**
+	 * MOVE / UID MOVE (RFC 6851 §3 / RFC 9051 §6.4.8) -- M3.8. Native MOVE
+	 * ONLY (spec §5b's own "native MOVE only, gated" callout): a server that
+	 * hasn't advertised the `MOVE` capability (rev1) or folded it into base
+	 * protocol via `IMAP4rev2` (RFC 9051 §6.4.8 absorbs MOVE into rev2 core
+	 * with no separate token -- same OR-capability precedent as
+	 * `unselect()`'s own UNSELECT-or-IMAP4rev2 gate) never sees a single byte
+	 * of this command -- there is NO client-side COPY+STORE(\Deleted)+EXPUNGE
+	 * emulation fallback. The capability gate is enforced TWICE, both before
+	 * any bytes are written (I-9), same two-layer pattern `unselect()` above
+	 * uses: the explicit, RFC-annotated check in `runCopyOrMove()` below, and
+	 * `MoveCommand`'s own `capability = ["MOVE", "IMAP4rev2"]` declaration,
+	 * so a caller reaching the command directly via the `client.run()`
+	 * escape hatch is still caught.
+	 *
+	 * Returns `CopyResult` exactly like `copy()` above; see `MoveCommand`'s
+	 * own doc comment for why its `COPYUID` capture (an untagged OK arriving
+	 * BEFORE the EXPUNGE responses, RFC9051-6.4.8-1) needs different
+	 * machinery than `copy()`'s tagged-only read, and for why this method
+	 * performs no EXPUNGE bookkeeping itself (the existing untagged-EXPUNGE
+	 * state-tracker lane in `ImapClient`, `applyMailboxLiveUpdate`, already
+	 * applies it -- unconditionally of any command's `claims()` -- so doing
+	 * it again here would double-decrement `exists`).
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed.
+	 */
+	public async move(uids: SequenceInput, dest: string): Promise<CopyResult> {
+		return MailboxSession.runCopyOrMove(this, uids, dest, "uid", true);
+	}
+
+	/**
+	 * Package-private (same static-widening convention as `applyExists`/
+	 * `applyExpunge`/etc. below, and `commands/base.ts`'s own
+	 * `Command.assignTag`) -- shared COPY/MOVE dispatch for both the UID-grain
+	 * `copy()`/`move()` above and `SeqFacet`'s sequence-number-grain
+	 * mirrors (`SeqFacet` is a genuinely separate class in this same
+	 * file, so it cannot reach a real `private` member of `MailboxSession`;
+	 * this static is the minimal seam that lets it reuse the exact same
+	 * precondition/capability/dispatch logic rather than duplicating it --
+	 * `async` so the guards reject rather than throw, like `runSearch`/
+	 * `runStore` above). Nothing outside this file should call it.
+	 */
+	static async runCopyOrMove(
+		session: MailboxSession,
+		input: SequenceInput,
+		dest: string,
+		kind: "uid" | "seq",
+		isMove: boolean,
+	): Promise<CopyResult> {
+		const label = isMove
+			? kind === "uid"
+				? "move"
+				: "seq.move"
+			: kind === "uid"
+				? "copy"
+				: "seq.copy";
+		session.assertOpen(label);
+		if (
+			isMove &&
+			!session.driver.hasCapability("MOVE") &&
+			!session.driver.hasCapability("IMAP4rev2")
+		) {
+			throw new CapabilityError(
+				`${label}() requires the MOVE capability (RFC 6851 §3) or an ` +
+					"IMAP4rev2 server (RFC 9051 §6.4.8, which folds MOVE into the base " +
+					"command set with no separate capability token) -- native MOVE " +
+					"only, this library never emulates it client-side via " +
+					"COPY+STORE(\\Deleted)+EXPUNGE -- neither of which the server has " +
+					"advertised",
+				{ capability: "MOVE", rfc: "RFC6851" },
+			);
+		}
+		const set = SequenceSet.from(input).withKind(kind);
+		const command = isMove
+			? new MoveCommand(set, dest, kind === "uid")
+			: new CopyCommand(set, dest, kind === "uid");
+		return session.driver.run(command);
+	}
+
 	/** Shared precondition for every message-op/deselection method (spec §5b:
 	 *  "`closed`... all methods reject `StateError`"). Reads the live client
 	 *  state through the driver seam rather than guessing, so the error's
@@ -505,10 +612,16 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
  * `SequenceFacet` implementation backing `MailboxSession.seq` (spec §5b).
  * A thin delegator: every method forwards to the SAME shared static
  * (`MailboxSession.runSearch`, etc.) the UID-grain method uses, passing
- * `uid: false` so the wire verb is the bare (non-`UID`-prefixed) form. Kept
- * as its own class (rather than an object literal built in the
+ * the seq grain so the wire verb is the bare (non-`UID`-prefixed) form.
+ * Kept as its own class (rather than an object literal built in the
  * constructor) so future verbs land here as ordinary additional methods —
  * additive, merge-friendly, matching `SequenceFacet`'s own doc comment.
+ *
+ * UIDONLY lockout (RFC 9586, spec §5b: "unavailable under UIDONLY -- every
+ * method rejects `CapabilityError('UIDONLY active')`") is explicitly OUT OF
+ * SCOPE here -- M5's job once `ENABLE UIDONLY` itself lands; this
+ * milestone has no UIDONLY capability tracking to gate on yet, so no
+ * method below performs that check.
  */
 class SeqFacet implements SequenceFacet {
 	constructor(private readonly session: MailboxSession) {}
@@ -527,5 +640,20 @@ class SeqFacet implements SequenceFacet {
 
 	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult> {
 		return MailboxSession.runStore(this.session, "seq", seqs, "replace", flags, opts);
+	}
+
+	/** Sequence-number-grain COPY -- see `MailboxSession.copy()`'s doc
+	 *  comment; identical behavior, `seqs` interpreted as sequence numbers
+	 *  (bare `COPY`, not `UID COPY`) rather than UIDs. */
+	copy(seqs: SequenceInput, dest: string): Promise<CopyResult> {
+		return MailboxSession.runCopyOrMove(this.session, seqs, dest, "seq", false);
+	}
+
+	/** Sequence-number-grain MOVE -- see `MailboxSession.move()`'s doc
+	 *  comment; identical behavior (including the native-MOVE-only
+	 *  capability gate), `seqs` interpreted as sequence numbers (bare
+	 *  `MOVE`, not `UID MOVE`) rather than UIDs. */
+	move(seqs: SequenceInput, dest: string): Promise<CopyResult> {
+		return MailboxSession.runCopyOrMove(this.session, seqs, dest, "seq", true);
 	}
 }

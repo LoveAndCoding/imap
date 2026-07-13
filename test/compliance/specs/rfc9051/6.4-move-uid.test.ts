@@ -27,19 +27,23 @@
  * RFC9051-6.4.9-3: FETCH responses caused by UID commands implicitly include the
  *                  UID data item.
  *
- * Genuineness note: driver.examine() / move() / uidFetch() / uidSearch() are
- * all unimplemented today (they throw NotImplementedError), so those tests
- * are annotated `unimplemented`: the driver call rejects before any
- * forbidden command could be emitted or any scripted response processed.
+ * Genuineness note: driver.examine() / uidFetch() / uidSearch() are all
+ * unimplemented today (they throw NotImplementedError), so those tests are
+ * annotated `unimplemented`: the driver call rejects before any forbidden
+ * command could be emitted or any scripted response processed.
  * RFC9051-6.4.1-1 is the exception (M2.2): driver.select() is wired to the
  * real client, so that prohibition test is a REAL pass, not self-actualizing.
  * RFC9051-6.4.2-1 is a second exception as of M2.13: driver.unselect() is now
  * wired to `MailboxSession.unselect()` too, so its `expectFailure:
  * "unimplemented"` annotation is removed — the no-CLOSE/no-EXPUNGE
- * prohibition is a REAL pass. The remaining prohibition test (6.4.8-2
- * no-seq-command-mid-MOVE) stays self-actualizing — the missing expectLine
- * plus transcript guards catch a violation once MOVE lands. This is
- * disclosed rather than hidden behind a vacuous pass.
+ * prohibition is a REAL pass. RFC9051-6.4.8-1/-6.4.8-2 are a third exception
+ * as of M3.8: driver.move() is now wired to `MailboxSession.seq.move()`
+ * (both tests already scripted a full login+select preamble, so flipping
+ * them was a pure annotation removal, unlike the ext/move-6851.test.ts rows
+ * which needed that preamble added). RFC9051-6.4.8-1's COPYUID-in-untagged-OK
+ * capture and RFC9051-6.4.8-2's no-seq-command-mid-MOVE prohibition
+ * (guaranteed by `MoveCommand`'s `queueMode: "serial"`, see its own doc
+ * comment) are both REAL passes now, not self-actualizing.
  *
  * Note on driver surface: there is no dedicated uidMove() verb; the MOVE duties
  * here are exercised through move() (the §6.4.8 REQUIRED-COPYUID-in-untagged-OK
@@ -157,14 +161,15 @@ complianceTest(
 // (where COPYUID rides the tagged OK), MOVE delivers COPYUID in an *untagged* OK
 // ahead of the source-mailbox EXPUNGEs. The client must parse and correlate it
 // there so the new UIDs are known before the source is renumbered. Script
-// MOVE → "* OK [COPYUID ...]" → EXPUNGE responses → tagged OK.
-// driver.move() is unimplemented today → annotated unimplemented.
+// MOVE, "* OK [COPYUID ...]", EXPUNGE responses, then the tagged OK.
+// REAL SIGNAL as of M3.8: driver.move() is wired to MailboxSession.seq.move(),
+// whose MoveCommand.claims() claims untagged STATUS-type responses so its
+// accept() can recover COPYUID from the untagged OK, ahead of the EXPUNGEs.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.8-1"],
 		profiles: ["rev2"],
 		title: "client parses a COPYUID response code delivered in an untagged OK during MOVE, before the EXPUNGEs",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -206,13 +211,15 @@ complianceTest(
 // interleaved sequence-number command; a NOOP (no seq-number argument) models a
 // safe follow-up. Any FETCH/STORE/SEARCH with a bare sequence number sent before
 // the MOVE's tagged OK is an unscripted-command failure; the transcript guard is
-// an independent layer. driver.move() is unimplemented today → unimplemented.
+// an independent layer. REAL SIGNAL as of M3.8: driver.move() is wired, and
+// MoveCommand's queueMode: "serial" (see its own doc comment) is what actually
+// guarantees the prohibition -- no command of any kind, not just a seq-number
+// one, can be concurrently in flight with a serial command.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.8-2"],
 		profiles: ["rev2"],
 		title: "client does not send a message-sequence-number command while a MOVE is in progress",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

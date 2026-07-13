@@ -46,4 +46,10 @@ export type TypedResponseCode =
 	 *  fetched/resolved. `url` is the offending IMAP URL, verbatim (quotes
 	 *  stripped if the server quoted it). */
 	| { name: "BADURL"; url: string }
+	/** RFC 4315 (UIDPLUS): COPY's tagged OK, or MOVE's untagged OK arriving
+	 *  BEFORE the EXPUNGE responses (RFC9051-6.4.8-1) -- M3.8. `sourceUids`/
+	 *  `destUids` are position-paired (the i-th source UID landed at the
+	 *  i-th destination UID), expanded from the wire's `uid-set` ranges into
+	 *  individual numbers in ascending order. */
+	| { name: "COPYUID"; uidValidity: number; sourceUids: number[]; destUids: number[] }
 	| { name: string; args: string | null };

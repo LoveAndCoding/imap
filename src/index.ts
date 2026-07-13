@@ -59,6 +59,9 @@ export type {
 	AppendResult,
 	AppendSource,
 } from "./commands/append";
+// COPY/MOVE + UIDPLUS results (spec §5b, M3.8). `CopyResult` is shared by
+// both `MailboxSession.copy()`/`.move()` (and their `seq` mirrors).
+export type { CopyResult } from "./commands/copy";
 // Mailbox-management shared types (spec §3.2/§5.2 — M2.7/M2.8 LIST/LSUB,
 // M2.9 STATUS, M2.10 NAMESPACE; `StatusItem` is also LIST's
 // RETURN (STATUS ...) vocabulary).

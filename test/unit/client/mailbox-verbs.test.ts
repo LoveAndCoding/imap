@@ -419,3 +419,214 @@ describe("ImapClient.subscribe()/unsubscribe() (spec §3.2, M2.6)", () => {
 		await server.assertCompleted();
 	});
 });
+
+// -- M3.8: COPY/MOVE + UIDPLUS results ---------------------------------------
+
+/** SELECT INBOX steps (RFC 3501 §6.3.1 response set), reusable across the
+ *  M3.8 describe block below -- mirrors test/unit/client/select.test.ts's own
+ *  inline SELECT script shape. */
+function selectInboxSteps(exists = 5): ScriptStep[] {
+	return [
+		expectLine(command("SELECT", { args: /^INBOX$/i })),
+		reply("OK [READ-WRITE] SELECT completed", [
+			`* ${exists} EXISTS`,
+			"* 0 RECENT",
+			"* OK [UIDVALIDITY 1] UIDs valid",
+			`* OK [UIDNEXT ${exists + 1}] Predicted next UID`,
+			"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)",
+			"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited",
+		]),
+	];
+}
+
+describe("MailboxSession.copy()/move() + seq facet (spec §5b, M3.8)", () => {
+	let server: ScriptedServer | undefined;
+	let client: ImapClient | undefined;
+
+	afterEach(async () => {
+		await client?.close({ force: true }).catch(() => undefined);
+		await server?.close();
+		server = undefined;
+		client = undefined;
+	});
+
+	test("copy(): UID COPY <sequence-set> <mailbox>, resolves the CopyResult from COPYUID (RFC 4315)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			// [3,4,5] canonicalizes (SequenceSet, M3.3) to the coalesced "3:5".
+			expectLine(command("UID COPY", { args: "3:5 Archive" })),
+			reply("OK [COPYUID 38505 3:5 3956:3958] COPY completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.copy([3, 4, 5], "Archive");
+		await server.assertCompleted();
+
+		expect(result.uidValidity).toBe(38505);
+		expect(result.sourceUids).toEqual([3, 4, 5]);
+		expect(result.destUids).toEqual([3956, 3957, 3958]);
+	});
+
+	test("seq.copy(): the bare (non-UID-prefixed) 'COPY' verb, sequence numbers not UIDs", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("COPY", { args: "1:2 Archive" })),
+			reply("OK COPY completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.seq.copy([1, 2], "Archive");
+		await server.assertCompleted();
+	});
+
+	test('destination-name codec: copy(uids, "Entwürfe") sends the mUTF-7-encoded mailbox name (M2.1 codec)', async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("UID COPY", { args: "1 Entw&APw-rfe" })),
+			reply("OK COPY completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.copy(1, "Entwürfe");
+		await server.assertCompleted();
+	});
+
+	test("missing UIDPLUS (bare tagged OK, no COPYUID) -> every CopyResult field stays undefined, never a thrown error", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("UID COPY", { args: "1 Archive" })),
+			reply("OK COPY completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.copy(1, "Archive");
+		await server.assertCompleted();
+
+		expect(result).toEqual({});
+	});
+
+	test("move(): UID MOVE <sequence-set> <mailbox> when MOVE is advertised, resolves CopyResult from the untagged-OK COPYUID (RFC9051-6.4.8-1)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "MOVE"], [
+			...selectInboxSteps(5),
+			expectLine(command("UID MOVE", { args: "3:5 Archive" })),
+			// RFC9051-6.4.8-1: COPYUID rides an untagged OK BEFORE the EXPUNGEs.
+			reply("OK MOVE completed", [
+				"* OK [COPYUID 38505 3:5 3956:3958] Moved",
+				"* 3 EXPUNGE",
+				"* 3 EXPUNGE",
+				"* 3 EXPUNGE",
+			]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		expect(mailbox.exists).toBe(5);
+
+		const expungeEvents: number[] = [];
+		mailbox.on("expunge", (seq) => expungeEvents.push(seq));
+
+		const result = await mailbox.move([3, 4, 5], "Archive");
+		await server.assertCompleted();
+
+		expect(result.uidValidity).toBe(38505);
+		expect(result.sourceUids).toEqual([3, 4, 5]);
+		expect(result.destUids).toEqual([3956, 3957, 3958]);
+
+		// No-double-apply verification: 3 EXPUNGE lines -> exactly 3 "expunge"
+		// events and exists decremented by exactly 3 (5 -> 2), never 6/(5 -> -1)
+		// or any other double-counted outcome. MoveCommand claims only the
+		// untagged-OK COPYUID (STATUS-type); it never also claims/applies the
+		// EXPUNGE lines itself, so ImapClient's ordinary untagged-EXPUNGE
+		// state-tracker lane (which always fires, independent of any command's
+		// claims()) is the sole place this bookkeeping happens.
+		expect(expungeEvents).toEqual([3, 3, 3]);
+		expect(mailbox.exists).toBe(2);
+	});
+
+	test("seq.move(): the bare 'MOVE' verb when MOVE is advertised", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "MOVE"], [
+			...selectInboxSteps(),
+			expectLine(command("MOVE", { args: "2 Archive" })),
+			reply("OK MOVE completed", ["* OK [COPYUID 1 2 2] Moved", "* 2 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.seq.move(2, "Archive");
+		await server.assertCompleted();
+		expect(mailbox.exists).toBe(4);
+	});
+
+	test("move(): CapabilityError, zero bytes written, when MOVE is not advertised (RFC 6851 -- native MOVE only, never emulated via COPY+STORE+EXPUNGE)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// Deliberately NO MOVE in the script: any MOVE/UID MOVE on the wire
+		// would be an unscripted-command failure below.
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.move(1, "Archive");
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(CapabilityError);
+		expect((caught as CapabilityError).capability).toBe("MOVE");
+		expect((caught as CapabilityError).rfc).toBe("RFC6851");
+		// Connection still healthy and NOTHING was written for the gated call.
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("move(): IMAP4rev2 alone satisfies the gate (RFC 9051 §6.4.8 folds MOVE into base protocol, no separate token needed)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev2", "LITERAL-"], [
+			...selectInboxSteps(),
+			expectLine(command("UID MOVE", { args: "1 Archive" })),
+			reply("OK MOVE completed", ["* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.move(1, "Archive");
+		await server.assertCompleted();
+	});
+
+	test("queueMode is serial for both COPY and MOVE (spec §6.1) -- declared on the command classes wired here", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "MOVE"], [
+			...selectInboxSteps(),
+			expectLine(command("UID COPY", { args: "1 Archive" })),
+			reply("OK COPY completed"),
+			expectLine(command("UID MOVE", { args: "1 Archive" })),
+			reply("OK MOVE completed", ["* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		// Sequential (not concurrent) awaits are the only thing this test can
+		// observe about "serial" from the outside; queueMode's actual
+		// declaration is pinned directly against the command classes in
+		// test/unit/commands/copy.test.ts and test/unit/commands/move.test.ts.
+		await mailbox.copy(1, "Archive");
+		await mailbox.move(1, "Archive");
+		await server.assertCompleted();
+	});
+});

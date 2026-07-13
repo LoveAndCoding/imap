@@ -287,4 +287,122 @@ describe("MailboxSession (spec §5b, M2.2 skeleton)", () => {
 			expect((caught as StateError).required).toEqual(["selected"]);
 		});
 	});
+
+	describe("copy()/move()/seq (spec §5b, M3.8)", () => {
+		test("copy(): runs CopyCommand (UID-grain, verb 'UID COPY'), returns the driver's CopyResult verbatim", async () => {
+			const seenVerbs: string[] = [];
+			const copyResult = { uidValidity: 1, sourceUids: [1], destUids: [2] };
+			const driver = fakeDriver({
+				run: (async (cmd) => {
+					seenVerbs.push(cmd.verb);
+					return copyResult;
+				}) as MailboxSessionDriver["run"],
+			});
+			const session = makeSession({}, driver);
+
+			const result = await session.copy("1:5", "Archive");
+
+			expect(seenVerbs).toEqual(["UID COPY"]);
+			expect(result).toBe(copyResult);
+		});
+
+		test("seq.copy(): runs the bare (seq-grain) 'COPY' verb", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({ onRun: (cmd) => seenVerbs.push(cmd.verb) });
+			const session = makeSession({}, driver);
+
+			await session.seq.copy("1:5", "Archive");
+
+			expect(seenVerbs).toEqual(["COPY"]);
+		});
+
+		test("move(): runs MoveCommand (UID-grain, verb 'UID MOVE') when MOVE is advertised", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: (cap) => cap === "MOVE",
+			});
+			const session = makeSession({}, driver);
+
+			await session.move("1:5", "Archive");
+
+			expect(seenVerbs).toEqual(["UID MOVE"]);
+		});
+
+		test("seq.move(): runs the bare (seq-grain) 'MOVE' verb when MOVE is advertised", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: (cap) => cap === "MOVE",
+			});
+			const session = makeSession({}, driver);
+
+			await session.seq.move("1:5", "Archive");
+
+			expect(seenVerbs).toEqual(["MOVE"]);
+		});
+
+		test("move(): CapabilityError, zero-run, when MOVE is not advertised (RFC 6851, I-9 -- native MOVE only, never emulated)", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: () => false,
+			});
+			const session = makeSession({}, driver);
+
+			let caught: unknown;
+			try {
+				await session.move("1:5", "Archive");
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(CapabilityError);
+			expect((caught as CapabilityError).capability).toBe("MOVE");
+			expect((caught as CapabilityError).rfc).toBe("RFC6851");
+			expect(seenVerbs).toEqual([]);
+		});
+
+		test("move(): IMAP4rev2 alone satisfies the OR-capability gate (no MOVE token needed, RFC 9051 §6.4.8)", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: (cap) => cap === "IMAP4rev2",
+			});
+			const session = makeSession({}, driver);
+
+			await session.move("1:5", "Archive");
+			expect(seenVerbs).toEqual(["UID MOVE"]);
+		});
+
+		test("seq.move(): the same CapabilityError gate applies to the seq-grain mirror", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: () => false,
+			});
+			const session = makeSession({}, driver);
+
+			await expect(session.seq.move("1:5", "Archive")).rejects.toBeInstanceOf(
+				CapabilityError,
+			);
+			expect(seenVerbs).toEqual([]);
+		});
+
+		test("copy()/move()/seq.copy()/seq.move() on an already-closed session reject StateError, zero-run", async () => {
+			const seenVerbs: string[] = [];
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: () => true,
+			});
+			const session = makeSession({}, driver);
+			MailboxSession.markClosed(session, "closed");
+
+			await expect(session.copy("1", "A")).rejects.toBeInstanceOf(StateError);
+			await expect(session.move("1", "A")).rejects.toBeInstanceOf(StateError);
+			await expect(session.seq.copy("1", "A")).rejects.toBeInstanceOf(StateError);
+			await expect(session.seq.move("1", "A")).rejects.toBeInstanceOf(StateError);
+			expect(seenVerbs).toEqual([]);
+		});
+	});
 });
