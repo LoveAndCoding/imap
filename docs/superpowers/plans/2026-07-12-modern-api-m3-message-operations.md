@@ -263,6 +263,109 @@ touches FETCH bodies (M3.4, M3.5) or MULTIAPPEND/CATENATE literal volume
 (M3.10). SEARCH/STORE/COPY/MOVE/EXPUNGE (M3.3, M3.6-M3.9) do not depend on
 this spike and can proceed in parallel.
 
+### M3.1 RESOLUTION — the written design decision (recorded at M3 kickoff)
+
+**Fact-base corrections to this task's premises** (from the kickoff
+exploration pass; full citations in the session fact base):
+
+- The premise "NewlineTransform already must know the literal's declared
+  length from framing" is FALSE for the current code. `NewlineTranform`
+  (`src/newline.transform.ts`, note the historical misspelling) splits
+  blindly on every CRLF (`indexOf(CRLF)` loop, lines ~92-138) with zero
+  `{n}` awareness. A server literal containing CRLF is split across
+  multiple pushed "lines" today; fragmented literals only survive because
+  the LEXER string-buffers everything across `_transform` calls
+  (`src/lexer/lexer.ts` `this.buffer += line.toString()`) until
+  `StringRule` (`src/lexer/rules/string.ts:36-64`) can consume the whole
+  `{n}\r\n` + n bytes in one synchronous pass. §11.4's "must not buffer
+  literal bodies" duty is therefore NEW behavior for the framing layer,
+  not a confirmation of existing logic.
+- Literal bodies currently live as JS STRINGS end-to-end
+  (`LiteralStringToken.value` holds the raw `{n}\r\nOCTETS` wire text) —
+  binary-unsafe for literal8/BINARY payloads and memory-doubled for large
+  bodies. The redesign moves literal bodies to Buffers/streams.
+- The M2.2 16-response deadlock was OBJECT-COUNT-driven (parser push()es
+  responses nothing reads; 16-object objectMode highWaterMark), NOT
+  literal-size-driven. Streaming literals alone would not have fixed it,
+  and removing `parser.resume()` naively reintroduces it.
+
+**The §5.4-coexistence answer (the question this spike exists to settle):**
+pipe-chain backpressure is ABANDONED as the mechanism — it is already
+discarded today (`parser.resume()` puts the parser's dead Readable side in
+flowing mode precisely so pipe backpressure can never fire), and no design
+that re-enables pipe()-propagated pause can coexist with the router's
+event-driven consumption model. Instead:
+
+1. **Retire the parser's Readable side.** `Parser._transform` stops
+   `push()`-ing responses entirely (the custom events — the router — are
+   and always were the only real consumer). This removes the `.resume()`
+   hack AND the entire 16-object deadlock class at the root, instead of
+   suppressing it. The parser stays a Transform for pipeline plumbing but
+   its Readable side carries nothing.
+2. **Explicit socket-level backpressure keyed to literal-stream
+   consumption.** When the framing layer opens a streaming literal, the
+   connection pauses the socket (`socket.pause()`) whenever the literal
+   stream's internal buffer is above its highWaterMark and the consumer
+   isn't reading; the stream's `_read` resumes the socket. Because the
+   byte count is declared up front (`{n}`), the stream pushes exactly n
+   bytes and ends deterministically — no chunked/unknown-length handling.
+   This directly implements §5.4's "the iterator does not advance past a
+   message until its live streams are consumed or destroyed (backpressure
+   to the socket)": while a live stream is unconsumed, the socket is
+   paused, so no later response bytes are even read, let alone parsed.
+
+**Layering decision (where "large" becomes a stream):** the framing/lexer
+layer streams literals above a LOW MECHANICAL THRESHOLD (spike default:
+8 KiB — final value settled in M3.2 by measuring the small-literal
+consumers' actual maxima) and keeps smaller literals buffered in the token
+exactly as today (all non-FETCH literal consumers — ENVELOPE fields,
+addresses, BODYSTRUCTURE metadata, ID pairs — are structurally tiny; the
+per-consumer inventory in the fact base found only FETCH body-section /
+RFC822 / HEADER paths plausibly above KB scale). `maxInlineSize` is NOT
+threaded into the lexer: it is consumed exclusively by the `FetchedPart`
+layer (M3.5), which decides per §5.4 whether to eagerly drain a streamed
+literal into a buffer (size ≤ maxInlineSize) or hand the live stream to
+the caller. This confirms the task's "likely resolution" layering.
+Defensive rule: any NON-FETCH structure parser that encounters a streaming
+literal token drains it to a buffer via a shared helper (correctness
+preserved even if a server sends an absurd literal where a small value is
+expected; memory profile no worse than today's full buffering).
+
+**Mechanism shape (indicative for M3.2, exact code its own task):**
+
+- `NewlineTranform` becomes literal-aware: it already accumulates
+  `currentLine`; when a completed line ends with an IMAP literal
+  announcement (`/~?\{\d+\+?\}\r\n$/` — the `+` non-sync marker appears in
+  client->server literals only, but tolerate it), it pushes the line as
+  today, then enters "opaque mode" for the next n bytes: those bytes are
+  pushed as tagged literal-body chunks (objectMode already; push
+  `{literal: Buffer}` markers or a small discriminated class) without CRLF
+  scanning, decrementing a remaining counter across chunks. The
+  `maxLineLength` guard must not count opaque literal bytes.
+- The lexer, on seeing the announcement at end-of-line, constructs the
+  literal token: below-threshold → accumulate body chunks into a Buffer,
+  produce today's buffered token shape (value becomes Buffer-backed;
+  `getTrueValue()` keeps returning string for small text literals so no
+  small-consumer changes); above-threshold → produce a `LiteralStreamToken`
+  carrying a `Readable` plus declared length, and emit the completed
+  token list for the line WITHOUT waiting for the body to finish arriving
+  (this is what lets the FETCH bridge hand a live stream to the consumer
+  mid-response).
+- Non-goals confirmed: client->server literals (APPEND continuation data)
+  are untouched — this is response-side parsing only. The
+  `ResponseCollector` seam (`src/commands/collector.ts` doc comment) stays
+  the M3.4/M3.5 integration point; nothing in it changes shape.
+
+**Acceptance bar held:** the throwaway spike proof exercises a
+byte-staggered ScriptedServer transcript (the harness's `chunks:` send
+option already supports forced packet splits; no existing test fragments a
+literal PAYLOAD — the spike proof and then M3.2's real tests author that
+coverage) demonstrating (a) a FETCH body literal delivered across ≥3
+staggered chunks arrives intact via the stream, (b) socket reads pause
+while the stream consumer withholds demand and resume when it reads, and
+(c) a small quoted-string FETCH body still parses through the unchanged
+path (legacy regression scenario 2 shape).
+
 ---
 
 ## M3.2 — Literal streaming implementation (§11.4)
