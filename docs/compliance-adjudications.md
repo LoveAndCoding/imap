@@ -71,3 +71,34 @@ config surface ahead of its planned milestone; the deviation is scoped to
 exactly the automatic-connect-time behavior, not to whether the verb can be
 driven at all (it can, via `enableExtensions()`, once a real profile-intent
 signal exists).
+
+---
+
+## Pure-rev2-only mailbox-name codec direction — deviate (temporary, revisit at M5)
+
+**Context:** RFC 9051 Appendix A's mUTF-7-compatibility MUST (A-2) and the
+ENABLE gate (A-1) are conditioned on a server advertising BOTH IMAP4rev1
+and IMAP4rev2. A server advertising only IMAP4rev2 falls outside that
+apparatus: RFC9051-A-3 says mUTF-7 support "is not required for
+IMAP4rev2-only clients and servers", and RFC9051-5.1-1 frames Net-Unicode
+names as the rev2 default. Such a server has no obligation to decode
+mUTF-7.
+
+**Decision:** The client currently sends modified UTF-7 for non-ASCII
+mailbox names whenever `UTF8=ACCEPT` is not ENABLEd, including against
+pure-rev2-only servers — one codec rule for every session, matching the
+compliance suite's rev2 fixtures (which advertise `IMAP4rev2 LITERAL-`
+and pin mUTF-7 forms as the expected behavior; the extrapolation is
+documented in test prose at rfc9051/5-operational.test.ts).
+
+**Residual risk:** a pure-rev2-only server lacking an mUTF-7 decoder
+would store a shifted name literally. Mitigations: genuine rev2 servers
+accept UTF-8 quoted-strings natively and in practice advertise
+UTF8=ACCEPT (which the default `extensions:"auto"` config ENABLEs,
+making the raw-UTF-8 arm active); the deviation is only reachable with
+`extensions:false` or a rev2-only server that omits UTF8=ACCEPT.
+
+**Revisit:** M5's UTF8=ACCEPT/ONLY behaviors task re-decides whether the
+codec gains a pure-rev2 (IMAP4rev2 without IMAP4rev1) raw-UTF-8 arm; the
+spec §5.2 text was amended at the M2 review to match the implemented
+rule and points here.

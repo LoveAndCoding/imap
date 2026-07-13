@@ -427,9 +427,17 @@ export interface MailboxStatusResult {
 ```
 
 Mailbox-name codec rules (protocol/): encode caller UTF-8 → modified UTF-7
-unless (`UTF8=ACCEPT` enabled ∨ server is rev2); decode symmetrically on all
-inbound names; `INBOX` is case-insensitive and always canonicalized to
-`"INBOX"`. 8-bit names are never sent unencoded on rev1 (RFC 6855 duties).
+unless `UTF8=ACCEPT` is ENABLEd by this client (advertisement alone never
+licenses UTF-8 wire forms — RFC 6855 §3's MUST binds the client's own
+ENABLE); decode symmetrically on all inbound names; `INBOX` is
+case-insensitive and always canonicalized to `"INBOX"`. 8-bit names are
+never sent unencoded on rev1 (RFC 6855 duties). [Amended at the M2 review:
+the original "∨ server is rev2" disjunct was wrong both ways — literal
+implementation would violate RFC 9051 A-2 against dual-advertising servers,
+while pure-rev2-only servers (no IMAP4rev1 token) genuinely fall outside
+Appendix A's apparatus; that narrower pure-rev2 case is adjudicated in
+docs/compliance-adjudications.md and revisited by M5's UTF8=ACCEPT/ONLY
+task.]
 
 ### 5.3 Search criteria
 

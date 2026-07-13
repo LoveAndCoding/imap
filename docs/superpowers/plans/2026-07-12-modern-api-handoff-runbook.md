@@ -85,6 +85,18 @@ orchestration, adjudication, and diff review.
 
 ## 3. Phase-boundary reviews (mandatory, they keep finding criticals)
 
+**Orchestration in THIS environment (learned at M2):** `TaskOutput` is not
+exposed inside subagents, so a sub-orchestrator (review-runner) can never
+retrieve its own children's results — its multi-lens pipeline cannot work
+here. The working pattern: the MAIN loop dispatches 3-5 lens agents
+directly (state/correctness/spec-compliance/security/error-handling as the
+milestone warrants) with a shared context packet + diff path, receives
+their reports via completion notifications, verifies the key findings
+itself, dispatches one fix agent for the confirmed batch, and writes the
+verdict. review-runner remains usable only as a single-reviewer deep pass
+(the M1 fallback mode). Both review agent definitions carry notes to this
+effect.
+
 Every milestone close dispatches a review over the milestone's `src/` diff
 (export it to a file; give the reviewer the final-state file list too).
 Use the `review-runner` agent (definitions in `.claude/agents/` — they were

@@ -75,7 +75,15 @@ You will be given:
    completion isn't awaited when you need its findings and the run can
    stall.
 
-   **Forced-async environments.** Some environments force every Agent
+   **KNOWN LIMITATION (verified):** in some environments `TaskOutput` is not
+exposed inside subagents at all ("No such tool available"). If your first
+`TaskOutput` call fails that way, do NOT dispatch sub-agents you cannot
+await: fall back to a SINGLE-REVIEWER DEEP PASS — read the scoped files
+yourself against the provided references and produce the findings/verdict
+directly (this fallback has a strong track record here). Report that the
+pipeline was skipped and why.
+
+**Forced-async environments.** Some environments force every Agent
    spawn into the background even when `run_in_background: false` is
    passed (the spawn result says "Async agent launched" / "working in the
    background" and gives an agentId + output file path). When you see
