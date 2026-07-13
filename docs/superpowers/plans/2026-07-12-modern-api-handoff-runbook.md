@@ -25,21 +25,46 @@ orchestration, adjudication, and diff review.
 
 ## 1. State at handoff
 
-- **M0, M1: CLOSED** (snapshots + notes in `docs/compliance-history/M0/`,
-  `M1/`). M1 close: 489 pass / 2 adjudicated violations / 0 problems.
-- **M2: IN PROGRESS.** Done: M2.1 (mailbox codec + writer delegation),
-  M2.2 (SELECT/EXAMINE + MailboxSession → 513 pass), M2.12 (RFC 3691
-  catalog extraction, +6 rows). In flight at handoff (resume or re-run):
-  - M2.3–M2.6 CREATE/DELETE/RENAME/SUBSCRIBE/UNSUBSCRIBE — main tree.
-  - M2.7–M2.8 unified LIST + LSUB — worktree `agent-ac9075a8663d817e1`.
-  - M2.9–M2.10 STATUS + NAMESPACE — worktree `agent-afc712acfca0b9561`.
-  Remaining after those: M2.11 APPEND (single), M2.13 UNSELECT/CLOSE,
-  M2.14 milestone close.
-- **Compliance right now:** 513 pass / 2 violations (both adjudicated,
-  `docs/compliance-adjudications.md`) / 645 unimplemented / 427 untestable /
-  problems []. The ratchet baseline is ALWAYS the last committed milestone
+*(Living section — update at every milestone close AND whenever tasks land
+between closes; last updated: M3 in progress, after M3.1+M3.3.)*
+
+- **M0, M1, M2: CLOSED** (snapshots + notes in `docs/compliance-history/M0/`,
+  `M1/`, `M2/`). M2 close: 602 pass / 2 adjudicated violations / problems [].
+  All M2 exit families at 100% with the RFC9051-6.3.13 IDLE rows itemized as
+  M4 work. The M2 phase review's seven findings (F1 critical select/examine
+  serialization → F7) are FIXED and landed (commit `66b525a`); review outcome
+  addendum in `docs/compliance-history/M2/NOTES.md`.
+- **M3: IN PROGRESS** per
+  `docs/superpowers/plans/2026-07-12-modern-api-m3-message-operations.md`.
+  - M3.1 DONE — literal-streaming design decision recorded in the M3 plan
+    doc ("M3.1 RESOLUTION"), spike-proof outcomes recorded beneath it
+    ("M3.1 PROOF ADDENDUM", commit `dbc8ee7`): all three acceptance claims
+    PROVEN; the addendum's encoding correction (pipeline is UTF-8-decoded
+    and ALREADY corrupts non-ASCII literals) and the mandatory opaque-guard
+    are binding obligations on M3.2. Proof artifacts were throwaway
+    (session scratchpad only, not committed).
+  - M3.3 DONE — `SequenceSet` landed (`src/protocol/sequence-set.ts`,
+    commit `8d590b4`), zero compliance-row changes (unwired until the verb
+    tasks).
+  - M3.2 (literal streaming implementation) IN FLIGHT — main tree
+    (lexer/newline/parser/connection files).
+  - M3.7 (SEARCH compiler + verb) IN FLIGHT — isolated worktree; merge
+    serially AFTER M3.2 lands (M3.7 owns `mailbox.ts`/`driver.ts` additions;
+    creates the `seq` facet if first to land a verb).
+  - Remaining: M3.4 (collector FETCH bridge, needs M3.2), M3.5 FETCH,
+    M3.6 STORE, M3.8 COPY/MOVE, M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE,
+    M3.11 response-code sweep + milestone close.
+- **Compliance right now:** 602 pass / 2 violations (both adjudicated,
+  `docs/compliance-adjudications.md`) / problems []. Checked-in reports
+  (`test/compliance/reports/`) match the M2 snapshot byte-for-byte. The
+  ratchet baseline is ALWAYS the last committed milestone
   snapshot plus deltas noted in commit messages; measure per-row, never by
   totals (totals mask offsetting flips — this bit us once in M0.5).
+- **Spend-limit kills:** recurring; latest wave reported "monthly spend
+  limit" (not the rolling-window message). Resume protocol unchanged
+  (SendMessage with last-narration context); user confirmed limits reset on
+  a rolling window and asked only that recurrences be raised, which has
+  been done.
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before
   deciding: finished-and-verified → commit; half-done → usually keep and

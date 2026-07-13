@@ -23,23 +23,31 @@ especially I-4/I-6/I-10).
 FETCH bodies) are this milestone's duties; scenario 3 (IDLE ordering) is
 M4's.
 
-**Status check — READ BEFORE STARTING, this section is a snapshot from the
-handoff runbook and WILL be stale by the time M3 actually starts (see
-"Validate at kickoff" below).** At the time this doc was written, M2 was
-**still in progress**: M2.1 (mailbox codec), M2.2 (SELECT/EXAMINE +
-`MailboxSession`), and M2.12 (RFC 3691 catalog) were committed; M2.3–M2.6
-(CREATE/DELETE/RENAME/SUBSCRIBE/UNSUBSCRIBE) existed as uncommitted work in
-the main tree; M2.7–M2.10 (LIST/LSUB/STATUS/NAMESPACE) were in flight in two
-worktrees; M2.11 (APPEND single) and M2.13/M2.14 (UNSELECT/CLOSE, milestone
-close) had not started. **M3 must not start until M2.14 has actually
-closed** — this doc is written now (per the user-approved plan of authoring
-each milestone's kickoff doc in advance) so the task breakdown and risk
-analysis are ready the moment M2 closes, not because M3 work can begin
-early. The one M2 artifact this doc's tasks structurally depend on already
-exists in the tree: `MailboxSession` (`src/client/mailbox.ts` — note, NOT
-`mailbox-session.ts`, a filename deviation from the M2 plan doc's stated
-path; use the real path) with its snapshot fields, events, and
+**Status (living section — keep current as tasks land).** M2 CLOSED at
+602 pass / 2 adjudicated violations / problems [] (snapshot
+`docs/compliance-history/M2/`), phase-review findings F1–F7 fixed
+(`66b525a`). That snapshot is M3's ratchet baseline; the checked-in
+`test/compliance/reports/` match it byte-for-byte. The original kickoff
+prerequisite ("M3 must not start until M2.14 has actually closed") is
+satisfied. `MailboxSession` lives at `src/client/mailbox.ts` (note, NOT
+`mailbox-session.ts`) with its snapshot fields, events, and
 `ImapClient.mailbox` getter (`src/client/client.ts`).
+
+Per-task status:
+
+| Task | Status |
+|---|---|
+| M3.1 spike (design + proof) | **DONE** — "M3.1 RESOLUTION" + "M3.1 PROOF ADDENDUM" below (`6fcfd7a`, `dbc8ee7`) |
+| M3.2 literal streaming | IN FLIGHT (main tree) — bound by the proof addendum's obligations |
+| M3.3 SequenceSet | **DONE** — `8d590b4`, zero row changes (unwired by design) |
+| M3.4 collector FETCH bridge | pending (needs M3.2) |
+| M3.5 FETCH engine | pending |
+| M3.6 STORE | pending |
+| M3.7 SEARCH | IN FLIGHT (worktree; merge after M3.2) |
+| M3.8 COPY/MOVE | pending |
+| M3.9 EXPUNGE | pending |
+| M3.10 MULTIAPPEND/CATENATE | pending |
+| M3.11 sweep + close | pending |
 
 ---
 
