@@ -6,6 +6,7 @@ import * as tls from "node:tls";
 // imported from anywhere under test/compliance/specs or test/compliance/driver.
 import { Connection, ImapClient, StateError } from "../../../src/index";
 import type {
+	AppendMessageEntry,
 	AppendResult as ClientAppendResult,
 	CopyResult,
 	ImapClientConfig,
@@ -841,25 +842,24 @@ export class ComplianceDriver {
 		return this.requireClient().status(mailbox, items as StatusItem[]);
 	}
 	/**
-	 * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) -- delegates to
-	 * `ImapClient.append()` (M2.11), zero protocol logic here (I-4). Only the
-	 * single-message form is wired: `opts.catenate` (RFC 4469 CATENATE, and
-	 * by extension MULTIAPPEND, RFC 3502) stays `NotImplementedError` --
-	 * explicitly out of scope for M2.11 (M3 work) -- checked BEFORE
-	 * touching the client so no bytes go out for an unsupported request.
+	 * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12), extended by RFC 4469
+	 * CATENATE (M3.10) -- delegates to `ImapClient.append()` (M2.11's
+	 * `AppendOptions`/`AppendCommand`, extended in place at M3.10 for
+	 * `opts.catenate`), zero protocol logic here (I-4). This file's own
+	 * `AppendOptions.catenate` ad hoc shape is IDENTICAL in shape to the real
+	 * `CatenatePart[]` (`{type:"TEXT",message}|{type:"URL",url}`), so no
+	 * translation is needed -- passed straight through.
 	 */
 	public async append(
 		mailbox: string,
 		message: Buffer,
 		opts?: AppendOptions,
 	): Promise<ClientAppendResult> {
-		if (opts?.catenate) {
-			throw new NotImplementedError("APPEND CATENATE");
-		}
 		return this.requireClient().append(mailbox, message, {
 			flags: opts?.flags,
 			internalDate: opts?.date ? new Date(opts.date) : undefined,
 			binary: opts?.binary,
+			catenate: opts?.catenate,
 		});
 	}
 	public async check(): Promise<never> {
@@ -1174,12 +1174,25 @@ export class ComplianceDriver {
 		throw new NotImplementedError("SETMETADATA");
 	}
 
-	// MULTIAPPEND (RFC 3502)
+	/**
+	 * MULTIAPPEND (RFC 3502 §6.3.11) -- M3.10. Delegates to
+	 * `ImapClient.appendMany()`, zero protocol logic here (I-4). Each
+	 * scripted-wire-form entry (`{ message, flags?, date? }`) maps onto the
+	 * real `AppendMessageEntry` one field at a time -- `date` (a plain ISO
+	 * string here, matching every other ad hoc `AppendOptions.date` in this
+	 * file) becomes `internalDate` (a `Date`), same translation `append()`
+	 * above already does for the single-message form.
+	 */
 	public async multiAppend(
-		_mailbox: string,
-		_messages: Array<{ message: Buffer; flags?: string[]; date?: string }>,
-	): Promise<never> {
-		throw new NotImplementedError("MULTIAPPEND");
+		mailbox: string,
+		messages: Array<{ message: Buffer; flags?: string[]; date?: string }>,
+	): Promise<ClientAppendResult[]> {
+		const entries: AppendMessageEntry[] = messages.map((m) => ({
+			message: m.message,
+			flags: m.flags,
+			internalDate: m.date ? new Date(m.date) : undefined,
+		}));
+		return this.requireClient().appendMany(mailbox, entries);
 	}
 
 	// ---- Phase 5: search/sort/sync/events ----------------------------------

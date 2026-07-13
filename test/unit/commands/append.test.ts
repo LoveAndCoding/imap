@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { AppendCommand } from "../../../src/commands/append";
+import { AppendCommand, MultiAppendCommand } from "../../../src/commands/append";
 import { Command } from "../../../src/commands/base";
 import { ResponseCollector } from "../../../src/commands/collector";
 import { CommandWriter } from "../../../src/commands/writer";
+import { CapabilityError } from "../../../src/errors";
 import Lexer from "../../../src/lexer/lexer";
 import Parser from "../../../src/parser/parser";
 import TaggedResponse from "../../../src/parser/structure/tagged";
@@ -336,6 +337,321 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 			const tagged = parseLine(`A1 OK APPEND completed${CRLF}`) as TaggedResponse;
 			const c = new ResponseCollector([], tagged);
 			expect(Command.acceptResult(cmd, c)).toEqual({});
+		});
+	});
+
+	describe("CATENATE (RFC 4469 §3/§5) — M3.10", () => {
+		test("gated on the CATENATE capability: CapabilityError, zero bytes, when absent", () => {
+			expect(
+				() =>
+					new AppendCommand("Drafts", Buffer.alloc(0), {
+						catenate: [{ type: "TEXT", message: Buffer.from("hi\r\n") }],
+					}),
+			).toThrow(CapabilityError);
+		});
+
+		test("CATENATE capability advertised: construction succeeds", () => {
+			expect(
+				() =>
+					new AppendCommand(
+						"Drafts",
+						Buffer.alloc(0),
+						{ catenate: [{ type: "TEXT", message: Buffer.from("hi\r\n") }] },
+						{ has: (c) => c === "CATENATE", knownAppendLimit: () => false },
+					),
+			).not.toThrow();
+		});
+
+		test("min-one (RFC4469-3-4): an empty catenate array throws RangeError, checked before the capability probe", () => {
+			expect(
+				() =>
+					new AppendCommand(
+						"Drafts",
+						Buffer.alloc(0),
+						{ catenate: [] },
+						// Even with CATENATE advertised, an empty part list is illegal.
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).toThrow(RangeError);
+		});
+
+		test("NUL byte in a TEXT cat-part is refused (RangeError), same rule as the base message", () => {
+			expect(
+				() =>
+					new AppendCommand(
+						"Drafts",
+						Buffer.alloc(0),
+						{ catenate: [{ type: "TEXT", message: Buffer.from([0x41, 0x00, 0x42]) }] },
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).toThrow(/NUL byte/);
+		});
+
+		test("write(): CATENATE (TEXT {n} URL \"...\") wire form, TEXT + URL parts", () => {
+			const cmd = new AppendCommand(
+				"Drafts",
+				Buffer.alloc(0),
+				{
+					catenate: [
+						{ type: "TEXT", message: Buffer.from("Fwd: see below\r\n\r\n") },
+						{ type: "URL", url: "/Sent;UIDVALIDITY=385759045/;UID=20/;section=1.MIME" },
+					],
+				},
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["CATENATE"]);
+			Command.writeArgs(cmd, w);
+			const text = wireText(w);
+			expect(text).toBe(
+				'Drafts CATENATE (TEXT {18}\r\nFwd: see below\r\n\r\n URL ' +
+					'"/Sent;UIDVALIDITY=385759045/;UID=20/;section=1.MIME")',
+			);
+		});
+
+		test("write(): a single (minimal) cat-part is well-formed, never an empty '()' list", () => {
+			const cmd = new AppendCommand(
+				"Drafts",
+				Buffer.alloc(0),
+				{ catenate: [{ type: "TEXT", message: Buffer.from("hello\r\n") }] },
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["CATENATE"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).toBe("Drafts CATENATE (TEXT {7}\r\nhello\r\n)");
+		});
+
+		test("the top-level `message` argument's bytes are never put on the wire when catenate is present", () => {
+			const cmd = new AppendCommand(
+				"Drafts",
+				Buffer.from("THIS MUST NOT APPEAR ON THE WIRE"),
+				{ catenate: [{ type: "TEXT", message: Buffer.from("hi\r\n") }] },
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["CATENATE"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).not.toContain("MUST NOT APPEAR");
+		});
+
+		test("a NUL byte in the (unused) top-level message argument is NOT refused when catenate is present", () => {
+			expect(
+				() =>
+					new AppendCommand(
+						"Drafts",
+						Buffer.from([0x00]),
+						{ catenate: [{ type: "TEXT", message: Buffer.from("hi\r\n") }] },
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).not.toThrow();
+		});
+
+		test("URL cat-parts are always quoted, never a bare atom, per RFC 4469's own worked examples", () => {
+			const cmd = new AppendCommand(
+				"Drafts",
+				Buffer.alloc(0),
+				{ catenate: [{ type: "URL", url: "/Sent;UIDVALIDITY=1/;UID=1" }] },
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["CATENATE"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).toBe('Drafts CATENATE (URL "/Sent;UIDVALIDITY=1/;UID=1")');
+		});
+
+		test("RFC7889-4-2 still applies: CATENATE TEXT literals force a synchronizing literal when the upload limit is unknown", () => {
+			const cmd = new AppendCommand(
+				"Drafts",
+				Buffer.alloc(0),
+				{ catenate: [{ type: "TEXT", message: Buffer.from("x") }] },
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["CATENATE", "LITERAL+"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).toBe("Drafts CATENATE (TEXT {1}\r\nx)");
+			expect(w.segments()[0]?.awaitContinuation).toBe(true);
+		});
+	});
+});
+
+describe("MultiAppendCommand (RFC 3502 §6.3.11) — M3.10", () => {
+	test("declares verb/queueMode/states identically to AppendCommand (same wire verb, same legal states)", () => {
+		const cmd = new MultiAppendCommand("INBOX", [{ message: Buffer.from("a") }]);
+		expect(cmd.verb).toBe("APPEND");
+		expect(cmd.queueMode).toBe("pipeline");
+		expect(cmd.states).toEqual(["authenticated", "selected"]);
+	});
+
+	test("rejects an empty messages array", () => {
+		expect(() => new MultiAppendCommand("INBOX", [])).toThrow(RangeError);
+	});
+
+	test("rejects a non-array messages argument", () => {
+		expect(() => new MultiAppendCommand("INBOX", "not an array" as never)).toThrow(RangeError);
+	});
+
+	describe("MULTIAPPEND capability gate", () => {
+		test("a single-entry batch needs no MULTIAPPEND support (one-message degrade shape)", () => {
+			expect(
+				() => new MultiAppendCommand("INBOX", [{ message: Buffer.from("a") }]),
+			).not.toThrow();
+		});
+
+		test("more than one message without MULTIAPPEND advertised throws CapabilityError, zero bytes", () => {
+			expect(
+				() =>
+					new MultiAppendCommand("INBOX", [
+						{ message: Buffer.from("a") },
+						{ message: Buffer.from("b") },
+					]),
+			).toThrow(CapabilityError);
+		});
+
+		test("more than one message WITH MULTIAPPEND advertised succeeds", () => {
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[{ message: Buffer.from("a") }, { message: Buffer.from("b") }],
+						{ has: (c) => c === "MULTIAPPEND", knownAppendLimit: () => false },
+					),
+			).not.toThrow();
+		});
+	});
+
+	describe("per-message validation (RFC 3502 §6.3.11's independent [flags] [date-time] per group)", () => {
+		test("NUL byte in one message's content is refused (RangeError) independent of the others", () => {
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[
+							{ message: Buffer.from("clean") },
+							{ message: Buffer.from([0x00]) },
+						],
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).toThrow(/NUL byte/);
+		});
+
+		test("a message's own binary:true opts out of the NUL refusal for THAT message only", () => {
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[
+							{ message: Buffer.from("clean") },
+							{ message: Buffer.from([0x00]), binary: true },
+						],
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).not.toThrow();
+		});
+
+		test("\\Recent in one message's own flags is refused (RangeError), independent of the others", () => {
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[
+							{ message: Buffer.from("a"), flags: ["\\Seen"] },
+							{ message: Buffer.from("b"), flags: ["\\Recent"] },
+						],
+						{ has: () => true, knownAppendLimit: () => false },
+					),
+			).toThrow(RangeError);
+		});
+	});
+
+	describe("write()", () => {
+		test("two messages, each with independent flags/date: mailbox then two back-to-back groups", () => {
+			const cmd = new MultiAppendCommand(
+				"Saved-Messages",
+				[
+					{ message: Buffer.from("first\r\n"), flags: ["\\Seen"] },
+					{
+						message: Buffer.from("second\r\n"),
+						flags: ["\\Seen", "\\Draft"],
+						internalDate: new Date(Date.UTC(2026, 6, 5, 0, 0, 0)),
+					},
+				],
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps(["MULTIAPPEND"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).toBe(
+				"Saved-Messages (\\Seen) {7}\r\nfirst\r\n " +
+					'(\\Seen \\Draft) " 5-Jul-2026 00:00:00 +0000" {8}\r\nsecond\r\n',
+			);
+		});
+
+		test("literal gate sequencing: each message's literal ends its own synchronizing segment", () => {
+			const cmd = new MultiAppendCommand(
+				"INBOX",
+				[
+					{ message: Buffer.from("a") },
+					{ message: Buffer.from("b") },
+					{ message: Buffer.from("c") },
+				],
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const w = writerWithCaps();
+			Command.writeArgs(cmd, w);
+			const segments = w.segments();
+			// Three synchronizing literals -> three FINISHED segment boundaries
+			// (each awaiting its OWN continuation -- the queue/execute-command
+			// loop withholds the next segment until each one's '+' arrives),
+			// plus the trailing (unterminated) segment `segments()` always
+			// reports for whatever bytes follow the last boundary (here, the
+			// third literal's own data, which awaits no further continuation).
+			expect(segments).toHaveLength(4);
+			expect(segments[0].awaitContinuation).toBe(true);
+			expect(segments[1].awaitContinuation).toBe(true);
+			expect(segments[2].awaitContinuation).toBe(true);
+			expect(segments[3].awaitContinuation).toBe(false);
+		});
+
+		test("LITERAL+ + known append limit: every message's literal goes non-synchronizing, one flat segment", () => {
+			const cmd = new MultiAppendCommand(
+				"INBOX",
+				[{ message: Buffer.from("a") }, { message: Buffer.from("b") }],
+				{ has: (c) => c === "MULTIAPPEND" || c === "LITERAL+", knownAppendLimit: () => true },
+			);
+			const w = writerWithCaps(["MULTIAPPEND", "LITERAL+"]);
+			Command.writeArgs(cmd, w);
+			expect(wireText(w)).toBe("INBOX {1+}\r\na {1+}\r\nb");
+			expect(w.segments()).toHaveLength(1);
+		});
+	});
+
+	describe("accept()", () => {
+		test("set-valued APPENDUID (RFC3502-uidplus-1): expands positionally onto every message, ascending", () => {
+			const cmd = new MultiAppendCommand(
+				"Saved-Messages",
+				[
+					{ message: Buffer.from("a") },
+					{ message: Buffer.from("b") },
+					{ message: Buffer.from("c") },
+				],
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const tagged = parseLine(
+				`A1 OK [APPENDUID 38505 2:4] APPEND completed${CRLF}`,
+			) as TaggedResponse;
+			const c = new ResponseCollector([], tagged);
+			expect(Command.acceptResult(cmd, c)).toEqual([
+				{ uidValidity: 38505, uid: 2 },
+				{ uidValidity: 38505, uid: 3 },
+				{ uidValidity: 38505, uid: 4 },
+			]);
+		});
+
+		test("no APPENDUID (server lacks UIDPLUS): every entry is {} , never an error", () => {
+			const cmd = new MultiAppendCommand(
+				"INBOX",
+				[{ message: Buffer.from("a") }, { message: Buffer.from("b") }],
+				{ has: () => true, knownAppendLimit: () => false },
+			);
+			const tagged = parseLine(`A1 OK APPEND completed${CRLF}`) as TaggedResponse;
+			const c = new ResponseCollector([], tagged);
+			expect(Command.acceptResult(cmd, c)).toEqual([{}, {}]);
 		});
 	});
 });

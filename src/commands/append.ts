@@ -1,7 +1,8 @@
+import { CapabilityError } from "../errors";
 import { assertNoRecentFlag } from "../protocol/vocabularies";
 import type { Flag } from "../protocol/vocabularies";
 import { Command } from "./base";
-import { toTypedResponseCode } from "./collector";
+import { expandUidSet, toTypedResponseCode } from "./collector";
 import type { ResponseCollector } from "./collector";
 import type { CommandWriter } from "./writer";
 
@@ -44,13 +45,61 @@ import type { CommandWriter } from "./writer";
 export type AppendSource = Buffer | string;
 
 /**
- * Options for APPEND (spec §3.2, M2.11). `flags`/`internalDate` are the
+ * One CATENATE cat-part (RFC 4469 §3/§5, M3.10): an extended APPEND assembles
+ * its message from a parenthesized, non-empty list of these instead of a
+ * single literal --
+ *  - `{ type: "TEXT"; message }`: `"TEXT" SP literal` -- a literal chunk of
+ *    message content, contributed byte-for-byte (same `AppendSource`
+ *    Buffer-verbatim/string-UTF-8 rule as the base APPEND message, same
+ *    NUL-byte refusal -- see `AppendCommand`'s constructor).
+ *  - `{ type: "URL"; url }`: `"URL" SP astring` -- an IMAP URL (RFC 5092)
+ *    referencing an existing message or body part to splice in verbatim,
+ *    server-side. This library never fetches/validates the URL itself --
+ *    that is the server's job (and the source of the `BADURL` resp-code on
+ *    failure, see `AppendResult`'s sibling error handling in
+ *    `commands/collector.ts`).
+ * At least one part is required (RFC4469-3-4, "min-one"); an empty array
+ * throws `RangeError` at construction, zero bytes written, before the
+ * `CATENATE` capability is even probed.
+ */
+export type CatenatePart =
+	| { type: "TEXT"; message: AppendSource }
+	| { type: "URL"; url: string };
+
+/**
+ * One message entry in a MULTIAPPEND batch (RFC 3502 §6.3.11 `append-message
+ * = [SP flag-list] [SP date-time] SP literal`, M3.10). Each message carries
+ * its OWN optional `flags`/`internalDate`/`binary` -- distinct from
+ * `AppendOptions`'s single shared set for the whole (single-message)
+ * command -- exactly mirroring `AppendOptions`'s own fields one level down,
+ * per message. `catenate` is deliberately NOT offered here: RFC 4469 defines
+ * CATENATE as a modification to the single `append-data` production (RFC
+ * 4469 §5 amends `append-data` itself, not `append-message`'s repetition),
+ * and neither RFC formalizes a MULTIAPPEND batch whose individual messages
+ * are themselves CATENATE-assembled -- combine the two only via
+ * `ImapClient.append()`'s own `catenate` option (a single message), not
+ * through `appendMany()`.
+ */
+export interface AppendMessageEntry {
+	message: AppendSource;
+	flags?: Flag[];
+	internalDate?: Date;
+	binary?: boolean;
+}
+
+/**
+ * Options for APPEND (spec §3.2, M2.11/M3.10). `flags`/`internalDate` are the
  * optional `(flags) date-time` prefix RFC 3501/9051 §6.3.11/§6.3.12 the
  * command may carry before the message literal; `binary` requests the RFC
  * 3516 `literal8` (`~{n}`) wire form (needed for a message containing NUL
  * octets a server has BINARY-declared support for decoding -- see
  * `AppendSource`'s doc comment for why this library never does that
- * encoding decision FOR the caller).
+ * encoding decision FOR the caller). `catenate` (RFC 4469, M3.10) replaces
+ * the plain message literal with an assembled TEXT/URL part list -- see
+ * `CatenatePart`'s doc comment; when present, the top-level `message`
+ * argument to `ImapClient.append()`/`AppendCommand`'s constructor is not put
+ * on the wire (a caller passing `catenate` conventionally passes
+ * `Buffer.alloc(0)` as the now-unused `message` argument).
  */
 export interface AppendOptions {
 	/** `(flags)` parameter (RFC 3501/9051 §9 `flag-list`). Never include
@@ -78,8 +127,14 @@ export interface AppendOptions {
 	 *  both are literal8 under the hood, but UTF8(...) wrapping is a
 	 *  capability-and-content-driven decision this command makes for the
 	 *  caller (see `write()`), while `binary` is the caller's own explicit
-	 *  ask. */
+	 *  ask. Ignored (never consulted) when `catenate` is present -- RFC 4469
+	 *  CATENATE's TEXT cat-parts are plain literals, never literal8. */
 	binary?: boolean;
+	/** RFC 4469 CATENATE (M3.10): assemble the message from TEXT/URL parts
+	 *  instead of a single literal -- see `CatenatePart`. Gated on the
+	 *  `CATENATE` capability: `CapabilityError`, zero bytes written, when
+	 *  absent (I-9). */
+	catenate?: CatenatePart[];
 }
 
 /**
@@ -87,6 +142,15 @@ export interface AppendOptions {
  * surfaces the new message's `uidValidity`/`uid`. Both stay `undefined` --
  * never a thrown error -- when the server lacks UIDPLUS (a missing OPTIONAL
  * capability's absence is not a failure, I-6/I-9's shared spirit).
+ *
+ * MULTIAPPEND (M3.10): `ImapClient.appendMany()` returns `AppendResult[]`,
+ * one entry per appended message, in append order -- RFC 4315 §3's
+ * `resp-code-apnd = "APPENDUID" SP nz-number SP uid-set` widens for a
+ * MULTIAPPEND batch to a set covering every appended message
+ * (`MultiAppendCommand.accept()` expands that set positionally onto the
+ * batch, ascending, per the widened `TypedResponseCode` APPENDUID variant's
+ * `uids` field -- see `commands/collector.ts`), rather than adding a
+ * separate multi-uid shape to this interface.
  */
 export interface AppendResult {
 	uidValidity?: number;
@@ -141,11 +205,63 @@ function hasNonAsciiOctet(data: Buffer): boolean {
 }
 
 /**
- * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) -- M2.11, single-message form
- * only. MULTIAPPEND (RFC 3502, `appendMany`) and CATENATE (RFC 4469,
- * TEXT/URL cat-parts) are explicitly out of scope for this milestone (M3) --
- * this class has no `catenate` option and never emits the extended
- * `CATENATE (...)` append-data form.
+ * Shared `AppendSource` -> `Buffer` conversion (see that type's doc comment
+ * for the Buffer-verbatim/string-UTF-8 rule) -- factored out so
+ * `AppendCommand` (the single message, and each CATENATE TEXT part) and
+ * `MultiAppendCommand` (each MULTIAPPEND batch entry) apply IDENTICAL
+ * validation rather than three copies of the same two `typeof`/`isBuffer`
+ * checks. `context` is a short label prefixed to the thrown `RangeError`'s
+ * message (e.g. `"APPEND"`, `"APPEND (message 2)"`, `"APPEND (CATENATE TEXT
+ * part 1)"`) so a caller can tell which part of a multi-part/multi-message
+ * command failed validation.
+ */
+function toMessageBuffer(message: AppendSource, context: string): Buffer {
+	if (Buffer.isBuffer(message)) {
+		return message;
+	}
+	if (typeof message === "string") {
+		return Buffer.from(message, "utf8");
+	}
+	throw new RangeError(`${context}: message must be a Buffer or a string`);
+}
+
+/**
+ * Shared NUL-byte refusal (RFC 3501/9051 §4.3.1, see `AppendSource`'s doc
+ * comment for the full rationale) -- `binary` is the caller's `{ binary:
+ * true }` opt-out (RFC 3516 literal8), skipping the check entirely.
+ */
+function assertNoUnencodedNul(data: Buffer, binary: boolean, context: string): void {
+	if (!binary && data.includes(0x00)) {
+		throw new RangeError(
+			`${context}: message contains a NUL byte (0x00) -- binary content must be ` +
+				"caller-encoded (e.g. base64) or sent as a literal8 via { binary: true } " +
+				"(RFC 3516), never transmitted unencoded (RFC 3501/9051 §4.3.1)",
+		);
+	}
+}
+
+/** One validated CATENATE cat-part, post-construction (see `CatenatePart`
+ *  above for the pre-validation caller-facing shape). TEXT parts have already
+ *  been through `toMessageBuffer()`/`assertNoUnencodedNul()`; URL parts are
+ *  carried verbatim (this library never validates/resolves the URL itself --
+ *  the server does, surfacing `BADURL` on failure). */
+type ValidatedCatenatePart = { type: "TEXT"; data: Buffer } | { type: "URL"; url: string };
+
+/**
+ * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12), extended by RFC 4469
+ * CATENATE (M3.10, `opts.catenate`) -- single MESSAGE form (one
+ * `append-message`/`append-data` group); MULTIAPPEND's repetition of this
+ * group (RFC 3502, `appendMany`) is `MultiAppendCommand` below, a SIBLING
+ * class rather than a variant of this one (mirrors `ImapClient.appendMany()`
+ * being a sibling method of `ImapClient.append()`, not a parameter variant --
+ * see that method's doc comment for the shared rationale: MULTIAPPEND's
+ * multi-message result shape, `AppendResult[]`, is different enough from
+ * this class's single `AppendResult` that folding both into one class would
+ * need a runtime-shape-dependent return type). CATENATE, by contrast, stays
+ * on THIS class: RFC 4469 §5 amends the single-message `append-data`
+ * production itself (replacing one literal with a TEXT/URL part list), so a
+ * CATENATE-assembled message is still exactly one `append-message` group --
+ * the same shape MULTIAPPEND repeats, not a variant of the repetition.
  *
  * `queueMode: "pipeline"` -- spec §6.1's serial list is SELECT/EXAMINE/
  * CLOSE/UNSELECT (mailbox-context switches), EXPUNGE, COPY/MOVE, and LOGIN;
@@ -159,11 +275,13 @@ function hasNonAsciiOctet(data: Buffer): boolean {
  * RFC3501-6.3.11-2/RFC9051-6.3.12-2 rows, which APPEND to the currently
  * selected mailbox.
  *
- * Wire form: `mailbox [(flags)] [date-time] <message>`, where `<message>`
- * is either a plain/literal8 literal (`CommandWriter.literal(data,
- * {binary})`) or, when the message contains 8-bit header/body octets AND
- * the server has UTF8=ACCEPT enabled, the RFC 6855 §4 `"UTF8 (" literal8
- * ")"` data extension (RFC6855-4-1) -- see `write()`.
+ * Wire form: `mailbox [(flags)] [date-time] <message>`, where `<message>` is
+ * either a plain/literal8 literal (`CommandWriter.literal(data, {binary})`),
+ * the RFC 6855 §4 `"UTF8 (" literal8 ")"` data extension when the message
+ * contains 8-bit header/body octets AND the server has UTF8=ACCEPT enabled
+ * (RFC6855-4-1), OR -- when `opts.catenate` is given -- the RFC 4469 §5
+ * `"CATENATE (" cat-part *(SP cat-part) ")"` extended form (mutually
+ * exclusive with the first two; see `write()`).
  */
 export class AppendCommand extends Command<AppendResult> {
 	readonly verb = "APPEND";
@@ -171,6 +289,7 @@ export class AppendCommand extends Command<AppendResult> {
 	readonly states = ["authenticated", "selected"] as const;
 
 	private readonly data: Buffer;
+	private readonly catenateParts: readonly ValidatedCatenatePart[] | null;
 
 	constructor(
 		private readonly mailboxName: string,
@@ -182,25 +301,64 @@ export class AppendCommand extends Command<AppendResult> {
 		if (typeof mailboxName !== "string") {
 			throw new RangeError("APPEND: mailbox must be a string");
 		}
-		if (Buffer.isBuffer(message)) {
-			this.data = message;
-		} else if (typeof message === "string") {
-			this.data = Buffer.from(message, "utf8");
+		// The top-level `message` argument is still type-validated even when
+		// `opts.catenate` is present (a caller must still pass a well-formed
+		// `AppendSource`, conventionally `Buffer.alloc(0)`) but its BYTES are
+		// never put on the wire in that case -- `write()` emits the CATENATE
+		// part list instead, and the NUL-byte refusal below is skipped for
+		// this now-unused buffer (each CATENATE TEXT part gets its OWN NUL
+		// check below instead).
+		this.data = toMessageBuffer(message, "APPEND");
+
+		if (this.opts.catenate) {
+			// RFC4469-3-4 (min-one): at least one cat-part is required -- "CATENATE
+			// ()" is not a legal wire form. Refuse (RangeError, zero bytes) before
+			// the capability probe below, same "validate content before checking
+			// the network" ordering `StoreCommand`'s UNCHANGEDSINCE gate uses.
+			if (!Array.isArray(this.opts.catenate) || this.opts.catenate.length === 0) {
+				throw new RangeError(
+					"APPEND: catenate must be a non-empty array (RFC 4469 §3/§5 " +
+						"requires at least one cat-part)",
+				);
+			}
+			// RFC 4469 §2: CATENATE is its own capability, gating the extended
+			// append-data form -- CapabilityError, zero bytes written (I-9),
+			// before any TEXT/URL part is even validated.
+			if (!this.caps.has("CATENATE")) {
+				throw new CapabilityError(
+					"APPEND: the catenate option requires the CATENATE capability " +
+						"(RFC 4469 §2) -- construct without `catenate` (a plain message " +
+						"literal) if the server hasn't advertised it",
+					{ capability: "CATENATE", rfc: "RFC4469" },
+				);
+			}
+			this.catenateParts = this.opts.catenate.map((part, i): ValidatedCatenatePart => {
+				if (part.type === "URL") {
+					if (typeof part.url !== "string") {
+						throw new RangeError(
+							`APPEND: catenate[${i}] (URL) must carry a string url`,
+						);
+					}
+					return { type: "URL", url: part.url };
+				}
+				const data = toMessageBuffer(part.message, `APPEND (CATENATE TEXT part ${i + 1})`);
+				// RFC 4469's `text-literal` is a plain literal, never literal8 --
+				// this library has no `{ binary: true }` escape hatch for a
+				// CATENATE TEXT part (unlike the single-message case below), so
+				// the NUL refusal always applies here.
+				assertNoUnencodedNul(data, false, `APPEND (CATENATE TEXT part ${i + 1})`);
+				return { type: "TEXT", data };
+			});
 		} else {
-			throw new RangeError("APPEND: message must be a Buffer or a string");
-		}
-		// RFC 3501/9051 §4.3.1: binary (NUL-bearing) data MUST be encoded into a
-		// textual form before transmission; this client never transmits a
-		// string/literal containing an unencoded NUL byte. Refuse (do not
-		// silently transform) at construction -- `opts.binary` is the caller's
-		// explicit opt-out, requesting the RFC 3516 literal8 (`~{n}`) wire form
-		// that legitimately carries NUL octets to a BINARY-capable server.
-		if (this.opts.binary !== true && this.data.includes(0x00)) {
-			throw new RangeError(
-				"APPEND: message contains a NUL byte (0x00) -- binary content must be " +
-					"caller-encoded (e.g. base64) or sent as a literal8 via { binary: true } " +
-					"(RFC 3516), never transmitted unencoded (RFC 3501/9051 §4.3.1)",
-			);
+			this.catenateParts = null;
+			// RFC 3501/9051 §4.3.1: binary (NUL-bearing) data MUST be encoded into
+			// a textual form before transmission; this client never transmits a
+			// string/literal containing an unencoded NUL byte. Refuse (do not
+			// silently transform) at construction -- `opts.binary` is the
+			// caller's explicit opt-out, requesting the RFC 3516 literal8
+			// (`~{n}`) wire form that legitimately carries NUL octets to a
+			// BINARY-capable server.
+			assertNoUnencodedNul(this.data, this.opts.binary === true, "APPEND");
 		}
 		// RFC 3501 §2.3.2 (RFC3501-2.3.2-1/-2): \Recent can never appear in a
 		// client-sent flag list; §2.3.2 names APPEND explicitly. Refuse
@@ -228,10 +386,32 @@ export class AppendCommand extends Command<AppendResult> {
 		// a non-sync literal purely because LITERAL+/LITERAL- was advertised,
 		// with no regard for whether an oversized message might get sent in
 		// full before the server can reject it with TOOBIG (RFC 7889 §1's
-		// motivating waste). Applies uniformly to both wire forms below (the
-		// plain literal and the UTF8(...)-wrapped literal8) since both carry
-		// the same message bytes and the same waste risk.
+		// motivating waste). Applies uniformly to every literal this command
+		// may emit below (plain, UTF8(...)-wrapped, or CATENATE TEXT parts)
+		// since all carry the same waste risk.
 		const forceSync = !this.caps.knownAppendLimit();
+
+		if (this.catenateParts) {
+			// RFC 4469 §5: "CATENATE" SP "(" cat-part *(SP cat-part) ")". A URL
+			// cat-part is technically an `astring` (bare atom is legal grammar),
+			// but every RFC 4469 worked example quotes it (§4.1's own sample) --
+			// `quotedOrLiteral()` matches that idiom by never emitting a bare
+			// atom for a URL, unlike `astring()`/`mailbox()` elsewhere in this
+			// writer, which prefer the bare form when legal.
+			w.atom("CATENATE");
+			w.list((inner) => {
+				for (const part of this.catenateParts!) {
+					if (part.type === "TEXT") {
+						inner.atom("TEXT");
+						inner.literal(part.data, { forceSync });
+					} else {
+						inner.atom("URL");
+						inner.quotedOrLiteral(part.url);
+					}
+				}
+			});
+			return;
+		}
 
 		// RFC 6855 §4 (RFC6855-4-1): a message carrying UTF-8 header octets
 		// MUST be sent through the "UTF8 (" literal8 ")" data extension once
@@ -268,5 +448,153 @@ export class AppendCommand extends Command<AppendResult> {
 			return { uidValidity: code.uidValidity, uid: code.uid };
 		}
 		return {};
+	}
+}
+
+/**
+ * MULTIAPPEND (RFC 3502 §6.3.11, M3.10) -- a SIBLING of `AppendCommand`
+ * (see that class's doc comment for why), covering the `1*append-message`
+ * repetition: one `APPEND mailbox` command carrying two or more
+ * `[flags] [date-time] literal` groups, each with its own independent
+ * optional flags/date (`AppendMessageEntry`).
+ *
+ * **One-message degrade decision:** this class accepts a single-entry
+ * `messages` array too (constructing it directly is legal and produces the
+ * exact same wire form `AppendCommand` would for that one message), but
+ * `ImapClient.appendMany()` never actually reaches this class for a
+ * single-message call -- it degrades to `this.append(...)` (plain
+ * `AppendCommand`) instead, wrapping that single `AppendResult` in a
+ * one-element array. Rationale: RFC 3502's `1*append-message` grammar makes
+ * a one-message "batch" indistinguishable on the wire from a base APPEND
+ * (both are exactly one `append-message` group), so gating a single-message
+ * `appendMany()` call on the MULTIAPPEND capability would incorrectly refuse
+ * a call the server can satisfy with ZERO extension support -- `appendMany`
+ * should only ever need MULTIAPPEND when it is actually exercising the
+ * repetition (>= 2 messages). This class's OWN gate below (`messages.length
+ * > 1`) is kept anyway as defense-in-depth for a caller reaching it directly
+ * via the `client.run()` escape hatch with a single-entry array.
+ *
+ * `queueMode`/`states` mirror `AppendCommand` exactly (same verb, same
+ * legal states -- MULTIAPPEND changes no client-visible context beyond what
+ * a base APPEND already does).
+ *
+ * Wire form: `mailbox` followed by N `[(flags)] [date-time] literal` groups
+ * back-to-back, one per `messages` entry, in order (RFC3502-6.3.11-1).
+ *
+ * Result: `AppendResult[]`, one entry per message in append order. RFC 4315
+ * §3's `APPENDUID` resp-code widens, for a MULTIAPPEND batch, to a `uid-set`
+ * covering every appended message (RFC3502-uidplus-1) -- `accept()` expands
+ * that set (via `commands/collector.ts`'s widened `TypedResponseCode`
+ * APPENDUID variant, `uids`) and pairs it positionally onto `messages`,
+ * ascending (UIDs are always allocated in increasing order, so an ascending
+ * expansion of the set is the correct append-order pairing). A batch the
+ * server fails atomically (RFC3502-intro-1/-6.3.11-3, including an early
+ * abort per RFC3502-6.3.11-4) surfaces as this command's promise rejecting
+ * with the tagged NO's `ServerNoError` -- no partial `AppendResult[]` is
+ * ever produced for a failed batch, consistent with MULTIAPPEND's
+ * all-or-nothing semantics.
+ */
+export class MultiAppendCommand extends Command<AppendResult[]> {
+	readonly verb = "APPEND";
+	readonly queueMode = "pipeline" as const;
+	readonly states = ["authenticated", "selected"] as const;
+
+	private readonly entries: ReadonlyArray<{
+		data: Buffer;
+		flags?: readonly Flag[];
+		internalDate?: Date;
+		binary: boolean;
+	}>;
+
+	constructor(
+		private readonly mailboxName: string,
+		messages: readonly AppendMessageEntry[],
+		private readonly caps: AppendCapabilityProbe = NO_CAPS,
+	) {
+		super();
+		if (typeof mailboxName !== "string") {
+			throw new RangeError("APPEND (MULTIAPPEND): mailbox must be a string");
+		}
+		if (!Array.isArray(messages) || messages.length === 0) {
+			throw new RangeError(
+				"APPEND (MULTIAPPEND): messages must be a non-empty array",
+			);
+		}
+		// RFC 3502 §2: MULTIAPPEND is its own capability, gating the
+		// `1*append-message` repetition beyond a single group -- CapabilityError,
+		// zero bytes written (I-9), before any message is validated. A
+		// single-entry array needs no MULTIAPPEND support at all (see this
+		// class's doc comment's "one-message degrade decision") -- this defends
+		// only a direct `client.run()` caller who skipped `ImapClient
+		// .appendMany()`'s own degrade path.
+		if (messages.length > 1 && !this.caps.has("MULTIAPPEND")) {
+			throw new CapabilityError(
+				"APPEND (MULTIAPPEND): more than one message requires the " +
+					"MULTIAPPEND capability (RFC 3502 §2) -- construct with a single " +
+					"message (plain APPEND) if the server hasn't advertised it",
+				{ capability: "MULTIAPPEND", rfc: "RFC3502" },
+			);
+		}
+		this.entries = messages.map((entry, i) => {
+			const label = `APPEND (MULTIAPPEND message ${i + 1})`;
+			const data = toMessageBuffer(entry.message, label);
+			assertNoUnencodedNul(data, entry.binary === true, label);
+			// RFC 3501 §2.3.2: \Recent refusal applies per-message, exactly like
+			// the single-message `AppendCommand` (M3.6 adjudication) -- each
+			// MULTIAPPEND message carries its own independent flag list.
+			if (entry.flags) {
+				assertNoRecentFlag(entry.flags, label);
+			}
+			return {
+				data,
+				flags: entry.flags,
+				internalDate: entry.internalDate,
+				binary: entry.binary === true,
+			};
+		});
+	}
+
+	protected write(w: CommandWriter): void {
+		w.mailbox(this.mailboxName);
+		// Same RFC7889-4-2 rationale as `AppendCommand.write()` -- applies
+		// uniformly to every message literal in the batch.
+		const forceSync = !this.caps.knownAppendLimit();
+		for (const entry of this.entries) {
+			if (entry.flags && entry.flags.length > 0) {
+				w.flagList([...entry.flags]);
+			}
+			if (entry.internalDate) {
+				w.dateTime(entry.internalDate);
+			}
+			// Same RFC6855-4-1 UTF8(...) wrapping decision as `AppendCommand`,
+			// applied per-message (a batch may mix 7-bit-clean and 8-bit
+			// messages; each is wrapped independently).
+			if (this.caps.has("UTF8=ACCEPT") && hasNonAsciiOctet(entry.data)) {
+				w.atom("UTF8");
+				w.list((inner) => {
+					inner.literal(entry.data, { binary: true, forceSync });
+				});
+			} else {
+				w.literal(entry.data, { binary: entry.binary, forceSync });
+			}
+		}
+	}
+
+	protected accept(c: ResponseCollector): AppendResult[] {
+		const code = toTypedResponseCode(c.tagged().status.text?.code);
+		if (code && code.name === "APPENDUID" && "uidValidity" in code) {
+			// `code.uids` is the widened APPENDUID variant's full, ascending
+			// uid-set expansion (see `commands/collector.ts`) -- paired
+			// positionally onto `this.entries` in append order. A server
+			// returning fewer UIDs than messages (non-conformant) tolerates
+			// silently (I-6): the trailing entries simply have no `uid`, same
+			// as any other server that omits APPENDUID entirely.
+			const uids = code.uids;
+			return this.entries.map((_entry, i) => ({
+				uidValidity: code.uidValidity,
+				uid: uids[i],
+			}));
+		}
+		return this.entries.map(() => ({}));
 	}
 }

@@ -35,9 +35,15 @@ export type TypedResponseCode =
 	 *  carried no (or a non-numeric) argument. */
 	| { name: "APPENDLIMIT"; value: bigint | null }
 	/** RFC 4315 (UIDPLUS): tagged OK on a successful APPEND. `uid` is the
-	 *  single assigned UID -- correct for the single-message APPEND this
-	 *  codebase implements (M2.11); MULTIAPPEND's multi-UID form is M3. */
-	| { name: "APPENDUID"; uidValidity: number; uid: number }
+	 *  FIRST assigned UID (correct, on its own, for the single-message APPEND
+	 *  case, M2.11). `uids` (M3.10) is the FULL, ascending expansion of the
+	 *  wire's `uid-set` -- for a single-message APPEND this is always the
+	 *  one-element array `[uid]`; for a MULTIAPPEND batch (RFC 3502) it
+	 *  carries one UID per appended message, in append order (RFC 4315 §3's
+	 *  `uid-set` widened to cover every message in the batch,
+	 *  RFC3502-uidplus-1) -- `commands/append.ts`'s `MultiAppendCommand`
+	 *  pairs this positionally onto its message array. */
+	| { name: "APPENDUID"; uidValidity: number; uid: number; uids: number[] }
 	/** RFC 4469 (CATENATE) / RFC 7889 (APPENDLIMIT): tagged NO when an
 	 *  APPEND's resulting message would exceed a size limit. Carries no
 	 *  argument. */

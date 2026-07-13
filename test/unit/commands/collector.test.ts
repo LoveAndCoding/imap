@@ -317,6 +317,21 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			name: "APPENDUID",
 			uidValidity: 38505,
 			uid: 3955,
+			uids: [3955],
+		});
+	});
+
+	// M3.10 (MULTIAPPEND): a set-valued APPENDUID (RFC 4315 §3's widened
+	// `uid-set`, RFC3502-uidplus-1) expands to every appended UID, ascending.
+	test("APPENDUID set-valued (MULTIAPPEND) carries the full ascending uids array", () => {
+		const tagged = parseLine(
+			`A1 OK [APPENDUID 38505 2:4] APPEND completed${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "APPENDUID",
+			uidValidity: 38505,
+			uid: 2,
+			uids: [2, 3, 4],
 		});
 	});
 

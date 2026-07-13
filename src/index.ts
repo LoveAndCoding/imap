@@ -52,12 +52,16 @@ export type { SequenceInput, SequenceRange } from "./protocol/sequence-set";
 // Mailbox-management option types (spec §3.2/§5.6, M2.3).
 export type { CreateMailboxOptions } from "./commands/create";
 export type { Flag, SpecialUse, SystemFlag } from "./protocol/vocabularies";
-// APPEND (spec §3.2/§5.4, M2.11 — single-message form only).
+// APPEND (spec §3.2/§5.4, M2.11 single-message form; M3.10 adds MULTIAPPEND
+// `appendMany()`'s per-message entry shape and CATENATE's TEXT/URL part
+// shape, both riding the same `AppendOptions`/`AppendResult` types).
 export type {
 	AppendCapabilityProbe,
+	AppendMessageEntry,
 	AppendOptions,
 	AppendResult,
 	AppendSource,
+	CatenatePart,
 } from "./commands/append";
 // COPY/MOVE + UIDPLUS results (spec §5b, M3.8). `CopyResult` is shared by
 // both `MailboxSession.copy()`/`.move()` (and their `seq` mirrors).

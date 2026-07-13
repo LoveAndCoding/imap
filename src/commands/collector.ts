@@ -8,20 +8,22 @@ import {
 	TaggedResponse,
 	UntaggedResponse,
 } from "../parser";
-import { UID, UIDRange } from "../parser/structure/uid";
+import { UIDRange } from "../parser/structure/uid";
 import type { UIDSet } from "../parser/structure/uid";
 import type { TextCode } from "../parser/structure/text.code";
 import type { TypedResponseCode } from "../protocol/response-codes";
 
 /** Expands a parsed `UIDSet` (individual UIDs and `a:b` ranges, per RFC
  *  3501/9051 §9 `uid-set`) into an ascending flat list of concrete numbers,
- *  used by the `COPYUID` handling below. RFC 4315's `resp-code-copy` grammar
- *  never legitimately puts `"*"` in either uid-set here (that placeholder is
- *  a `sequence-set`-only wildcard, meaningless once the server has assigned
- *  real destination UIDs) -- a `"*"`-bearing element is skipped rather than
- *  guessed at, tolerating a non-conformant server without inventing a number
- *  (I-6). */
-function expandUidSet(set: UIDSet): number[] {
+ *  used by the `COPYUID`/`APPENDUID` handling below. RFC 4315's
+ *  `resp-code-copy`/`resp-code-apnd` grammars never legitimately put `"*"`
+ *  in a uid-set here (that placeholder is a `sequence-set`-only wildcard,
+ *  meaningless once the server has assigned real UIDs) -- a `"*"`-bearing
+ *  element is skipped rather than guessed at, tolerating a non-conformant
+ *  server without inventing a number (I-6). Exported for
+ *  `commands/append.ts`'s `MultiAppendCommand`, which pairs this same
+ *  ascending expansion positionally onto its message array (M3.10). */
+export function expandUidSet(set: UIDSet): number[] {
 	const out: number[] = [];
 	for (const el of set.set) {
 		if (el instanceof UIDRange) {
@@ -69,16 +71,17 @@ export function toTypedResponseCode(
 	}
 	const name = String((code as { kind: unknown }).kind).toUpperCase();
 	if (code instanceof AppendUIDTextCode) {
-		// RFC 4315 (UIDPLUS): single-message APPEND always carries exactly one
-		// `uniqueid` here (never a range/set -- that's MULTIAPPEND's grammar,
-		// RFC 3502, M3). `first` is defensively checked rather than assumed:
-		// an `UID` instance with a numeric `.id` is the only grammar-legal
-		// shape; `0` is never a real IMAP UID (nz-number) and documents "the
-		// server sent something this parse can't have produced" without
-		// inventing an error for tolerated-but-odd data (I-6).
-		const first = code.uids.set[0];
-		const uid = first instanceof UID && typeof first.id === "number" ? first.id : 0;
-		return { name: "APPENDUID", uidValidity: code.uidvalidity, uid };
+		// RFC 4315 (UIDPLUS): a single-message APPEND carries exactly one
+		// `uniqueid` here; a MULTIAPPEND batch (RFC 3502, M3.10) widens this to
+		// a `uid-set` covering every appended message (RFC3502-uidplus-1).
+		// `expandUidSet` handles both shapes uniformly -- a lone `uniqueid`
+		// expands to a one-element array. `uid` stays the FIRST uid for
+		// backward compatibility with the single-message case (M2.11); `0`
+		// (never a real IMAP UID, nz-number) documents "the server sent
+		// something this parse can't have produced" for an empty expansion
+		// without inventing an error for tolerated-but-odd data (I-6).
+		const uids = expandUidSet(code.uids);
+		return { name: "APPENDUID", uidValidity: code.uidvalidity, uid: uids[0] ?? 0, uids };
 	}
 	if (code instanceof CopyUIDTextCode) {
 		return {

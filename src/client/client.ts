@@ -12,6 +12,7 @@ import {
 	IdCommand,
 	ListCommand,
 	LogoutCommand,
+	MultiAppendCommand,
 	NamespaceCommand,
 	LsubCommand,
 	NoopCommand,
@@ -23,7 +24,12 @@ import {
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
-import type { AppendOptions, AppendResult, AppendSource } from "../commands/append";
+import type {
+	AppendMessageEntry,
+	AppendOptions,
+	AppendResult,
+	AppendSource,
+} from "../commands/append";
 import type { CreateMailboxOptions } from "../commands/create";
 import type { IdResponseMap } from "../commands/id";
 import type { ListOptions } from "../commands/list";
@@ -582,6 +588,52 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				// the advertisement -- see `effectiveCapability()`'s doc comment.
 				// `knownAppendLimit()` stays advertisement-based (unaffected --
 				// APPENDLIMIT has no ENABLE story at all).
+				has: (cap) => this.effectiveCapability(cap),
+				knownAppendLimit: () =>
+					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
+			}),
+		);
+	}
+
+	/**
+	 * MULTIAPPEND (spec §3.2, RFC 3502 §6.3.11) -- M3.10. A SIBLING of
+	 * `append()` (per M2.11's own note: "do not stub it here either... this
+	 * should be a sibling method, not a parameter variant" -- `AppendResult[]`
+	 * is a genuinely different result shape than `append()`'s single
+	 * `AppendResult`, and folding the two into one overloaded method would
+	 * need callers to discriminate the return type by the SHAPE of the
+	 * argument they passed, which is worse ergonomics than two names).
+	 *
+	 * **One-message degrade decision:** a single-entry `messages` array
+	 * degrades to a plain `append()` call (wrapped in a one-element result
+	 * array) rather than going through `MultiAppendCommand` -- RFC 3502's
+	 * `1*append-message` repetition produces an IDENTICAL wire form to a base
+	 * APPEND when there is only one group, so requiring the MULTIAPPEND
+	 * capability for a one-message "batch" would incorrectly refuse a call
+	 * the server can satisfy with no extension support at all. See
+	 * `MultiAppendCommand`'s own doc comment (`commands/append.ts`) for the
+	 * full rationale and its own defense-in-depth gate for a direct
+	 * `client.run()` caller.
+	 */
+	public async appendMany(
+		mailbox: string,
+		messages: AppendMessageEntry[],
+	): Promise<AppendResult[]> {
+		if (!Array.isArray(messages) || messages.length === 0) {
+			throw new RangeError("appendMany: messages must be a non-empty array");
+		}
+		if (messages.length === 1) {
+			const [entry] = messages;
+			const result = await this.append(mailbox, entry.message, {
+				flags: entry.flags,
+				internalDate: entry.internalDate,
+				binary: entry.binary,
+			});
+			return [result];
+		}
+		const view = this.capabilityRegistry.view;
+		return this.run(
+			new MultiAppendCommand(mailbox, messages, {
 				has: (cap) => this.effectiveCapability(cap),
 				knownAppendLimit: () =>
 					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
