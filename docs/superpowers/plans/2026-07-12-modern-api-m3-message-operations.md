@@ -40,8 +40,8 @@ Per-task status:
 | M3.1 spike (design + proof) | **DONE** — "M3.1 RESOLUTION" + "M3.1 PROOF ADDENDUM" below (`6fcfd7a`, `dbc8ee7`) |
 | M3.2 literal streaming | **DONE** — `3265172`, zero row changes; engagement-gate deviation documented in-code |
 | M3.3 SequenceSet | **DONE** — `8d590b4`, zero row changes (unwired by design) |
-| M3.4 collector FETCH bridge | IN FLIGHT (worktree) |
-| M3.5 FETCH engine | pending (needs M3.4) |
+| M3.4 collector FETCH bridge | **DONE** — `e0d07cd`, zero row changes; live()/push()/settle() bridge, FETCH's early-accept hook deliberately left to M3.5 |
+| M3.5 FETCH engine | IN FLIGHT (worktree) — real contract inventory: 41 sites (not the ~89 proxy), ~36 flippable, 5 blocked (states/condstore); ext/* files need preludes |
 | M3.6 STORE | **DONE** — `85a4e48`, +4 rows incl. the adjudicated \Recent refusal |
 | M3.7 SEARCH | **DONE** — `0aa5810`, +60 rows, 0 regressions |
 | M3.8 COPY/MOVE | **DONE** — `2549b99`, +9 rows; MOVE∨IMAP4rev2 gate |
