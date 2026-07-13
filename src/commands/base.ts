@@ -145,6 +145,30 @@ export abstract class Command<TResult> {
 	 *  unaffected — awaiting a non-thenable value is a same-microtask no-op. */
 	protected abstract accept(c: ResponseCollector): TResult | Promise<TResult>;
 
+	/**
+	 * M3.5 streaming hook (spec §7.3/§5.4): called ONCE by `executeCommand`,
+	 * synchronously, the instant this command's own LIVE `ResponseCollector`
+	 * is constructed — BEFORE this command's bytes are even written and
+	 * before any response could possibly be claimed. This is deliberately a
+	 * SEPARATE seam from `accept()` (still only ever invoked once, after
+	 * `settle()`, unchanged): `accept()`'s post-tagged timing is exactly
+	 * right for every command through M3.4, but a genuinely STREAMING
+	 * command (FETCH) needs to hand its caller something that starts
+	 * consuming `collector.live()` while the command is still in flight —
+	 * `MailboxSession.fetch()` must return an `AsyncIterable` that yields
+	 * messages as their FETCH responses complete, not only once the whole
+	 * multi-message command (and its tagged OK) has already finished
+	 * arriving. `FetchCommand` (M3.5) captures the collector reference here
+	 * and drives its own internal consumption of `live()` from it; every
+	 * other command leaves this hook undefined and is completely
+	 * unaffected — `executeCommand`'s own promise-resolution timing (and
+	 * therefore the queue's `commandDone`/idle bookkeeping) is UNCHANGED by
+	 * this hook's existence: it fires as a side effect alongside collector
+	 * construction, not in place of the normal write/await-tagged/settle/
+	 * accept flow that still runs to completion exactly as before.
+	 */
+	protected onCollectorReady?(c: ResponseCollector): void;
+
 	/** Continuation hook for INTERACTIVE commands only (AUTHENTICATE, IDLE —
 	 *  neither lands in this milestone). The queue-automatic literal gate
 	 *  (spec §6.2) is NOT this: a plain multi-segment `write()` output is
@@ -213,6 +237,12 @@ export abstract class Command<TResult> {
 
 	static acceptResult<T>(cmd: Command<T>, c: ResponseCollector): T | Promise<T> {
 		return cmd.accept(c);
+	}
+
+	/** Fires the M3.5 streaming hook (`onCollectorReady`, see its own doc
+	 *  comment above) — a no-op for every command that doesn't define it. */
+	static notifyCollectorReady(cmd: Command<unknown>, c: ResponseCollector): void {
+		cmd.onCollectorReady?.(c);
 	}
 
 	static hasContinuationHook(cmd: Command<unknown>): boolean {

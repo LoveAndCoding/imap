@@ -44,6 +44,28 @@ export type { SearchOptions, SearchResult } from "./commands/search";
 // STORE / UID STORE + addFlags/removeFlags/setFlags (spec §5b, M3.6).
 export type { StoreModifiers, StoreOperation, StoreResult } from "./commands/store";
 
+// FETCH / UID FETCH (spec §5.4/§5b, M3.5): the typed request shape
+// `MailboxSession.fetch()`/`.fetchOne()` (and their `.seq` mirrors) accept,
+// and the `FetchedMessage`/`FetchedPart` result shapes they resolve to.
+// `FetchEnvelope`/`FetchEnvelopeAddress` (NOT bare `Envelope`/`EnvelopeAddress`
+// -- that name is already taken at this package root by the lower-level
+// parser structure class re-exported via `export * from "./parser"` below;
+// this is the spec §5.4 FetchedMessage.envelope shape) and `BodyStructure`
+// (an alias for the parser's own `MessageBodyStructure`/
+// `MessageBodyMultipartStructure` tree, which already satisfies "unknown
+// extension data preserved raw").
+export type {
+	BodyPartRequest,
+	BodyStructure,
+	FetchEnvelope,
+	FetchEnvelopeAddress,
+	FetchItems,
+	FetchModifiers,
+	FetchRequest,
+	FetchedMessage,
+	FetchedPart,
+} from "./client/fetch";
+
 // Shared UID/sequence-number argument type (spec §5.1, M3.3) — used by
 // every message-operation method's `uids`/`seq` parameters.
 export { SequenceSet } from "./protocol/sequence-set";

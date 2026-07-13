@@ -53,7 +53,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -134,14 +134,14 @@ complianceTest(
 		reqs: ["RFC3516-4.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH BINARY[...] command form (decoded section fetch)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "BINARY"]),
+				...sessionPrelude(["IMAP4rev1", "BINARY"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				// FETCH <seq> (BINARY[<section-binary>]). Pin BINARY[...] — reject the
 				// base BODY[...] and the sibling BINARY.SIZE[...] item.
 				expectLine(command("FETCH", { args: /^1 \(BINARY\[1\]\)$/i })),
@@ -149,7 +149,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["BINARY[1]"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["BINARY[1]"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -171,21 +173,23 @@ complianceTest(
 		reqs: ["RFC3516-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH BINARY[...]<offset.length> partial form (decoded-data coordinates)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "BINARY"]),
+				...sessionPrelude(["IMAP4rev1", "BINARY"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				// partial applies to the DECODED data: BINARY[1]<0.1024>.
 				expectLine(command("FETCH", { args: /^1 \(BINARY\[1\]<0\.1024>\)$/i })),
 				reply("OK FETCH completed", ["* 1 FETCH (BINARY[1]<0> {2}", "\x00\x01)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["BINARY[1]<0.1024>"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["BINARY[1]<0.1024>"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -204,14 +208,14 @@ complianceTest(
 		reqs: ["RFC3516-4.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH BINARY.SIZE[...] command form and numeric decoded-size response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "BINARY"]),
+				...sessionPrelude(["IMAP4rev1", "BINARY"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				// The BINARY.SIZE item — NOT the BINARY value item.
 				expectLine(command("FETCH", { args: /^1 \(BINARY\.SIZE\[1\]\)$/i })),
 				// msg-att-static =/ "BINARY.SIZE" section-binary SP number.
@@ -219,7 +223,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["BINARY.SIZE[1]"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["BINARY.SIZE[1]"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();

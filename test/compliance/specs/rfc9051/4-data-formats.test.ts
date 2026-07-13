@@ -100,7 +100,6 @@ complianceTest(
 		reqs: ["RFC9051-4.1.1-1"],
 		profiles: ["rev2"],
 		title: "FETCH sequence-set argument is well-formed sequence-set syntax",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -136,7 +135,6 @@ complianceTest(
 		reqs: ["RFC9051-4.1.1-1"],
 		profiles: ["rev2"],
 		title: "UID FETCH set argument never contains the '*' wildcard",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

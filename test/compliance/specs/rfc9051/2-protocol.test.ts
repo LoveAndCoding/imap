@@ -35,6 +35,7 @@
  */
 import { expect } from "vitest";
 
+import { NotImplementedError } from "../../driver/errors";
 import { command, isValidTag } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -251,9 +252,19 @@ complianceTest(
 // ── RFC9051-2.3.2-1: mutually-set $Junk/$NotJunk ──────────────────────────
 // "If more than one of these is set for a message, the client MUST treat it
 // as if none are set, and it SHOULD unset both of them on the IMAP server."
-// The wire-observable half is the SHOULD: upon observing both keywords set,
-// the client unsets both via STORE. The full expected exchange is scripted;
-// driver.fetch() is unimplemented today.
+// SCOPE NOTE (M3.5, found once driver.fetch() became real): this duty is an
+// APPLICATION-level policy decision ("the IMAP client" in RFC 9051's sense —
+// the whole MUA), not a behavior a protocol LIBRARY should perform
+// automatically and silently on the caller's behalf (a library that watched
+// every FETCH FLAGS result and unilaterally issued STOREs in response would
+// be a surprising, unrequested side effect). This library exposes the data
+// the duty needs (`FetchedMessage.flags`) and the primitive to act on it
+// (`addFlags`/`removeFlags`) -- composing them into this specific policy is
+// the caller's job. Genuinely unimplemented AS AN AUTOMATIC LIBRARY
+// BEHAVIOR (and, per the above, never will be) -- the fetch() call below is
+// real and exercises the FETCH-side data this duty depends on; the
+// remaining half throws explicitly rather than hanging the script waiting
+// for a STORE this library will never auto-emit.
 complianceTest(
 	{
 		reqs: ["RFC9051-2.3.2-1"],
@@ -271,23 +282,21 @@ complianceTest(
 				expectLine(command("FETCH")),
 				// Both keywords set simultaneously — the mutually-exclusive state.
 				reply("OK FETCH completed", ["* 1 FETCH (FLAGS ($Junk $NotJunk))"]),
-				// SHOULD half: the client unsets both on the server.
-				expectLine(
-					command("STORE", {
-						args: /^\S+ -FLAGS(?:\.SILENT)? \((?=[^)]*\$Junk)(?=[^)]*\$NotJunk)[^)]*\)$/i,
-					}),
-				),
-				reply("OK STORE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await driver.select("INBOX");
-		// Observing both keywords set triggers the duty.
-		await driver.fetch("1", ["FLAGS"]);
-		await server.assertCompleted();
-		// MUST half (treat as if none are set) is the client's local
-		// interpretation; the STORE removing both is its wire-visible witness.
+		// Observing both keywords set is now real (M3.5) -- the FETCH data
+		// this duty depends on is genuinely available.
+		const [msg] = await driver.fetch("1", ["FLAGS"]);
+		expect(msg?.flags?.has("$Junk")).toBe(true);
+		expect(msg?.flags?.has("$NotJunk")).toBe(true);
+		// The SHOULD half (automatically issuing STORE to unset both) is an
+		// application-level policy this library does not implement on its own.
+		throw new NotImplementedError(
+			"automatic $Junk/$NotJunk conflict-resolution STORE (application-level policy, not a library behavior)",
+		);
 	},
 );
 
@@ -295,6 +304,22 @@ complianceTest(
 // Prohibition style (never expectLine the forbidden command): the consumer
 // asks the client to clear $Forwarded; a conformant client keeps the removal
 // off the wire. Mirrors the rev1 \Recent prohibition exemplar.
+//
+// SCOPE NOTE (M3.5, found once driver.fetch() became real): "SHOULD NOT
+// clear $Forwarded" is the same application-level policy question as
+// RFC9051-2.3.2-1 above -- $Forwarded is an ordinary keyword with no
+// protocol-level status (contrast \Recent, RFC3501-2.3.2-1/-2, which IS a
+// system flag this library legitimately refuses as a STORE argument
+// unconditionally, `assertNoRecentFlag`). A library-level `removeFlags()`
+// that silently refused to remove a caller-named keyword based on its
+// string value would be surprising, unrequested behavior -- this is a
+// caller policy choice (don't call removeFlags(..., ["$Forwarded"]) in the
+// first place), not something `StoreCommand` should enforce. Genuinely
+// unimplemented as automatic library behavior (and, per the above, never
+// will be) -- the fetch() call below is real and exercises the FETCH-side
+// data this duty depends on; the STORE call is never issued (avoiding the
+// hang the removed script step would otherwise cause waiting for a tagged
+// response that was never scripted).
 complianceTest(
 	{
 		reqs: ["RFC9051-2.3.2-2"],
@@ -319,27 +344,11 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await driver.select("INBOX");
-		await driver.fetch("1", ["FLAGS"]);
-		// Consumer requests clearing $Forwarded; the client SHOULD NOT comply
-		// on the wire (refuse locally or drop the keyword from the request).
-		await driver.store("1", "-FLAGS", ["$Forwarded"]);
-		await server.assertCompleted();
-
-		// Self-actualizing assertions: no client command may remove $Forwarded —
-		// neither a -FLAGS list containing it nor a replacement FLAGS list
-		// omitting it (the message is known to have $Forwarded set).
-		for (const l of server.commandLines) {
-			if (l.verb !== "STORE" && l.verb !== "UID STORE") continue;
-			expect(l.args, "STORE must not remove $Forwarded").not.toMatch(
-				/-FLAGS(?:\.SILENT)?\s+\([^)]*\$Forwarded/i,
-			);
-			const replace = /(?:^|\s)\+?FLAGS(?:\.SILENT)?\s+\(([^)]*)\)/i.exec(l.args);
-			if (replace && !l.args.match(/[+-]FLAGS/i)) {
-				expect(replace[1], "replacement FLAGS list must retain $Forwarded").toMatch(
-					/\$Forwarded/i,
-				);
-			}
-		}
+		const [msg] = await driver.fetch("1", ["FLAGS"]);
+		expect(msg?.flags?.has("$Forwarded")).toBe(true);
+		throw new NotImplementedError(
+			"automatic refusal to clear $Forwarded (application-level policy, not a library behavior)",
+		);
 	},
 );
 
@@ -400,7 +409,6 @@ complianceTest(
 		reqs: ["RFC9051-3.2-1"],
 		profiles: ["rev2"],
 		title: "client selects a mailbox before issuing message-affecting commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

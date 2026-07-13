@@ -918,6 +918,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// truly enabled it) needs the SAME "enabled, not merely advertised"
 			// semantics `CommandWriter`'s own injected probe already has.
 			hasCapability: (cap) => this.effectiveCapability(cap),
+			maxInlineSize: () => this.config.maxInlineSize,
 			deselect: (session) => {
 				if (this._mailboxSession !== session) {
 					return;

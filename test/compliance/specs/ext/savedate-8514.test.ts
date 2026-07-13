@@ -22,10 +22,13 @@
  *   search-key     =/ "SAVEDBEFORE" SP date / "SAVEDON" SP date /
  *                     "SAVEDSINCE" SP date / "SAVEDATESUPPORTED"
  *
- * SELF-ACTUALIZATION: there is no SAVEDATE surface — driver.fetch()/search() throw
- * NotImplementedError → unimplemented. The scripted server pins the exact FETCH
- * data item and the four SEARCH-key command forms so, once a surface exists, the
- * matchers reject a wrong spelling. The FETCH response legs additionally pin the
+ * REAL-SIGNAL STATUS (M3.5): `driver.fetch()` is wired to the real
+ * `MailboxSession.fetch()` (spec §5.4) -- the two FETCH SAVEDATE entries
+ * below are genuine wire-form/parse assertions. `SAVEDATESUPPORTED` (a
+ * SEARCH key with no `SearchCriteria` field of its own) stays unimplemented.
+ * The scripted server pins the exact FETCH data item and the four
+ * SEARCH-key command forms so a wrong spelling is rejected. The FETCH
+ * response legs additionally pin the
  * two-branch (date-time / NIL) response shape the client must accept.
  */
 import { expect } from "vitest";
@@ -49,14 +52,14 @@ complianceTest(
 		reqs: ["RFC8514-4.2-1", "RFC8514-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH SAVEDATE command form and a date-time response value",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 998 }),
 				// fetch-att =/ "SAVEDATE" — the bare atom in the FETCH item list.
 				expectLine(command("FETCH", { args: /^998 \(SAVEDATE\)$/i })),
 				// msg-att-static =/ "SAVEDATE" SP date-time (the date-time branch).
@@ -64,7 +67,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("998", ["SAVEDATE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("998", ["SAVEDATE"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -84,21 +89,23 @@ complianceTest(
 		reqs: ["RFC8514-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH SAVEDATE accepts a NIL value (storage without the save-date attribute)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 998 }),
 				expectLine(command("FETCH", { args: /^998 \(SAVEDATE\)$/i })),
 				// msg-att-static =/ "SAVEDATE" SP nil (the NIL branch).
 				reply("OK FETCH completed", ["* 998 FETCH (SAVEDATE NIL)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("998", ["SAVEDATE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("998", ["SAVEDATE"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},

@@ -69,7 +69,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-1"],
 		profiles: ["rev2"],
 		title: "client uses FETCH macros (ALL/FAST/FULL) standalone, never inside a parenthesised item list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -119,7 +118,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-2"],
 		profiles: ["rev2"],
 		title: "client requests BINARY only for a leaf body part (numeric section), never the multipart root",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -173,7 +171,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-3"],
 		profiles: ["rev2"],
 		title: "client sends BODY[] (not BODY.PEEK) when the \\Seen side-effect is intended, and tolerates FLAGS in the response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -216,7 +213,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-3"],
 		profiles: ["rev2"],
 		title: "client sends BODY.PEEK[] when fetching body without wanting to set \\Seen",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -255,7 +251,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5.1-1"],
 		profiles: ["rev2"],
 		title: "client references nested body parts with dotted numeric part paths (e.g. BODY[4.2.2.1])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -300,7 +295,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5.1-2"],
 		profiles: ["rev2"],
 		title: "client prefixes the MIME part specifier with one or more numeric part specifiers (e.g. BODY[1.MIME])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

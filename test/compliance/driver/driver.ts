@@ -9,6 +9,9 @@ import type {
 	AppendMessageEntry,
 	AppendResult as ClientAppendResult,
 	CopyResult,
+	FetchItems,
+	FetchRequest,
+	FetchedMessage,
 	ImapClientConfig,
 	ListOptions,
 	MailboxInfo,
@@ -422,6 +425,152 @@ function translateAdHocSearch(
 	if (partial) opts.partial = partial;
 
 	return { criteria: criteria as SearchCriteria, opts };
+}
+
+// ---------------------------------------------------------------------------
+// FETCH / UID FETCH ad hoc -> real `FetchRequest` translation (M3.5). These
+// `driver.fetch()`/`driver.uidFetch()` call sites were scripted well before
+// the real, spec-typed `FetchItems`/`BodyPartRequest` existed, so every spec
+// file passes `items: string[]` shaped as raw wire-form data-item tokens
+// (e.g. `"BODY[1.MIME]"`, `"BINARY[1]<0.1024>"`, `"PREVIEW (LAZY)"`,
+// `"X-GM-MSGID"`, or a single bare `"ALL"`/`"FAST"`/`"FULL"` macro) -- same
+// "translate the driver's own wire-shaped strings onto the public typed
+// shape" rule `translateAdHocSearch()` above already follows. A genuinely
+// unsupported token throws `NotImplementedError`, mirroring that
+// precedent's own fallback.
+//
+// ORDER MATTERS (spec §5.4's own wire form has no canonical item order --
+// several fixtures pin an exact caller-chosen order, e.g. `(PREVIEW
+// ENVELOPE)` vs. `(ENVELOPE PREVIEW (LAZY))`, the same two items in opposite
+// order): `FetchCommand.write()` emits items in `Object.keys()` insertion
+// order, so this translator must set each `FetchItems` key in the SAME
+// order `rawItems` lists them, never a fixed field order of its own.
+
+const FETCH_MACROS = new Set(["FAST", "ALL", "FULL"]);
+
+/** Parses one `"BODY[...]"`/`"BODY.PEEK[...]"`/`"BINARY[...]"`/
+ *  `"BINARY.PEEK[...]"` token, with an optional `"<start.length>"` partial
+ *  suffix, into a `BodyPartRequest` fragment. `null` if `item` isn't shaped
+ *  like one of these four forms at all. */
+function parseAdHocBodyPartItem(
+	item: string,
+): { binary: boolean; peek: boolean; section: string; partial?: { start: number; length: number } } | null {
+	const m = /^(BODY|BODY\.PEEK|BINARY|BINARY\.PEEK)\[([\s\S]*)\](?:<(\d+)\.(\d+)>)?$/i.exec(item.trim());
+	if (!m) {
+		return null;
+	}
+	const prefix = m[1].toUpperCase();
+	const binary = prefix.startsWith("BINARY");
+	const peek = prefix.includes("PEEK");
+	const partial =
+		m[3] !== undefined && m[4] !== undefined
+			? { start: Number(m[3]), length: Number(m[4]) }
+			: undefined;
+	return { binary, peek, section: m[2], partial };
+}
+
+/**
+ * Applies one raw wire-form FETCH data-item token to `target` IN PLACE,
+ * setting/merging the corresponding `FetchItems` field -- a new scalar key
+ * is set at its first-seen position (JS object key order: reassigning an
+ * EXISTING key never moves it), and the two repeatable fields (`gmail`'s
+ * sub-flags, `bodyParts`/`binarySize` arrays) merge into the SAME slot
+ * across multiple tokens rather than overwriting it. Throws
+ * `NotImplementedError` for a token this translator doesn't recognize at
+ * all (e.g. a genuinely unsupported extension item) -- same "public API
+ * cannot express this" outcome `translateAdHocSearch()`'s own fallback uses.
+ */
+function applyAdHocFetchItem(target: FetchItems, rawItem: string): void {
+	const item = rawItem.trim();
+	const upper = item.toUpperCase();
+	switch (upper) {
+		case "FLAGS":
+			target.flags = true;
+			return;
+		case "ENVELOPE":
+			target.envelope = true;
+			return;
+		case "INTERNALDATE":
+			target.internalDate = true;
+			return;
+		case "RFC822.SIZE":
+			target.size = true;
+			return;
+		case "BODYSTRUCTURE":
+			target.bodyStructure = true;
+			return;
+		case "BODY":
+			target.body = true;
+			return;
+		case "UID":
+			target.uid = true;
+			return;
+		case "MODSEQ":
+			target.modSeq = true;
+			return;
+		case "EMAILID":
+			target.emailId = true;
+			return;
+		case "THREADID":
+			target.threadId = true;
+			return;
+		case "SAVEDATE":
+			target.saveDate = true;
+			return;
+		case "PREVIEW":
+			target.preview = true;
+			return;
+		case "PREVIEW (LAZY)":
+			target.preview = { lazy: true };
+			return;
+		case "X-GM-MSGID":
+			target.gmail = { ...target.gmail, msgId: true };
+			return;
+		case "X-GM-THRID":
+			target.gmail = { ...target.gmail, threadId: true };
+			return;
+		case "X-GM-LABELS":
+			target.gmail = { ...target.gmail, labels: true };
+			return;
+		default:
+			break;
+	}
+	const binSize = /^BINARY\.SIZE\[([\s\S]*)\]$/i.exec(item);
+	if (binSize) {
+		target.binarySize = [...(target.binarySize ?? []), binSize[1]];
+		return;
+	}
+	const part = parseAdHocBodyPartItem(item);
+	if (part) {
+		target.bodyParts = [
+			...(target.bodyParts ?? []),
+			{
+				section: part.section,
+				peek: part.peek,
+				binary: part.binary || undefined,
+				partial: part.partial,
+			},
+		];
+		return;
+	}
+	throw new NotImplementedError(`FETCH data item ${JSON.stringify(rawItem)}`);
+}
+
+/** Translates one `driver.fetch()`/`driver.uidFetch()` call's ad hoc
+ *  `items: string[]` into the real `FetchRequest` `MailboxSession.fetch()`/
+ *  `.seq.fetch()` actually take -- a single bare macro string
+ *  (`"fast"|"all"|"full"`) when `items` is exactly that one token (spec
+ *  §5.4: macros are standalone, never combined with other items), otherwise
+ *  a `FetchItems` object built by applying every token in order. */
+function translateAdHocFetchItems(rawItems: string[]): FetchRequest {
+	if (rawItems.length === 1 && FETCH_MACROS.has(rawItems[0].trim().toUpperCase())) {
+		return rawItems[0].trim().toLowerCase();
+	}
+	const target: FetchItems = {};
+	for (const item of rawItems) {
+		applyAdHocFetchItem(target, item);
+	}
+	return target;
 }
 
 /**
@@ -937,8 +1086,49 @@ export class ComplianceDriver {
 		const { criteria: realCriteria, opts: realOpts } = translateAdHocSearch(criteria, opts);
 		return session.seq.search(realCriteria, realOpts);
 	}
-	public async fetch(_seq: string, _items: string[], _opts?: FetchOptions): Promise<never> {
-		throw new NotImplementedError("FETCH");
+	/**
+	 * FETCH (RFC 3501/9051 §6.4.5/§6.4.9 + RFC 3516 BINARY, RFC 8474 OBJECTID,
+	 * RFC 8514 SAVEDATE, RFC 8970 PREVIEW, X-GM-EXT-1) -- M3.5. Sequence-number
+	 * grain (spec §6.2's UID-grain-default convention): wired to
+	 * `client.mailbox!.seq.fetch(...)`, mirroring `search`/`store`/`copy`/
+	 * `move`/`expunge`'s own bare-verb -> `.seq.<verb>` convention. Zero
+	 * protocol logic here (I-4) -- `translateAdHocFetchItems()` above only
+	 * maps this file's pre-existing ad hoc scripted-wire-form item strings
+	 * onto the real, spec-typed `FetchRequest` `MailboxSession.seq.fetch()`
+	 * actually takes. Fully drains the returned `AsyncIterable` (matching
+	 * every other verb here awaiting the full round trip before resolving)
+	 * and returns the collected messages as a plain array.
+	 *
+	 * `opts.changedSince`/`.vanished` are translated to `NotImplementedError`
+	 * the same way `select()`'s own `condstore`/`qresync` are (see that
+	 * method's doc comment): the real `MailboxSession.fetch()` throws a
+	 * genuine `CapabilityError` for them (CONDSTORE/QRESYNC inert this
+	 * milestone), which `classifyFailure` would otherwise score as an honest
+	 * `"violation"` rather than `"unimplemented"` -- this keeps the RFC 7162
+	 * CONDSTORE-modifier compliance tests' `expectFailure: "unimplemented"`
+	 * annotation accurate.
+	 */
+	public async fetch(seq: string, items: string[], opts?: FetchOptions): Promise<FetchedMessage[]> {
+		if (opts?.changedSince !== undefined || opts?.vanished) {
+			throw new NotImplementedError("FETCH (CHANGEDSINCE/VANISHED modifier)");
+		}
+		// RFC 9394 §3.3's `(PARTIAL m:n)` FETCH MODIFIER (paging the RESULT SET
+		// of a FETCH command itself -- distinct from `BodyPartRequest.partial`'s
+		// `<start.length>` octet window, and from SEARCH's own PARTIAL return
+		// option) has no surface on `FetchOptions`/`FetchModifiers` at all --
+		// a spec file that reaches for it does so via an `as unknown as
+		// FetchOptions` cast (see ext/partial-9394.test.ts), so this checks for
+		// it defensively at runtime rather than through the declared type.
+		if ((opts as { partial?: unknown } | undefined)?.partial !== undefined) {
+			throw new NotImplementedError("FETCH (PARTIAL m:n fetch modifier, RFC 9394 §3.3)");
+		}
+		const session = this.requireMailboxSession();
+		const request = translateAdHocFetchItems(items);
+		const out: FetchedMessage[] = [];
+		for await (const msg of session.seq.fetch(seq, request)) {
+			out.push(msg);
+		}
+		return out;
 	}
 	/**
 	 * STORE (RFC 3501/9051 §6.4.6/§6.4.9) -- M3.6. Delegates to
@@ -1020,12 +1210,30 @@ export class ComplianceDriver {
 		}
 		return session.seq.move(seq, mailbox);
 	}
+	/** UID FETCH -- M3.5. UID grain: wired to `client.mailbox!.fetch(...)`
+	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
+	 *  `fetch()`'s own doc comment above for the ad hoc-translation rationale
+	 *  and the CHANGEDSINCE/VANISHED -> `NotImplementedError` translation. */
 	public async uidFetch(
-		_seq: string,
-		_items: string[],
-		_opts?: FetchOptions,
-	): Promise<never> {
-		throw new NotImplementedError("UID FETCH");
+		seq: string,
+		items: string[],
+		opts?: FetchOptions,
+	): Promise<FetchedMessage[]> {
+		if (opts?.changedSince !== undefined || opts?.vanished) {
+			throw new NotImplementedError("UID FETCH (CHANGEDSINCE/VANISHED modifier)");
+		}
+		// See `fetch()`'s own doc comment above for why this is checked at
+		// runtime rather than through the declared `FetchOptions` type.
+		if ((opts as { partial?: unknown } | undefined)?.partial !== undefined) {
+			throw new NotImplementedError("UID FETCH (PARTIAL m:n fetch modifier, RFC 9394 §3.3)");
+		}
+		const session = this.requireMailboxSession();
+		const request = translateAdHocFetchItems(items);
+		const out: FetchedMessage[] = [];
+		for await (const msg of session.fetch(seq, request)) {
+			out.push(msg);
+		}
+		return out;
 	}
 	/** UID SEARCH -- M3.7. UID grain: wired to `client.mailbox!.search(...)`
 	 *  directly (the driver's `uid`-prefixed stub convention), mirroring

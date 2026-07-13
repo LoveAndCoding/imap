@@ -305,7 +305,6 @@ complianceTest(
 		reqs: ["RFC9051-9-7"],
 		profiles: ["rev2"],
 		title: "client accepts BODYSTRUCTURE responses with unknown body-extension fields",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

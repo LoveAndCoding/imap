@@ -104,7 +104,6 @@ complianceTest(
 		reqs: ["RFC5182-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH RETURN (SAVE) form followed by a bare '$' sequence-set in a subsequent FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -245,7 +244,6 @@ complianceTest(
 		reqs: ["RFC5182-2.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a tagged OK with no untagged data when fetching an empty '$'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -288,7 +286,6 @@ complianceTest(
 		reqs: ["RFC5182-2.3-1"],
 		profiles: ["rev1"],
 		title: "client may pipeline SEARCH RETURN (SAVE) with a '$'-consuming FETCH, correlating both completions",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

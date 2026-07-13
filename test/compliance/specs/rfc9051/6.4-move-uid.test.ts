@@ -312,7 +312,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.9-2"],
 		profiles: ["rev2"],
 		title: "client accepts a seq-numbered untagged FETCH carrying UID data in response to UID FETCH (mapping assertion deferred)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -353,7 +352,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.9-3"],
 		profiles: ["rev2"],
 		title: "client accepts an implicit UID data item in a FETCH response caused by UID FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

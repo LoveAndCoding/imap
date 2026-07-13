@@ -80,6 +80,11 @@ export async function executeCommand<T>(
 	// invoked once below, after `settle()`) see the exact same complete,
 	// arrival-ordered contents they always did.
 	const collector = new ResponseCollector();
+	// M3.5: fires the streaming hook (spec §7.3) BEFORE any byte is written
+	// and before any response could be claimed -- see `Command.onCollectorReady`'s
+	// own doc comment for why this is a separate seam from `accept()` and why
+	// it changes nothing about every other command's timing.
+	Command.notifyCollectorReady(command, collector);
 	const unregisterClaimant = router.registerClaimant({
 		claims: (resp) => Command.claimsResponse(command, resp, { tag }),
 		push: (resp) => {

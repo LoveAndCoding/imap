@@ -375,7 +375,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4.2-1"],
 		profiles: ["rev2"],
 		title: "client MAY pipeline SEARCH RETURN (SAVE) with a '$'-consuming FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

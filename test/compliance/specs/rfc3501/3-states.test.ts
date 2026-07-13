@@ -115,23 +115,24 @@ complianceTest(
 
 // ── RFC3501-3.2-1: must SELECT mailbox before message commands ─────────────
 // Best observable surface: driver.fetch() in Authenticated state.
-// Both select() and fetch() are unimplemented; the test documents the correct
-// command sequence: SELECT must precede FETCH in the client's command stream.
+// REAL SIGNAL (M3.5): select()/fetch() are both wired to the public client
+// now -- the driver must actually SELECT before FETCH is legal (the real
+// `MailboxSession.fetch()`/`FetchCommand` reject `StateError` otherwise, spec
+// §5b's own "closed"/no-session precondition), so this test now drives the
+// correct sequence rather than merely documenting it.
 complianceTest(
 	{
 		reqs: ["RFC3501-3.2-1"],
 		profiles: ["rev1"],
 		title: "client selects a mailbox before issuing message-affecting commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// The correct sequence: SELECT before FETCH.
-				// When both verbs are implemented, the driver must issue SELECT first.
 				expectLine(command("SELECT")),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 0 EXISTS",
@@ -143,8 +144,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: driver must SELECT before FETCH is allowed.
-		// fetch() throws NotImplementedError; select() does too.
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.fetch("1:*", ["FLAGS"]);
 		await server.assertCompleted();
 	},

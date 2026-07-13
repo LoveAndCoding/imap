@@ -5,6 +5,8 @@ import { CloseCommand } from "../commands/close";
 import { CopyCommand } from "../commands/copy";
 import type { CopyResult } from "../commands/copy";
 import { ExpungeCommand } from "../commands/expunge";
+import { FetchCommand } from "../commands/fetch";
+import type { FetchCapabilityProbe } from "../commands/fetch";
 import { MoveCommand } from "../commands/move";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
@@ -17,6 +19,7 @@ import { CapabilityError, StateError } from "../errors";
 import { SequenceSet } from "../protocol/sequence-set";
 import type { SequenceInput } from "../protocol/sequence-set";
 import type { Flag } from "../protocol/vocabularies";
+import type { FetchModifiers, FetchRequest, FetchedMessage, FetchedMessageImpl } from "./fetch";
 import type { ClientState } from "./state";
 
 /**
@@ -72,6 +75,11 @@ export interface MailboxSessionDriver {
 	 *  `capability` declare" two-layer pattern `ImapClient.create()`/
 	 *  `namespaces()` use). */
 	hasCapability(cap: string): boolean;
+	/** `ResolvedConfig.maxInlineSize` (spec §5.4/§2, M1 groundwork left
+	 *  unconsumed until M3.5): the fetch part buffering cutoff `FetchCommand`
+	 *  reads to decide, per body part, whether to eagerly drain a streamed
+	 *  literal into a `Buffer` or hand out a live stream. */
+	maxInlineSize(): number;
 	/** Called ONCE the deselecting command's tagged OK has actually arrived:
 	 *  clears the client's `mailbox` pointer (only if it still points at
 	 *  THIS session -- a defensive no-op otherwise) and transitions
@@ -118,6 +126,8 @@ export interface MailboxFlagsUpdate {
  * its `MailboxSession` UID-grain counterpart's shape.
  */
 export interface SequenceFacet {
+	fetch(seqs: SequenceInput, items: FetchRequest, opts?: FetchModifiers): AsyncIterable<FetchedMessage>;
+	fetchOne(seq: number, items: FetchRequest, opts?: FetchModifiers): Promise<FetchedMessage | null>;
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
 	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
 	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
@@ -294,6 +304,54 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 */
 	public async search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this, criteria, opts, true);
+	}
+
+	// -- message ops: FETCH (spec §5.4/§5b, M3.5) ------------------------------
+
+	/**
+	 * FETCH / UID FETCH (spec §5.4/§5b; RFC 3501/9051 §6.4.5/§6.4.9). UID
+	 * grain (spec §6.2's settled default) — the wire verb is always `UID
+	 * FETCH`, and the UID data item is always implicit in the response
+	 * regardless of whether `items.uid` was set (RFC9051-6.4.9-3) — see `seq`
+	 * for the bare `FETCH` (sequence-number grain) mirror, where an explicit
+	 * ask IS required to see `UID` in the response.
+	 *
+	 * Returns an async iterable (NOT a `Promise` of one — spec §5.4's own
+	 * signature): iterating it is what actually submits the command and
+	 * starts consuming responses (`MailboxSession.runFetch()`/`driveFetch()`
+	 * below build this lazily), so constructing the iterable performs no I/O
+	 * by itself. `FetchModifiers.changedSince`/`.vanished` are CONDSTORE/
+	 * QRESYNC-gated and throw `CapabilityError` synchronously (zero bytes
+	 * written, I-9) — CONDSTORE-inert this milestone, mirroring the M2.2
+	 * `SelectOptions.condstore`/`.qresync` precedent exactly (shared M3
+	 * design note). Every other capability gate (`items.modSeq`/`.emailId`/
+	 * etc.) lives in `FetchCommand`'s own constructor.
+	 *
+	 * Rejects `StateError` (zero bytes written, thrown synchronously from
+	 * this call, not from the returned iterable) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public fetch(uids: SequenceInput, items: FetchRequest, opts?: FetchModifiers): AsyncIterable<FetchedMessage> {
+		return MailboxSession.runFetch(this, uids, items, opts, "uid");
+	}
+
+	/**
+	 * Single-UID convenience form of `fetch()` (spec §5b): `Promise<
+	 * FetchedMessage | null>`, `null` on no match (a UID the server has
+	 * nothing to say about — a legal, common outcome, e.g. a since-expunged
+	 * UID), never a thrown error for that case. Implemented as "take the
+	 * first (and, for a single-UID request, only) yielded message, then stop
+	 * iterating" — the early `return` inside the `for await` loop invokes the
+	 * SAME abandoned-iterator drain path `fetch()`'s own mandatory compliance
+	 * coverage exercises (spec §5.4), so a multi-part response's live streams
+	 * this caller never touched are destroyed rather than left dangling.
+	 */
+	public async fetchOne(
+		uid: number,
+		items: FetchRequest,
+		opts?: FetchModifiers,
+	): Promise<FetchedMessage | null> {
+		return fetchOneOf(this.fetch(uid, items, opts));
 	}
 
 	// -- deselection (spec §5b) -----------------------------------------------
@@ -631,6 +689,70 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return session.driver.run(new SearchCommand(criteria, opts, probe, uid));
 	}
 
+	/**
+	 * Shared FETCH/UID FETCH implementation for both `fetch()` (UID grain)
+	 * and `seq.fetch()` (sequence-number grain) — a `static` for the same
+	 * facet-delegation reason as `runSearch`/`runStore`/`runCopyOrMove`
+	 * above. `FetchModifiers.changedSince`/`.vanished` throw `CapabilityError`
+	 * HERE, synchronously, before `FetchCommand` is even constructed (I-9) —
+	 * CONDSTORE/QRESYNC are M4 exit-criteria RFCs, mirroring the M2.2
+	 * `SelectOptions.condstore`/`.qresync` precedent (shared M3 design note).
+	 */
+	static runFetch(
+		session: MailboxSession,
+		input: SequenceInput,
+		items: FetchRequest,
+		opts: FetchModifiers | undefined,
+		kind: "uid" | "seq",
+	): AsyncIterable<FetchedMessage> {
+		session.assertOpen(kind === "uid" ? "fetch" : "seq.fetch");
+		if (opts?.changedSince !== undefined || opts?.vanished) {
+			throw new CapabilityError(
+				`${kind === "uid" ? "fetch" : "seq.fetch"}(): the CHANGEDSINCE/VANISHED ` +
+					"FETCH modifiers are not implemented until a later milestone (CONDSTORE/" +
+					"QRESYNC, RFC 7162/5162, are M4 exit-criteria RFCs) -- call fetch() " +
+					"without `changedSince`/`vanished` today",
+				{ capability: "CONDSTORE", rfc: "RFC7162" },
+			);
+		}
+		const set = SequenceSet.from(input).withKind(kind);
+		// RFC 5182 §2.1's "$" SEARCHRES sentinel gate AT POINT OF USE (I-9):
+		// `SequenceSet` itself deliberately leaves this "gated on capability
+		// elsewhere" (its own doc comment) -- this is that "elsewhere". Folded
+		// into rev2 core with no separate token (RFC 9051 §6.4.4, same
+		// absorption pattern as ESEARCH's RETURN syntax); rev1 needs the real
+		// SEARCHRES capability.
+		if (
+			set.toString() === "$" &&
+			!session.driver.hasCapability("SEARCHRES") &&
+			!session.driver.hasCapability("IMAP4rev2")
+		) {
+			throw new CapabilityError(
+				`${kind === "uid" ? "fetch" : "seq.fetch"}(): the "$" SEARCHRES sequence-set ` +
+					"sentinel requires the SEARCHRES capability (RFC 5182 §2.1) or an " +
+					"IMAP4rev2 server (RFC 9051 §6.4.4, which folds SEARCHRES into the base " +
+					"command set with no separate capability token), neither of which the " +
+					"server has advertised",
+				{ capability: "SEARCHRES", rfc: "RFC5182" },
+			);
+		}
+		const probe: FetchCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
+		const command = new FetchCommand(set, items, kind === "uid", session.driver.maxInlineSize(), probe);
+		// Kicks off the actual submission/dispatch (write, wait-for-tagged,
+		// settle, cleanup) in the background -- by the time this call returns
+		// (synchronously, even though it's a Promise), `FetchCommand`'s
+		// `onCollectorReady()` hook has ALREADY fired if the queue is running
+		// (constructing the collector and registering the claimant happen
+		// synchronously inside `executeCommand`, before its first `await`);
+		// `driveFetch()` below awaits that hook internally regardless, so this
+		// is correct even if the queue is held/not yet running. Never awaited
+		// directly here -- errors (a tagged NO/BAD) surface through
+		// `driveFetch()`'s own `await resultPromise` instead, once every
+		// already-claimed message has been yielded.
+		const resultPromise = session.driver.run(command);
+		return { [Symbol.asyncIterator]: () => driveFetch(command, resultPromise) };
+	}
+
 	// -- internal driver surface (ImapClient's §8.3 state-tracker lane ONLY) --
 	// Public statics (same access-widening trick `commands/base.ts` documents
 	// for `Command`'s own static driver methods): nothing outside `client.ts`
@@ -710,6 +832,19 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 class SeqFacet implements SequenceFacet {
 	constructor(private readonly session: MailboxSession) {}
 
+	/** Sequence-number-grain FETCH -- see `MailboxSession.fetch()`'s doc
+	 *  comment; identical behavior (bare `FETCH`, not `UID FETCH`), except an
+	 *  explicit `items.uid: true` ask IS required to see the `UID` data item
+	 *  in the response (contrast the UID-grain method, where it's always
+	 *  implicit regardless). */
+	fetch(seqs: SequenceInput, items: FetchRequest, opts?: FetchModifiers): AsyncIterable<FetchedMessage> {
+		return MailboxSession.runFetch(this.session, seqs, items, opts, "seq");
+	}
+
+	fetchOne(seq: number, items: FetchRequest, opts?: FetchModifiers): Promise<FetchedMessage | null> {
+		return fetchOneOf(this.fetch(seq, items, opts));
+	}
+
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this.session, criteria, opts, false);
 	}
@@ -748,4 +883,136 @@ class SeqFacet implements SequenceFacet {
 	expunge(): Promise<number[]> {
 		return MailboxSession.runExpunge(this.session, undefined, "seq.expunge");
 	}
+}
+
+// -- FETCH async-iterable driver (spec §5.4, M3.5) ---------------------------
+// Free functions (not methods) because they operate on a `FetchCommand`
+// instance directly, not on `MailboxSession`'s own private state -- kept
+// beside `MailboxSession`/`SeqFacet` rather than in `commands/fetch.ts` since
+// this is where the PUBLIC `AsyncIterable` contract (backpressure + the
+// abandoned-iterator drain, both spec §5.4) is implemented; `FetchCommand`
+// itself only knows how to expose the raw claimed-response stream
+// (`messages()`).
+
+/**
+ * Drives one `fetch()`/`seq.fetch()` call's `AsyncIterable<FetchedMessage>`
+ * (spec §5.4): yields each message as `FetchCommand.messages()` produces it
+ * (itself fed by the M3.4 collector bridge, before this command's tagged OK),
+ * and — the backpressure contract — does not pull the NEXT message out of
+ * `messages()` until every LIVE (not-yet-buffered) `FetchedPart` on the
+ * current message has been consumed (drained via `buffer()`/read to the end
+ * of `stream()`) or destroyed. `await resultPromise` at the end surfaces a
+ * tagged NO/BAD (or any other rejection `driver.run()` itself would produce)
+ * as this iterable's own completion error, once every already-claimed
+ * message has been exhausted.
+ *
+ * Abandoned iterator (`break`/`return`, the mandatory compliance scenario):
+ * the `finally` block destroys the just-yielded message's own not-yet-
+ * settled live parts (in case the consumer walked away between the `yield`
+ * and the backpressure `await` above), then keeps draining the REST of
+ * `messages()` in the background (`drainAbandoned`, fire-and-forget,
+ * destroying any live parts it encounters along the way) — the command was
+ * already dispatched; its remaining responses will keep arriving over the
+ * wire regardless of whether anyone reads them here, and every one of them
+ * must still be claimed/settled so the NEXT command on this connection
+ * parses cleanly (`ResponseCollector.settle()` — and this command's own
+ * tag/claimant cleanup in `executeCommand`'s `finally` — only ever happen
+ * once, driven by the tagged response arriving, independent of this
+ * generator's own lifetime).
+ */
+async function* driveFetch(
+	command: { messages(): AsyncGenerator<FetchedMessage, void, void> },
+	resultPromise: Promise<AsyncIterable<FetchedMessage>>,
+): AsyncGenerator<FetchedMessage, void, void> {
+	const iter = command.messages();
+	let current: FetchedMessageImpl | undefined;
+	try {
+		for (;;) {
+			const next = await iter.next();
+			if (next.done) {
+				break;
+			}
+			current = next.value as FetchedMessageImpl;
+			yield current;
+			await Promise.all(current.livePartSettledPromises());
+			current = undefined;
+		}
+		await resultPromise;
+	} finally {
+		if (current) {
+			current.destroyLiveParts();
+		}
+		void drainAbandoned(iter);
+		// The command's own completion is observed either via the `await`
+		// above (normal path) or discarded here (abandoned path) -- either
+		// way, a rejection must never become an unhandled rejection just
+		// because this generator stopped reading before it settled.
+		resultPromise.catch(() => undefined);
+	}
+}
+
+/** Best-effort background drain for an abandoned `fetch()` iterator (see
+ *  `driveFetch()`'s own doc comment) -- consumes the rest of `iter`,
+ *  destroying every live part of every remaining message so none of them
+ *  can leave the underlying socket paused forever (`LiteralBodyStream`'s own
+ *  "consumed or destroyed" contract, §5.4) with nobody left to resume it. */
+async function drainAbandoned(iter: AsyncGenerator<FetchedMessage, void, void>): Promise<void> {
+	try {
+		for (;;) {
+			const next = await iter.next();
+			if (next.done) {
+				break;
+			}
+			(next.value as FetchedMessageImpl).destroyLiveParts();
+		}
+	} catch {
+		// Best-effort drain only -- a parse/protocol error surfaces through
+		// the command's own `resultPromise` instead (already handled by the
+		// caller that abandoned this iterator); nothing more to do here.
+	}
+}
+
+/**
+ * Shared `fetchOne()`/`seq.fetchOne()` implementation (spec §5b): take the
+ * first yielded message, then stop.
+ *
+ * Deliberately NOT `for await (const msg of iterable) { return msg; }`:
+ * `for await...of` calls the underlying iterator's `.return()` on ANY early
+ * exit, which is exactly `driveFetch()`'s ABANDONED-iterator signal --
+ * destroying the just-yielded message's own not-yet-consumed live parts
+ * (spec §5.4's "consumed or destroyed" contract) BEFORE `fetchOne()`'s
+ * caller ever gets a chance to read them. That's correct for a genuine
+ * caller-initiated `break`, but wrong here: `fetchOne()` hands the message
+ * back whole, live parts intact, for the caller to use exactly like any
+ * other `FetchedMessage`. Calling the raw `.next()` once (never `.return()`)
+ * avoids triggering that cleanup for the message actually being returned.
+ *
+ * The rest of the iterator (if a non-conformant server sends more than one
+ * response to what should be a single-UID request, or a caller reuses
+ * `fetchOne()` against a range) is still drained in the background via
+ * ordinary `.next()` calls -- NORMAL completion, not abandonment -- so
+ * `driveFetch()`'s own advance-gate/backpressure and final settle/cleanup
+ * still run exactly as they would for a fully-consumed `fetch()` call; this
+ * background drain simply won't ask for message 2 until message 1's own
+ * live parts (if any) are consumed or destroyed by whoever ends up doing
+ * that, typically this call's own caller.
+ */
+async function fetchOneOf(iterable: AsyncIterable<FetchedMessage>): Promise<FetchedMessage | null> {
+	const it = iterable[Symbol.asyncIterator]();
+	const first = await it.next();
+	void (async () => {
+		try {
+			for (;;) {
+				const next = await it.next();
+				if (next.done) {
+					break;
+				}
+			}
+		} catch {
+			// Already surfaced through the original command's own error path
+			// (whoever is holding the first message / awaiting `fetchOne()`);
+			// nothing more to do with a background drain failure.
+		}
+	})();
+	return first.done ? null : first.value;
 }

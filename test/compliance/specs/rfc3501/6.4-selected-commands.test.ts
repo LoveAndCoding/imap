@@ -340,7 +340,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-1"],
 		profiles: ["rev1"],
 		title: "client sends BODY[] (not BODY.PEEK) when fetching body with \\Seen side-effect intended",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -392,7 +391,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-1"],
 		profiles: ["rev1"],
 		title: "client sends BODY.PEEK[] when fetching body without wanting to set \\Seen",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -441,7 +439,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-2"],
 		profiles: ["rev1"],
 		title: "client uses FETCH macros (ALL/FAST/FULL) standalone, never inside a parenthesised item list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -497,7 +494,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-6"],
 		profiles: ["rev1"],
 		title: "client prefixes MIME part specifier with one or more numeric part specifiers (e.g. BODY[1.MIME])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -618,7 +614,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.8-5"],
 		profiles: ["rev1"],
 		title: "client issues UID FETCH and accepts a seq-numbered untagged FETCH with UID data (mapping assertion deferred)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -666,7 +661,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.8-6"],
 		profiles: ["rev1"],
 		title: "client accepts implicit UID data item in FETCH response caused by UID FETCH command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -456,7 +456,6 @@ defineAcceptanceTable({
 	name: "client waits for completion before sending a sequence-number command after a non-FETCH/STORE/SEARCH",
 	profiles: ["rev2"],
 	timeout: 5000,
-	expectFailure: "unimplemented",
 	rows: [
 		{
 			req: "RFC9051-5.5-3",
@@ -503,7 +502,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-4"],
 		profiles: ["rev2"],
 		title: "client waits for UID command completion before sending a sequence-number command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -703,6 +703,45 @@ export class CommandWriter {
 		});
 	}
 
+	/**
+	 * Writes an already-assembled, caller-validated wire token VERBATIM, as
+	 * one value (participating in the normal implicit-spacing model like any
+	 * other emission). Added for FETCH's section-spec syntax (spec §5.4):
+	 * `"[" [section-spec] "]" ["<" number "." nz-number ">"]` embeds "[", "]",
+	 * "<", ">" characters `atom()` rejects outright (they're excluded
+	 * ATOM-CHARs) and no other method here has a dedicated production for —
+	 * `FetchCommand` (`src/commands/fetch.ts`) is the one caller, assembling
+	 * one complete `BODY[...]`/`BODY.PEEK[...]`/`BINARY[...]`/
+	 * `BINARY.PEEK[...]`/`BINARY.SIZE[...]` token (including any embedded
+	 * `HEADER.FIELDS (...)` astring list, itself quoted/escaped by that
+	 * caller using the same rules `astring()` applies) as a single string,
+	 * then handing it here rather than trying to interleave bracket
+	 * punctuation with this class's own group/list helpers (which always
+	 * insert their own spacing and would fight the "no space between `]` and
+	 * a following `<`" requirement). This method's own validation is
+	 * intentionally the same universal wire-safety floor every other method
+	 * enforces (no CR/LF — RFC3501/9051 §9 line-injection guard — and 7-bit
+	 * ASCII only, since every segment here is ultimately encoded "ascii"),
+	 * NOT re-validation of the token's own grammar — the caller owns that.
+	 */
+	raw(s: string): this {
+		return this.atomic(() => {
+			if (typeof s !== "string" || s.length === 0) {
+				throw new RangeError("raw: expected a non-empty string");
+			}
+			for (const ch of s) {
+				const cp = ch.codePointAt(0) ?? 0;
+				if (cp > 0x7f || cp === 0x0d || cp === 0x0a) {
+					throw new RangeError(
+						`raw: ${JSON.stringify(s)} contains a disallowed character (8-bit or CR/LF)`,
+					);
+				}
+			}
+			this.emitValue(Buffer.from(s, "ascii"));
+			return this;
+		});
+	}
+
 	/** Requests an explicit space before the next value. Idempotent: calling
 	 *  it multiple times in a row (or after a value that already requested
 	 *  one) never produces more than one space. */

@@ -6,10 +6,16 @@ import { UID } from "../uid";
 import { MessageBody, match as BodyMatch, MessageBodyPiece } from "./body";
 import { Envelope, match as EnvelopeMatch } from "./envelope";
 import {
+	BinarySection,
+	BinarySize,
+	EmailId,
 	ExtensionsSupported,
 	GmailLabels,
 	GmailMessageId,
 	GmailThreadId,
+	Preview,
+	SaveDate,
+	ThreadId,
 	match as ExtensionsMatch,
 } from "./extension";
 import { match as FlagMatch } from "./flag";
@@ -19,8 +25,12 @@ import { ModSeqBodyResponse, match as ModSeqMatch } from "./modseq";
 import { RFC822Size, match as RFCMatch } from "./rfc822";
 import { match as UIDMatch } from "./uid";
 
-export { Address, AddressList } from "./address";
+export { Address, AddressGroup, AddressList } from "./address";
+export { MessageBodyMultipartStructure, MessageBodyStructure } from "./body.structure";
 export {
+	BinarySection,
+	BinarySize,
+	EmailId,
 	Envelope,
 	FlagList,
 	GmailLabels,
@@ -29,9 +39,13 @@ export {
 	InternalDate,
 	MessageBody,
 	MessageHeader,
+	Preview,
 	RFC822Size,
+	SaveDate,
+	ThreadId,
 	UID,
 };
+export type { ExtensionsSupported };
 
 type FetchMatch =
 	| Envelope
@@ -90,6 +104,14 @@ export class Fetch {
 	public readonly modseq?: number | bigint;
 	public readonly size?: number | bigint;
 	public readonly uid?: UID;
+	/** RFC 3516 BINARY/BINARY.SIZE (M3.5): kept as arrays, NOT folded into
+	 *  `extensions` (keyed by a single `.type` string) -- a single FETCH
+	 *  response legitimately carries more than one leaf part's BINARY[section]/
+	 *  BINARY.SIZE[section] data item (e.g. `BINARY[1]` and `BINARY[2]` in the
+	 *  same response), and a type-keyed map would silently drop all but the
+	 *  last one. */
+	public readonly binarySections?: BinarySection[];
+	public readonly binarySizes?: BinarySize[];
 
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
@@ -141,10 +163,18 @@ export class Fetch {
 					this.body = new MessageBody();
 				}
 				this.body.addMessageBodyPiece(piece);
+			} else if (piece instanceof BinarySection) {
+				(this.binarySections ??= []).push(piece);
+			} else if (piece instanceof BinarySize) {
+				(this.binarySizes ??= []).push(piece);
 			} else if (
 				piece instanceof GmailLabels ||
 				piece instanceof GmailMessageId ||
-				piece instanceof GmailThreadId
+				piece instanceof GmailThreadId ||
+				piece instanceof EmailId ||
+				piece instanceof ThreadId ||
+				piece instanceof SaveDate ||
+				piece instanceof Preview
 			) {
 				if (!this.extensions) {
 					this.extensions = new Map();

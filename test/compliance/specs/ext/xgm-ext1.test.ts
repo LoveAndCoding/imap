@@ -111,7 +111,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-msgid-2", "X-GM-EXT-1-msgid-3"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH X-GM-MSGID attribute retrieves the 64-bit unsigned decimal Gmail message ID",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -119,13 +118,15 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(X-GM-MSGID\)$/i })),
 				reply("OK FETCH (Success)", ["* 1 FETCH (X-GM-MSGID 1278455344230334865)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.fetch("1", ["X-GM-MSGID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["X-GM-MSGID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -180,7 +181,6 @@ complianceTest(
 		reqs: ["X-GM-EXT-1-thrid-2", "X-GM-EXT-1-thrid-3"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH X-GM-THRID attribute retrieves the 64-bit unsigned decimal Gmail thread ID",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -188,6 +188,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1:4 \(X-GM-THRID\)$/i })),
 				reply("OK FETCH (Success)", [
 					"* 1 FETCH (X-GM-THRID 1266894439832287888)",
@@ -198,8 +199,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.fetch("1:4", ["X-GM-THRID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1:4", ["X-GM-THRID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -257,7 +259,6 @@ complianceTest(
 		profiles: ["rev1", "rev2"],
 		title:
 			"FETCH X-GM-LABELS attribute retrieves a parenthesized ASTRING list mixing flag-style and quoted labels",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -265,6 +266,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1:4 \(X-GM-LABELS\)$/i })),
 				reply("OK FETCH (Success)", [
 					'* 1 FETCH (X-GM-LABELS (\\Inbox \\Sent Important "Muy Importante"))',
@@ -275,8 +277,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.fetch("1:4", ["X-GM-LABELS"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1:4", ["X-GM-LABELS"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();

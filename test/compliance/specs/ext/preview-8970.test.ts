@@ -23,12 +23,10 @@
  *   RFC8970-4.2-1  Client SHOULD NOT continually re-issue FETCH PREVIEW
  *                  (LAZY) requests in a selected mailbox (self-actualizing).
  *
- * REAL-SIGNAL ASSESSMENT (per the catalog's own note): no REAL parse
- * surface is reachable for ANY PREVIEW duty — driver.fetch()/uidFetch()
- * throw NotImplementedError('FETCH')/('UID FETCH') unconditionally before
- * any command reaches the wire, and there is no FetchOptions surface for a
- * LAZY-style modifier either. All entries below are therefore honest
- * self-actualizing fails; the scripted server pins the exact wire forms
+ * REAL-SIGNAL STATUS (M3.5): `driver.fetch()`/`uidFetch()` are wired to the
+ * real `MailboxSession.fetch()`/`.seq.fetch()` (spec §5.4) — every entry
+ * below is now a genuine wire-form/parse assertion, not a self-actualizing
+ * fail; the scripted server still pins the exact wire forms
  * and response shapes from RFC 8970's own §5 worked examples.
  */
 import { expect } from "vitest";
@@ -37,7 +35,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -55,14 +53,14 @@ complianceTest(
 		reqs: ["RFC8970-3.1-1", "RFC8970-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH 1 (RFC822.SIZE PREVIEW) requests and accepts a generated preview string",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1 \(RFC822\.SIZE PREVIEW\)$/i })),
 				reply("OK FETCH completed", [
 					'* 1 FETCH (RFC822.SIZE 5647 PREVIEW "This is a short preview of the message.")',
@@ -70,7 +68,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["RFC822.SIZE", "PREVIEW"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["RFC822.SIZE", "PREVIEW"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -91,14 +91,14 @@ complianceTest(
 		reqs: ["RFC8970-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH PREVIEW (LAZY) accepts a NIL preview response as well-formed, not an error",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1:4 \(ENVELOPE PREVIEW \(LAZY\)\)$/i })),
 				reply("OK FETCH completed", [
 					'* 3 FETCH (ENVELOPE ("date" NIL NIL NIL NIL NIL NIL NIL NIL NIL) PREVIEW NIL)',
@@ -106,7 +106,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1:4", ["ENVELOPE", "PREVIEW (LAZY)"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1:4", ["ENVELOPE", "PREVIEW (LAZY)"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -123,14 +125,14 @@ complianceTest(
 		reqs: ["RFC8970-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'FETCH PREVIEW accepts a zero-length string ("") as "no meaningful preview available"',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^2 \(PREVIEW ENVELOPE\)$/i })),
 				reply("OK FETCH completed", [
 					'* 2 FETCH (PREVIEW "" ENVELOPE ("date" NIL NIL NIL NIL NIL NIL NIL NIL NIL))',
@@ -138,7 +140,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("2", ["PREVIEW", "ENVELOPE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("2", ["PREVIEW", "ENVELOPE"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -156,20 +160,22 @@ complianceTest(
 		reqs: ["RFC8970-4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'FETCH PREVIEW (LAZY) requests best-effort, non-blocking preview generation',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1 \(PREVIEW \(LAZY\)\)$/i })),
 				reply("OK FETCH completed", ['* 1 FETCH (PREVIEW "Preview text.")']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["PREVIEW (LAZY)"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["PREVIEW (LAZY)"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -198,7 +204,6 @@ complianceTest(
 		reqs: ["RFC8970-3.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH PREVIEW text is interpreted as literal UTF-8 text/plain, not content-transfer-decoded",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -211,13 +216,16 @@ complianceTest(
 		const previewText = "café";
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1 \(PREVIEW\)$/i })),
 				reply("OK FETCH completed", [`* 1 FETCH (PREVIEW "${previewText}")`]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["PREVIEW"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["PREVIEW"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -245,14 +253,14 @@ complianceTest(
 		reqs: ["RFC8970-4.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not continually re-issue FETCH PREVIEW (LAZY) for the same message with no triggering event",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(previewCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("FETCH", { args: /^1 \(PREVIEW \(LAZY\)\)$/i })),
 				reply("OK FETCH completed", ['* 1 FETCH (PREVIEW NIL)']),
 				// A second, immediate FETCH PREVIEW (LAZY) for the SAME message with
@@ -263,7 +271,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["PREVIEW (LAZY)"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["PREVIEW (LAZY)"]);
 		// Intended probe once implemented: immediately re-request the same
 		// message's PREVIEW (LAZY) with no triggering event and assert the
 		// client does not emit a second, unprompted FETCH line.

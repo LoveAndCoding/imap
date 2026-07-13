@@ -64,7 +64,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -228,14 +228,14 @@ complianceTest(
 		reqs: ["RFC8474-5.1-1", "RFC8474-5.3-1", "RFC8474-5.3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (EMAILID) request and EMAILID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				// fetch-att =/ "EMAILID".
 				expectLine(command("FETCH", { args: /^1 \(EMAILID\)$/i })),
 				// fetch-emailid-resp = "EMAILID" SP "(" objectid ")".
@@ -243,7 +243,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["EMAILID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["EMAILID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -261,21 +263,23 @@ complianceTest(
 		reqs: ["RFC8474-5.3-2", "RFC8474-5.3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (THREADID) request and THREADID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(THREADID\)$/i })),
 				// fetch-threadid-resp = "THREADID" SP ( "(" objectid ")" / nil ) — id branch.
 				reply("OK FETCH completed", ["* 1 FETCH (THREADID (T64b478a75b7ea9))"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["THREADID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["THREADID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -295,21 +299,23 @@ complianceTest(
 		reqs: ["RFC8474-1-1", "RFC8474-5.2-1", "RFC8474-5.3-5"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (THREADID) accepts a NIL value (server without threading)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(THREADID\)$/i })),
 				// fetch-threadid-resp second branch: "THREADID" SP nil.
 				reply("OK FETCH completed", ["* 1 FETCH (THREADID NIL)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["THREADID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["THREADID"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},
@@ -330,14 +336,14 @@ complianceTest(
 		reqs: ["RFC8474-8.4-1", "RFC8474-8.4-2", "RFC8474-8.4-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles inconsistent ObjectIDs (RFC 3501 fallback / bounded resync)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(EMAILID\)$/i })),
 				// Two different EMAILIDs reported for the same message — an inconsistency
 				// the client must detect and respond to per §8.4, without looping forever.
@@ -348,7 +354,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["EMAILID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["EMAILID"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},

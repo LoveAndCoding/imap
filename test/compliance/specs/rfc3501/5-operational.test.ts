@@ -557,7 +557,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"client does not pipeline a NOOP/COPY/EXPUNGE alongside a message-sequence-number command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -648,7 +647,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"client waits for UID command completion before sending a message-sequence-number command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
