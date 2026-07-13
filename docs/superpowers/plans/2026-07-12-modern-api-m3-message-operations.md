@@ -45,7 +45,7 @@ Per-task status:
 | M3.6 STORE | **DONE** — `85a4e48`, +4 rows incl. the adjudicated \Recent refusal |
 | M3.7 SEARCH | **DONE** — `0aa5810`, +60 rows, 0 regressions |
 | M3.8 COPY/MOVE | **DONE** — `2549b99`, +9 rows; MOVE∨IMAP4rev2 gate |
-| M3.9 EXPUNGE | IN FLIGHT (worktree) |
+| M3.9 EXPUNGE | **DONE** — `fc69102`, +2 rows; no new catalog rows (verified §6.4.3 has no client-binding entries); seq.expunge() takes no argument by design |
 | M3.10 MULTIAPPEND/CATENATE | **DONE** — `6494b98`, +20 rows, 0 regressions |
 | M3.11 sweep + close | pending |
 
