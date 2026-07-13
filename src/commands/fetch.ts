@@ -326,6 +326,7 @@ function compileFetchWire(
 	request: FetchRequest,
 	uidGrain: boolean,
 	caps: FetchCapabilityProbe,
+	changedSince: bigint | undefined,
 ): void {
 	w.sequenceSet(set);
 	if (typeof request === "string") {
@@ -336,15 +337,26 @@ function compileFetchWire(
 			);
 		}
 		w.atom(macro);
-		return;
-	}
-	if (typeof request !== "object" || request === null || Array.isArray(request)) {
+	} else if (typeof request !== "object" || request === null || Array.isArray(request)) {
 		throw new RangeError("FETCH request must be a macro string or a FetchItems object");
-	}
-	if (Object.keys(request).length === 0) {
+	} else if (Object.keys(request).length === 0) {
 		throw new RangeError("FETCH requires at least one data item (empty FetchItems object)");
+	} else {
+		w.list((inner) => writeFetchItems(inner, request, uidGrain, caps));
 	}
-	w.list((inner) => writeFetchItems(inner, request, uidGrain, caps));
+	if (changedSince !== undefined) {
+		if (!caps.has("CONDSTORE")) {
+			throw new CapabilityError(
+				"FetchModifiers.changedSince requires the CONDSTORE capability " +
+					"(RFC 7162 §3.1.4.1), which the server hasn't advertised",
+				{ capability: "CONDSTORE", rfc: "RFC7162" },
+			);
+		}
+		// RFC 7162 §7 chgsince-fetch-mod: the modifier list follows the item
+		// list (or macro) -- 'FETCH <set> <items> (CHANGEDSINCE <mod-sequence>)'
+		// (§3.1.4.1 Example 12).
+		w.list((inner) => inner.atom("CHANGEDSINCE").bignumber(changedSince));
+	}
 }
 
 /**
@@ -413,6 +425,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	private readonly caps: FetchCapabilityProbe;
 	private readonly maxInlineSizeValue: number;
 	private readonly forcedStreamSections: ReadonlySet<string>;
+	private readonly changedSince: bigint | undefined;
 
 	private collector: ResponseCollector | undefined;
 	private resolveCollectorReady!: () => void;
@@ -424,6 +437,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		uidGrain: boolean,
 		maxInlineSize: number,
 		caps: FetchCapabilityProbe = NO_FETCH_CAPS,
+		changedSince?: bigint,
 	) {
 		super();
 		this.verb = uidGrain ? "UID FETCH" : "FETCH";
@@ -432,19 +446,27 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		this.uidGrain = uidGrain;
 		this.caps = caps;
 		this.maxInlineSizeValue = maxInlineSize;
+		this.changedSince = changedSince;
 		this.forcedStreamSections =
 			typeof request === "object" ? collectForcedStreamSections(request) : new Set();
 		// Pre-compile once against a throwaway writer purely to surface any
 		// CapabilityError/RangeError synchronously, before this command is ever
 		// submitted (I-9) -- SearchCommand's own established precedent.
-		compileFetchWire(new CommandWriter({ has: (cap) => caps.has(cap) }), set, request, uidGrain, caps);
+		compileFetchWire(
+			new CommandWriter({ has: (cap) => caps.has(cap) }),
+			set,
+			request,
+			uidGrain,
+			caps,
+			changedSince,
+		);
 		this.collectorReady = new Promise((resolve) => {
 			this.resolveCollectorReady = resolve;
 		});
 	}
 
 	protected write(w: CommandWriter): void {
-		compileFetchWire(w, this.set, this.request, this.uidGrain, this.caps);
+		compileFetchWire(w, this.set, this.request, this.uidGrain, this.caps, this.changedSince);
 	}
 
 	protected onCollectorReady(c: ResponseCollector): void {

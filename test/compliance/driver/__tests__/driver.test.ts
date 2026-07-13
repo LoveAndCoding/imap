@@ -115,11 +115,33 @@ test("select()/examine() are wired to the public ImapClient (M2.2)", async () =>
 	await server.assertCompleted();
 });
 
-test("select()/examine() translate CONDSTORE/QRESYNC options to NotImplementedError (M4 carry-forward)", async () => {
+test("select() translates the CONDSTORE option onto the real SELECT (CONDSTORE) wire form (M4.5)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 CONDSTORE"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("SELECT", { args: /^INBOX \(CONDSTORE\)$/i })),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 3 EXISTS",
+				"* 0 RECENT",
+				"* OK [HIGHESTMODSEQ 12345] Highest",
+			]),
+		],
+	]);
 	driver = new ComplianceDriver();
-	await expect(
-		driver.select("INBOX", { condstore: true }),
-	).rejects.toBeInstanceOf(NotImplementedError);
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	const session = await driver.select("INBOX", { condstore: true });
+	expect(session.highestModSeq).toBe(12345n);
+	await server.assertCompleted();
+});
+
+test("select()/examine() still translate the QRESYNC option to NotImplementedError (M4.6 not yet landed)", async () => {
+	driver = new ComplianceDriver();
 	await expect(
 		driver.examine("INBOX", { qresync: { uidvalidity: 1, modseq: 1n } }),
 	).rejects.toBeInstanceOf(NotImplementedError);
@@ -266,12 +288,32 @@ test("Phase 6 verbs throw NotImplementedError", async () => {
 test("Phase 5 widened signatures still throw NotImplementedError", async () => {
 	const driver = new ComplianceDriver();
 	await expect(driver.search(["ALL"], { return: ["MIN", "MAX"] })).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.select("INBOX", { condstore: true })).rejects.toBeInstanceOf(NotImplementedError);
 	await expect(
 		driver.select("INBOX", { qresync: { uidvalidity: 67890007, modseq: 90060115194045000n } }),
 	).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n })).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.store("1", "+FLAGS", ["\\Seen"], { unchangedSince: 320162338n })).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+// M4.5: `condstore`/`changedSince`/`unchangedSince` are real now (delegating
+// to the real, capability-gated CONDSTORE paths on SELECT/FETCH/STORE), not
+// NotImplementedError stubs -- QRESYNC (immediately above) is the one
+// widened-signature option still NotImplementedError, unchanged, since it's
+// M4.6's job. With no client connected at all here (deliberately, same
+// rationale as the M3.9 note above `Phase 4 widened signatures`),
+// `requireClient()` throws its own plain `Error` before any CONDSTORE gate is
+// even reached -- proving these three are no longer the old
+// NotImplementedError stub, without needing a live connection to prove the
+// full real behavior (that's `condstore-7162.test.ts`'s job).
+test("Phase 5 widened signatures: condstore/changedSince/unchangedSince are no longer NotImplementedError (M4.5)", async () => {
+	const driver = new ComplianceDriver();
+	await expect(driver.select("INBOX", { condstore: true })).rejects.not.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n })).rejects.not.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(
+		driver.store("1", "+FLAGS", ["\\Seen"], { unchangedSince: 320162338n }),
+	).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
 test("driver.logs captures client logger output (BYE/failed-connect path)", async () => {

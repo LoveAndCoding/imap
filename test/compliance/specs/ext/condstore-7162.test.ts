@@ -15,21 +15,35 @@
  *   RFC7162-3.1.2-1   Accept HIGHESTMODSEQ / NOMODSEQ OK resp-codes.
  *                                                    *** REAL — text.code.ts ***
  *   RFC7162-3.1.2.2-1 MUST NOT use CONDSTORE modifiers on a NOMODSEQ mailbox
- *                     (self-actualizing prohibition)
+ *                     (self-actualizing prohibition)   *** REAL as of M4.5 ***
  *   RFC7162-3.1.3-1   STORE (UNCHANGEDSINCE n) modifier form (self-act.)
+ *                                                    *** REAL as of M4.5 ***
  *   RFC7162-3.1.3-2   Accept untagged FETCH w/ MODSEQ even for .SILENT stores.
  *                                                    *** REAL — fetch/modseq.ts ***
  *   RFC7162-3.1.3-3   Accept [MODIFIED set] on tagged OK and tagged NO.
  *                                                    *** REAL — ModifiedTextCode ***
  *   RFC7162-3.1.3-5   On MODIFIED without explanatory FETCH, SHOULD probe via
- *                     FETCH or NOOP (driven scenario; self-act.)
+ *                     FETCH or NOOP (driven scenario; self-act.) -- STILL
+ *                     unimplemented after M4.5, deliberately: this is a
+ *                     client-internal conflict-resolution POLICY (spec §13
+ *                     non-goals: "Auto-reconnect/retry (consumers own it)"),
+ *                     not a wire form -- there is no single spec-mandated
+ *                     algorithm for deciding "did the watched item really
+ *                     change", and the two scripted probe payloads here don't
+ *                     admit one general-purpose heuristic that answers both
+ *                     "don't retry" (-5) and "do retry" (-6) correctly without
+ *                     guessing at hidden intent. See M4.5's own handoff notes.
  *   RFC7162-3.1.3-6   SHOULD retry with the NEW mod-sequence (driven; self-act.)
+ *                     -- still unimplemented after M4.5, same reasoning as
+ *                     RFC7162-3.1.3-5 immediately above.
  *   RFC7162-3.1.4.1-1 FETCH (CHANGEDSINCE n) modifier form (self-act.)
+ *                                                    *** REAL as of M4.5 ***
  *   RFC7162-3.1.4.2-1 MODSEQ message data item in the FETCH item list (self-act.)
+ *                                                    *** REAL as of M4.5 ***
  *   RFC7162-3.1.4.2-2 Accept the MODSEQ (n) FETCH response data item.
  *                                                    *** REAL — fetch/modseq.ts ***
  *   RFC7162-3.1.5-1   SEARCH MODSEQ criterion form incl. quoted entry-name
- *                     escaping (self-act.)
+ *                     escaping (self-act.)            *** REAL as of M4.5 ***
  *   RFC7162-3.1.6-1   Accept '* SEARCH ... (MODSEQ n)' [rev1 ONLY — IMAP4rev2
  *                     removed the legacy SEARCH response].
  *                                                    *** REAL — mailbox/search.ts ***
@@ -37,6 +51,7 @@
  *                     driver.status() wired) + value
  *                     acceptance incl. 0.            *** REAL — mailbox/status.ts ***
  *   RFC7162-3.1.8-1   SELECT/EXAMINE (CONDSTORE) select parameter form (self-act.)
+ *                                                    *** REAL as of M4.5 ***
  *   RFC7162-3.1.9-1   Accept '* SORT ... (MODSEQ n)'. *** REAL VIOLATION — probed:
  *                     sort.ts drops the line AND the parse stream dies (the
  *                     trailing responses never surface) ***
@@ -77,9 +92,12 @@
  *    stream DIES — no SORT event, and a trailing '* 7 EXISTS' never surfaces
  *    (the client goes deaf for the rest of the connection). RFC7162-3.1.9-1 is
  *    therefore an honest violation, annotated expectFailure: "violation".
- *  - Command-emission duties have no implemented surface: select/fetch/store/
- *    search/status option payloads all throw NotImplementedError → honest
- *    "unimplemented", with the exact wire form pinned for the future.
+ *  - M4.5 update: the command-emission duties (SELECT/FETCH/STORE/SEARCH
+ *    CONDSTORE option payloads, plus the RFC7162-3.1.2.2-1 NOMODSEQ guard)
+ *    are REAL as of M4.5 -- `expectFailure: "unimplemented"` was removed from
+ *    each row's test above once it genuinely passed (stale-annotation
+ *    sweep). RFC7162-3.1.3-5/-6 remain the one still-unimplemented pair
+ *    (see their own catalog-id entries above for why).
  */
 import { expect } from "vitest";
 
@@ -671,7 +689,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.8-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SELECT command form: SELECT INBOX (CONDSTORE)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -711,7 +728,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "STORE command form: STORE 1:2 (UNCHANGEDSINCE 320162338) +FLAGS.SILENT (\\Deleted)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -763,7 +779,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH command form: FETCH 1:* (FLAGS) (CHANGEDSINCE 12345)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -814,7 +829,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.4.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH command form: FETCH 1:3 (MODSEQ)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -863,7 +877,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'SEARCH command form: SEARCH MODSEQ "/flags/\\\\draft" all 620162338',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1066,7 +1079,6 @@ complianceTest(
 		reqs: ["RFC7162-3.1.2.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits no CONDSTORE modifiers after selecting a NOMODSEQ mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {

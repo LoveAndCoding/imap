@@ -129,9 +129,17 @@ export interface BodyPartRequest {
  *  a typed `FetchItems` att-list. */
 export type FetchRequest = string | FetchItems;
 
-/** spec §5b: type-complete, CONDSTORE/QRESYNC-inert this milestone -- both
- *  fields throw `CapabilityError` before any bytes are written (I-9),
- *  mirroring the `SelectOptions.condstore`/`.qresync` precedent (M2.2). */
+/**
+ * spec §5b. `changedSince` (RFC 7162 CONDSTORE `CHANGEDSINCE`) is real as of
+ * M4.5: gated on the CONDSTORE capability being ADVERTISED (not `ENABLE`d --
+ * see `src/commands/select.ts`'s `SelectOrExamineCommand` doc comment for
+ * the RFC 7162 §3.1.1 rationale this shares) and on the selected mailbox not
+ * having reported NOMODSEQ (`MailboxSession.highestModSeq !== null`,
+ * RFC7162-3.1.2.2-1 -- see `MailboxSession.runFetch()`'s own doc comment).
+ * `vanished` remains QRESYNC-inert (M4.6's job): still throws
+ * `CapabilityError` before any bytes are written (I-9), mirroring the
+ * `SelectOptions.qresync` precedent (M2.2/M4.5).
+ */
 export interface FetchModifiers {
 	changedSince?: bigint;
 	vanished?: boolean;

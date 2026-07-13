@@ -90,13 +90,26 @@ import type { ClientState } from "./state";
  * The "understood-enable set" for `extensions: "auto"` (spec §3.4): every
  * capability the client itself knows how to make use of once ENABLEd, that
  * "auto" is willing to turn on automatically without being asked. Grows as
- * later milestones land the extension itself -- `QRESYNC` (M4), `CONDSTORE`
- * (M4; implied by QRESYNC), `UIDONLY` (M5). `IMAP4rev2` is deliberately
- * excluded permanently: enabling it is a profile decision the caller opts
- * into explicitly (a future `profile:"rev2"` config, not yet implemented),
- * never something "auto" reaches for on its own.
+ * later milestones land the extension itself -- `UIDONLY` (M5) is next.
+ * `IMAP4rev2` is deliberately excluded permanently: enabling it is a profile
+ * decision the caller opts into explicitly (a future `profile:"rev2"`
+ * config, not yet implemented), never something "auto" reaches for on its
+ * own.
+ *
+ * M4.4 adds `QRESYNC` and `CONDSTORE` (both requested unconditionally, in
+ * this order): RFC 7162 §3.2 QRESYNC implies CONDSTORE, but `ENABLE QRESYNC`
+ * alone does not obligate a server to ALSO treat CONDSTORE as enabled unless
+ * CONDSTORE was named too (and — separately — a server may support CONDSTORE
+ * without QRESYNC at all) — requesting both by name is the only combination
+ * that is correct regardless of which the server actually supports.
+ * `enableExtensions()`'s existing advertisement filter (`isEnableAdvertised`)
+ * already drops whichever name isn't advertised, zero bytes either way, same
+ * as every existing member — no behavior change for a server advertising
+ * neither. Landing this before M4.5/M4.6's capability-gated paths are
+ * exercised is deliberate: it gives their "enabled" branches something real
+ * to run against instead of only their "not available -> throws" branch.
  */
-const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT"];
+const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT", "CONDSTORE", "QRESYNC"];
 
 const TLS_MODE_TO_CONNECTION: Record<TlsMode, TLSSetting> = {
 	on: TLSSetting.DEFAULT,
@@ -487,10 +500,26 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `extensions: false` deliberately never sends ENABLE at all.
 	 *
 	 * "ENABLE-managed" capabilities (the `_enabled`-gated branch) are exactly
-	 * `UTF8=ACCEPT` today; `QRESYNC`/`CONDSTORE` are documented to join this
-	 * set in M4, once ENABLEing THEM has its own wire-visible effects to gate
-	 * the same way. Every other capability name falls through to the ordinary
-	 * advertisement check unchanged.
+	 * `UTF8=ACCEPT` today. M4.5 kickoff settled the CONDSTORE question this
+	 * comment used to leave open: CONDSTORE deliberately does NOT join this
+	 * set. RFC 7162 §3.1.1/§3.1.2 make CONDSTORE's activation model
+	 * fundamentally different from UTF8=ACCEPT's — a client "enables"
+	 * CONDSTORE-track use just by ISSUING any condstore-enabling command
+	 * (`SELECT`/`EXAMINE (CONDSTORE)`, `FETCH (CHANGEDSINCE ...)`, `STORE
+	 * (UNCHANGEDSINCE ...)`, `SEARCH MODSEQ`), never by a prior `ENABLE
+	 * CONDSTORE` — and the RFC is explicit that "there is no requirement for
+	 * a compliant server to support 'ENABLE CONDSTORE' by itself" (catalog:
+	 * `test/compliance/catalog/ext/rfc7162.ts`, RFC7162-3.2.3's notes). So
+	 * unlike UTF8=ACCEPT (whose wire effects RFC 6855 §3 licenses only once
+	 * genuinely negotiated), plain advertisement is the correct and complete
+	 * gate for every CONDSTORE-shaped option this client emits — falling
+	 * through to the ordinary `capabilityRegistry.view.has()` check below is
+	 * the intended behavior, not a gap. `QRESYNC` is the opposite: RFC 7162
+	 * §3.2.3/§3.2.4 make a positive `ENABLE QRESYNC` + `ENABLED QRESYNC`
+	 * response a hard MUST before any QRESYNC-shaped wire form may be used —
+	 * that capability DOES need to join this `_enabled`-gated branch, once
+	 * M4.6 gives it a real path to gate. Every other capability name falls
+	 * through to the ordinary advertisement check unchanged.
 	 */
 	private effectiveCapability(cap: string): boolean {
 		if (cap.toUpperCase() === "UTF8=ACCEPT") {
@@ -749,14 +778,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See
 	 *  `selectOrExamine()` for the shared choreography. */
 	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		return this.selectOrExamine(mailbox, new SelectCommand(mailbox, opts));
+		return this.selectOrExamine(
+			mailbox,
+			new SelectCommand(mailbox, opts, this.capabilityRegistry.view),
+		);
 	}
 
 	/** EXAMINE (spec §3.2/§3.1, RFC 3501/9051 §6.3.2/§6.3.3): identical
 	 *  choreography to `select()`; the returned session's `readOnly` is
 	 *  always `true` (enforced by `ExamineCommand.accept()`). */
 	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		return this.selectOrExamine(mailbox, new ExamineCommand(mailbox, opts));
+		return this.selectOrExamine(
+			mailbox,
+			new ExamineCommand(mailbox, opts, this.capabilityRegistry.view),
+		);
 	}
 
 	/**

@@ -26,32 +26,38 @@ export type StoreOperation = "add" | "remove" | "replace";
  * `StoreModifiers` (spec §5b). `silent` controls the `.SILENT` suffix (see
  * `StoreCommand`'s class doc comment for the silent-vs-non-silent design
  * decision this task settled). `unchangedSince` (RFC 7162 CONDSTORE
- * `UNCHANGEDSINCE`) lands type-complete but CONDSTORE-inert THIS milestone —
- * mirroring the M2.2 `SelectOptions.condstore`/`.qresync` precedent exactly:
- * passing it throws `CapabilityError` synchronously, before any bytes are
- * written (I-9), rather than silently ignoring it or half-emitting the RFC
- * 4466 store-modifier wire form. CONDSTORE/QRESYNC are M4 exit-criteria RFCs
- * (RFC 7162/5162) — a real implementation lands there, at which point this
- * field's shape already matches spec §5b with no breaking change required.
+ * `UNCHANGEDSINCE`) is real as of M4.5: `StoreCommand` emits the RFC 7162 §7
+ * `store-modifier` wire form (`(UNCHANGEDSINCE n)`, BETWEEN the sequence set
+ * and the data item) whenever set, gated on the CONDSTORE capability being
+ * ADVERTISED (not `ENABLE`d — see `src/commands/select.ts`'s
+ * `SelectOrExamineCommand` doc comment for the RFC 7162 §3.1.1 rationale
+ * this file shares) — `CapabilityError`, zero bytes written (I-9), when
+ * CONDSTORE isn't available at all.
  */
 export interface StoreModifiers {
 	silent?: boolean;
 	unchangedSince?: bigint;
 }
 
+/** The minimal capability read surface `StoreCommand`'s `unchangedSince`
+ *  gate needs -- same structural-probe convention as `FetchCapabilityProbe`/
+ *  `SelectCapabilityProbe`. */
+export interface StoreCapabilityProbe {
+	has(cap: string): boolean;
+}
+
+const NO_STORE_CAPS: StoreCapabilityProbe = { has: () => false };
+
 /**
  * `StoreResult` (spec §5b). `modified` is populated from the `MODIFIED`
  * resp-code (RFC 7162 §3.2.5.1) — the sequence-set/UID-set of messages
  * `UNCHANGEDSINCE` prevented this STORE from touching, present only on a
- * CONDSTORE partial failure. Since `unchangedSince` always throws before any
- * `StoreCommand` is even constructed this milestone (see `StoreModifiers`'s
- * doc comment), `MODIFIED` can never actually arrive on a command this
- * client sends today — this field is parsed anyway, both for the rare
- * defensive case of a non-conformant server sending it unprompted (tolerated
- * data, I-6, not an error either way) and so M4's CONDSTORE work needs no
- * new collector-reading code, only the removal of the `unchangedSince` throw
- * above. Absent (`undefined`) is the ordinary/common case — never a thrown
- * error for a plain, fully-applied STORE.
+ * CONDSTORE partial failure (tagged OK or tagged NO alike, RFC7162-3.1.3-3).
+ * This field was parsed defensively since before `unchangedSince` itself was
+ * real (M3.6), so M4.5's un-stub needed no new collector-reading code, only
+ * the capability-gated relaxation of `StoreModifiers.unchangedSince`'s own
+ * throw above. Absent (`undefined`) is the ordinary/common case — never a
+ * thrown error for a plain, fully-applied STORE.
  */
 export interface StoreResult {
 	modified?: number[];
@@ -100,6 +106,7 @@ export class StoreCommand extends Command<StoreResult> {
 	private readonly set: SequenceSet;
 	private readonly prefixAtom: string;
 	private readonly flags: readonly string[];
+	private readonly unchangedSince: bigint | undefined;
 
 	constructor(
 		uid: boolean,
@@ -107,6 +114,7 @@ export class StoreCommand extends Command<StoreResult> {
 		operation: StoreOperation,
 		flags: Flag[],
 		opts: StoreModifiers = {},
+		caps: StoreCapabilityProbe = NO_STORE_CAPS,
 	) {
 		super();
 		this.verb = uid ? "UID STORE" : "STORE";
@@ -116,16 +124,16 @@ export class StoreCommand extends Command<StoreResult> {
 		// Same refuse-don't-transform posture as AppendCommand's NUL refusal;
 		// adjudicated at M3.6 (docs/compliance-adjudications.md).
 		assertNoRecentFlag(flags, this.verb);
-		if (opts.unchangedSince !== undefined) {
+		if (opts.unchangedSince !== undefined && !caps.has("CONDSTORE")) {
 			throw new CapabilityError(
-				`${this.verb}: the UNCHANGEDSINCE store modifier is not implemented ` +
-					"until a later milestone (M3.6 plan: StoreModifiers lands type-" +
-					"complete but functionally inert this milestone; CONDSTORE/QRESYNC " +
-					"are M4 exit-criteria RFCs, RFC 7162 §3.1.3) -- construct the " +
-					"command without `unchangedSince` to store flags today",
+				`${this.verb}: the UNCHANGEDSINCE store modifier requires the ` +
+					"CONDSTORE capability (RFC 7162 §3.1.3), which the server hasn't " +
+					"advertised -- construct the command without `unchangedSince` to " +
+					"store flags today",
 				{ capability: "CONDSTORE", rfc: "RFC7162" },
 			);
 		}
+		this.unchangedSince = opts.unchangedSince;
 		this.set = set;
 		const base =
 			operation === "add" ? "+FLAGS" : operation === "remove" ? "-FLAGS" : "FLAGS";
@@ -135,6 +143,12 @@ export class StoreCommand extends Command<StoreResult> {
 
 	protected write(w: CommandWriter): void {
 		w.sequenceSet(this.set);
+		if (this.unchangedSince !== undefined) {
+			// RFC 7162 §7 store-modifier: the modifier list rides BETWEEN the
+			// sequence set and the data item -- 'STORE <set> (UNCHANGEDSINCE
+			// <mod-sequence>) <data-item> <value>' (§3.1.3 Example 4).
+			w.list((inner) => inner.atom("UNCHANGEDSINCE").bignumber(this.unchangedSince!));
+		}
 		w.atom(this.prefixAtom);
 		w.flagList([...this.flags]);
 	}

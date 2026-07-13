@@ -250,3 +250,30 @@ task than folded silently into this phase's fixes.
 **Revisit:** M5's extension-families pass (the milestone that already owns
 CONTEXT=SEARCH/CONTEXT=SORT and the rest of RFC 9394's currently-untested
 rows) re-decides whether `FetchModifiers` gains a `partial` field.
+
+---
+
+## RFC7162-3.1.3-5 / RFC7162-3.1.3-6 — deviate (permanent, SHOULD-level, adjudicated at M4.5)
+
+**Requirement:** After a conditional STORE fails with `MODIFIED`, the
+client SHOULD probe the flagged messages (3.1.3-5, "use ... FETCH to find
+out the new state") and SHOULD retry/reconcile with the new
+mod-sequence (3.1.3-6).
+
+**Decision:** Do not auto-probe or auto-retry. The library surfaces the
+complete signal the duty depends on — `StoreResult.modified` (the
+MODIFIED uid-set, typed since M3.6/M3.11) plus the primitives to act on
+it (`fetch` with `modSeq`, `addFlags`/`setFlags` with `unchangedSince`)
+— and leaves the probe/retry policy to the caller.
+
+**Rationale:** (1) the spec's §13 non-goals state it directly:
+"Auto-reconnect/retry (consumers own it)"; (2) the catalog's own note on
+the sibling row RFC7162-3.1.3-4 classifies the underlying
+conflict-resolution algorithm as internal-decision/untestable — there is
+no single spec-mandated heuristic to implement; (3) an automatic
+probe-then-retry would be a silent, unrequested write issued behind the
+caller's back on observed state — the same class of application-policy
+behavior declined at RFC9051-2.3.2-1/-2. Once M4.5 made UNCHANGEDSINCE
+real, these two rows' tests stopped short-circuiting as unimplemented
+and now measure the deviation honestly (`violation`, like the
+RFC9051-7.1-1 precedent for adjudicated SHOULD deviations).

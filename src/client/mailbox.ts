@@ -14,10 +14,10 @@ import type { ThreadNode } from "../commands/message/thread";
 import type { SelectResult } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
-import { assertSearchResSentinelAllowed } from "../commands/search-criteria";
+import { assertSearchResSentinelAllowed, criteriaHasModSeq } from "../commands/search-criteria";
 import type { SearchCriteria } from "../commands/search-criteria";
 import { StoreCommand } from "../commands/store";
-import type { StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
+import type { StoreCapabilityProbe, StoreModifiers, StoreOperation, StoreResult } from "../commands/store";
 import { UnselectCommand } from "../commands/unselect";
 import { CapabilityError, StateError } from "../errors";
 import { SequenceSet } from "../protocol/sequence-set";
@@ -605,10 +605,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 *  facet-delegation reason as `runSearch` above (so `SeqFacet`, a
 	 *  separate class in this module, can reach it). Rejects `StateError`
 	 *  (zero bytes written) once this session is closed, same guard
-	 *  `close()`/`unselect()` use. `StoreCommand`'s own constructor is where
-	 *  `opts.unchangedSince` throws `CapabilityError` (CONDSTORE-inert this
-	 *  milestone) -- this method does no capability gating of its own beyond
-	 *  the state check. */
+	 *  `close()`/`unselect()` use. `opts.unchangedSince` is real as of M4.5
+	 *  (RFC 7162 §3.1.3): gated HERE against `assertModSeqUsable()`'s
+	 *  NOMODSEQ check (RFC7162-3.1.2.2-1) before `StoreCommand` is even
+	 *  constructed, which separately gates plain CONDSTORE-advertisement
+	 *  (RFC7162-3.1.1-1) in its own constructor. */
 	static async runStore(
 		session: MailboxSession,
 		kind: "uid" | "seq",
@@ -617,11 +618,12 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		flags: Flag[],
 		opts?: StoreModifiers,
 	): Promise<StoreResult> {
-		session.assertOpen(
-			kind === "uid"
-				? "addFlags/removeFlags/setFlags"
-				: "seq.addFlags/seq.removeFlags/seq.setFlags",
-		);
+		const method =
+			kind === "uid" ? "addFlags/removeFlags/setFlags" : "seq.addFlags/seq.removeFlags/seq.setFlags";
+		session.assertOpen(method);
+		if (opts?.unchangedSince !== undefined) {
+			MailboxSession.assertModSeqUsable(session, `${method}()`);
+		}
 		const set = SequenceSet.from(input).withKind(kind);
 		// P1 fix (M3-phase-boundary review): the "$" SEARCHRES gate (see
 		// `assertSearchResSentinelAllowed()`'s own doc comment) applies here
@@ -631,7 +633,8 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			{ has: (cap) => session.driver.hasCapability(cap) },
 			kind === "uid" ? "addFlags/removeFlags/setFlags()" : "seq.addFlags/seq.removeFlags/seq.setFlags()",
 		);
-		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts));
+		const probe: StoreCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
+		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts, probe));
 	}
 
 	// -- message ops: COPY/MOVE (spec §5b, M3.8) ------------------------------
@@ -838,13 +841,58 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	}
 
 	/**
+	 * RFC7162-3.1.2.2-1: "MUST NOT use CONDSTORE modifiers on a NOMODSEQ
+	 * mailbox." Shared by `runFetch()`/`runStore()`/`runSearch()` — every
+	 * entry point that can emit a CONDSTORE-shaped modifier (`CHANGEDSINCE`,
+	 * `UNCHANGEDSINCE`, the SEARCH `MODSEQ` criterion) calls this first.
+	 *
+	 * `highestModSeq === null` is the one signal `MailboxSession` already
+	 * carries for this (§5b: "null = NOMODSEQ or no CONDSTORE"). Once
+	 * CONDSTORE is advertised AT ALL, RFC 7162 §3.1.2 requires the server to
+	 * send exactly one of HIGHESTMODSEQ/NOMODSEQ on every successful
+	 * SELECT/EXAMINE regardless of whether the client asked for the
+	 * `(CONDSTORE)` select parameter — so for a real server, `null` here
+	 * unambiguously means "this mailbox reported NOMODSEQ" whenever CONDSTORE
+	 * is available at all; the "CONDSTORE isn't advertised at all" case
+	 * collapses to the same `null` value, but is already caught earlier (and
+	 * with a more specific message) by each command's own CONDSTORE-
+	 * advertisement gate (`FetchCommand`/`StoreCommand`/`SearchCommand`'s own
+	 * `assertCap`-style checks) — this guard only ever needs to fire for the
+	 * NOMODSEQ case in practice, but is safe (same outcome either way) if a
+	 * caller somehow reaches it first.
+	 *
+	 * `CapabilityError` (not `StateError`): this is a capability-shaped
+	 * refusal ("CONDSTORE modifiers aren't usable against THIS mailbox right
+	 * now"), the same error type every other CONDSTORE gate in this codebase
+	 * uses — even though the underlying fact (NOMODSEQ) is per-mailbox
+	 * rather than per-connection, `StateError`'s own shape (`state`/
+	 * `required: ClientState[]`) has no field for "this mailbox lacks
+	 * mod-sequences", so it would be a structural mismatch here.
+	 */
+	private static assertModSeqUsable(session: MailboxSession, method: string): void {
+		if (session._highestModSeq === null) {
+			throw new CapabilityError(
+				`${method}: CONDSTORE modifiers cannot be used while the selected ` +
+					`mailbox "${session.name}" has no mod-sequence support (NOMODSEQ, ` +
+					"RFC 7162 §3.1.2.2) -- select a mailbox that supports mod-sequences " +
+					"to use this option",
+				{ capability: "CONDSTORE", rfc: "RFC7162" },
+			);
+		}
+	}
+
+	/**
 	 * Shared SEARCH/UID SEARCH implementation for both `search()` (UID grain)
 	 * and `seq.search()` (sequence-number grain) — a `static` (rather than a
 	 * private instance method) so `SeqFacet` below, a separate class in this
 	 * module, can reach it without this being a public instance method on
 	 * `MailboxSession` itself (same access-widening trick as `markClosed`/
 	 * `applyExists`/etc. below, applied for a facet-delegation reason rather
-	 * than a cross-module one).
+	 * than a cross-module one). `criteria.modSeq` (RFC 7162 §3.1.5) is gated
+	 * HERE against `assertModSeqUsable()`'s NOMODSEQ check
+	 * (RFC7162-3.1.2.2-1) before `SearchCommand` is even constructed, which
+	 * separately gates plain CONDSTORE-advertisement (RFC7162-3.1.1-1) inside
+	 * the criteria compiler (`search-criteria.ts`).
 	 */
 	static async runSearch(
 		session: MailboxSession,
@@ -852,7 +900,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		opts: SearchOptions | undefined,
 		uid: boolean,
 	): Promise<SearchResult> {
-		session.assertOpen(uid ? "search" : "seq.search");
+		const method = uid ? "search" : "seq.search";
+		session.assertOpen(method);
+		if (criteriaHasModSeq(criteria)) {
+			MailboxSession.assertModSeqUsable(session, `${method}()`);
+		}
 		const probe = { has: (cap: string) => session.driver.hasCapability(cap) };
 		const command = new SearchCommand(criteria, opts, probe, uid);
 		// S3 fix: serialize against any OTHER search()/seq.search() currently
@@ -944,10 +996,12 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * Shared FETCH/UID FETCH implementation for both `fetch()` (UID grain)
 	 * and `seq.fetch()` (sequence-number grain) — a `static` for the same
 	 * facet-delegation reason as `runSearch`/`runStore`/`runCopyOrMove`
-	 * above. `FetchModifiers.changedSince`/`.vanished` throw `CapabilityError`
-	 * HERE, synchronously, before `FetchCommand` is even constructed (I-9) —
-	 * CONDSTORE/QRESYNC are M4 exit-criteria RFCs, mirroring the M2.2
-	 * `SelectOptions.condstore`/`.qresync` precedent (shared M3 design note).
+	 * above. `FetchModifiers.changedSince` is real as of M4.5 (RFC 7162
+	 * §3.1.4.1) — gated HERE against `assertModSeqUsable()`'s NOMODSEQ check
+	 * (RFC7162-3.1.2.2-1) before `FetchCommand` is even constructed, which
+	 * separately gates plain CONDSTORE-advertisement (RFC7162-3.1.1-1).
+	 * `FetchModifiers.vanished` still throws `CapabilityError` HERE,
+	 * synchronously (I-9) — QRESYNC (RFC 7162 §3.2/RFC 5162) is M4.6's job.
 	 */
 	static runFetch(
 		session: MailboxSession,
@@ -956,15 +1010,18 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		opts: FetchModifiers | undefined,
 		kind: "uid" | "seq",
 	): AsyncIterable<FetchedMessage> {
-		session.assertOpen(kind === "uid" ? "fetch" : "seq.fetch");
-		if (opts?.changedSince !== undefined || opts?.vanished) {
+		const method = kind === "uid" ? "fetch" : "seq.fetch";
+		session.assertOpen(method);
+		if (opts?.vanished) {
 			throw new CapabilityError(
-				`${kind === "uid" ? "fetch" : "seq.fetch"}(): the CHANGEDSINCE/VANISHED ` +
-					"FETCH modifiers are not implemented until a later milestone (CONDSTORE/" +
-					"QRESYNC, RFC 7162/5162, are M4 exit-criteria RFCs) -- call fetch() " +
-					"without `changedSince`/`vanished` today",
-				{ capability: "CONDSTORE", rfc: "RFC7162" },
+				`${method}(): the VANISHED FETCH modifier is not implemented until a ` +
+					"later milestone (QRESYNC, RFC 7162 §3.2/RFC 5162, is M4.6's job) -- " +
+					"call fetch() without `vanished` today",
+				{ capability: "QRESYNC", rfc: "RFC7162" },
 			);
+		}
+		if (opts?.changedSince !== undefined) {
+			MailboxSession.assertModSeqUsable(session, `${method}()`);
 		}
 		const set = SequenceSet.from(input).withKind(kind);
 		// RFC 5182 §2.1's "$" SEARCHRES sentinel gate AT POINT OF USE (I-9):
@@ -980,7 +1037,14 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			kind === "uid" ? "fetch()" : "seq.fetch()",
 		);
 		const probe: FetchCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
-		const command = new FetchCommand(set, items, kind === "uid", session.driver.maxInlineSize(), probe);
+		const command = new FetchCommand(
+			set,
+			items,
+			kind === "uid",
+			session.driver.maxInlineSize(),
+			probe,
+			opts?.changedSince,
+		);
 		// Kicks off the actual submission/dispatch (write, wait-for-tagged,
 		// settle, cleanup) in the background -- by the time this call returns
 		// (synchronously, even though it's a Promise), `FetchCommand`'s

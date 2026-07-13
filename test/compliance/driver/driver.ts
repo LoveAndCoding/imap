@@ -846,34 +846,44 @@ export class ComplianceDriver {
 	 * milestone's driver-wiring rule (I-4: every byte through
 	 * `CommandWriter`, never a parallel wire-writer in the driver).
 	 *
-	 * `opts.condstore`/`opts.qresync` are the one deliberate exception: the
-	 * real `SelectCommand`/`ExamineCommand` throw `CapabilityError` for
-	 * these (M2.2 plan: `SelectOptions` lands type-complete but functionally
-	 * inert until M4's CONDSTORE/QRESYNC land) -- and `CapabilityError` is a
-	 * real `ImapError`, which the compliance harness's `classifyFailure`
-	 * would misclassify as an honest `"violation"` rather than
-	 * `"unimplemented"` (only `NotImplementedError` classifies as the
+	 * `opts.condstore` is real as of M4.5 -- the public `select()`/
+	 * `SelectCommand` now genuinely emit `SELECT mailbox (CONDSTORE)` once
+	 * the CONDSTORE capability is advertised, so this driver method no
+	 * longer intercepts it at all (a caller asking for CONDSTORE against a
+	 * server that hasn't advertised it now sees the real `CapabilityError`
+	 * `ImapClient.select()` itself throws).
+	 *
+	 * `opts.qresync` remains the one deliberate exception: QRESYNC is M4.6's
+	 * job (RFC 7162 §3.2/RFC 5162's resync-ingestion machinery), and the real
+	 * `SelectCommand` still throws `CapabilityError` for it -- which
+	 * `classifyFailure` would misclassify as an honest `"violation"` rather
+	 * than `"unimplemented"` (only `NotImplementedError` classifies as the
 	 * latter). Translating "this feature is not implemented yet" into
 	 * `NotImplementedError` at the driver boundary is exactly the kind of
 	 * failure-kind translation the driver is allowed to do (it is not wire
-	 * protocol logic); the CONDSTORE/QRESYNC-parameter compliance tests stay
-	 * annotated `expectFailure: "unimplemented"` and this keeps that
-	 * annotation honest once SELECT itself is wired.
+	 * protocol logic); the QRESYNC-parameter compliance tests stay annotated
+	 * `expectFailure: "unimplemented"` and this keeps that annotation honest.
 	 */
 	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		if (opts?.condstore || opts?.qresync) {
-			throw new NotImplementedError("SELECT (CONDSTORE/QRESYNC select parameters)");
+		if (opts?.qresync) {
+			throw new NotImplementedError("SELECT (QRESYNC select parameter)");
 		}
-		return this.requireClient().select(mailbox);
+		return this.requireClient().select(
+			mailbox,
+			opts?.condstore !== undefined ? { condstore: opts.condstore } : undefined,
+		);
 	}
 
 	/** EXAMINE (RFC 3501/9051 §6.3.2/§6.3.3) -- same shape/rationale as
 	 *  `select()` above. */
 	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
-		if (opts?.condstore || opts?.qresync) {
-			throw new NotImplementedError("EXAMINE (CONDSTORE/QRESYNC select parameters)");
+		if (opts?.qresync) {
+			throw new NotImplementedError("EXAMINE (QRESYNC select parameter)");
 		}
-		return this.requireClient().examine(mailbox);
+		return this.requireClient().examine(
+			mailbox,
+			opts?.condstore !== undefined ? { condstore: opts.condstore } : undefined,
+		);
 	}
 	/**
 	 * CREATE (RFC 3501/9051 §6.3.3/§6.3.4; RFC 6154 for `useAttributes`) --
@@ -1134,18 +1144,22 @@ export class ComplianceDriver {
 	 * every other verb here awaiting the full round trip before resolving)
 	 * and returns the collected messages as a plain array.
 	 *
-	 * `opts.changedSince`/`.vanished` are translated to `NotImplementedError`
-	 * the same way `select()`'s own `condstore`/`qresync` are (see that
-	 * method's doc comment): the real `MailboxSession.fetch()` throws a
-	 * genuine `CapabilityError` for them (CONDSTORE/QRESYNC inert this
-	 * milestone), which `classifyFailure` would otherwise score as an honest
-	 * `"violation"` rather than `"unimplemented"` -- this keeps the RFC 7162
-	 * CONDSTORE-modifier compliance tests' `expectFailure: "unimplemented"`
-	 * annotation accurate.
+	 * `opts.changedSince` is real as of M4.5 -- the real
+	 * `MailboxSession.fetch()`/`.seq.fetch()` now genuinely emit `(CHANGEDSINCE
+	 * n)`, so this driver method no longer intercepts it (a caller reaching
+	 * for it against a server/mailbox that can't honor it now sees the real
+	 * `CapabilityError`: unadvertised CONDSTORE, or a NOMODSEQ mailbox per
+	 * RFC7162-3.1.2.2-1).
+	 *
+	 * `opts.vanished` remains translated to `NotImplementedError` the same
+	 * way `select()`'s own `qresync` is (see that method's doc comment): the
+	 * real `MailboxSession.fetch()` throws a genuine `CapabilityError` for it
+	 * (QRESYNC is M4.6's job), which `classifyFailure` would otherwise score
+	 * as an honest `"violation"` rather than `"unimplemented"`.
 	 */
 	public async fetch(seq: string, items: string[], opts?: FetchOptions): Promise<FetchedMessage[]> {
-		if (opts?.changedSince !== undefined || opts?.vanished) {
-			throw new NotImplementedError("FETCH (CHANGEDSINCE/VANISHED modifier)");
+		if (opts?.vanished) {
+			throw new NotImplementedError("FETCH (VANISHED modifier)");
 		}
 		// RFC 9394 §3.3's `(PARTIAL m:n)` FETCH MODIFIER (paging the RESULT SET
 		// of a FETCH command itself -- distinct from `BodyPartRequest.partial`'s
@@ -1160,7 +1174,8 @@ export class ComplianceDriver {
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
-		for await (const msg of session.seq.fetch(seq, request)) {
+		const fetchOpts = opts?.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
+		for await (const msg of session.seq.fetch(seq, request, fetchOpts)) {
 			out.push(msg);
 		}
 		return out;
@@ -1184,14 +1199,12 @@ export class ComplianceDriver {
 	 * `addGmailLabels`/`removeGmailLabels`) stays `NotImplementedError`,
 	 * unchanged from today.
 	 *
-	 * `opts.unchangedSince` is translated to `NotImplementedError` the same
-	 * way `select()`/`examine()` above translate `condstore`/`qresync`: the
-	 * real `StoreCommand` throws a genuine `CapabilityError` for it
-	 * (CONDSTORE is inert this milestone), which `classifyFailure` would
-	 * otherwise score as an honest `"violation"` rather than
-	 * `"unimplemented"` -- this keeps the RFC 7162 STORE compliance tests'
-	 * `expectFailure: "unimplemented"` annotation accurate once STORE itself
-	 * is wired.
+	 * `opts.unchangedSince` is real as of M4.5 -- the real
+	 * `MailboxSession.addFlags()`/`.removeFlags()`/`.setFlags()` (and their
+	 * `.seq` mirrors) now genuinely emit `(UNCHANGEDSINCE n)`, so this driver
+	 * method no longer intercepts it (a caller reaching for it against a
+	 * server/mailbox that can't honor it now sees the real `CapabilityError`:
+	 * unadvertised CONDSTORE, or a NOMODSEQ mailbox per RFC7162-3.1.2.2-1).
 	 */
 	public async store(
 		seq: string,
@@ -1248,14 +1261,15 @@ export class ComplianceDriver {
 	/** UID FETCH -- M3.5. UID grain: wired to `client.mailbox!.fetch(...)`
 	 *  directly (the driver's `uid`-prefixed stub convention), mirroring
 	 *  `fetch()`'s own doc comment above for the ad hoc-translation rationale
-	 *  and the CHANGEDSINCE/VANISHED -> `NotImplementedError` translation. */
+	 *  and the VANISHED -> `NotImplementedError` translation (CHANGEDSINCE is
+	 *  real as of M4.5). */
 	public async uidFetch(
 		seq: string,
 		items: string[],
 		opts?: FetchOptions,
 	): Promise<FetchedMessage[]> {
-		if (opts?.changedSince !== undefined || opts?.vanished) {
-			throw new NotImplementedError("UID FETCH (CHANGEDSINCE/VANISHED modifier)");
+		if (opts?.vanished) {
+			throw new NotImplementedError("UID FETCH (VANISHED modifier)");
 		}
 		// See `fetch()`'s own doc comment above for why this is checked at
 		// runtime rather than through the declared `FetchOptions` type.
@@ -1265,7 +1279,8 @@ export class ComplianceDriver {
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
-		for await (const msg of session.fetch(seq, request)) {
+		const fetchOpts = opts?.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
+		for await (const msg of session.fetch(seq, request, fetchOpts)) {
 			out.push(msg);
 		}
 		return out;
@@ -1663,12 +1678,12 @@ export class ComplianceDriver {
 		if (!parsed) {
 			throw new NotImplementedError(`STORE action ${action}`);
 		}
-		if (opts?.unchangedSince !== undefined) {
-			throw new NotImplementedError("STORE (UNCHANGEDSINCE store modifier)");
-		}
 		const session = this.requireMailboxSession();
 		const target = grain === "uid" ? session : session.seq;
-		const storeOpts = parsed.silent ? { silent: true } : undefined;
+		const storeOpts =
+			parsed.silent || opts?.unchangedSince !== undefined
+				? { silent: parsed.silent, unchangedSince: opts?.unchangedSince }
+				: undefined;
 		if (parsed.operation === "add") {
 			return target.addFlags(seq, flags, storeOpts);
 		}

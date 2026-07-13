@@ -16,14 +16,18 @@ import type { CommandWriter } from "./writer";
 
 /**
  * SELECT/EXAMINE (RFC 3501/9051 §6.3.1/§6.3.2; RFC 9051 §6.3.2/§6.3.3) —
- * M2.2. `SelectOptions.condstore`/`.qresync` are lands the §5b type SHAPE
- * in full so the public surface never needs a breaking change once CONDSTORE/
- * QRESYNC actually land (M4's exit-criteria RFCs, RFC 7162/5162) -- this
- * milestone only ever writes the bare `SELECT mailbox` / `EXAMINE mailbox`
- * form. Passing either option throws `CapabilityError` synchronously from
- * this command's constructor (cheap, honest, zero bytes written, per spec
- * invariant I-9) rather than silently ignoring the option or half-emitting
- * the RFC 4466 select-param wire form (`SELECT mailbox (CONDSTORE)` etc.).
+ * M2.2 landed the §5b type SHAPE in full; M4.5 (this milestone) un-stubs
+ * `condstore`: `SELECT mailbox (CONDSTORE)` / `EXAMINE mailbox (CONDSTORE)`
+ * (RFC 7162 §3.1.8/§7 `condstore-param`) is now genuinely emitted once the
+ * CONDSTORE capability is advertised — see `SelectOrExamineCommand`'s own
+ * doc comment for the advertised-vs-ENABLEd gate this milestone settled.
+ * `qresync` remains inert (M4.6's job — QRESYNC's own ENABLE-gated
+ * activation model, RFC 7162 §3.2.3/§3.2.4, is a materially different
+ * capability check than CONDSTORE's): passing it still throws
+ * `CapabilityError` synchronously from this command's constructor (cheap,
+ * honest, zero bytes written, per spec invariant I-9) rather than silently
+ * ignoring the option or half-emitting the RFC 7162 §3.2.6 QRESYNC
+ * select-param wire form.
  *
  * `qresync`'s interior shape approximates spec §5b's
  * `{ uidValidity, highestModSeq, knownUids?: SequenceInput, seqMatch?: … }`
@@ -43,6 +47,22 @@ export interface SelectOptions {
 		seqMatch?: { knownSeqSet: string; knownUidSet: string };
 	};
 }
+
+/**
+ * The minimal capability read surface `SelectOrExamineCommand`'s `condstore`
+ * gate needs -- same structural-probe convention as `ListCapabilityProbe`/
+ * `FetchCapabilityProbe`/`SearchCapabilityProbe`. `ImapClient.select()`/
+ * `.examine()` pass `this.capabilityRegistry.view` (plain advertisement,
+ * NOT the `_enabled`-aware `effectiveCapability()` reading UTF8=ACCEPT
+ * uses) -- see this file's own doc comment on `SelectOrExamineCommand` for
+ * why plain advertisement is the deliberately-chosen, RFC-correct gate for
+ * CONDSTORE specifically.
+ */
+export interface SelectCapabilityProbe {
+	has(cap: string): boolean;
+}
+
+const NO_SELECT_CAPS: SelectCapabilityProbe = { has: () => false };
 
 /**
  * The structured snapshot `accept()` builds from one SELECT/EXAMINE exchange
@@ -97,6 +117,27 @@ const CLAIMED_TYPES = new Set(["FLAGS", "EXISTS", "RECENT", "STATUS"]);
  * fields, because JS field-initializer ordering runs subclass fields AFTER
  * the parent constructor body -- code in THIS constructor cannot rely on a
  * subclass's own `readonly verb = "SELECT"` field already being set.
+ *
+ * **M4.5 CONDSTORE gate (advertised, not ENABLEd):** `opts.condstore` is
+ * validated against the capability probe passed in, not against whether the
+ * client has already `ENABLE`d CONDSTORE. RFC 7162 §3.1.1 makes plain
+ * advertisement the correct and complete gate here: a client "opts in" to
+ * the CONDSTORE track by ISSUING any condstore-enabling command in the
+ * first place (this select-parameter form is itself one of the four
+ * ways to do so, per §3.1.8) -- there is no separate prior `ENABLE
+ * CONDSTORE` handshake to wait for (contrast QRESYNC, RFC 7162 §3.2.3/
+ * §3.2.4, which DOES hard-require `ENABLE QRESYNC` + a positive `ENABLED
+ * QRESYNC` before ANY QRESYNC-shaped wire form may be used -- a
+ * fundamentally different activation model this class deliberately does
+ * NOT extend to `condstore`). See `test/compliance/catalog/ext/rfc7162.ts`'s
+ * own RFC7162-3.2.3 notes: "there is no requirement for a compliant server
+ * to support 'ENABLE CONDSTORE' by itself" -- i.e. the RFC does not even
+ * promise ENABLE CONDSTORE has an effect, so gating on `_enabled` here would
+ * be both unnecessary and potentially wrong for a real server. `caps` is
+ * therefore `ImapClient.select()`/`.examine()`'s `capabilityRegistry.view`
+ * (plain advertisement), not `effectiveCapability()` (which special-cases
+ * UTF8=ACCEPT to its `_enabled`-aware reading) -- see `SelectCapabilityProbe`'s
+ * own doc comment.
  */
 abstract class SelectOrExamineCommand extends Command<SelectResult> {
 	readonly verb: string;
@@ -115,30 +156,32 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 	readonly states = ["authenticated", "selected"] as const;
 
 	private readonly forcedReadOnly: boolean;
+	private readonly condstore: boolean;
 
 	constructor(
 		verb: "SELECT" | "EXAMINE",
 		private readonly mailboxName: string,
 		opts: SelectOptions = {},
+		caps: SelectCapabilityProbe = NO_SELECT_CAPS,
 	) {
 		super();
 		this.verb = verb;
 		this.forcedReadOnly = verb === "EXAMINE";
-		if (opts.condstore) {
+		this.condstore = opts.condstore === true;
+		if (this.condstore && !caps.has("CONDSTORE")) {
 			throw new CapabilityError(
-				`${verb}: the CONDSTORE select parameter is not implemented until a ` +
-					"later milestone (M2.2 plan: SelectOptions lands type-complete but " +
-					"functionally inert this milestone; CONDSTORE/QRESYNC are M4 exit-" +
-					"criteria RFCs, RFC 7162 §3.1/§3.2) -- construct the command without " +
-					"`condstore`/`qresync` to select the mailbox today",
+				`${verb}: the CONDSTORE select parameter requires the CONDSTORE ` +
+					"capability (RFC 7162 §3.1.8), which the server hasn't advertised " +
+					"-- construct the command without `condstore` to select the " +
+					"mailbox today",
 				{ capability: "CONDSTORE", rfc: "RFC7162" },
 			);
 		}
 		if (opts.qresync) {
 			throw new CapabilityError(
 				`${verb}: the QRESYNC select parameter is not implemented until a ` +
-					"later milestone (same M2.2 scoping decision as CONDSTORE above; " +
-					"RFC 7162 §3.2 / RFC 5162)",
+					"later milestone (RFC 7162 §3.2 / RFC 5162 -- QRESYNC's resync-" +
+					"ingestion machinery is M4.6's job)",
 				{ capability: "QRESYNC", rfc: "RFC7162" },
 			);
 		}
@@ -146,6 +189,12 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
 
 	protected write(w: CommandWriter): void {
 		w.mailbox(this.mailboxName);
+		if (this.condstore) {
+			// RFC 7162 §7 condstore-param, under the RFC 4466 select-param
+			// grammar: the bare atom CONDSTORE inside a parenthesized list
+			// AFTER the mailbox name -- 'SELECT INBOX (CONDSTORE)'.
+			w.list((inner) => inner.atom("CONDSTORE"));
+		}
 	}
 
 	protected claims(resp: UntaggedResponse, _ctx: ClaimContext): boolean {
@@ -270,8 +319,8 @@ abstract class SelectOrExamineCommand extends Command<SelectResult> {
  *  case) and "selected" (reselecting -- see `SelectOrExamineCommand`'s doc
  *  comment on `states`). */
 export class SelectCommand extends SelectOrExamineCommand {
-	constructor(mailboxName: string, opts?: SelectOptions) {
-		super("SELECT", mailboxName, opts);
+	constructor(mailboxName: string, opts?: SelectOptions, caps?: SelectCapabilityProbe) {
+		super("SELECT", mailboxName, opts, caps);
 	}
 }
 
@@ -281,7 +330,7 @@ export class SelectCommand extends SelectOrExamineCommand {
  *  for this verb, regardless of what (if anything) the tagged OK's resp-code
  *  says. */
 export class ExamineCommand extends SelectOrExamineCommand {
-	constructor(mailboxName: string, opts?: SelectOptions) {
-		super("EXAMINE", mailboxName, opts);
+	constructor(mailboxName: string, opts?: SelectOptions, caps?: SelectCapabilityProbe) {
+		super("EXAMINE", mailboxName, opts, caps);
 	}
 }

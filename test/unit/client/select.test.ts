@@ -398,18 +398,63 @@ describe("ImapClient.select()/examine() (spec §3.2/§3.1, M2.2)", () => {
 		expect(session.name).toBe("INBOX");
 	});
 
-	test("SelectOptions.condstore/.qresync reject CapabilityError synchronously, zero bytes written, current selection undisturbed", async () => {
+	test("SelectOptions.condstore rejects CapabilityError synchronously, zero bytes written, when CONDSTORE isn't advertised", async () => {
 		server = await ScriptedServer.start();
 		client = new ImapClient(baseConfig(server.port));
-		await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE"], [
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
 			expectLine(command("SELECT", { args: /^INBOX$/i })),
 			reply("OK [READ-WRITE] SELECT completed", ["* 3 EXISTS", "* 0 RECENT"]),
 		]);
 		const selected = await client.select("INBOX");
 
-		await expect(client.select("Sent", { condstore: true })).rejects.toBeInstanceOf(
-			CapabilityError,
-		);
+		const err = await client.select("Sent", { condstore: true }).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(CapabilityError);
+		expect((err as CapabilityError).capability).toBe("CONDSTORE");
+
+		// Zero bytes written, current selection completely undisturbed.
+		expect(client.state).toBe("selected");
+		expect(client.mailbox).toBe(selected);
+		expect(selected.closed).toBe(false);
+		await server.assertCompleted();
+	});
+
+	// M4.5: RFC 7162 §3.1.1 makes CONDSTORE's gate plain advertisement, not a
+	// prior `ENABLE CONDSTORE` (see `SelectOrExamineCommand`'s own doc
+	// comment for the full rationale) -- so once the server advertises
+	// CONDSTORE, `select({ condstore: true })` genuinely emits
+	// `SELECT mailbox (CONDSTORE)`, unconditional of `client.enabled`.
+	test("SelectOptions.condstore emits SELECT mailbox (CONDSTORE) once CONDSTORE is advertised, even without a prior ENABLE", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient({ ...baseConfig(server.port), extensions: false });
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE"], [
+			expectLine(command("SELECT", { args: /^INBOX \(CONDSTORE\)$/i })),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 3 EXISTS",
+				"* 0 RECENT",
+				"* OK [HIGHESTMODSEQ 12345] Highest",
+			]),
+		]);
+
+		expect(client.enabled.has("CONDSTORE")).toBe(false);
+		const selected = await client.select("INBOX", { condstore: true });
+
+		expect(selected.highestModSeq).toBe(12345n);
+		await server.assertCompleted();
+	});
+
+	// QRESYNC is unaffected by M4.5: its own ENABLE-gated activation model
+	// (RFC 7162 §3.2.3/§3.2.4) is materially different from CONDSTORE's and
+	// remains M4.6's job -- `select({ qresync })` still throws
+	// `CapabilityError` regardless of advertisement.
+	test("SelectOptions.qresync still rejects CapabilityError synchronously, zero bytes written, current selection undisturbed (M4.6 not yet landed)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONDSTORE", "QRESYNC"], [
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", ["* 3 EXISTS", "* 0 RECENT"]),
+		]);
+		const selected = await client.select("INBOX");
+
 		await expect(
 			client.select("Sent", { qresync: { uidValidity: 1, highestModSeq: 1n } }),
 		).rejects.toBeInstanceOf(CapabilityError);

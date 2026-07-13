@@ -617,3 +617,30 @@ export function criteriaHasNonAscii(criteria: SearchCriteria): boolean {
 	}
 	return false;
 }
+
+/**
+ * Whether `criteria` contains a `modSeq` key anywhere in its tree — top
+ * level or nested under `not`/`fuzzy`/`or`/`and` — same recursive-walk shape
+ * as `criteriaHasNonAscii()` above. Used by `MailboxSession.runSearch()`
+ * (`client/mailbox.ts`) to apply the RFC7162-3.1.2.2-1 NOMODSEQ guard to
+ * every `modSeq` criterion a caller might have buried inside a compound
+ * `not`/`or`/`and`/`fuzzy` expression, not only a bare top-level one.
+ */
+export function criteriaHasModSeq(criteria: SearchCriteria): boolean {
+	if (criteria.modSeq !== undefined) {
+		return true;
+	}
+	if (criteria.not !== undefined && criteriaHasModSeq(criteria.not)) {
+		return true;
+	}
+	if (criteria.fuzzy !== undefined && criteriaHasModSeq(criteria.fuzzy)) {
+		return true;
+	}
+	if (criteria.or?.some((c) => criteriaHasModSeq(c))) {
+		return true;
+	}
+	if (criteria.and?.some((c) => criteriaHasModSeq(c))) {
+		return true;
+	}
+	return false;
+}
