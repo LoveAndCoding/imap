@@ -366,6 +366,85 @@ while the stream consumer withholds demand and resume when it reads, and
 (c) a small quoted-string FETCH body still parses through the unchanged
 path (legacy regression scenario 2 shape).
 
+### M3.1 PROOF ADDENDUM — spike-proof outcomes (recorded post-proof, pre-M3.2)
+
+The throwaway proof (11 tests, real `net` sockets, prototype
+`LiteralAwareNewlineTransform` + `LiteralBodyStream`, small path compared
+byte-for-byte against the real `NewlineTranform`) ran all three acceptance
+claims to PROVEN:
+
+- **(a) Intact delivery:** 8000-byte literal across 5 staggered writes with
+  cut points inside the announcement, mid-body, and inside the trailing
+  `)\r\n`; body salted with embedded CRLFs and `)\r\n` / `{4096}\r\n`
+  framing lookalikes. Exactly n bytes delivered, byte-identical, no body
+  bytes leaked into the line stream, line mode resumed cleanly after.
+- **(b) Backpressure:** 256 KiB literal, 16 KiB stream hwm, consumer
+  withholding demand 500 ms — socket `isPaused()` on 25/25 polls during the
+  stall, stream never buffered more than one socket chunk past hwm, full
+  byte-identical delivery after drain, tagged line flowed after. `_destroy`
+  resumes the socket and discards the remainder, covering §5.4's "consumed
+  **or destroyed**". The Transform never withholds `done()` — flow control
+  is purely socket-level, exactly this resolution's shape.
+- **(c) Small-path no-regression:** byte-identical emitted line streams vs
+  the real `NewlineTranform` for quoted-string bodies, small literals,
+  small literals with embedded CRLFs, and plain multi-line traffic.
+
+**Encoding correction (HIGH impact on M3.2 — supersedes this resolution's
+"literal bodies currently live as JS strings" framing):** the response
+pipeline decodes as **UTF-8**, not latin1 — the one and only decode is
+`src/lexer/lexer.ts:142` `this.buffer += line.toString()` (no encoding
+argument ⇒ `'utf8'`; no `setEncoding` anywhere in connection.ts;
+NewlineTranform only slices Buffers). Proven consequences against the real
+lexer: (1) invalid-UTF-8 octets collapse to U+FFFD irreversibly; (2) a
+4-octet UTF-8 character counts as 2 code units, so `StringRule`'s
+`substr(0, prefix + n)` octet-count slice **steals bytes past the literal
+boundary** (a `{4}` literal containing one emoji tokenized as the emoji
+PLUS the following `)` and `\r`). "Raw bytes intact" holds today only for
+pure-ASCII literal bodies. M3.2 is therefore **fixing an existing
+corruption bug class**, not preserving equivalence — regression baselines
+must not enshrine current non-ASCII literal behavior, and any interim
+JS-string step may only use `latin1` (1 octet ↔ 1 code unit, proven
+reversible).
+
+**Design obligations the proof added for M3.2 (flaws found adversarially):**
+
+1. **Opaque-guard (MANDATORY):** a *below-threshold* literal body ending in
+   `...{999999}\r\n` produces a completed "line" that ends with a valid
+   announcement; matching announcements naively would swallow the next
+   ~1 MB of session as opaque bytes — silent whole-connection desync. The
+   transform must track below-threshold literal extents and match
+   announcements only in the non-literal suffix of each line (the
+   prototype's `opaqueGuard`); proven by an adversarial test in (c).
+2. **Resp-text ambiguity (parity, raised stakes):** a legitimate line whose
+   resp-text ends with `{n}` is indistinguishable from an announcement at
+   the framing layer. The current lexer has the same ambiguity
+   (`matchIncludingEOL`, `src/lexer/rules/string.ts:70-89`), so this is
+   parity, not regression — but an above-threshold false positive now means
+   opaque-mode desync rather than one over-buffered line. M3.2 should note
+   a mitigation (context gating or a sanity cap), and that lexer path has a
+   latent bug worth fixing in passing: it checks
+   `expectCloseBrack.value === "{"` where it plainly means `"}"`.
+3. **Marker contract through the lexer:** the transform pushes
+   stream-marker objects interleaved with line Buffers; the real lexer's
+   `_transform` calls `line.toString()` on everything, which would
+   stringify a marker to garbage. M3.2 must intercept markers before the
+   string path (the `LiteralStreamToken` sketch), and if the below-threshold
+   path stays string-based it is only safe while ASCII — otherwise lexer
+   buffering moves to Buffers in the same task (the encoding correction
+   above independently argues for Buffers).
+4. **`maxLineLength` invariant (minor):** streamed literal bytes are exempt
+   from the line-length guard; below-threshold literal bytes still count,
+   same as today — fine while threshold ≪ the 2 MB default, but state it.
+5. **Confirmed workable:** explicit socket-level `pause()`/`resume()`
+   coexists with `socket.pipe(transform)` — Node's `pipe` only auto-resumes
+   a source it paused itself via dest-drain, which never fires while the
+   transform's writable side processes synchronously.
+
+Proof artifacts live in the session scratchpad (`m3-spike/`) and are
+deliberately NOT committed (throwaway per this task's definition); the
+prototype `literal-newline.transform.ts` there is the reference sketch for
+M3.2's real implementation.
+
 ---
 
 ## M3.2 — Literal streaming implementation (§11.4)
