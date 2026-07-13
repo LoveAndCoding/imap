@@ -1094,6 +1094,8 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// comment and `_notifyState`'s field comment for the full rationale.
 			hasActiveNotifySelectedMessageNew: () => this._notifyState.selectedMessageNew,
 			hasActiveNotifySelectedMessageExpunge: () => this._notifyState.selectedMessageExpunge,
+			// M4.3 (spec §3.7): `updates()`'s NOOP-poll fallback cadence.
+			noopFallbackIntervalMs: () => this.config.timeouts.noopFallbackInterval,
 		};
 	}
 

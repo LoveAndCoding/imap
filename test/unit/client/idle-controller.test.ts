@@ -193,6 +193,48 @@ describe("IdleController (spec §3.7, M4.1)", () => {
 		await expect(controller.done()).resolves.toBeUndefined();
 	});
 
+	// M4.3: `managedReentry: true` is `updates({idle:true})`'s ONE
+	// behavioral difference from explicit `idle()` -- see
+	// `IdleControllerOptions.managedReentry`'s own doc comment.
+	test("managedReentry: the queued-behind-isolated hook re-enters IDLE afterward instead of ending the session", async () => {
+		const fake = makeFakeDriver();
+		const controller = new IdleController(fake.driver, { managedReentry: true });
+		await controller.start();
+		expect(fake.hookIsSubscribed).toBe(true);
+
+		fake.fireQueuedBehindIsolated();
+		fake.resolveRound(0);
+		await flush();
+
+		// Round 2 was submitted automatically -- the managed loop treats the
+		// hook exactly like the renewal timer (spec §3.7's "run the queued
+		// command(s), re-enter IDLE").
+		expect(fake.runCalls).toHaveLength(2);
+		// Still running -- an explicit `done()` call is needed to stop it.
+		let settled = false;
+		const donePromise = controller.done().then(() => {
+			settled = true;
+		});
+		await flush();
+		expect(settled).toBe(false);
+		fake.resolveRound(1);
+		await donePromise;
+		expect(settled).toBe(true);
+		expect(fake.runCalls).toHaveLength(2); // done() itself did not trigger a third round
+	});
+
+	test("managedReentry: an explicit done() call still ends the session for good (no re-entry)", async () => {
+		const fake = makeFakeDriver();
+		const controller = new IdleController(fake.driver, { managedReentry: true });
+		await controller.start();
+
+		const donePromise = controller.done();
+		fake.resolveRound(0);
+		await donePromise;
+
+		expect(fake.runCalls).toHaveLength(1);
+	});
+
 	test("the hook is unsubscribed once its round settles (no leak across rounds)", async () => {
 		const fake = makeFakeDriver();
 		fake.setIdleRenewMs(1000);

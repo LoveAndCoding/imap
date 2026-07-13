@@ -63,6 +63,37 @@ export interface IdleControllerDriver {
 type RoundOutcome = { ok: true } | { ok: false; err: unknown };
 
 /**
+ * Constructor options (M4.3). Empty/omitted preserves M4.1's original
+ * explicit-mode behavior exactly — additive, not a breaking change to any
+ * existing `new IdleController(driver)` call site.
+ */
+export interface IdleControllerOptions {
+	/**
+	 * M4.3 (spec §3.7): when `true`, "another command queued up behind this
+	 * controller's isolated IDLE context" (the `onQueuedBehindIsolated` hook)
+	 * is given the SAME treatment as the renewal timer — end the current
+	 * round only, then silently re-enter IDLE once `onRoundSettled()` sees
+	 * `continueIdling` is still `true` — instead of `requestStop()`'s hard
+	 * "end this session for good" (the explicit `MailboxSession.idle()`
+	 * default, `managedReentry` unset/`false`). This is the ONE behavioral
+	 * difference between the two surfaces spec §3.7 describes; every other
+	 * line of this class (renewal, `done()`, the hook subscription lifecycle)
+	 * is shared unchanged, per this class's own top-of-file doc comment.
+	 *
+	 * Re-entering only after the just-queued command(s) actually run is not
+	 * something this controller has to arrange specially: the queue's own
+	 * FIFO structural ordering already guarantees it (`CommandQueue`'s
+	 * `contextQueuedBehindIsolated` doc comment, `connection/queue.ts`) — the
+	 * interrupting command's context was already enqueued, ahead of wherever
+	 * this controller's NEXT `beginRound()` submission lands, by the time
+	 * that submission happens (after this round's `driver.run()` promise
+	 * settles). The managed `updates({idle:true})` loop
+	 * (`MailboxSession.updates()`, M4.3) is this option's sole consumer.
+	 */
+	managedReentry?: boolean;
+}
+
+/**
  * `IdleController` (spec §3.7) — owns one IDLE session's round(s) over the
  * connection's isolated queue context: opens IDLE, tracks idling state,
  * renews every `timeouts.idleRenew` (DONE + immediate re-IDLE, invisible to
@@ -116,7 +147,11 @@ export class IdleController {
 	private rejectStopped!: (err: unknown) => void;
 	private stoppedSettled = false;
 
-	constructor(private readonly driver: IdleControllerDriver) {
+	/** M4.3 — see `IdleControllerOptions.managedReentry`'s own doc comment. */
+	private readonly managedReentry: boolean;
+
+	constructor(private readonly driver: IdleControllerDriver, options: IdleControllerOptions = {}) {
+		this.managedReentry = options.managedReentry === true;
 		this.stopped = new Promise<void>((resolve, reject) => {
 			this.resolveStopped = resolve;
 			this.rejectStopped = reject;
@@ -177,7 +212,16 @@ export class IdleController {
 		const completion = this.driver.run(cmd);
 
 		this.unsubscribeHook = this.driver.onQueuedBehindIsolated(() => {
-			this.requestStop();
+			if (this.managedReentry) {
+				// M4.3 (spec §3.7): treated exactly like the renewal timer below —
+				// end THIS round only (`continueIdling` stays `true`), letting
+				// `onRoundSettled()` re-enter automatically once the queued
+				// command(s) have had their turn (queue FIFO order, see
+				// `IdleControllerOptions.managedReentry`'s own doc comment).
+				this.resolveRoundDone?.();
+			} else {
+				this.requestStop();
+			}
 		});
 
 		this.armRenewalTimer();
