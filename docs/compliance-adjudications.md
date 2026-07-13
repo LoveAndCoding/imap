@@ -102,3 +102,29 @@ making the raw-UTF-8 arm active); the deviation is only reachable with
 codec gains a pure-rev2 (IMAP4rev2 without IMAP4rev1) raw-UTF-8 arm; the
 spec §5.2 text was amended at the M2 review to match the implemented
 rule and points here.
+
+---
+
+## \Recent in STORE/APPEND flag arguments — client-side refusal (RFC3501-2.3.2-1/-2)
+
+**Context:** RFC 3501 §2.3.2: "\Recent … can not be altered by the
+client" and "can not be used as an argument in a STORE or APPEND
+command". The catalog treats both as client-side MUST NOTs
+(rev1-profile rows; RFC 9051 removed \Recent entirely). M2.11's APPEND
+work had documented a pass-through posture (flags forwarded, server
+enforces), but that posture was never exercised — the passing APPEND
+test drives no flags at all.
+
+**Decision (M3.6 adjudication):** the client REFUSES \Recent
+(case-insensitive) in STORE operations and in `AppendOptions.flags`
+with a `RangeError` before any bytes reach the wire — mirroring the
+NUL-refusal precedent (refusal is how the client satisfies a
+"never appears in the command stream" operationalization). The
+2.3-flags STORE script was corrected per the documented
+unsatisfiable-script precedent class: a refusing client never sends
+the armed STORE exchange. M2.11's pass-through doc comment is
+superseded and amended in place.
+
+**Residual risk:** none identified — no legitimate use exists for a
+client-set \Recent under either RFC; rev2 sessions cannot name the
+flag at all.

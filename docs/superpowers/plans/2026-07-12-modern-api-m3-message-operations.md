@@ -42,9 +42,9 @@ Per-task status:
 | M3.3 SequenceSet | **DONE** — `8d590b4`, zero row changes (unwired by design) |
 | M3.4 collector FETCH bridge | pending (needs M3.2) |
 | M3.5 FETCH engine | pending |
-| M3.6 STORE | IN FLIGHT (worktree; merge after M3.7) |
-| M3.7 SEARCH | IN FLIGHT (worktree; merge after M3.2) |
-| M3.8 COPY/MOVE | IN FLIGHT (worktree; merge after M3.6) |
+| M3.6 STORE | verbs complete in worktree; REWORK in flight (\Recent refusal adjudication, see `docs/compliance-adjudications.md`); merge after M3.7 |
+| M3.7 SEARCH | **complete in worktree** (+60 rows, 0 regressions), snapshot `a8b3eef`; merge after M3.2 |
+| M3.8 COPY/MOVE | **complete in worktree** (+9 rows, 0 regressions), snapshot `d358554`; merge after M3.6 |
 | M3.9 EXPUNGE | pending |
 | M3.10 MULTIAPPEND/CATENATE | pending |
 | M3.11 sweep + close | pending |

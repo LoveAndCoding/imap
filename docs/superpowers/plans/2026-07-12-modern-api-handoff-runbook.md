@@ -48,12 +48,28 @@ between closes; last updated: M3 in progress, after M3.1+M3.3.)*
     tasks).
   - M3.2 (literal streaming implementation) IN FLIGHT — main tree
     (lexer/newline/parser/connection files).
-  - M3.7 (SEARCH), M3.6 (STORE), M3.8 (COPY/MOVE) IN FLIGHT — three
-    isolated worktrees, all instructed to keep `mailbox.ts`/`driver.ts`/
-    `index.ts` changes purely additive and to create the `seq` facet
-    minimally if first to land it. Merge order: M3.2 (main tree) → M3.7 →
-    M3.6 → M3.8, orchestrator resolves the additive overlaps at each merge
-    and re-runs the full gates before each commit.
+  - M3.7 (SEARCH) COMPLETE in worktree `agent-a619ba2a01fbe82cb`
+    (WIP snapshot `a8b3eef`): +60 rows unimplemented→pass, 0 regressions,
+    7 documented deviations all accepted at review. M3.8 (COPY/MOVE)
+    COMPLETE in worktree `agent-a7253545b8c7119a9` (WIP snapshot
+    `d358554`): +9 rows, found+fixed the MOVE∨IMAP4rev2 capability gate.
+    M3.6 (STORE) verbs complete in worktree `agent-a7b303d9ec224efa8`
+    (WIP snapshot `169a758`); REWORK in flight for the adjudicated
+    \Recent client-side refusal (entry in `docs/compliance-adjudications.md`
+    — refusal mirrors the NUL precedent; the agent's original
+    unimplemented→violation flip was rejected). Merge order: M3.2 (main
+    tree) → M3.7 → M3.6 → M3.8; orchestrator resolves the overlapping
+    `seq`-facet/`assertOpen` additions in `mailbox.ts` (all three verb
+    tasks created facets independently) and re-runs full gates before
+    each commit.
+  - LANDMINE (new): freshly-created agent worktrees have been handed out
+    checked out at WRONG BASE commits (`origin/main` or an ancient
+    dependabot commit `0d68600`), not this branch's tip. All three verb
+    agents detected and fast-forwarded/reset themselves, but every future
+    worktree dispatch must instruct the agent to VERIFY
+    `git log --oneline -1` matches the current branch tip before starting
+    (and the orchestrator should verify at merge time that the diff bases
+    on the right lineage).
   - Remaining: M3.4 (collector FETCH bridge, needs M3.2), M3.5 FETCH,
     M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE (needs M3.2),
     M3.11 response-code sweep + milestone close.
