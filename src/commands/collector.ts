@@ -3,6 +3,7 @@ import {
 	AtomTextCode,
 	CapabilityTextCode,
 	CopyUIDTextCode,
+	ModifiedTextCode,
 	NumberTextCode,
 	PermanentFlagsTextCode,
 	TaggedResponse,
@@ -91,6 +92,19 @@ export function toTypedResponseCode(
 			destUids: expandUidSet(code.toUIDs),
 		};
 	}
+	if (code instanceof ModifiedTextCode) {
+		// RFC 7162 §3.2.5.1 (CONDSTORE), M3.6/M3.11: `StoreCommand.accept()`
+		// reads this instance directly off the tagged response (its own
+		// `instanceof ModifiedTextCode` check, `commands/store.ts`) rather
+		// than through this function -- this branch exists so the GENERIC
+		// paths that also read a command's resp-code (this class's own
+		// `codes()` below, and `Command`'s `defaultOnError` building
+		// `ServerNoError`/`ServerBadError.code`) render the same structured
+		// `uids` array instead of silently losing the MODIFIED payload to the
+		// open `{name, args}` fallback -- consistent with every other
+		// structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) above.
+		return { name: "MODIFIED", uids: expandUidSet(code.uids) };
+	}
 	if (code instanceof PermanentFlagsTextCode) {
 		return { name: "PERMANENTFLAGS", flags: code.flags.flags.map((f) => f.name) };
 	}
@@ -160,12 +174,20 @@ export function toTypedResponseCode(
 			args: code.capabilities.capabilities.map((cap) => cap.fullValue).join(" "),
 		};
 	}
-	// Every other known TextCode variant with a structured (non-flat-string)
-	// payload -- MODIFIED -- gets its own typed variant (spec §5.5) as
-	// future work, landing with the command that first needs it (APPENDUID's
-	// own variant landed with M2.11's APPEND above; COPYUID's landed with
-	// M3.8's COPY/MOVE above). Surface the code's name with no rendered args
-	// rather than guessing at a string representation.
+	// Every TextCode variant with a structured (non-flat-string) payload now
+	// has its own typed variant above (APPENDUID landed with M2.11's APPEND;
+	// COPYUID with M3.8's COPY/MOVE; MODIFIED with M3.11's resp-code sweep).
+	// What reaches here is either a genuinely unknown/untyped code (including
+	// argument-less or flat-string codes like UNKNOWN-CTE (RFC 3516) and
+	// EXPUNGEISSUED (RFC 5530) -- both audited at M3.11 and left generic
+	// on purpose: neither carries a client-observable argument or a
+	// structured payload the open `{name, args}` shape would lose, and
+	// neither's catalog entry (test/compliance/catalog/ext/rfc3516.ts,
+	// rfc9051/s7-responses-a.ts) imposes a client-binding duty beyond
+	// tolerating/ignoring the code, per RFC 3501/9051 §7.1's "ignore
+	// unrecognized response codes" posture) -- surface the code's name with
+	// whatever flat args it carries (usually none) rather than guessing at a
+	// dedicated shape with no distinguishing behavior to type.
 	return { name, args: null };
 }
 

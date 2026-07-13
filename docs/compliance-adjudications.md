@@ -140,3 +140,71 @@ making the raw-UTF-8 arm active); the deviation is only reachable with
 codec gains a pure-rev2 (IMAP4rev2 without IMAP4rev1) raw-UTF-8 arm; the
 spec §5.2 text was amended at the M2 review to match the implemented
 rule and points here.
+
+---
+
+## RFC9051-2.3.2-1 / RFC9051-2.3.2-2 — decline to auto-implement (permanent scope boundary, established M3.5)
+
+**Requirement:** RFC9051-2.3.2-1 (catalog, `test/compliance/catalog/rfc9051/
+s2-protocol.ts`): "$Junk and $NotJunk are mutually exclusive. If more than
+one of these is set for a message, the client MUST treat it as if none are
+set, and it SHOULD unset both of them on the IMAP server." RFC9051-2.3.2-2
+(same file): "... Once set, the flag SHOULD NOT be cleared." (the
+$Forwarded keyword definition in §2.3.2).
+
+**Decision:** The client implements the read-side half of each row (the
+data these duties depend on — `FetchedMessage.flags`, landed real in M3.5 —
+correctly exposes both keywords set simultaneously for -1, and exposes
+$Forwarded once set for -2) but does not, and per this adjudication never
+will, automatically issue or refuse a STORE in response to observed flag
+state. Both compliance tests
+(`test/compliance/specs/rfc9051/2-protocol.test.ts`, reqs
+`RFC9051-2.3.2-1`/`RFC9051-2.3.2-2`) drive a real `fetch()` to observe the
+triggering flag state, then explicitly `throw new NotImplementedError(...)`
+for the automatic-STORE half, and stay `expectFailure: "unimplemented"` by
+design — not a stale annotation left over from before FETCH existed, but a
+deliberate, permanent marker that this half of the row is out of scope.
+
+**Rationale:** Quoting the test file's own scope-note comments (added at
+M3.5, when `driver.fetch()` became real and this question first became
+answerable rather than moot):
+
+- RFC9051-2.3.2-1: "this duty is an APPLICATION-level policy decision (\"the
+  IMAP client\" in RFC 9051's sense — the whole MUA), not a behavior a
+  protocol LIBRARY should perform automatically and silently on the
+  caller's behalf (a library that watched every FETCH FLAGS result and
+  unilaterally issued STOREs in response would be a surprising, unrequested
+  side effect). This library exposes the data the duty needs
+  (`FetchedMessage.flags`) and the primitive to act on it
+  (`addFlags`/`removeFlags`) -- composing them into this specific policy is
+  the caller's job. Genuinely unimplemented AS AN AUTOMATIC LIBRARY
+  BEHAVIOR (and, per the above, never will be)."
+- RFC9051-2.3.2-2: "\"SHOULD NOT clear $Forwarded\" is the same
+  application-level policy question as RFC9051-2.3.2-1 above --
+  $Forwarded is an ordinary keyword with no protocol-level status
+  (contrast \\Recent, RFC3501-2.3.2-1/-2, which IS a system flag this
+  library legitimately refuses as a STORE argument unconditionally,
+  `assertNoRecentFlag`). A library-level `removeFlags()` that silently
+  refused to remove a caller-named keyword based on its string value would
+  be surprising, unrequested behavior -- this is a caller policy choice
+  (don't call `removeFlags(..., ["$Forwarded"])` in the first place), not
+  something `StoreCommand` should enforce."
+
+The distinguishing line from this milestone's OTHER flag-refusal
+adjudication (`RFC3501-2.3.2-1`/`-2` above, `\Recent`) is exactly the
+contrast the test comments draw: `\Recent` is a system flag whose
+prohibition is unconditional and protocol-defined (the client can refuse it
+the same way for every caller, every time, with no cross-message state to
+track), so a library-level refusal is a faithful, unsurprising translation
+of the RFC text into code. $Junk/$NotJunk/$Forwarded instead require the
+library to (a) watch every incoming FETCH FLAGS result across the whole
+session, (b) recognize a specific cross-flag *pattern*, and (c)
+unilaterally emit a STORE the caller never asked for — a stateful,
+silent, automatic side effect a protocol library must not perform behind
+its caller's back. Both rows are therefore adjudicated as a permanent
+scope boundary rather than a temporary "not yet implemented" gap: the read
+side (observing the flags) is real and tested; the write side (auto-STORE
+or auto-refusal) is deliberately never automated, and the compliance rows
+stay `unimplemented` on that half indefinitely. A caller that wants this
+policy composes it themselves from `FetchedMessage.flags` +
+`addFlags`/`removeFlags`, which this library provides.

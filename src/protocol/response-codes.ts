@@ -14,7 +14,21 @@
  * a tagged NO rejecting an over-limit APPEND, or an informational untagged
  * OK), not only as a STATUS item; typed here since STATUS is where
  * APPENDLIMIT-as-item is first built, and M2.11's APPEND reuses it for the
- * resp-code form. Everything else
+ * resp-code form. M2.11 (APPEND) adds APPENDUID/TOOBIG/BADURL (RFC 4315/4469).
+ * M3.8 (COPY/MOVE) adds COPYUID (RFC 4315). M3.11's §7 resp-code sweep adds
+ * MODIFIED (RFC 7162 §3.2.5.1) -- STORE's own `ModifiedTextCode` handling
+ * (M3.6, `commands/store.ts`) predates this variant and reads the parser
+ * class directly off the tagged response, but the code went untyped in this
+ * module and in `toTypedResponseCode()`'s generic path (`ServerNoError`/
+ * `ServerBadError.code`, `ResponseCollector.codes()`) until now. The sweep
+ * also audited UNKNOWN-CTE (RFC 3516) and EXPUNGEISSUED (RFC 5530) and left
+ * both untyped ON PURPOSE: neither's catalog entry
+ * (`test/compliance/catalog/ext/rfc3516.ts`, `rfc9051/s7-responses-a.ts`)
+ * imposes a client-binding duty beyond tolerating/ignoring the code (RFC
+ * 3501/9051 §7.1's "ignore unrecognized response codes"), and both are
+ * argument-less on the wire -- the open fallback already renders them
+ * correctly, and a dedicated variant would carry no behavior a caller could
+ * distinguish from `{ name, args: null }`. Everything else
  * -- known-but-not-yet-typed and genuinely unknown codes alike -- still
  * surfaces through the open `{ name, args }` fallback member (never an
  * error, per the tolerance invariant I-6): `commands/collector.ts`'s
@@ -58,4 +72,18 @@ export type TypedResponseCode =
 	 *  i-th destination UID), expanded from the wire's `uid-set` ranges into
 	 *  individual numbers in ascending order. */
 	| { name: "COPYUID"; uidValidity: number; sourceUids: number[]; destUids: number[] }
+	/** RFC 7162 §3.2.5.1 (CONDSTORE): rides a STORE/UID STORE's TAGGED
+	 *  response when `UNCHANGEDSINCE` prevented the command from touching
+	 *  every requested message -- `uids` is the ascending expansion of the
+	 *  wire's sequence-set/uid-set of messages that were NOT modified (M3.6's
+	 *  `StoreResult.modified`, §5.5 M3.11 sweep). `unchangedSince` is
+	 *  CONDSTORE-inert this milestone (`StoreModifiers` throws before any
+	 *  `StoreCommand` is constructed, so no command this client sends can
+	 *  actually provoke a real server MODIFIED today) -- typed anyway so a
+	 *  non-conformant/defensive server's unprompted MODIFIED still renders
+	 *  structured data through `toTypedResponseCode`/`.codes()` and
+	 *  `ServerNoError`/`ServerBadError.code`, matching every other
+	 *  structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) rather than
+	 *  silently falling back to the open `{name, args}` shape. */
+	| { name: "MODIFIED"; uids: number[] }
 	| { name: string; args: string | null };

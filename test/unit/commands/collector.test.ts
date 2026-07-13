@@ -349,4 +349,69 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			url: "/Sent;UIDVALIDITY=385759045/;UID=20",
 		});
 	});
+
+	// M3.11 (§7 resp-code sweep): MODIFIED (RFC 7162 §3.2.5.1) gets a typed
+	// variant so the GENERIC paths (this function, `ResponseCollector.codes()`,
+	// `Command`'s `defaultOnError` building `ServerNoError`/`ServerBadError.code`)
+	// render the same structured `uids` array that `commands/store.ts`'s own
+	// direct `instanceof ModifiedTextCode` read already produces -- MODIFIED
+	// previously fell through to the open `{name, args: null}` fallback here,
+	// silently losing the failed-message uid-set for every consumer except
+	// `StoreCommand.accept()` itself.
+	test("MODIFIED carries a typed ascending `uids` array (single uid)", () => {
+		const tagged = parseLine(`A1 OK [MODIFIED 7] Conditional STORE failed${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "MODIFIED",
+			uids: [7],
+		});
+	});
+
+	test("MODIFIED expands a mixed range/singleton uid-set, ascending", () => {
+		const tagged = parseLine(
+			`A1 OK [MODIFIED 2:4,7] Conditional STORE failed${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "MODIFIED",
+			uids: [2, 3, 4, 7],
+		});
+	});
+
+	test("MODIFIED on a tagged NO (defensive/non-conformant-server shape) still renders typed uids", () => {
+		// RFC 7162 documents MODIFIED riding a tagged OK for CONDSTORE's
+		// partial-failure case; this exercises the code path a
+		// `ServerNoError`/`ServerBadError.code` would see if a server ever
+		// sent it on a NO/BAD instead -- tolerated data either way (I-6).
+		const tagged = parseLine(`A1 NO [MODIFIED 1,3,5] Conditional STORE failed${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "MODIFIED",
+			uids: [1, 3, 5],
+		});
+	});
+
+	// M3.11 sweep: UNKNOWN-CTE (RFC 3516) and EXPUNGEISSUED (RFC 5530) were
+	// audited against spec §5.5 and the compliance catalog
+	// (test/compliance/catalog/ext/rfc3516.ts, rfc9051/s7-responses-a.ts) and
+	// deliberately left WITHOUT a dedicated typed variant: neither carries a
+	// structured or client-actionable argument, and each catalog's own
+	// adjudication says the client's only duty is to tolerate/ignore the
+	// code (RFC 3501/9051 §7.1's "ignore unrecognized response codes").
+	// These tests are the evidence that the generic fallback still parses
+	// each of them through end-to-end without error.
+	test("UNKNOWN-CTE (RFC 3516) is an argument-less generic fallback, not a dedicated variant", () => {
+		const tagged = parseLine(`A1 NO [UNKNOWN-CTE] Unknown content-transfer-encoding${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "UNKNOWN-CTE",
+			args: null,
+		});
+	});
+
+	test("EXPUNGEISSUED (RFC 5530) is an argument-less generic fallback, not a dedicated variant", () => {
+		const tagged = parseLine(
+			`A1 OK [EXPUNGEISSUED] Messages expunged by another session${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "EXPUNGEISSUED",
+			args: null,
+		});
+	});
 });
