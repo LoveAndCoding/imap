@@ -68,7 +68,7 @@ between closes; last updated: M3 CLOSED.)*
     their base is `2549b99`+): M3.4 (collector streaming bridge — flips
     nothing, prerequisite for M3.5), M3.9 (EXPUNGE — authors fresh bare-
     EXPUNGE compliance coverage), M3.10 (MULTIAPPEND/CATENATE).
-  - LANDMINE (new): freshly-created agent worktrees have been handed out
+  - LANDMINE: freshly-created agent worktrees have been handed out
     checked out at WRONG BASE commits (`origin/main` or an ancient
     dependabot commit `0d68600`), not this branch's tip. All three verb
     agents detected and fast-forwarded/reset themselves, but every future
@@ -76,6 +76,18 @@ between closes; last updated: M3 CLOSED.)*
     `git log --oneline -1` matches the current branch tip before starting
     (and the orchestrator should verify at merge time that the diff bases
     on the right lineage).
+  - LANDMINE (M4): `refs/stash` is SHARED across all git worktrees of
+    this repo. Two concurrent agents' `git stash pop` calls swapped
+    stash entries mid-M4 (both recovered via `git fsck --unreachable`
+    — stash commits stay reachable as dangling objects). `git stash` is
+    BANNED in agent instructions; use `git diff`/`git show HEAD:<path>`
+    or /tmp copies for before/after comparisons.
+  - LESSON (M4): the compliance report's per-row failure detail field is
+    `failureKind`, NOT `failureMode` — orchestrator diff scripts using
+    the wrong name silently compare status only and MISS
+    unimplemented→violation kind-shifts (this hid 18 such shifts at the
+    M4.9 merge until a kind-aware re-diff caught them). Always diff
+    `status + failureKind` per row.
   - Remaining: M3.4 (collector FETCH bridge, needs M3.2), M3.5 FETCH,
     M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE (needs M3.2),
     M3.11 response-code sweep + milestone close.

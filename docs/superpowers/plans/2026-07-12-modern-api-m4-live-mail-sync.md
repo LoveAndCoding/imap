@@ -121,17 +121,17 @@ M3 will actually produce.
 
 | Task | Status |
 |---|---|
-| M4.1 IdleController + idle() | IN FLIGHT (worktree, with M4.2) |
-| M4.2 IDLE ordering-race tests | IN FLIGHT (with M4.1) |
-| M4.3 updates() iterator | pending (needs M4.1/M4.2; vanished member needs M4.6) |
-| M4.4 AUTO_ENABLE_SET | IN FLIGHT (worktree, with M4.5) |
-| M4.5 CONDSTORE | IN FLIGHT (with M4.4) |
-| M4.6 QRESYNC | pending (needs M4.5) |
+| M4.1 IdleController + idle() | **DONE** — `9943f17`, +8 rows; queue-hook design chosen (contextQueuedBehindIsolated) |
+| M4.2 IDLE ordering-race tests | **DONE** — with M4.1; both scenario-3 races pinned |
+| M4.3 updates() iterator | pending (needs M4.6's vanished member for the full union) |
+| M4.4 AUTO_ENABLE_SET | **DONE** — `f007c05` (with M4.5) |
+| M4.5 CONDSTORE | **DONE** — `f007c05`, +12 rows; advertisement-gated (not ENABLE) per RFC 7162 §3.1; 3.1.3-5/-6 adjudicated as permanent SHOULD deviations |
+| M4.6 QRESYNC | IN FLIGHT (worktree) |
 | M4.7 SEARCHRES | **DONE BY M3** — RFC 5182 rows all pass/untestable (M3.7 SAVE + the M3-review "$" gate); validated at kickoff |
 | M4.8 WITHIN | **DONE BY M3** — RFC 5032 rows all pass/untestable (M3.7 older/younger); validated at kickoff |
-| M4.9 SORT/THREAD + DISPLAY | IN FLIGHT (worktree; ThreadNode shape adjudicated: recursive {uid?/seq?/children}) |
-| M4.10 ESORT/CONTEXT + PARTIAL | pending (PARTIAL search half done by M3.7; RFC9394-3.3-1 adjudicated deferred to M5; remaining: RFC 5267 rows) |
-| M4.11 FUZZY | pending (M3.7 flipped 6203-1/3/5 rows; remaining: 4-2, 4-3, 6-1..6-3 — RELEVANCY-adjacent) |
+| M4.9 SORT/THREAD + DISPLAY | **DONE** — `94a943c`, +34 rows (5256+5957 at 100%); ThreadNode defined + spec amended; side effect: 18 rows shifted unimplemented→violation-kind (real verbs reached previously-short-circuited 5267/6203/5255 scripts) — owned by M4.10/M4.11 |
+| M4.10 ESORT/CONTEXT + PARTIAL | IN FLIGHT (worktree, with M4.11 + the 18 classification repairs) |
+| M4.11 FUZZY | IN FLIGHT (with M4.10) |
 | M4.12 INPROGRESS | **DONE BY M3/earlier** — RFC 9585 rows all pass/untestable; validated at kickoff |
 | M4.13 NOTIFY | pending |
 | M4.14 FILTERS | pending (scope decision at dispatch) |
