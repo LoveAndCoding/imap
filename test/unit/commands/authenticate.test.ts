@@ -306,7 +306,16 @@ describe("AuthenticateCommand (spec §9.1/§9)", () => {
 			expect(finishSpy).toHaveBeenCalledWith(null, CTX);
 		});
 
-		test("finish() throwing an AuthError directly is propagated unwrapped", async () => {
+		test("finish() throwing an AuthError is re-issued TERMINAL, carrying the original as cause (M5.1 security fix)", async () => {
+			// Pre-M5.1 this test asserted the mechanism's own AuthError propagated
+			// unwrapped. That contract deliberately changed: a finish() rejection
+			// is a post-tagged-OK integrity failure (the mechanism saying "the
+			// server is lying" -- a suspected MITM), so accept() re-issues it as a
+			// fresh AuthError with `terminal: true` -- the flag
+			// `performAuthSelection` uses to stop dead instead of downgrading to a
+			// weaker mechanism or LOGIN. The mechanism's own instance can't carry
+			// the flag itself (`mechanismAuthError()` is shared by pre-tagged-OK
+			// failures where try-next is still correct); it survives as `.cause`.
 			const { connection, router } = makeFakeConnection();
 			const authErr = new AuthError("server signature did not verify", {
 				mechanismsTried: ["MOCK-SCRAM"],
@@ -337,7 +346,11 @@ describe("AuthenticateCommand (spec §9.1/§9)", () => {
 			router.routeTagged(parseLine(`A8 OK done${CRLF}`) as TaggedResponse);
 
 			const err = await resultPromise.catch((e: unknown) => e);
-			expect(err).toBe(authErr);
+			expect(err).toBeInstanceOf(AuthError);
+			expect((err as AuthError).terminal).toBe(true);
+			expect((err as AuthError).cause).toBe(authErr);
+			expect((err as AuthError).message).toContain("server signature did not verify");
+			expect((err as AuthError).mechanismsTried).toEqual(["MOCK-SCRAM"]);
 		});
 	});
 

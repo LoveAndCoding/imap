@@ -237,21 +237,37 @@ export interface AuthErrorInit {
 	mechanismsTried: string[];
 	code: TypedResponseCode | null;
 	cause?: unknown;
+	terminal?: boolean;
 }
 
 /** Authentication failed outright, or no viable mechanism could be selected
  * (spec §9.3). `mechanismsTried` lists every mechanism attempted (or
  * considered and excluded); `code` carries a resp-code such as
- * AUTHENTICATIONFAILED when the server provided one. */
+ * AUTHENTICATIONFAILED when the server provided one.
+ *
+ * `terminal` (M5.1 security fix): `true` when the CLIENT's own mechanism —
+ * not the server — determined the exchange must fail AFTER the server
+ * already claimed success (a SASL `finish()` rejection: the SCRAM forged/
+ * unverifiable-ServerSignature case, RFC 5802 §5's "the client MUST
+ * consider the authentication exchange to be unsuccessful"). This is
+ * categorically different from an ordinary tagged NO/BAD: the server
+ * failing MUTUAL authentication means the peer may be a man-in-the-middle,
+ * so the §9.3 selection algorithm MUST stop dead on it — never falling
+ * through to a weaker mechanism or LOGIN, which would hand a suspected
+ * MITM the password in a directly-reusable form. Ordinary failures (the
+ * server saying no) leave this `false` and keep the existing
+ * try-next-candidate behavior. */
 export class AuthError extends ImapError {
 	readonly mechanismsTried: string[];
 	readonly code: TypedResponseCode | null;
+	readonly terminal: boolean;
 
 	constructor(message: string, init: AuthErrorInit) {
 		super(message, { cause: init.cause });
 		this.name = "AuthError";
 		this.mechanismsTried = init.mechanismsTried;
 		this.code = init.code;
+		this.terminal = init.terminal ?? false;
 	}
 }
 

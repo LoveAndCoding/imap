@@ -26,6 +26,7 @@ import {
 	TlsError,
 } from "../../../src/errors";
 import { createPlainMechanism } from "../../../src/sasl/plain";
+import { ScramMechanism } from "../../../src/sasl/scram";
 
 /** A minimal, inert fake command for exercising `run()`'s gating in
  *  isolation — never actually reaches the wire in these tests (gating
@@ -288,6 +289,130 @@ describe("ImapClient (spec §3.2/§3.3)", () => {
 			// XOAUTH2 was never attempted (not advertised) — only PLAIN's bytes
 			// appear on the wire.
 			expect(server.transcript.clientLines()).not.toMatch(/XOAUTH2/);
+			await server.assertCompleted();
+		});
+
+		test("TERMINAL integrity failure (M5.1 security fix): a forged SCRAM ServerSignature rejects outright — no weaker mechanism, never LOGIN", async () => {
+			// RFC 5802 §5's own worked example (user/pencil), driven with a pinned
+			// client nonce so every wire line is byte-predictable; the server's
+			// final message carries a FORGED 'v=' the client's own verification
+			// must reject — after the server already claimed success (tagged OK).
+			const cnonce = "fyko+d2lbbFgONRv9qkxdawL";
+			const combined = cnonce + "3rfcNHYJY1ZVvWVs7j";
+			const serverFirst = `r=${combined},s=QSXCR+Q6sek8bf92,i=4096`;
+			const clientFirstB64 = Buffer.from(`n,,n=user,r=${cnonce}`, "utf8").toString("base64");
+			const clientFinalB64 = Buffer.from(
+				`c=biws,r=${combined},p=v0X8v3Bz2T0CJGbJQyF0X+HI4Ts=`,
+				"utf8",
+			).toString("base64");
+			const forgedV = Buffer.alloc(20, 0x42).toString("base64");
+
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					// AUTH=PLAIN also advertised, and PLAIN is a configured fallback
+					// candidate below — a broken selection algorithm WOULD reach it.
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1 AUTH=PLAIN"]),
+					expectLine(command("AUTHENTICATE", { args: "SCRAM-SHA-1" })),
+					send("+ \r\n"),
+					expectLine({
+						description: "SCRAM client-first-message (base64)",
+						match: (line: string) => ({
+							ok: line === clientFirstB64,
+							reason: `expected '${clientFirstB64}', got '${line}'`,
+						}),
+					}),
+					send("+ " + Buffer.from(serverFirst, "utf8").toString("base64") + "\r\n"),
+					expectLine({
+						description: "SCRAM client-final-message (base64)",
+						match: (line: string) => ({
+							ok: line === clientFinalB64,
+							reason: `expected '${clientFinalB64}', got '${line}'`,
+						}),
+					}),
+					// Forged server-final-message, then a tagged OK claiming success.
+					send("+ " + Buffer.from(`v=${forgedV}`, "utf8").toString("base64") + "\r\n"),
+					expectLine({
+						description: "empty reply concluding the SASL exchange",
+						match: (line: string) => ({
+							ok: line === "",
+							reason: `expected empty concluding reply, got '${line}'`,
+						}),
+					}),
+					reply("OK authenticated"),
+					// Script ends here: a compliant client sends NOTHING more.
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: {
+					user: "user",
+					pass: "pencil",
+					// PLAIN deliberately queued AFTER the SCRAM instance: without the
+					// terminal stop, the selection loop would try it next (and then
+					// LOGIN), handing the forging peer the password in the clear.
+					mechanisms: [new ScramMechanism("sha1", { nonce: () => cnonce }), "PLAIN"],
+				},
+			});
+
+			let caught: unknown;
+			try {
+				await client.connect();
+			} catch (err) {
+				caught = err;
+			}
+
+			expect(caught).toBeInstanceOf(AuthError);
+			expect((caught as AuthError).terminal).toBe(true);
+			expect(client.state).not.toBe("authenticated");
+			// The security-critical assertions (RFC 5802 §5's MUST + spec §9.3's
+			// terminal stop): exactly ONE authentication attempt ever hit the
+			// wire — no PLAIN retry, no LOGIN fallback against the suspect peer.
+			const wire = server.transcript.clientLines();
+			expect(wire).not.toMatch(/LOGIN/i);
+			expect(wire.match(/AUTHENTICATE/gi)?.length ?? 0).toBe(1);
+			await server.assertCompleted();
+		});
+
+		test("default candidate order (spec §9.3, M5.1): SCRAM-SHA-256 is attempted before PLAIN when both are advertised", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", [
+						"* CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-256 AUTH=PLAIN SASL-IR",
+					]),
+					// SCRAM-SHA-256 is the FIRST candidate a plain {user, pass} config
+					// (no explicit `mechanisms`) tries — no `defaultCandidates()`
+					// reordering needed once SCRAM is a real, registered mechanism.
+					// SASL-IR is advertised, so the client-first-message rides inline
+					// on the AUTHENTICATE line itself rather than a later continuation.
+					expectLine(
+						command("AUTHENTICATE", { args: /^SCRAM-SHA-256 [A-Za-z0-9+/=]+$/ }),
+					),
+					// A bare NO (mechanism-negotiation failure, not credentials-wrong)
+					// makes the selection algorithm try the next candidate rather than
+					// stopping — SCRAM-SHA-1 isn't advertised, so PLAIN is next.
+					reply("NO AUTHENTICATE failed"),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					reply("OK [CAPABILITY IMAP4rev1] authenticated"),
+				],
+			]);
+
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+			});
+
+			await client.connect();
+
+			expect(client.state).toBe("authenticated");
 			await server.assertCompleted();
 		});
 

@@ -1,7 +1,6 @@
 import { AuthError, ImapError } from "../errors";
 import type { ContinueResponse, TaggedResponse } from "../parser";
 import type { SaslContext, SaslMechanism } from "../sasl/mechanism";
-import { mechanismAuthError } from "../sasl/mechanism";
 import { Command } from "./base";
 import { ResponseCollector, toTypedResponseCode } from "./collector";
 import type { CommandWriter } from "./writer";
@@ -159,18 +158,31 @@ export class AuthenticateCommand extends Command<void> {
 			// spec §9.1/task brief: `finish()` MUST be able to reject the
 			// command's promise even though the server already said OK (the
 			// SCRAM server-signature case: the client verifies, not just trusts,
-			// server-claimed success). A mechanism is documented to throw
-			// `AuthError` itself; pass that straight through, and wrap anything
-			// else (a mechanism that didn't follow the contract) the same way
-			// every other local mechanism failure in this codebase is wrapped.
-			if (err instanceof ImapError) {
-				throw err;
-			}
-			throw mechanismAuthError(
-				this.mechanism.name,
+			// server-claimed success).
+			//
+			// TERMINAL, always (M5.1 security fix): a `finish()` rejection means
+			// the CLIENT's own verification failed AFTER the server claimed
+			// success — the mechanism is saying "the server is lying", not the
+			// server saying "no". The peer may be a man-in-the-middle who
+			// couldn't forge the final proof; the §9.3 selection algorithm MUST
+			// stop dead on this error (see `AuthError.terminal`'s doc comment),
+			// never retrying a weaker mechanism or LOGIN against the same
+			// suspect peer. Every rejection out of this catch is therefore
+			// re-issued as a fresh `AuthError` with `terminal: true` — including
+			// one the mechanism raised as an `AuthError` itself (that instance
+			// can't carry the flag: `mechanismAuthError()` is also used by
+			// pre-tagged-OK failures where try-next is still correct; only THIS
+			// call site knows the failure happened post-success).
+			const detail = err instanceof Error ? err.message : String(err);
+			throw new AuthError(
 				`AUTHENTICATE ${this.mechanism.name}: finish() rejected authentication ` +
-					`despite a tagged OK (${err instanceof Error ? err.message : String(err)})`,
-				err,
+					`despite a tagged OK (${detail})`,
+				{
+					mechanismsTried: [this.mechanism.name],
+					code: err instanceof AuthError ? err.code : null,
+					cause: err,
+					terminal: true,
+				},
 			);
 		}
 	}

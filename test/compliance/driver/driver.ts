@@ -43,7 +43,7 @@ import type {
 	ThreadNode,
 	UrlFetchResultItem,
 } from "../../../src/index";
-import { createMechanism } from "../../../src/sasl";
+import { createMechanism, ScramMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
 
 import { NotImplementedError } from "./errors";
@@ -901,24 +901,62 @@ export class ComplianceDriver {
 	 * the test asked for.
 	 *
 	 * A mechanism name the registry doesn't recognize (GSSAPI — never on
-	 * this library's roadmap; CRAM-MD5, SCRAM-SHA-1/256, ANONYMOUS, EXTERNAL
-	 * — not shipped until M5) throws `NotImplementedError` directly, with zero
-	 * bytes written: `createMechanism()` returning `undefined` is a
-	 * capability gap in the CLIENT, not a protocol decision, so the driver
+	 * this library's roadmap; the `-PLUS` channel-binding variants of
+	 * SCRAM-SHA-1/256 — a permanent non-goal, spec §13/§9.2, never
+	 * registered under those names) throws `NotImplementedError` directly,
+	 * with zero bytes written: `createMechanism()` returning `undefined` is
+	 * a capability gap in the CLIENT, not a protocol decision, so the driver
 	 * surfaces it as the same "no public API for this" signal every other
 	 * unwired verb uses, rather than letting it fall through to
 	 * `performAuthSelection`'s generic `AuthError` (which exists for a
 	 * different case: every CANDIDATE excluded after a real attempt).
+	 * CRAM-MD5 and EXTERNAL shipped as M1 exit-gap work; SCRAM-SHA-1/256 and
+	 * ANONYMOUS shipped in M5.1 — all four are real, registered mechanisms
+	 * by the time this comment is read.
 	 *
 	 * `initialResponse`, when supplied, is treated as an authzid override
 	 * (RFC 4422 §3.4.1) for mechanisms that accept one (PLAIN, EXTERNAL) —
 	 * see `withAuthzid()` — UNLESS it contains an embedded NUL, in which
 	 * case it is documentation-only (see `withAuthzid`'s doc comment) and
 	 * the mechanism runs with its default (absent) authzid instead.
+	 * `SaslContext.authzid` doing double duty as ANONYMOUS's trace-
+	 * information input (RFC 4505) and SCRAM's gs2-header 'a=' value (RFC
+	 * 5802 §5.1-1) is exactly this same field, reused rather than given a
+	 * bespoke parameter for each mechanism — see those mechanisms' own doc
+	 * comments.
+	 *
+	 * `opts.user`/`opts.pass` override the fixed `DEFAULT_AUTH_USER`/
+	 * `DEFAULT_AUTH_PASS` identity — needed by a mechanism whose wire bytes
+	 * are a function of the username/password themselves (SCRAM's 'n='
+	 * attribute and its ClientProof/ServerSignature derivation, RFC 5802 §5)
+	 * where a test wants to reproduce the RFC's own worked-example identity
+	 * ("user"/"pencil") or exercise a specific username shape (e.g. one
+	 * containing ',' or '=', RFC5802-5.1-4). Omitted (the overwhelming
+	 * majority of callers): identical to every pre-existing behavior, the
+	 * fixed default identity.
+	 *
+	 * `opts.scramNonce`, when the named mechanism is SCRAM-SHA-1/-256,
+	 * constructs that mechanism directly with a pinned client nonce instead
+	 * of going through the registry's default (cryptographically random)
+	 * factory — the ONLY way a black-box compliance script (a static,
+	 * pre-declared array of expected/sent lines, `harness/script.ts`) can
+	 * reproduce a fixed RFC 5802 §5 / RFC 7677 §3 worked example: the
+	 * server's scripted response and the independently-recomputed expected
+	 * ClientProof/ServerSignature both need to be built from a KNOWN c-nonce
+	 * ahead of the exchange, which a genuinely random nonce (RFC5802-5.1-7,
+	 * the correct behavior every other caller of `authenticate()` relies on)
+	 * makes impossible to predict. Ignored for every other mechanism.
 	 */
-	public async authenticate(mechanism: string, initialResponse?: string): Promise<void> {
+	public async authenticate(
+		mechanism: string,
+		initialResponse?: string,
+		opts?: { user?: string; pass?: string; scramNonce?: () => string },
+	): Promise<void> {
 		const client = this.requireClient();
-		const base = createMechanism(mechanism);
+		const base =
+			opts?.scramNonce && (mechanism === "SCRAM-SHA-1" || mechanism === "SCRAM-SHA-256")
+				? new ScramMechanism(mechanism === "SCRAM-SHA-1" ? "sha1" : "sha256", { nonce: opts.scramNonce })
+				: createMechanism(mechanism);
 		if (!base) {
 			throw new NotImplementedError(`AUTHENTICATE ${mechanism}`);
 		}
@@ -927,8 +965,8 @@ export class ComplianceDriver {
 				? initialResponse
 				: undefined;
 		await client.authenticate({
-			user: DEFAULT_AUTH_USER,
-			pass: DEFAULT_AUTH_PASS,
+			user: opts?.user ?? DEFAULT_AUTH_USER,
+			pass: opts?.pass ?? DEFAULT_AUTH_PASS,
 			accessToken: DEFAULT_AUTH_TOKEN,
 			mechanisms: [withAuthzid(base, authzid)],
 		});

@@ -566,17 +566,31 @@ const rfc5802: CatalogModule = {
 			level: "MUST NOT",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"The duty's own antecedent — 'if the client supports channel binding' — is " +
+				"structurally unsatisfiable for this client: channel binding (and with it every " +
+				"-PLUS mechanism variant) is a permanent design non-goal (spec §13; §9.2 'no " +
+				"channel binding = -PLUS variants out of scope'), so no code path exists through " +
+				"this client's actual API in which the conditioned prohibition could be either " +
+				"honored or violated. A wire exchange showing gs2-cbind-flag 'n' is fully " +
+				"compliant here via the RFC5802-6-3 branch ('if the client does not support " +
+				"channel binding, then it MUST use an \"n\" gs2-cbind-flag') and carries zero " +
+				"information about this entry's channel-binding-capable-client duty — the same " +
+				"never-reachable-affordance reasoning as the RFC9525 URI-ID/SRV-ID rows already " +
+				"classified under this theme. Reclassified from 'testable' at M5.1 " +
+				"(adjudicated): the original classification was written before SCRAM landed, " +
+				"against a hypothetical future client that might implement channel binding; " +
+				"this library's never will.",
 			notes:
 				"Applies only to a client that itself supports channel binding, connecting to " +
 				"a server whose CAPABILITY list advertises only the non-PLUS mechanism name " +
-				"(e.g. SCRAM-SHA-1 without SCRAM-SHA-1-PLUS). The correct flag in this case is " +
+				"(e.g. SCRAM-SHA-1 without SCRAM-SHA-1-PLUS). The correct flag in that case is " +
 				"'y' (the client believes the server lacks channel-binding support), reserving " +
 				"'n' exclusively for clients that do not support channel binding at all (entry " +
-				"RFC5802-6-3). Testable once SCRAM with channel-binding support is implemented: " +
-				"script a server CAPABILITY advertising AUTH=SCRAM-SHA-1 without the -PLUS " +
-				"variant, and assert a channel-binding-capable client's gs2-cbind-flag is 'y', " +
-				"never 'n'.",
+				"RFC5802-6-3 — the branch THIS client permanently takes, verified by the " +
+				"RFC5802-6-3-citing test asserting every SCRAM exchange uses flag 'n').",
 		},
 		{
 			id: "RFC5802-6-2",

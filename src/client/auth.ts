@@ -128,6 +128,18 @@ export async function performAuthSelection(
 		try {
 			await deps.run(cmd);
 		} catch (err) {
+			if (err instanceof AuthError && err.terminal) {
+				// TERMINAL (M5.1 security fix): the MECHANISM itself rejected the
+				// exchange after the server already claimed success (a `finish()`
+				// integrity failure — e.g. a SCRAM ServerSignature that does not
+				// verify, RFC 5802 §5). The server failed MUTUAL authentication:
+				// the peer may be a man-in-the-middle who couldn't forge the
+				// final proof. Stop dead — trying the next candidate (or worse,
+				// falling through to LOGIN below) would hand that suspect peer
+				// the password in a weaker, directly-reusable form. See
+				// `AuthError.terminal`'s doc comment.
+				throw err;
+			}
 			if (err instanceof AuthError && err.code?.name === "AUTHENTICATIONFAILED") {
 				// Credentials are wrong, not the mechanism (spec §9.3 step 3) — do
 				// NOT fall through to the next candidate.
