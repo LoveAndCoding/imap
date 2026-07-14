@@ -506,7 +506,7 @@ export const registryCoverage: RegistryEntry[] = [
 		capability: "URLAUTH",
 		status: "cataloged",
 		source: "RFC4467",
-		note: "GENURLAUTH/URLFETCH/RESETKEY; URLMECH resp-code parses for real. * GENURLAUTH/* URLFETCH untagged responses have no handler (stream-death).",
+		note: "GENURLAUTH/URLFETCH/RESETKEY; URLMECH resp-code parses for real. M5.5: * GENURLAUTH/* URLFETCH untagged responses now have a real parser handler (src/parser/structure/urlauth.ts) -- no longer a stream-death.",
 	},
 	{
 		capability: "URLAUTH=BINARY",

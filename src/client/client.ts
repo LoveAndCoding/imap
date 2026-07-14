@@ -79,6 +79,8 @@ import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "
 import type { FacetDriver } from "./facets/driver";
 import { QuotaFacetImpl } from "./facets/quota";
 import type { QuotaFacet } from "./facets/quota";
+import { UrlauthFacetImpl } from "./facets/urlauth";
+import type { UrlauthFacet } from "./facets/urlauth";
 import { MailboxSession } from "./mailbox";
 import type { MailboxSessionDriver } from "./mailbox";
 import { ClientStateMachine } from "./state";
@@ -260,6 +262,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  full facet-pattern rationale every later facet (`acl`/`metadata`/
 	 *  `urlauth`) reuses. */
 	private _quota: QuotaFacet | null = null;
+
+	/** Backing field for the lazy `urlauth` facet property (spec §3.6, M5.5)
+	 *  — identical pattern to `_quota` above; see that field's doc comment
+	 *  and `client/facets/quota.ts`'s header comment for the full rationale. */
+	private _urlauth: UrlauthFacet | null = null;
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -809,6 +816,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			this._quota = new QuotaFacetImpl(this.facetDriver());
 		}
 		return this._quota;
+	}
+
+	/**
+	 * `urlauth` (spec §3.6, RFC 4467 + RFC 5524's URLAUTH=BINARY extension)
+	 * — M5.5. Same lazy-property pattern as `quota` above (see that getter's
+	 * doc comment and `client/facets/quota.ts`'s header comment for the full
+	 * writeup) — a plain PROPERTY, backed by `_urlauth`, constructed on
+	 * first read and cached thereafter.
+	 */
+	public get urlauth(): UrlauthFacet {
+		if (!this._urlauth) {
+			this._urlauth = new UrlauthFacetImpl(this.facetDriver());
+		}
+		return this._urlauth;
 	}
 
 	/**

@@ -17,6 +17,7 @@ export * from "./tag";
 export * from "./text.code";
 export * from "./text";
 export * from "./thread";
+export * from "./urlauth";
 export * from "./vanished";
 
 // Mailbox data is a bit messier due to Exists/Recent having

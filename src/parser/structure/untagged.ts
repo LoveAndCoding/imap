@@ -14,6 +14,7 @@ import { SortResponse } from "./sort";
 import { StatusResponse } from "./status";
 import { ThreadResponse } from "./thread";
 import { UnknownContent } from "./unknown";
+import { GenUrlAuthResponse, UrlFetchResponse } from "./urlauth";
 import { VanishedResponse } from "./vanished";
 
 type ContentType =
@@ -21,6 +22,7 @@ type ContentType =
 	| EnabledResponse
 	| Expunge
 	| Fetch
+	| GenUrlAuthResponse
 	| IDResponse
 	| NamespaceResponse
 	| QuotaResponse
@@ -29,6 +31,7 @@ type ContentType =
 	| StatusResponse
 	| ThreadResponse
 	| UnknownContent
+	| UrlFetchResponse
 	| VanishedResponse
 	| MailboxData.ContentType;
 
@@ -91,6 +94,8 @@ export default class UntaggedResponse {
 				SortResponse,
 				ThreadResponse,
 				VanishedResponse,
+				GenUrlAuthResponse,
+				UrlFetchResponse,
 				MailboxData, // See below for Exists/Recent
 			] as const;
 			for (const check of toCheckList) {

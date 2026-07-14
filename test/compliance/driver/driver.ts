@@ -36,6 +36,7 @@ import type {
 	StoreResult,
 	ThreadAlgorithm,
 	ThreadNode,
+	UrlFetchResultItem,
 } from "../../../src/index";
 import { createMechanism } from "../../../src/sasl";
 import type { SaslContext, SaslMechanism } from "../../../src/sasl";
@@ -1748,16 +1749,35 @@ export class ComplianceDriver {
 	): Promise<never> {
 		throw new NotImplementedError("CONVERT");
 	}
+	/**
+	 * GENURLAUTH (RFC 4467 §7/§9) -- M5.5. Wired to `client.urlauth.
+	 * generate(...)` directly (client-level facet, spec §3.6 -- URLAUTH is
+	 * not mailbox-scoped in the way FETCH/STORE/etc. are). `mechanism` is
+	 * required by this driver's own scripted-test surface (every compliance
+	 * test that calls this always supplies one), even though the facet's
+	 * own `UrlauthRump.mechanism` is optional (defaults to "INTERNAL").
+	 */
 	public async genurlauth(
-		_urls: Array<{ url: string; mechanism: string }>,
-	): Promise<never> {
-		throw new NotImplementedError("GENURLAUTH");
+		urls: Array<{ url: string; mechanism: string }>,
+	): Promise<string[]> {
+		return this.requireClient().urlauth.generate(urls);
 	}
-	public async urlfetch(_urls: string[]): Promise<never> {
-		throw new NotImplementedError("URLFETCH");
+	/** URLFETCH (RFC 4467 §7/§9; RFC 5524 §3 extended BODYPARTSTRUCTURE/
+	 *  BINARY/BODY parameters) -- M5.5. Wired to `client.urlauth.fetch(...)`
+	 *  directly; `opts` is this driver's own ad hoc pass-through of the
+	 *  facet's `UrlFetchOptions` (a plain object shape, not re-typed here --
+	 *  same "ad hoc translation" posture the driver already uses for other
+	 *  facet options). */
+	public async urlfetch(
+		urls: string[],
+		opts?: { bodyPartStructure?: boolean; binary?: boolean; body?: boolean },
+	): Promise<UrlFetchResultItem[]> {
+		return this.requireClient().urlauth.fetch(urls, opts);
 	}
-	public async resetkey(_mailbox?: string, _mechanisms?: string[]): Promise<never> {
-		throw new NotImplementedError("RESETKEY");
+	/** RESETKEY (RFC 4467 §7/§9) -- M5.5. Wired to `client.urlauth.
+	 *  resetKey(...)` directly. */
+	public async resetkey(mailbox?: string, mechanisms?: string[]): Promise<void> {
+		return this.requireClient().urlauth.resetKey(mailbox, mechanisms);
 	}
 	public async rlist(_ref: string, _pattern: string): Promise<never> {
 		throw new NotImplementedError("RLIST");

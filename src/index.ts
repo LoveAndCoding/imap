@@ -141,6 +141,21 @@ export type { QuotaResourceUsage, QuotaResult } from "./commands/quota/get-quota
 export type { QuotaRootResult } from "./commands/quota/get-quota-root";
 export type { QuotaLimitEntry } from "./commands/quota/set-quota";
 
+// URLAUTH (RFC 4467 + RFC 5524's URLAUTH=BINARY extension, spec §3.6,
+// M5.5): `ImapClient.urlauth`'s public facet surface. `UrlauthFacet` is the
+// interface `client.urlauth` is typed as; `UrlauthRump` is `generate()`'s
+// per-URL request shape; `UrlFetchOptions`/`UrlFetchResultItem`/
+// `UrlFetchMetadataItem` are `fetch()`'s request/result shapes. See
+// `client/facets/urlauth.ts`'s header comment for this task's IMAP-URL-
+// handling scope decision (URLs are opaque strings, never parsed/built by
+// this client).
+export type { UrlauthFacet, UrlauthRump } from "./client/facets/urlauth";
+export type {
+	UrlFetchMetadataItem,
+	UrlFetchOptions,
+	UrlFetchResultItem,
+} from "./commands/urlauth/url-fetch";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,
