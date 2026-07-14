@@ -1,5 +1,6 @@
 import { TypedEmitter } from "tiny-typed-emitter";
 
+import type { AppendCapabilityProbe, AppendOptions, AppendResult, AppendSource } from "../commands/append";
 import type { Command } from "../commands/base";
 import { CloseCommand } from "../commands/close";
 import { CopyCommand } from "../commands/copy";
@@ -12,6 +13,7 @@ import { NoopCommand } from "../commands/noop";
 import { SortCommand } from "../commands/message/sort";
 import { ThreadCommand } from "../commands/message/thread";
 import type { ThreadNode } from "../commands/message/thread";
+import { ReplaceCommand } from "../commands/replace";
 import type { SelectResult, SelectResyncEvent } from "../commands/select";
 import { SearchCommand } from "../commands/search";
 import type { SearchOptions, SearchResult } from "../commands/search";
@@ -140,6 +142,17 @@ export interface MailboxSessionDriver {
 	 * session. Same "one seam per need" shape as `idleRenewMs()` above.
 	 */
 	noopFallbackIntervalMs(): number;
+	/**
+	 * M5.6 (RFC 8508 REPLACE, RFC 7889 §4): mirrors `AppendCapabilityProbe.
+	 * knownAppendLimit()` exactly (`commands/append.ts`) -- `true` only once
+	 * the server's upload-size ceiling is actually known (the global valued
+	 * `APPENDLIMIT=<number>` capability form), reported through this seam so
+	 * `MailboxSession.replace()`/`SeqFacet.replace()` can build the same
+	 * `AppendCapabilityProbe` `ImapClient.append()` builds inline, without
+	 * this class needing direct access to the capability registry's raw
+	 * `view.all()` enumeration (which `hasCapability()` alone doesn't expose).
+	 */
+	knownAppendLimit(): boolean;
 }
 
 /** `closed` event reasons (spec §5b). `"closed"`/`"unselected"` are wired by
@@ -236,6 +249,28 @@ export interface SequenceFacet {
 	 * out of.
 	 */
 	expunge(): Promise<number[]>;
+	/**
+	 * Bare REPLACE (RFC 8508, spec §5b, M5.6) -- sequence-number-grain mirror
+	 * of `MailboxSession.replace()`, `seq` interpreted as a message sequence
+	 * number rather than a UID (bare `REPLACE`, not `UID REPLACE`).
+	 *
+	 * The spec's own §5b class listing shows `replace()` once, under the
+	 * UID-grain message-op group, not restated in this facet's comment
+	 * block -- but RFC 8508 §3.2/§3.3 defines TWO wire forms (`REPLACE
+	 * seq-number ...` and `UID REPLACE uid ...`), each independently useful
+	 * (a caller addressing a just-fetched sequence number never has to
+	 * resolve it to a UID first purely to replace a draft), so this facet
+	 * carries the bare-verb form the exact same way every other message-op
+	 * mirror here does (`copy`/`move`/`addFlags`/etc.) -- confirmed at this
+	 * task's kickoff against the driver-wiring convention already
+	 * established for `copy()`/`move()`/`expunge()` (bare verb name -> `.seq`
+	 * facet, `uid`-prefixed name -> the UID-grain method directly), which
+	 * the pre-existing compliance suite (`test/compliance/specs/ext/
+	 * replace-8508.test.ts`, `test/compliance/driver/driver.ts`'s separately
+	 * stubbed `replace()`/`uidReplace()`) already pins as two distinct wire
+	 * forms to drive.
+	 */
+	replace(seq: number, mailbox: string, msg: AppendSource, opts?: AppendOptions): Promise<AppendResult>;
 }
 
 /**
@@ -1222,6 +1257,92 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return MailboxSession.runCopyOrMove(this, uids, dest, "uid", true);
 	}
 
+	// -- message ops: REPLACE / UID REPLACE (spec §5b, M5.6, RFC 8508) -------
+
+	/**
+	 * UID REPLACE (RFC 8508 §3.3) -- M5.6. Atomically (RFC8508-3.2-2) appends
+	 * `msg` to `mailbox` and removes the message identified by `uid` from
+	 * THIS selected mailbox -- see `ReplaceCommand`'s own doc comment
+	 * (`commands/replace.ts`) for the full wire-form/response-shape/
+	 * queueMode rationale; this method's job is only the capability gate and
+	 * dispatch, mirroring `copy()`/`move()`'s own thin-delegation shape.
+	 *
+	 * `mailbox` need not be the currently selected mailbox (RFC8508-3.4-3
+	 * permissively allows targeting a different one, e.g. replacing a
+	 * `\Drafts` message with one landing in `\Sent`) -- this method performs
+	 * no such equality check.
+	 *
+	 * Returns `AppendResult` (RFC 4315 UIDPLUS's `APPENDUID`, spec §5.4) --
+	 * every field stays `undefined`, never a thrown error, when the server
+	 * lacks UIDPLUS, same posture as `append()`'s own result.
+	 *
+	 * Gated on the `REPLACE` capability (RFC 8508 §3.1, I-9): `CapabilityError`,
+	 * zero bytes written, when absent -- `ReplaceCommand`'s own `capability =
+	 * "REPLACE"` declaration is the defense-in-depth backstop for a caller
+	 * reaching the command directly via the `client.run()` escape hatch, same
+	 * two-layer pattern `move()` above established.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces -- and,
+	 * per RFC8508-3.5-1/-3.5-2, REPLACE/UID REPLACE are selected-state-only
+	 * to begin with (`ReplaceCommand.states = ["selected"]`), so there is no
+	 * authenticated-state form to fall back to the way plain `append()` has.
+	 */
+	public async replace(
+		uid: number,
+		mailbox: string,
+		msg: AppendSource,
+		opts?: AppendOptions,
+	): Promise<AppendResult> {
+		return MailboxSession.runReplace(this, uid, mailbox, msg, opts, "uid");
+	}
+
+	/**
+	 * Shared REPLACE/UID REPLACE dispatch for both `replace()` above (UID
+	 * grain) and `SeqFacet.replace()` below (sequence-number grain) -- same
+	 * static-widening reason as `runCopyOrMove`/`runExpunge` (a `SeqFacet`
+	 * instance, a separate class in this same file, cannot reach a real
+	 * `private` member of `MailboxSession`, so this static is the minimal
+	 * seam letting it reuse the exact same precondition/capability/dispatch
+	 * logic). `label` only affects the `StateError`/`CapabilityError`
+	 * message text.
+	 */
+	static async runReplace(
+		session: MailboxSession,
+		input: number,
+		mailbox: string,
+		msg: AppendSource,
+		opts: AppendOptions | undefined,
+		kind: "uid" | "seq",
+	): Promise<AppendResult> {
+		const label = kind === "uid" ? "replace" : "seq.replace";
+		session.assertOpen(label);
+		// RFC 8508 §3.1 (I-9): CapabilityError, zero bytes written, before
+		// `ReplaceCommand` is even constructed -- same explicit-precheck-plus-
+		// command's-own-declared-capability two-layer pattern `move()` above
+		// established for MOVE/RFC 6851.
+		if (!session.driver.hasCapability("REPLACE")) {
+			throw new CapabilityError(
+				`${label}() requires the REPLACE capability (RFC 8508 §3.1) -- the ` +
+					"server has not advertised support for the REPLACE/UID REPLACE " +
+					"extension",
+				{ capability: "REPLACE", rfc: "RFC8508" },
+			);
+		}
+		// Same small `AppendCapabilityProbe` adapter `ImapClient.append()`
+		// builds inline (`client.ts`) -- `hasCapability()` is already the
+		// ENABLE-aware `effectiveCapability()` probe (see
+		// `MailboxSessionDriver.hasCapability`'s own doc comment);
+		// `knownAppendLimit()` is forwarded through the dedicated driver seam
+		// added for this task (`MailboxSessionDriver.knownAppendLimit`).
+		const probe: AppendCapabilityProbe = {
+			has: (cap) => session.driver.hasCapability(cap),
+			knownAppendLimit: () => session.driver.knownAppendLimit(),
+		};
+		const command = new ReplaceCommand(input, mailbox, msg, opts, probe, kind === "uid");
+		return session.driver.run(command);
+	}
+
 	// -- message ops: EXPUNGE (spec §5b, M3.9) --------------------------------
 
 	/**
@@ -2033,6 +2154,13 @@ class SeqFacet implements SequenceFacet {
 	 *  there is no sequence-number-grain form of it to expose here). */
 	expunge(): Promise<number[]> {
 		return MailboxSession.runExpunge(this.session, undefined, "seq.expunge");
+	}
+
+	/** Sequence-number-grain REPLACE -- see `MailboxSession.replace()`'s doc
+	 *  comment; identical behavior (bare `REPLACE`, not `UID REPLACE`), `seq`
+	 *  interpreted as a message sequence number rather than a UID. */
+	replace(seq: number, mailbox: string, msg: AppendSource, opts?: AppendOptions): Promise<AppendResult> {
+		return MailboxSession.runReplace(this.session, seq, mailbox, msg, opts, "seq");
 	}
 }
 

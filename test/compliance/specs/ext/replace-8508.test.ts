@@ -29,15 +29,19 @@
  *
  * SELF-ACTUALIZATION: REPLACE / UID REPLACE is NOT part of IMAP4rev2 core (RFC
  * 9051 defines no REPLACE command), so every entry is profiles ["rev1","rev2"].
- * driver.replace()/uidReplace() throw NotImplementedError, so the client has no
- * REPLACE surface at all — every test self-actualizes as `unimplemented`. The
- * scripted server pins the exact RFC-8508 wire exchange (command atoms, the
- * append-message literal framing, the atomic response block) so that once a
- * REPLACE surface exists each matcher IS a genuine, non-vacuous assertion that
- * rejects a plausible wrong implementation. The state-prohibition tests
- * (3.5-1 / 3.5-2) are self-actualizing prohibitions: the driver call rejects
- * before any command reaches the wire, and the transcript guard confirms no
- * REPLACE was emitted from the wrong state once the verb lands.
+ *
+ * M5.6: driver.replace()/uidReplace() are now real (MailboxSession.replace()/
+ * SeqFacet.replace(), src/client/mailbox.ts, backed by ReplaceCommand,
+ * src/commands/replace.ts) — every test below now exercises the genuine wire
+ * form; `expectFailure: "unimplemented"` is removed from all seven tests
+ * (their matchers already rejected a plausible wrong implementation even
+ * while self-actualizing, so removing the annotation is a pure flip, no
+ * matcher was widened). The two state-prohibition tests (3.5-1 / 3.5-2) are
+ * self-actualizing prohibitions: the driver call rejects (StateError, zero
+ * bytes written — `ReplaceCommand.states = ["selected"]`) before any command
+ * reaches the wire, and the transcript guard confirms no REPLACE was emitted
+ * from the wrong state, mirroring `ext/enable-5161.test.ts`'s own
+ * MUST-NOT-after-SELECT prohibition pattern.
  */
 import { expect } from "vitest";
 
@@ -52,28 +56,26 @@ const f = useComplianceFixture();
 const MESSAGE = Buffer.from("From: a@example.com\r\nSubject: draft v2\r\n\r\nBody.\r\n", "latin1");
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8508-3.2-1 — REPLACE SP seq-number SP mailbox append-message (SELF-ACTUAL.)
+// RFC8508-3.2-1 — REPLACE SP seq-number SP mailbox append-message
 // ═════════════════════════════════════════════════════════════════════════════
 // §5 ABNF: replace = "REPLACE" SP seq-number SP mailbox append-message. The
 // append-message (RFC 4466) is the message literal, optionally preceded by a
-// parenthesized flag list and a date-time string. driver.replace() throws today →
-// unimplemented. The matcher pins the atom REPLACE, a seq-number, a mailbox, and
-// a trailing '{n}' literal announcement so a wrong impl — one that decomposes
-// REPLACE into separate APPEND/STORE/EXPUNGE commands, or omits the literal
-// framing — is rejected once implemented.
+// parenthesized flag list and a date-time string. The matcher pins the atom
+// REPLACE, a seq-number, a mailbox, and a trailing '{n}' literal announcement
+// so a wrong impl — one that decomposes REPLACE into separate
+// APPEND/STORE/EXPUNGE commands, or omits the literal framing — is rejected.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "REPLACE command form: REPLACE <seq-number> <mailbox> {literal}",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile }),
+				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true }),
 				...selectExchange("Drafts", { profile: ctx.profile, exists: 1 }),
 				// replace = "REPLACE" SP seq-number SP mailbox append-message. The
 				// append-message ends in a literal announcement {n} (optionally {n+}).
@@ -90,7 +92,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.replace("1", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("Drafts");
+		await driver.replace("1", "Drafts", MESSAGE);
 		await server.assertCompleted();
 		const replace = server.commandLines.find((l) => l.verb === "REPLACE");
 		expect(replace, "REPLACE must have been emitted as a single command").toBeDefined();
@@ -105,27 +109,25 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8508-3.2-2 — treat the REPLACE responses as one atomic action (SELF-ACTUAL.)
+// RFC8508-3.2-2 — treat the REPLACE responses as one atomic action
 // ═════════════════════════════════════════════════════════════════════════════
 // REPLACE presents append-new + expunge-old as one indivisible result correlated
-// to the single REPLACE tag. driver.replace() throws → unimplemented. The scripted
-// response block emits the append acknowledgement (APPENDUID), the EXISTS for the
-// added message, the EXPUNGE for the removed one, and the tagged OK — all against
-// the one REPLACE command. Once implemented the client must consume them as the
-// single completion of the REPLACE it issued.
+// to the single REPLACE tag. The scripted response block emits the append
+// acknowledgement (APPENDUID), the EXISTS for the added message, the EXPUNGE for
+// the removed one, and the tagged OK — all against the one REPLACE command. The
+// client must consume them as the single completion of the REPLACE it issued.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client consumes the REPLACE append+expunge responses as a single action against the REPLACE tag",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile }),
+				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true }),
 				...selectExchange("Drafts", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("REPLACE")),
 				// The atomic response block: append ack, EXISTS (added), EXPUNGE
@@ -138,33 +140,34 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.replace("1", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("Drafts");
+		await driver.replace("1", "Drafts", MESSAGE);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "REPLACE")).toBeDefined();
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8508-3.3-1 — UID SP REPLACE with a UID first parameter (SELF-ACTUALIZING)
+// RFC8508-3.3-1 — UID SP REPLACE with a UID first parameter
 // ═════════════════════════════════════════════════════════════════════════════
 // §5 ABNF: uid =/ "UID" SP replace. A client using UID REPLACE emits 'UID REPLACE'
-// with the first parameter interpreted as a UID. driver.uidReplace() throws →
-// unimplemented. The two-token 'UID REPLACE' verb rejects a bare 'REPLACE' with a
-// UID (dropping the UID prefix, which would make the server read the argument as a
-// sequence number) and reuse of the sequence-number REPLACE path.
+// with the first parameter interpreted as a UID. The two-token 'UID REPLACE' verb
+// rejects a bare 'REPLACE' with a UID (dropping the UID prefix, which would make
+// the server read the argument as a sequence number) and reuse of the
+// sequence-number REPLACE path.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID REPLACE command form: UID REPLACE <uid> <mailbox> {literal}",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile }),
+				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true }),
 				...selectExchange("Drafts", { profile: ctx.profile, exists: 1 }),
 				expectLine(
 					command("UID REPLACE", {
@@ -179,34 +182,34 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidReplace("4827313", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("Drafts");
+		await driver.uidReplace("4827313", "Drafts", MESSAGE);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "UID REPLACE")).toBeDefined();
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8508-3.4-1 — accept APPEND+EXPUNGE codes, expect no STORE (SELF-ACTUALIZING)
+// RFC8508-3.4-1 — accept APPEND+EXPUNGE codes, expect no STORE
 // ═════════════════════════════════════════════════════════════════════════════
 // On a successful REPLACE the client must accept the APPEND-side response code
 // (e.g. APPENDUID) and the EXPUNGE response, and must NOT expect a STORE response
-// (there will be none). driver.replace() throws → unimplemented. The scripted
-// response deliberately includes APPENDUID + EXPUNGE and deliberately OMITS any
-// STORE/FETCH \Deleted response; a client demanding a STORE round-trip is caught
-// by the transcript guard once the verb lands.
+// (there will be none). The scripted response deliberately includes APPENDUID +
+// EXPUNGE and deliberately OMITS any STORE/FETCH \Deleted response; a client
+// demanding a STORE round-trip is caught by the transcript guard.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client completes a REPLACE from APPENDUID+EXPUNGE responses with no STORE response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile }),
+				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true }),
 				...selectExchange("Drafts", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("REPLACE")),
 				// APPENDUID + EXPUNGE only — no STORE/FETCH \Deleted response.
@@ -218,7 +221,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.replace("1", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("Drafts");
+		await driver.replace("1", "Drafts", MESSAGE);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "REPLACE")).toBeDefined();
 		expect(
@@ -229,26 +234,27 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8508-3.4-4 — handle APPEND-affecting resp codes (TRYCREATE) (SELF-ACTUAL.)
+// RFC8508-3.4-4 — handle APPEND-affecting resp codes (TRYCREATE)
 // ═════════════════════════════════════════════════════════════════════════════
 // Because REPLACE contains an APPEND, a response code the client handles for
-// APPEND (the RFC names TRYCREATE) must be handled identically on REPLACE.
-// driver.replace() throws → unimplemented. The scripted REPLACE into a
-// nonexistent mailbox is answered with a tagged NO [TRYCREATE]; once implemented
-// the client must surface it the same way it does for APPEND.
+// APPEND (the RFC names TRYCREATE) must be handled identically on REPLACE. The
+// scripted REPLACE into a nonexistent mailbox is answered with a tagged NO
+// [TRYCREATE]; the client must surface it the same way it does for APPEND (see
+// rfc3501/7.1-response-codes.test.ts's RFC3501-7.1-3 sibling: the retry-via-
+// CREATE path is a MAY, not scripted here — the binding minimum is that the
+// failure surfaces to the caller as a rejection, not a hang or crash).
 complianceTest(
 	{
 		reqs: ["RFC8508-3.4-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO [TRYCREATE] to REPLACE as it would for APPEND",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile }),
+				...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true }),
 				...selectExchange("Drafts", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("REPLACE")),
 				// The append-into-nonexistent-mailbox failure signal, same as APPEND.
@@ -256,7 +262,18 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.replace("1", "Nonexistent", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("Drafts");
+		let replaceError: unknown;
+		try {
+			await driver.replace("1", "Nonexistent", MESSAGE);
+		} catch (err) {
+			replaceError = err;
+		}
+		expect(
+			replaceError,
+			"replace() must reject when the server answers NO [TRYCREATE]",
+		).toBeDefined();
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "REPLACE")).toBeDefined();
 	},
@@ -267,28 +284,41 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.5: REPLACE and UID REPLACE "MUST only be valid in the selected state." The
 // reciprocal client prohibition: MUST NOT issue REPLACE while in the authenticated
-// (non-selected) state. driver.replace() throws → unimplemented. Self-actualizing
-// prohibition: the driver call rejects before any REPLACE could reach the wire,
-// and the transcript guard confirms no REPLACE was emitted from the authenticated
-// state once the verb lands. The session prelude authenticates but performs NO
+// (non-selected) state. Self-actualizing prohibition (mirrors
+// `ext/enable-5161.test.ts`'s own MUST-NOT-after-SELECT pattern): the driver
+// call rejects (StateError, zero bytes written -- no SELECT was performed, so
+// `client.mailbox` is null and `MailboxSession.seq.replace()` is unreachable)
+// before any REPLACE could reach the wire; the transcript guard confirms none
+// was emitted. The session prelude authenticates (login: true) but performs NO
 // SELECT — the client is in the authenticated state throughout.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not issue REPLACE from the authenticated state (no mailbox selected)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		// A non-selected session (no SELECT performed). Issuing REPLACE here would
-		// violate §3.5; the driver has no REPLACE surface, so it self-actualizes.
-		server.arm([[...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile })]]);
+		// violate §3.5.
+		server.arm([
+			[...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true })],
+		]);
 		const driver = await f.connectPlain(server);
-		await driver.replace("1", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		let replaceError: unknown;
+		try {
+			await driver.replace("1", "Drafts", MESSAGE);
+		} catch (err) {
+			replaceError = err;
+		}
+		expect(
+			replaceError,
+			"replace() outside the selected state must throw a StateError (zero bytes written)",
+		).toMatchObject({ name: "StateError" });
 		await server.assertCompleted();
-		// When implemented: no REPLACE was emitted while not in the selected state.
+		// No REPLACE was emitted while not in the selected state.
 		expect(
 			server.transcript.clientLines(),
 			"REPLACE must not be issued outside the selected state",
@@ -301,22 +331,33 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.5: the UID variant "does not support use from the authenticated state." A
 // compliant client MUST NOT issue UID REPLACE from the authenticated state.
-// driver.uidReplace() throws → unimplemented. Self-actualizing prohibition: the
-// call rejects before any UID REPLACE could reach the wire; the transcript guard
-// confirms none was emitted from the authenticated state once the verb lands.
+// Self-actualizing prohibition (see RFC8508-3.5-1's sibling test above): the
+// call rejects (StateError, zero bytes written) before any UID REPLACE could
+// reach the wire; the transcript guard confirms none was emitted.
 complianceTest(
 	{
 		reqs: ["RFC8508-3.5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not issue UID REPLACE from the authenticated state (no mailbox selected)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
-		server.arm([[...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile })]]);
+		server.arm([
+			[...sessionPrelude(["IMAP4rev1", "REPLACE"], { profile: ctx.profile, login: true })],
+		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidReplace("4827313", "Drafts", MESSAGE); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		let replaceError: unknown;
+		try {
+			await driver.uidReplace("4827313", "Drafts", MESSAGE);
+		} catch (err) {
+			replaceError = err;
+		}
+		expect(
+			replaceError,
+			"uidReplace() outside the selected state must throw a StateError (zero bytes written)",
+		).toMatchObject({ name: "StateError" });
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),

@@ -1160,6 +1160,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			hasActiveNotifySelectedMessageExpunge: () => this._notifyState.selectedMessageExpunge,
 			// M4.3 (spec §3.7): `updates()`'s NOOP-poll fallback cadence.
 			noopFallbackIntervalMs: () => this.config.timeouts.noopFallbackInterval,
+			// M5.6 (RFC 8508 REPLACE, RFC 7889 §4): identical logic to
+			// `append()`'s own inline `knownAppendLimit` probe above -- `true`
+			// only for the global valued `APPENDLIMIT=<number>` capability form.
+			knownAppendLimit: () =>
+				[...this.capabilityRegistry.view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
 		};
 	}
 

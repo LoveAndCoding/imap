@@ -192,10 +192,16 @@ export interface AppendCapabilityProbe {
 	knownAppendLimit(): boolean;
 }
 
-const NO_CAPS: AppendCapabilityProbe = { has: () => false, knownAppendLimit: () => false };
+/**
+ * Default `AppendCapabilityProbe` (no capabilities, unknown upload limit) --
+ * exported (M5.6) so `ReplaceCommand` (RFC 8508, `commands/replace.ts`) can
+ * default its own constructor's capability-probe parameter identically to
+ * `AppendCommand`'s, rather than redefining an equivalent object.
+ */
+export const NO_CAPS: AppendCapabilityProbe = { has: () => false, knownAppendLimit: () => false };
 
 /** `true` when `data` contains at least one octet outside 7-bit US-ASCII. */
-function hasNonAsciiOctet(data: Buffer): boolean {
+export function hasNonAsciiOctet(data: Buffer): boolean {
 	for (let i = 0; i < data.length; i++) {
 		if (data[i] > 0x7f) {
 			return true;
@@ -213,9 +219,11 @@ function hasNonAsciiOctet(data: Buffer): boolean {
  * checks. `context` is a short label prefixed to the thrown `RangeError`'s
  * message (e.g. `"APPEND"`, `"APPEND (message 2)"`, `"APPEND (CATENATE TEXT
  * part 1)"`) so a caller can tell which part of a multi-part/multi-message
- * command failed validation.
+ * command failed validation. Exported (M5.6) so `ReplaceCommand`
+ * (`commands/replace.ts`, RFC 8508) can reuse it -- see `NO_CAPS`'s doc
+ * comment for the shared-machinery rationale.
  */
-function toMessageBuffer(message: AppendSource, context: string): Buffer {
+export function toMessageBuffer(message: AppendSource, context: string): Buffer {
 	if (Buffer.isBuffer(message)) {
 		return message;
 	}
@@ -228,9 +236,10 @@ function toMessageBuffer(message: AppendSource, context: string): Buffer {
 /**
  * Shared NUL-byte refusal (RFC 3501/9051 §4.3.1, see `AppendSource`'s doc
  * comment for the full rationale) -- `binary` is the caller's `{ binary:
- * true }` opt-out (RFC 3516 literal8), skipping the check entirely.
+ * true }` opt-out (RFC 3516 literal8), skipping the check entirely. Exported
+ * (M5.6) for `ReplaceCommand`'s reuse -- see `NO_CAPS`'s doc comment.
  */
-function assertNoUnencodedNul(data: Buffer, binary: boolean, context: string): void {
+export function assertNoUnencodedNul(data: Buffer, binary: boolean, context: string): void {
 	if (!binary && data.includes(0x00)) {
 		throw new RangeError(
 			`${context}: message contains a NUL byte (0x00) -- binary content must be ` +
@@ -244,8 +253,138 @@ function assertNoUnencodedNul(data: Buffer, binary: boolean, context: string): v
  *  above for the pre-validation caller-facing shape). TEXT parts have already
  *  been through `toMessageBuffer()`/`assertNoUnencodedNul()`; URL parts are
  *  carried verbatim (this library never validates/resolves the URL itself --
- *  the server does, surfacing `BADURL` on failure). */
-type ValidatedCatenatePart = { type: "TEXT"; data: Buffer } | { type: "URL"; url: string };
+ *  the server does, surfacing `BADURL` on failure). Exported (M5.6) so
+ *  `ReplaceCommand` can share the same validated-part shape -- see
+ *  `NO_CAPS`'s doc comment. */
+export type ValidatedCatenatePart = { type: "TEXT"; data: Buffer } | { type: "URL"; url: string };
+
+/**
+ * Shared CATENATE (RFC 4469 §3/§5) part-list validation -- factored out of
+ * `AppendCommand`'s constructor (M5.6) so `ReplaceCommand` (RFC 8508 REPLACE
+ * reuses APPEND's `append-data` production verbatim, per RFC 8508 §4.2)
+ * applies IDENTICAL validation rather than a second copy: `undefined` input
+ * (no `catenate` option) returns `null` (the "plain literal, not CATENATE"
+ * signal both callers' `write()` branch on); a present-but-empty array
+ * throws `RangeError` (RFC4469-3-4, "min-one") BEFORE the capability probe
+ * below is even consulted; the `CATENATE` capability gate (RFC 4469 §2) is
+ * `CapabilityError`, zero bytes written (I-9); each part is then converted
+ * to a `ValidatedCatenatePart` (TEXT parts through `toMessageBuffer()` +
+ * `assertNoUnencodedNul()`, URL parts carried verbatim). `context` labels
+ * the thrown error the same way `toMessageBuffer()`'s own parameter does
+ * (e.g. `"APPEND"`, `"REPLACE"`, `"UID REPLACE"`).
+ */
+export function validateCatenateParts(
+	catenate: CatenatePart[] | undefined,
+	caps: AppendCapabilityProbe,
+	context: string,
+): readonly ValidatedCatenatePart[] | null {
+	if (!catenate) {
+		return null;
+	}
+	// RFC4469-3-4 (min-one): at least one cat-part is required -- "CATENATE
+	// ()" is not a legal wire form. Refuse (RangeError, zero bytes) before
+	// the capability probe below, same "validate content before checking
+	// the network" ordering `StoreCommand`'s UNCHANGEDSINCE gate uses.
+	if (!Array.isArray(catenate) || catenate.length === 0) {
+		throw new RangeError(
+			`${context}: catenate must be a non-empty array (RFC 4469 §3/§5 ` +
+				"requires at least one cat-part)",
+		);
+	}
+	// RFC 4469 §2: CATENATE is its own capability, gating the extended
+	// append-data form -- CapabilityError, zero bytes written (I-9), before
+	// any TEXT/URL part is even validated.
+	if (!caps.has("CATENATE")) {
+		throw new CapabilityError(
+			`${context}: the catenate option requires the CATENATE capability ` +
+				"(RFC 4469 §2) -- construct without `catenate` (a plain message " +
+				"literal) if the server hasn't advertised it",
+			{ capability: "CATENATE", rfc: "RFC4469" },
+		);
+	}
+	return catenate.map((part, i): ValidatedCatenatePart => {
+		if (part.type === "URL") {
+			if (typeof part.url !== "string") {
+				throw new RangeError(`${context}: catenate[${i}] (URL) must carry a string url`);
+			}
+			return { type: "URL", url: part.url };
+		}
+		const data = toMessageBuffer(part.message, `${context} (CATENATE TEXT part ${i + 1})`);
+		// RFC 4469's `text-literal` is a plain literal, never literal8 --
+		// neither this class nor `ReplaceCommand` offers a `{ binary: true }`
+		// escape hatch for a CATENATE TEXT part, so the NUL refusal always
+		// applies here.
+		assertNoUnencodedNul(data, false, `${context} (CATENATE TEXT part ${i + 1})`);
+		return { type: "TEXT", data };
+	});
+}
+
+/**
+ * Shared append-message BODY writer -- `[(flags)] [date-time]` followed by
+ * either the CATENATE part list, the RFC 6855 UTF8(...)-wrapped literal8, or
+ * a plain/literal8 literal (spec §5.4/§7.2). Factored out of
+ * `AppendCommand.write()` (M5.6) so `ReplaceCommand.write()` -- which emits
+ * the IDENTICAL append-message grammar after a different preceding argument
+ * list (`seq-number mailbox`, vs. APPEND's bare `mailbox`) -- reuses this
+ * exactly rather than re-deriving the CATENATE/UTF8/literal8 branching.
+ * `opts` only needs the three append-message-relevant fields (not the full
+ * `AppendOptions`, which also carries `catenate` -- already resolved into
+ * `catenateParts` by the caller via `validateCatenateParts()` above).
+ */
+export function writeAppendMessageBody(
+	w: CommandWriter,
+	data: Buffer,
+	catenateParts: readonly ValidatedCatenatePart[] | null,
+	opts: { flags?: readonly Flag[]; internalDate?: Date; binary?: boolean },
+	caps: AppendCapabilityProbe,
+): void {
+	if (opts.flags && opts.flags.length > 0) {
+		w.flagList([...opts.flags]);
+	}
+	if (opts.internalDate) {
+		w.dateTime(opts.internalDate);
+	}
+
+	// RFC7889-4-2: avoid the non-synchronizing LITERAL+/LITERAL- form for the
+	// message literal when the server's upload-size ceiling is unknown -- see
+	// `AppendCommand.write()`'s own doc comment for the full rationale.
+	// Applies uniformly to every literal this may emit below.
+	const forceSync = !caps.knownAppendLimit();
+
+	if (catenateParts) {
+		// RFC 4469 §5: "CATENATE" SP "(" cat-part *(SP cat-part) ")". See
+		// `AppendCommand.write()`'s retained doc comment for why URL cat-parts
+		// are always quoted rather than left as a bare atom.
+		w.atom("CATENATE");
+		w.list((inner) => {
+			for (const part of catenateParts) {
+				if (part.type === "TEXT") {
+					inner.atom("TEXT");
+					inner.literal(part.data, { forceSync });
+				} else {
+					inner.atom("URL");
+					inner.quotedOrLiteral(part.url);
+				}
+			}
+		});
+		return;
+	}
+
+	// RFC 6855 §4 (RFC6855-4-1): a message carrying UTF-8 header octets MUST
+	// be sent through the "UTF8 (" literal8 ")" data extension once
+	// UTF8=ACCEPT is enabled -- see `AppendCommand.write()`'s retained doc
+	// comment for the full rationale (distinct from `opts.binary`'s own
+	// caller-driven literal8 ask).
+	if (caps.has("UTF8=ACCEPT") && hasNonAsciiOctet(data)) {
+		w.atom("UTF8");
+		w.list((inner) => {
+			inner.literal(data, { binary: true, forceSync });
+		});
+		return;
+	}
+
+	w.literal(data, { binary: opts.binary === true, forceSync });
+}
 
 /**
  * APPEND (RFC 3501 §6.3.11 / RFC 9051 §6.3.12), extended by RFC 4469
@@ -310,47 +449,11 @@ export class AppendCommand extends Command<AppendResult> {
 		// check below instead).
 		this.data = toMessageBuffer(message, "APPEND");
 
-		if (this.opts.catenate) {
-			// RFC4469-3-4 (min-one): at least one cat-part is required -- "CATENATE
-			// ()" is not a legal wire form. Refuse (RangeError, zero bytes) before
-			// the capability probe below, same "validate content before checking
-			// the network" ordering `StoreCommand`'s UNCHANGEDSINCE gate uses.
-			if (!Array.isArray(this.opts.catenate) || this.opts.catenate.length === 0) {
-				throw new RangeError(
-					"APPEND: catenate must be a non-empty array (RFC 4469 §3/§5 " +
-						"requires at least one cat-part)",
-				);
-			}
-			// RFC 4469 §2: CATENATE is its own capability, gating the extended
-			// append-data form -- CapabilityError, zero bytes written (I-9),
-			// before any TEXT/URL part is even validated.
-			if (!this.caps.has("CATENATE")) {
-				throw new CapabilityError(
-					"APPEND: the catenate option requires the CATENATE capability " +
-						"(RFC 4469 §2) -- construct without `catenate` (a plain message " +
-						"literal) if the server hasn't advertised it",
-					{ capability: "CATENATE", rfc: "RFC4469" },
-				);
-			}
-			this.catenateParts = this.opts.catenate.map((part, i): ValidatedCatenatePart => {
-				if (part.type === "URL") {
-					if (typeof part.url !== "string") {
-						throw new RangeError(
-							`APPEND: catenate[${i}] (URL) must carry a string url`,
-						);
-					}
-					return { type: "URL", url: part.url };
-				}
-				const data = toMessageBuffer(part.message, `APPEND (CATENATE TEXT part ${i + 1})`);
-				// RFC 4469's `text-literal` is a plain literal, never literal8 --
-				// this library has no `{ binary: true }` escape hatch for a
-				// CATENATE TEXT part (unlike the single-message case below), so
-				// the NUL refusal always applies here.
-				assertNoUnencodedNul(data, false, `APPEND (CATENATE TEXT part ${i + 1})`);
-				return { type: "TEXT", data };
-			});
-		} else {
-			this.catenateParts = null;
+		// M5.6: catenate-part validation factored into the shared
+		// `validateCatenateParts()` (below `NO_CAPS`'s doc comment) so
+		// `ReplaceCommand` applies IDENTICAL rules rather than a second copy.
+		this.catenateParts = validateCatenateParts(this.opts.catenate, this.caps, "APPEND");
+		if (!this.catenateParts) {
 			// RFC 3501/9051 §4.3.1: binary (NUL-bearing) data MUST be encoded into
 			// a textual form before transmission; this client never transmits a
 			// string/literal containing an unencoded NUL byte. Refuse (do not
@@ -372,69 +475,11 @@ export class AppendCommand extends Command<AppendResult> {
 
 	protected write(w: CommandWriter): void {
 		w.mailbox(this.mailboxName);
-		if (this.opts.flags && this.opts.flags.length > 0) {
-			w.flagList([...this.opts.flags]);
-		}
-		if (this.opts.internalDate) {
-			w.dateTime(this.opts.internalDate);
-		}
-
-		// RFC7889-4-2: avoid the non-synchronizing LITERAL+/LITERAL- form for
-		// the message literal when the server's upload-size ceiling is
-		// unknown -- this SHOULD outranks `CommandWriter`'s ordinary
-		// capability-driven eagerness (spec §7.2), which would otherwise use
-		// a non-sync literal purely because LITERAL+/LITERAL- was advertised,
-		// with no regard for whether an oversized message might get sent in
-		// full before the server can reject it with TOOBIG (RFC 7889 §1's
-		// motivating waste). Applies uniformly to every literal this command
-		// may emit below (plain, UTF8(...)-wrapped, or CATENATE TEXT parts)
-		// since all carry the same waste risk.
-		const forceSync = !this.caps.knownAppendLimit();
-
-		if (this.catenateParts) {
-			// RFC 4469 §5: "CATENATE" SP "(" cat-part *(SP cat-part) ")". A URL
-			// cat-part is an `astring`, so a bare atom would be an equally legal
-			// wire form -- quoting it is a style/simplicity choice, not a
-			// normative requirement (§4.1's own worked example happens to quote
-			// it, but the grammar doesn't mandate that). `quotedOrLiteral()`
-			// follows that quoted idiom by never emitting a bare atom for a
-			// URL, unlike `astring()`/`mailbox()` elsewhere in this writer,
-			// which prefer the bare form when legal -- simpler than adding a
-			// second atom-safety check purely to save a couple of quote bytes
-			// on a value that's virtually never ATOM-CHAR-safe anyway (IMAP
-			// URLs are full of `/`, `:`, `;` -- all outside ATOM-CHAR).
-			w.atom("CATENATE");
-			w.list((inner) => {
-				for (const part of this.catenateParts!) {
-					if (part.type === "TEXT") {
-						inner.atom("TEXT");
-						inner.literal(part.data, { forceSync });
-					} else {
-						inner.atom("URL");
-						inner.quotedOrLiteral(part.url);
-					}
-				}
-			});
-			return;
-		}
-
-		// RFC 6855 §4 (RFC6855-4-1): a message carrying UTF-8 header octets
-		// MUST be sent through the "UTF8 (" literal8 ")" data extension once
-		// UTF8=ACCEPT is enabled -- this is a distinct decision from the
-		// caller's own `opts.binary` ask (both end up as a literal8 on the
-		// wire, but this wrapping is automatic/content-driven, not
-		// caller-requested). A 7-bit-clean message never needs the wrapper
-		// even with UTF8=ACCEPT enabled -- the plain literal already carries
-		// it faithfully.
-		if (this.caps.has("UTF8=ACCEPT") && hasNonAsciiOctet(this.data)) {
-			w.atom("UTF8");
-			w.list((inner) => {
-				inner.literal(this.data, { binary: true, forceSync });
-			});
-			return;
-		}
-
-		w.literal(this.data, { binary: this.opts.binary === true, forceSync });
+		// M5.6: the append-message body (flags/date/CATENATE-or-UTF8-or-plain
+		// literal) is now shared with `ReplaceCommand` via `writeAppendMessageBody()`
+		// (see that function's doc comment) -- this class's own former inline
+		// logic moved there verbatim, no behavior change.
+		writeAppendMessageBody(w, this.data, this.catenateParts, this.opts, this.caps);
 	}
 
 	protected accept(c: ResponseCollector): AppendResult {

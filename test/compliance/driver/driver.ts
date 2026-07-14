@@ -1522,21 +1522,53 @@ export class ComplianceDriver {
 		}
 		return session.move(seq, mailbox);
 	}
+	/**
+	 * REPLACE (RFC 8508 §3.2) -- M5.6. Bare (non-UID-prefixed) verb: per the
+	 * established driver-wiring convention (`copy()`/`move()`/`expunge()`
+	 * above), delegates to `MailboxSession.seq.replace()` (sequence-number
+	 * grain), zero protocol logic here (I-4). `seq` is the scripted-wire-form
+	 * sequence-number string, parsed to a `number` the same way this file's
+	 * other single-message-number driver verbs do -- `ReplaceCommand`
+	 * (src/commands/replace.ts) itself re-validates it as a positive integer.
+	 *
+	 * No selected mailbox: same rationale as `copy()`/`move()`/`expunge()`
+	 * above -- `StateError` mirrors what `MailboxSession.seq.replace()` would
+	 * itself produce, and this file may not import `ReplaceCommand` directly.
+	 */
 	public async replace(
-		_seq: string,
-		_mailbox: string,
-		_message: Buffer,
-		_opts?: AppendOptions,
-	): Promise<never> {
-		throw new NotImplementedError("REPLACE");
+		seq: string,
+		mailbox: string,
+		message: Buffer,
+		opts?: AppendOptions,
+	): Promise<ClientAppendResult> {
+		const session = this.requireMailboxSession();
+		return session.seq.replace(Number(seq), mailbox, message, {
+			flags: opts?.flags,
+			internalDate: opts?.date ? new Date(opts.date) : undefined,
+			binary: opts?.binary,
+			catenate: opts?.catenate,
+		});
 	}
+	/**
+	 * UID REPLACE (RFC 8508 §3.3) -- M5.6. UID-prefixed verb: delegates to
+	 * `MailboxSession.replace()` (UID grain) directly, zero protocol logic
+	 * here (I-4) -- mirrors `uidMove()`'s no-selected-mailbox rationale
+	 * above; the REPLACE capability gate and selected-state-only prohibition
+	 * (RFC8508-3.5-1/-3.5-2) live entirely in `MailboxSession`/`ReplaceCommand`.
+	 */
 	public async uidReplace(
-		_seq: string,
-		_mailbox: string,
-		_message: Buffer,
-		_opts?: AppendOptions,
-	): Promise<never> {
-		throw new NotImplementedError("UID REPLACE");
+		seq: string,
+		mailbox: string,
+		message: Buffer,
+		opts?: AppendOptions,
+	): Promise<ClientAppendResult> {
+		const session = this.requireMailboxSession();
+		return session.replace(Number(seq), mailbox, message, {
+			flags: opts?.flags,
+			internalDate: opts?.date ? new Date(opts.date) : undefined,
+			binary: opts?.binary,
+			catenate: opts?.catenate,
+		});
 	}
 
 	// ACL (RFC 4314)

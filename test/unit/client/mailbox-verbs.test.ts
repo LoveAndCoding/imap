@@ -781,3 +781,209 @@ describe("MailboxSession.expunge() + seq facet (spec §5b, M3.9)", () => {
 		await server.assertCompleted();
 	});
 });
+
+// -- M5.6: REPLACE / UID REPLACE (RFC 8508) -----------------------------------
+
+describe("MailboxSession.replace() + seq facet (spec §5b, M5.6, RFC 8508)", () => {
+	let server: ScriptedServer | undefined;
+	let client: ImapClient | undefined;
+
+	afterEach(async () => {
+		await client?.close({ force: true }).catch(() => undefined);
+		await server?.close();
+		server = undefined;
+		client = undefined;
+	});
+
+	const MESSAGE = Buffer.from("Subject: draft v2\r\n\r\nBody.\r\n");
+
+	test("replace(): UID REPLACE <uid> <mailbox> {literal}, resolves AppendResult from APPENDUID (untagged OK)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(1),
+			expectLine(command("UID REPLACE", { args: /^3956\s+INBOX\s+\{\d+\}$/ })),
+			reply("OK REPLACE completed", [
+				"* OK [APPENDUID 38505 3957] append",
+				"* 2 EXISTS",
+				"* 1 EXPUNGE",
+			]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		expect(mailbox.exists).toBe(1);
+
+		const expungeEvents: number[] = [];
+		mailbox.on("expunge", (seq) => expungeEvents.push(seq));
+
+		const result = await mailbox.replace(3956, "INBOX", MESSAGE);
+		await server.assertCompleted();
+
+		expect(result).toEqual({ uidValidity: 38505, uid: 3957 });
+		// No-double-apply verification (same shape as move()'s own test above):
+		// "* 2 EXISTS" (the appended message) then exactly one "* 1 EXPUNGE"
+		// (the replaced message) -> exactly one "expunge" event and `exists`
+		// left at 1 (1 -> 2 -> 1), because `ReplaceCommand` claims only the
+		// untagged-OK APPENDUID (STATUS-type) and never the EXPUNGE itself --
+		// the ordinary untagged-EXISTS/EXPUNGE state-tracker lane is the sole
+		// place that bookkeeping happens.
+		expect(expungeEvents).toEqual([1]);
+		expect(mailbox.exists).toBe(1);
+	});
+
+	test("seq.replace(): the bare (non-UID-prefixed) 'REPLACE' verb, sequence number not UID", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(1),
+			expectLine(command("REPLACE", { args: /^1\s+INBOX\s+\{\d+\}$/ })),
+			reply("OK REPLACE completed", ["* OK [APPENDUID 1 2] append", "* 2 EXISTS", "* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.seq.replace(1, "INBOX", MESSAGE);
+		await server.assertCompleted();
+
+		expect(result).toEqual({ uidValidity: 1, uid: 2 });
+	});
+
+	test("destination-name codec: replace(uid, ..., \"Entwürfe\", ...) sends the mUTF-7-encoded mailbox name (M2.1 codec)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(1),
+			expectLine(command("UID REPLACE", { args: /^1\s+Entw&APw-rfe\s+\{\d+\}$/ })),
+			reply("OK REPLACE completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.replace(1, "Entwürfe", MESSAGE);
+		await server.assertCompleted();
+	});
+
+	test("missing UIDPLUS (bare tagged OK, no APPENDUID) -> every AppendResult field stays undefined, never a thrown error", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(1),
+			expectLine(command("UID REPLACE")),
+			reply("OK REPLACE completed", ["* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.replace(1, "INBOX", MESSAGE);
+		await server.assertCompleted();
+
+		expect(result).toEqual({});
+	});
+
+	test("replace(): CapabilityError, zero bytes written, when REPLACE is not advertised (RFC 8508 §3.1)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// Deliberately NO REPLACE in the script: any REPLACE/UID REPLACE on the
+		// wire would be an unscripted-command failure below.
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.replace(1, "INBOX", MESSAGE);
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(CapabilityError);
+		expect((caught as CapabilityError).capability).toBe("REPLACE");
+		expect((caught as CapabilityError).rfc).toBe("RFC8508");
+		// Connection still healthy and NOTHING was written for the gated call.
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("seq.replace(): same CapabilityError gate as the UID-grain form", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.seq.replace(1, "INBOX", MESSAGE);
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(CapabilityError);
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("replace()/seq.replace() reject StateError (zero bytes written) once the session is closed", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(),
+			expectLine(command("CLOSE", { args: null })),
+			reply("OK CLOSE completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.close();
+
+		await expect(mailbox.replace(1, "INBOX", MESSAGE)).rejects.toBeInstanceOf(StateError);
+		await expect(mailbox.seq.replace(1, "INBOX", MESSAGE)).rejects.toBeInstanceOf(StateError);
+		await server.assertCompleted();
+	});
+
+	test("queueMode is serial for REPLACE (spec §6.1) -- declared on the command class wired here", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(2),
+			expectLine(command("REPLACE")),
+			reply("OK REPLACE completed", ["* 1 EXPUNGE"]),
+			expectLine(command("UID REPLACE")),
+			reply("OK REPLACE completed", ["* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		// Sequential (not concurrent) awaits are the only thing this test can
+		// observe about "serial" from the outside; queueMode's actual
+		// declaration is pinned directly against the command class in
+		// test/unit/commands/replace.test.ts.
+		await mailbox.seq.replace(1, "INBOX", MESSAGE);
+		await mailbox.replace(1, "INBOX", MESSAGE);
+		await server.assertCompleted();
+	});
+
+	test("flags/date variant: replace() with flags + internalDate emits (flags) date-time before the literal", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "REPLACE"], [
+			...selectInboxSteps(1),
+			expectLine(
+				command("UID REPLACE", {
+					args: /^1\s+INBOX\s+\(\\Seen\)\s+" 5-Jul-2026 00:00:00 \+0000"\s+\{\d+\}$/,
+				}),
+			),
+			reply("OK REPLACE completed", ["* 1 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.replace(1, "INBOX", MESSAGE, {
+			flags: ["\\Seen"],
+			internalDate: new Date(Date.UTC(2026, 6, 5, 0, 0, 0)),
+		});
+		await server.assertCompleted();
+	});
+});
