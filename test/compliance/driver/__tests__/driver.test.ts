@@ -147,10 +147,23 @@ test("select()/examine() still translate the QRESYNC option to NotImplementedErr
 	).rejects.toBeInstanceOf(NotImplementedError);
 });
 
-test("Phase 3 verbs (unauthenticate, compress) throw NotImplementedError", async () => {
+test("Phase 3 verbs (unauthenticate) throw NotImplementedError", async () => {
 	driver = new ComplianceDriver();
 	await expect(driver.unauthenticate()).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.compress()).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+// M5.9: compress() is real now (delegating to ImapClient.compress()), not a
+// NotImplementedError stub. No connect() here (same rationale as the M3.9/
+// M4.5 notes above): with no client at all, `requireClient()` throws its own
+// plain `Error` before compress()'s own capability gate is ever reached, but
+// that alone already proves this isn't the old NotImplementedError stub --
+// the deep behavior (capability gate, idempotency guard, real DEFLATE
+// round-trip) is covered without network flakiness in
+// test/unit/connection/compress-upgrade.test.ts and the RFC4978 compliance
+// specs.
+test("compress() is wired (no longer NotImplementedError)", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.compress()).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
 test("authenticate() with a mechanism the registry doesn't know throws NotImplementedError", async () => {

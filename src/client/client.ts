@@ -368,6 +368,17 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// `auth` config supplied, so `connect()` leaves the client
 			// "not-authenticated").
 			await this.maybeEnable();
+
+			// M5.9 (RFC 4978): COMPRESS negotiates opportunistically here,
+			// AFTER ENABLE and before anything mailbox-related — mirroring
+			// `extensions: "auto"`'s own post-auth timing convention exactly
+			// (same gate: only meaningful once authenticated, silent no-op
+			// otherwise). Ordered after `maybeEnable()` rather than before it
+			// so a server that changes its capability advertisement in
+			// response to ENABLE (none of this milestone's ENABLE-managed
+			// capabilities do, but the ordering is deliberate, not
+			// coincidental) is never raced against.
+			await this.maybeCompress();
 		} catch (err) {
 			throw await this.abortConnect(err);
 		}
@@ -1565,6 +1576,70 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			return;
 		}
 		await this.enableExtensions([...requested]);
+	}
+
+	/**
+	 * `connect()`'s COMPRESS seam (M5.9, RFC 4978, spec §2): `compress:
+	 * "auto"` (the default as of M5) negotiates DEFLATE opportunistically
+	 * once authenticated, when the server advertises `COMPRESS=DEFLATE` --
+	 * same "only meaningful once authenticated, silent no-op otherwise"
+	 * gate as `maybeEnable()`, and the same advertisement-filter posture
+	 * (an unadvertised capability -> silently skipped, zero bytes) rather
+	 * than throwing. `compress: false` never negotiates. Calls
+	 * `this.connection.compress()` directly rather than the public
+	 * `compress()` method: the capability/idempotency checks `compress()`
+	 * performs are guaranteed to pass here (this seam runs at most once, on
+	 * a connection that has never negotiated compression), so this is a
+	 * deliberate bypass of redundant checks, not a gap in them.
+	 */
+	private async maybeCompress(): Promise<void> {
+		if (this.stateMachine.current !== "authenticated") {
+			return;
+		}
+		if (this.config.compress !== "auto") {
+			return;
+		}
+		if (!this.capabilityRegistry.view.has("COMPRESS=DEFLATE")) {
+			return;
+		}
+		await this.connection.compress();
+	}
+
+	/**
+	 * COMPRESS DEFLATE (spec §3.2, RFC 4978, M5.9). Capability-gate-then-
+	 * delegate, same shape every extension-facet method in this codebase
+	 * uses (§3.6): absent `COMPRESS=DEFLATE` -> `CapabilityError`, zero
+	 * bytes written (I-9); already active on this connection -> a plain
+	 * rejection (client-bug-shaped: COMPRESS is a one-shot, per-connection
+	 * upgrade with no renegotiation or downgrade, RFC 4978 §3 -- calling
+	 * this again is a caller bug, not a protocol retry, so it is refused
+	 * locally rather than silently no-op'd or sent to the wire a second
+	 * time). Otherwise delegates to `Connection.compress()`.
+	 *
+	 * Resolves on ANY outcome the RFC treats as non-fatal, including the
+	 * server declining with a tagged NO/BAD (RFC4978-3-3: the client "MUST
+	 * NOT turn on compression" after such a result, but the connection
+	 * remains fully usable, uncompressed -- COMPRESS is only ever a
+	 * RFC4978-1-1 MAY, so a declined request is not surfaced as an error
+	 * any more than an unadvertised `extensions: "auto"` member is).
+	 */
+	public async compress(): Promise<void> {
+		if (!this.capabilityRegistry.view.has("COMPRESS=DEFLATE")) {
+			throw new CapabilityError(
+				"compress() requires the COMPRESS=DEFLATE capability (RFC 4978), " +
+					"which the server hasn't advertised",
+				{ capability: "COMPRESS=DEFLATE", rfc: "RFC4978" },
+			);
+		}
+		if (this.connection.isCompressed) {
+			throw new ImapError(
+				"compress() was already negotiated on this connection -- COMPRESS " +
+					"is a one-shot, per-connection upgrade with no renegotiation or " +
+					"downgrade (RFC 4978 §3); a second attempt is refused locally " +
+					"rather than sent to the wire",
+			);
+		}
+		await this.connection.compress();
 	}
 
 	/**

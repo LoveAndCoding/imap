@@ -941,8 +941,18 @@ export class ComplianceDriver {
 	public async unauthenticate(): Promise<never> {
 		throw new NotImplementedError("UNAUTHENTICATE");
 	}
-	public async compress(): Promise<never> {
-		throw new NotImplementedError("COMPRESS");
+	/**
+	 * COMPRESS DEFLATE (RFC 4978, M5.9). Delegates straight to
+	 * `ImapClient.compress()` -- zero protocol logic lives here, per this
+	 * milestone's driver-wiring rule (I-4). A tagged NO/BAD result is
+	 * swallowed by `ImapClient.compress()` itself (RFC4978-3-3: the client
+	 * MUST NOT turn on compression after such a result, but that is not
+	 * surfaced as an error -- COMPRESS is only ever a RFC4978-1-1 MAY); a
+	 * genuinely unadvertised capability or a repeat call still rejects, same
+	 * as the real client.
+	 */
+	public async compress(): Promise<void> {
+		await this.requireClient().compress();
 	}
 	/**
 	 * SELECT (RFC 3501/9051 §6.3.1/§6.3.2). Delegates straight to

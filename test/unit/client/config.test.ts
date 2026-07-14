@@ -213,8 +213,12 @@ describe("validateConfig (spec §2)", () => {
 			expect(validateConfig({ host: "h" }).extensions).toBe("auto");
 		});
 
-		test("compress defaults to false", () => {
-			expect(validateConfig({ host: "h" }).compress).toBe(false);
+		test("compress defaults to 'auto' (M5.9: default flipped false -> 'auto')", () => {
+			expect(validateConfig({ host: "h" }).compress).toBe("auto");
+		});
+
+		test("compress: false is honored (never negotiates)", () => {
+			expect(validateConfig({ host: "h", compress: false }).compress).toBe(false);
 		});
 
 		test("maxInlineSize defaults to 1 MiB", () => {

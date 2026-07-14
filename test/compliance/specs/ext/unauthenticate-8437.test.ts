@@ -354,9 +354,10 @@ complianceTest(
 // ── RFC8437-4.1-1: outgoing COMPRESS layer terminates after the CRLF ───────
 // If IMAP COMPRESS is active, the client terminates its outgoing compression
 // layer after the CRLF following the UNAUTHENTICATE command (and, when both are
-// active, compression terminates before the SASL layer). No COMPRESS surface
-// exists (compress() throws) and unauthenticate() throws → unimplemented. Scripted
-// to document the intended layer-teardown boundary.
+// active, compression terminates before the SASL layer). compress() is real as
+// of M5.9, but unauthenticate() itself still throws (M5.10's job) →
+// unimplemented overall. Scripted to document the intended layer-teardown
+// boundary.
 complianceTest(
 	{
 		reqs: ["RFC8437-4.1-1"],
@@ -374,8 +375,10 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
-				// A COMPRESS negotiation would install a compression layer; the client
-				// has no such surface, so compress() throws here.
+				// The COMPRESS negotiation itself is real (M5.9) and installs a
+				// genuine compression layer; `unauthenticate()` below is what still
+				// throws (M5.10's job), before this test can observe the post-CRLF
+				// layer-teardown boundary the title describes.
 				expectLine(command("COMPRESS", { args: /^DEFLATE$/i })),
 				reply("OK COMPRESS active"),
 				expectLine(unauthenticateLine),
@@ -383,9 +386,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.compress(); // throws NotImplementedError today
-		await driver.unauthenticate(); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.compress();
+		await driver.unauthenticate(); // throws NotImplementedError today (M5.10)
 		await server.assertCompleted();
 		// When implemented: bytes after the UNAUTHENTICATE CRLF are sent uncompressed
 		// (and, if a SASL layer was also active, compression unwrapping precedes it).

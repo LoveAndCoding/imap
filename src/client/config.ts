@@ -3,12 +3,15 @@
 // `validateConfig()` — the single synchronous gate `ImapClient`'s
 // constructor runs every caller-supplied config through.
 //
-// Scope note (per this milestone's brief): `compress`, `extensions`, and
-// `maxInlineSize` are accepted and type/range-validated here so the public
-// shape is stable and callers get synchronous feedback on nonsense input,
-// but nothing in `ImapClient` consults their resolved values yet — that
-// wiring lands with M5 (compress), M1.8 (extensions/ENABLE), and M3
-// (maxInlineSize, fetch part buffering) respectively.
+// Scope note (per this milestone's brief): `extensions` and `maxInlineSize`
+// are accepted and type/range-validated here so the public shape is stable
+// and callers get synchronous feedback on nonsense input, but nothing in
+// `ImapClient` consults their resolved values yet — that wiring lands with
+// M1.8 (extensions/ENABLE) and M3 (maxInlineSize, fetch part buffering)
+// respectively. `compress` is no longer in that category as of M5.9
+// (RFC 4978): `ImapClient.compress()`/`maybeCompress()` consult it for
+// real, and its default has flipped `false` -> `"auto"` (see
+// `validateCompress()` below).
 
 import type * as tls from "node:tls";
 
@@ -65,7 +68,9 @@ export interface ImapClientConfig {
 	/** Which server extensions to ENABLE (§3.4); default "auto". Wired in
 	 *  M1.8 — accepted/validated, inert until then. */
 	extensions?: "auto" | string[] | false;
-	/** Default false until M5, then "auto". Inert until M5. */
+	/** Default "auto" as of M5.9 (RFC 4978; was `false` before this
+	 *  milestone) — negotiated opportunistically post-authentication when
+	 *  the server advertises `COMPRESS=DEFLATE`. `false` never negotiates. */
 	compress?: "auto" | false;
 	/** Fetch part buffering cutoff, default 1 MiB (§5.4). Inert until M3. */
 	maxInlineSize?: number;
@@ -215,7 +220,9 @@ function validateExtensions(extensions: unknown): "auto" | string[] | false {
 
 function validateCompress(compress: unknown): "auto" | false {
 	if (compress === undefined) {
-		return false;
+		// M5.9: default flipped `false` -> `"auto"` (RFC 4978, spec §2 —
+		// this is the diff that makes that comment true).
+		return "auto";
 	}
 	if (compress === "auto" || compress === false) {
 		return compress;

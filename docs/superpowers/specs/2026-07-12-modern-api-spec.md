@@ -105,7 +105,7 @@ export interface ImapClientConfig {
 	                                         //   default "auto". Named `extensions`, not
 	                                         //   `enable`: "enable" reads as an on/off
 	                                         //   switch for the client itself.
-	compress?: "auto" | false;        // default false until M5, then "auto"
+	compress?: "auto" | false;        // default "auto" as of M5.9 (was false pre-M5)
 	maxInlineSize?: number;           // fetch part buffering cutoff, default 1 MiB (§5.4)
 	timeouts?: {
 		connect?: number;             // socket + TLS handshake, default 10_000

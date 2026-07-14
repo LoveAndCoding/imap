@@ -4,6 +4,7 @@ export * from "./base";
 export * from "./capability";
 export * from "./close";
 export * from "./collector";
+export * from "./compress";
 export * from "./copy";
 export * from "./create";
 export * from "./delete";

@@ -4,9 +4,11 @@ import { clearTimeout, setTimeout } from "timers";
 import * as tls from "tls";
 import { TypedEmitter } from "tiny-typed-emitter";
 
-import { CapabilityCommand, StartTLSCommand, Command } from "../commands";
-import { ConnectionError, IMAPError } from "../errors";
+import { CapabilityCommand, CompressCommand, StartTLSCommand, Command } from "../commands";
+import { ConnectionError, IMAPError, ServerBadError, ServerNoError } from "../errors";
 import NewlineTranform from "../newline.transform";
+import { wrapCompression } from "./compress";
+import type { CompressionLayer } from "./compress";
 import Lexer from "../lexer";
 import Parser, {
 	CapabilityList,
@@ -66,6 +68,18 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	private commandQueue!: CommandQueue;
 	private connected: boolean;
 	private secure?: boolean;
+
+	/**
+	 * Set once `compress()` (RFC 4978, M5.9) has successfully negotiated
+	 * COMPRESS=DEFLATE: the inflate/deflate Transform pair currently
+	 * interposed on the socket (`send()`/`writeBytes()` route through it
+	 * instead of the socket directly). `null` until then, and reset back to
+	 * `null` on every teardown -- COMPRESS is a one-shot, per-connection
+	 * upgrade (no un-COMPRESS), so a later `connect()` on this same
+	 * instance always starts uncompressed again, same posture as `secure`/
+	 * `preauthed`.
+	 */
+	private compression: CompressionLayer | null = null;
 
 	/**
 	 * Set once a PREAUTH greeting is accepted (spec §10.5, I-8): the
@@ -231,6 +245,8 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.secure = undefined;
 		this.connected = false;
 		this.preauthed = false;
+		this.compression?.destroy();
+		this.compression = null;
 		this.commandQueue.stop();
 		this.transientConnectError = undefined;
 		// CRITICAL-2: a command (e.g. the STARTTLS/CAPABILITY round trips that
@@ -275,6 +291,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 	get isSecure(): boolean {
 		return !!(this.connected && this.secure);
+	}
+
+	/** `true` once `compress()` has successfully negotiated COMPRESS=DEFLATE
+	 *  on this connection (RFC 4978, M5.9). Unlike `isSecure`, this does NOT
+	 *  gate on `this.connected` -- `ImapClient.compress()`'s idempotency
+	 *  guard (reject a second attempt) needs to read this synchronously
+	 *  right up until teardown actually clears it. */
+	get isCompressed(): boolean {
+		return !!this.compression;
 	}
 
 	/**
@@ -544,6 +569,14 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	protected onSocketClose = (hadErr: boolean) => {
 		this.commandQueue.stop();
 		this.connected = false;
+		// If compress() ever activated, the socket's read side is piped into
+		// `inflate`, not `processingPipeline` directly (see `wrapCompression`)
+		// -- destroy the compression layer FIRST so its own `unpipe()` calls
+		// run against a still-live socket, then the direct-pipe `unpipe()`
+		// below is the correct (and harmless, if compression was active and
+		// this never was a direct pipe) cleanup for the uncompressed case.
+		this.compression?.destroy();
+		this.compression = null;
 		this.socket!.unpipe(this.processingPipeline);
 		this.processingPipeline.forceNewLine(false);
 		this.socket!.removeAllListeners();
@@ -606,17 +639,25 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	}
 
 	public send(toSend: string) {
-		this.socket!.write(toSend + CRLF, "utf8");
+		this.writeBytes(Buffer.from(toSend + CRLF, "utf8"));
 	}
 
 	/**
-	 * Writes already-fully-serialized wire bytes directly to the socket, with
-	 * no CRLF/encoding applied — used exclusively by
-	 * `connection/execute-command.ts` to write `CommandWriter`'s byte-exact
-	 * segments (spec I-4: all client bytes go through `CommandWriter`; this
-	 * is the one place those bytes actually reach the wire).
+	 * Writes already-fully-serialized wire bytes, with no CRLF/encoding
+	 * applied — used exclusively by `connection/execute-command.ts` to write
+	 * `CommandWriter`'s byte-exact segments (spec I-4: all client bytes go
+	 * through `CommandWriter`; this is the one place those bytes actually
+	 * reach the wire). Once `compress()` has activated (RFC 4978), every
+	 * byte is routed through the DEFLATE write path instead of straight to
+	 * the socket -- this is the ONE chokepoint both `send()` above and
+	 * `execute-command.ts` funnel through, so neither has to know whether
+	 * compression is active.
 	 */
 	public writeBytes(buf: Buffer): void {
+		if (this.compression) {
+			this.compression.write(buf);
+			return;
+		}
 		this.socket!.write(buf);
 	}
 
@@ -920,6 +961,104 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			new CapabilityCommand(),
 		);
 		this.capabilityRegistry.set(postTlsCapabilities);
+
+		return true;
+	}
+
+	/**
+	 * COMPRESS DEFLATE (RFC 4978, M5.9) — modeled directly on `starttls()`
+	 * above, with one structural difference: STARTTLS swaps the socket
+	 * itself (plaintext -> TLS); COMPRESS interposes a codec on the SAME
+	 * socket (`wrapCompression`, `connection/compress.ts`) instead of
+	 * replacing it. Capability gating (I-9: `CapabilityError` with zero
+	 * bytes written when `COMPRESS=DEFLATE` isn't advertised) and the
+	 * "already compressed" idempotency guard both live one layer up, in
+	 * `ImapClient.compress()` — this method assumes both have already been
+	 * checked and simply runs the negotiation, exactly the same division of
+	 * labor as `starttls()`'s own capability check living in the connect()
+	 * ritual rather than here... except `starttls()` DOES still check
+	 * locally (it runs before `ImapClient` exists during the initial
+	 * connect() ritual); `compress()` is only ever reachable post-connect,
+	 * through `ImapClient`, so its capability gate is the ONE place that
+	 * check lives.
+	 *
+	 * Resolves `true` once compression is active, `false` if the server
+	 * declined with a tagged NO/BAD (RFC4978-3-3: the client "MUST NOT turn
+	 * on compression" after such a result — an ordinary, non-fatal decline,
+	 * not a connection failure, since COMPRESS itself is only ever a
+	 * RFC4978-1-1 MAY). Any OTHER failure (e.g. the connection tearing down
+	 * mid-negotiation) still propagates as a rejection.
+	 */
+	public async compress(): Promise<boolean> {
+		if (this.compression) {
+			// Already active: idempotent success, mirroring `starttls()`'s own
+			// `isSecure` early return. `ImapClient.compress()` is what actually
+			// guards against a CALLER re-requesting this (client-bug-shaped
+			// rejection, not a silent no-op) -- this method itself stays a
+			// plain idempotent primitive, same posture as `starttls()`.
+			return true;
+		}
+		if (!this.socket) {
+			return false;
+		}
+
+		const compressCmd = new CompressCommand();
+		// Same choreography as starttls(): `runCommand()` synchronously
+		// writes COMPRESS DEFLATE's bytes (queueMode "isolated", queue not
+		// yet held) before this call returns; holding right after still lets
+		// COMPRESS's own bytes through while blocking every other command's
+		// bytes until release() below (spec §6.1/I-1, RFC4978-3-1: "the
+		// client MUST NOT send any further commands until it has seen the
+		// result of COMPRESS").
+		const negotiationResult = this.runCommand(compressCmd);
+		this.commandQueue.hold();
+
+		let activated: boolean;
+		try {
+			activated = await negotiationResult;
+		} catch (err) {
+			this.commandQueue.release();
+			if (err instanceof ServerNoError || err instanceof ServerBadError) {
+				// RFC4978-3-3: leave the connection exactly as it was --
+				// fully functional, uncompressed.
+				return false;
+			}
+			throw err;
+		}
+
+		if (!activated) {
+			// In theory unreachable (a non-OK tagged response always throws,
+			// caught above) -- kept for safety, same posture as starttls()'s
+			// own identical guard.
+			this.commandQueue.release();
+			return false;
+		}
+
+		// MEDIUM-7 parity: the tagged OK for COMPRESS was just observed.
+		// Discard any buffered-but-not-yet-complete line sitting in the
+		// processing pipeline right now, before touching the stream topology
+		// at all -- a server that packs extra bytes into the same TCP
+		// segment as the tagged OK must never have that residue carried
+		// across the compression boundary and misread as a post-negotiation
+		// response (the same STARTTLS-plaintext-injection defense class,
+		// applied to the DEFLATE boundary instead of the TLS one).
+		this.processingPipeline.forceNewLine(false);
+
+		// Unlike starttls(), the socket itself is never replaced -- only
+		// unpiped from the pipeline so `wrapCompression` can re-pipe it
+		// through `inflate` first.
+		const socket = this.socket!;
+		socket.unpipe(this.processingPipeline);
+
+		this.compression = wrapCompression(socket, this.processingPipeline, (err) => {
+			this.onSocketError(err);
+		});
+
+		// MEDIUM-6 parity: the codec is fully interposed BEFORE releasing the
+		// held queue -- anything parked during the hold must write through
+		// the NEW (compressing) path, never bypass it by writing to the raw
+		// socket first.
+		this.commandQueue.release();
 
 		return true;
 	}
