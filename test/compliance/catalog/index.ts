@@ -77,6 +77,10 @@ import rfc9585 from "./ext/rfc9585";
 // promoted from the registry-coverage out-of-scope borderline list (Phase 6).
 import rfc3691 from "./ext/rfc3691";
 
+// M5 (modern-API milestone 5) — suite growth: RFC 9586 UIDONLY (M5.14),
+// promoted from the registry-coverage out-of-scope borderline list (Phase 6).
+import rfc9586 from "./ext/rfc9586";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -146,6 +150,8 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc9585,
 	// M2 — suite growth (M2.12)
 	rfc3691,
+	// M5 — suite growth (M5.14)
+	rfc9586,
 ];
 
 export function findRequirement(id: string) {

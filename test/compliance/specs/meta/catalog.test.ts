@@ -116,3 +116,10 @@ test("catalog contains the M2 suite-growth sources", () => {
 	const sources = allCatalogModules.map((m) => m.source);
 	expect(sources).toEqual(expect.arrayContaining(["RFC3691"]));
 });
+
+test("catalog contains the M5 suite-growth sources", () => {
+	// M5.14 (modern-API M5 extension-families milestone): RFC 9586 UIDONLY,
+	// promoted from the registry-coverage out-of-scope borderline list.
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(expect.arrayContaining(["RFC9586"]));
+});

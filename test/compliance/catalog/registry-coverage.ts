@@ -425,18 +425,6 @@ export const registryCoverage: RegistryEntry[] = [
 
 	// ---- Phase 6 reconciliation: borderline (documented judgment, no catalog) -
 	{
-		capability: "UIDONLY",
-		status: "out-of-scope",
-		note:
-			"BORDERLINE JUDGMENT: RFC 9586 defines a genuine client-requested mode shift (ENABLE " +
-			"UIDONLY; thereafter the client MUST NOT use sequence numbers at all, and servers " +
-			"return UIDFETCH/VANISHED instead of FETCH/EXPUNGE) — real client-binding duties exist. " +
-			"Not among the Phase 6 plan's five named reconciliation-delta candidates (APPENDLIMIT/" +
-			"STATUS=SIZE/LIST-MYRIGHTS/PREVIEW/INPROGRESS); per the plan's instruction to default " +
-			"borderline tokens to a documented status rather than expand the bounded delta round, " +
-			"deferred rather than cataloged now. Strong candidate for a future phase's extraction.",
-	},
-	{
 		capability: "LIST-METADATA",
 		status: "out-of-scope",
 		note:
@@ -625,5 +613,25 @@ export const registryCoverage: RegistryEntry[] = [
 			"management milestone): full extraction in catalog/ext/rfc3691.ts, spec coverage in " +
 			"specs/ext/unselect-3691.test.ts. rev2-core overlap: RFC 9051 §6.4.2 absorbs UNSELECT " +
 			"into the rev2 base spec — rev1-only tags adjudicated in-catalog.",
+	},
+
+	// ---- M5 (modern-API milestone 5) suite growth ------------------------------
+	// Promoted from the Phase 6 out-of-scope borderline block above by M5.14.
+	{
+		capability: "UIDONLY",
+		status: "cataloged",
+		source: "RFC9586",
+		note:
+			"UIDONLY (client-requested mode: ENABLE UIDONLY, then message sequence numbers are " +
+			"forbidden on the wire; UIDFETCH/VANISHED replace FETCH/EXPUNGE; BAD [UIDREQUIRED] " +
+			"on a sequence-numbered command post-enable). Promoted from this list's Phase 6 " +
+			"out-of-scope borderline judgment by M5.14 (modern-API M5 extension-families " +
+			"milestone's catalog-extraction task): full extraction in catalog/ext/rfc9586.ts, " +
+			"spec coverage in specs/ext/uidonly-9586.test.ts. Primary-source fetch was blocked " +
+			"this session (see catalog/ext/rfc9586.ts's extractionNote) — every requirement's " +
+			"quoted text is reconstructed from model training knowledge, NOT mechanically " +
+			"verified, and flagged accordingly; re-verify before M6. Both profiles: unlike " +
+			"UNSELECT/RFC 3691, this document is not absorbed into (and postdates) RFC 9051 " +
+			"core, so no rev1/rev2 split is adjudicated in-catalog — every row applies to both.",
 	},
 ];
