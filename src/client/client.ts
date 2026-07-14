@@ -76,6 +76,9 @@ import { CapabilityRegistry } from "./capabilities";
 import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
 import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
+import type { FacetDriver } from "./facets/driver";
+import { QuotaFacetImpl } from "./facets/quota";
+import type { QuotaFacet } from "./facets/quota";
 import { MailboxSession } from "./mailbox";
 import type { MailboxSessionDriver } from "./mailbox";
 import { ClientStateMachine } from "./state";
@@ -250,6 +253,13 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * which requirement a given guard is enforcing.
 	 */
 	private _notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+
+	/** Backing field for the lazy `quota` facet property (spec §3.6, M5.2) —
+	 *  `null` until the first read of `this.quota`; see that getter's own
+	 *  doc comment, and `client/facets/quota.ts`'s header comment for the
+	 *  full facet-pattern rationale every later facet (`acl`/`metadata`/
+	 *  `urlauth`) reuses. */
+	private _quota: QuotaFacet | null = null;
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -770,6 +780,27 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/**
+	 * `quota` (spec §3.6, RFC 9208) — M5.2, the REFERENCE IMPLEMENTATION of
+	 * every §3.6 extension facet's lazy-property pattern (see
+	 * `client/facets/quota.ts`'s header comment for the full writeup; every
+	 * later facet, `acl`/`metadata`/`urlauth`, copies this getter's shape
+	 * verbatim). A plain PROPERTY — visible in autocomplete without a call,
+	 * never `client.quota()` — backed by `_quota`, constructed on FIRST READ
+	 * and cached thereafter; never pre-built in the constructor. Repeated
+	 * reads return the identical object (`client.quota === client.quota`).
+	 * Construction itself has no side effects and needs no capability check
+	 * (the check lives in each of `QuotaFacetImpl`'s methods, not here) — it
+	 * is safe to read `client.quota` even against a server that will never
+	 * advertise `QUOTA` at all.
+	 */
+	public get quota(): QuotaFacet {
+		if (!this._quota) {
+			this._quota = new QuotaFacetImpl(this.facetDriver());
+		}
+		return this._quota;
+	}
+
+	/**
 	 * STATUS (spec §3.2/§5.2, RFC 3501 §6.3.10 / RFC 9051 §6.3.11) — M2.9.
 	 * All ten `StatusItem`s; extension items are capability-gated (see
 	 * `assertStatusItemsSupported`'s item→capability→RFC table in
@@ -1118,6 +1149,26 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			hasActiveNotifySelectedMessageExpunge: () => this._notifyState.selectedMessageExpunge,
 			// M4.3 (spec §3.7): `updates()`'s NOOP-poll fallback cadence.
 			noopFallbackIntervalMs: () => this.config.timeouts.noopFallbackInterval,
+		};
+	}
+
+	/**
+	 * The narrow callback surface every §3.6 extension facet needs (spec
+	 * §3.6, `FacetDriver` — `client/facets/driver.ts`): `run()` delegates
+	 * through the SAME state/capability-gated chokepoint every other verb
+	 * uses, and `hasCapability()` is the live registry probe each facet
+	 * method's capability gate checks first. `effectiveCapability()`, not
+	 * the raw registry view directly — same rationale as
+	 * `mailboxSessionDriver()`'s own `hasCapability` field above: every
+	 * capability QUOTA (or a later facet) gates on today behaves identically
+	 * either way, and using the ENABLE-aware probe uniformly means a future
+	 * facet method gating on an ENABLE-sensitive capability (should one ever
+	 * arise) does not need a second driver-construction path.
+	 */
+	private facetDriver(): FacetDriver {
+		return {
+			run: (command) => this.run(command),
+			hasCapability: (cap) => this.effectiveCapability(cap),
 		};
 	}
 

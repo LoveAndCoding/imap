@@ -23,6 +23,9 @@ import type {
 	NotifyEventGroup,
 	NotifyMailboxFilter,
 	NotifySpec,
+	QuotaLimitEntry,
+	QuotaResult,
+	QuotaRootResult,
 	SearchCriteria,
 	SearchOptions as RealSearchOptions,
 	SearchResult,
@@ -1547,18 +1550,18 @@ export class ComplianceDriver {
 		throw new NotImplementedError("MYRIGHTS");
 	}
 
-	// QUOTA (RFC 9208, obsoletes RFC 2087)
-	public async getquota(_root: string): Promise<never> {
-		throw new NotImplementedError("GETQUOTA");
+	// QUOTA (RFC 9208, obsoletes RFC 2087) — M5.2. Zero protocol logic here
+	// (I-4): straight delegation to the lazy `client.quota` facet
+	// (`ImapClient.quota`, spec §3.6), mirroring every other driver method's
+	// "thin wrapper over the public surface" posture.
+	public async getquota(root: string): Promise<QuotaResult> {
+		return this.requireClient().quota.get(root);
 	}
-	public async getquotaroot(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("GETQUOTAROOT");
+	public async getquotaroot(mailbox: string): Promise<QuotaRootResult> {
+		return this.requireClient().quota.roots(mailbox);
 	}
-	public async setquota(
-		_root: string,
-		_limits: Array<{ resource: string; limit: number }>,
-	): Promise<never> {
-		throw new NotImplementedError("SETQUOTA");
+	public async setquota(root: string, limits: QuotaLimitEntry[]): Promise<QuotaResult> {
+		return this.requireClient().quota.set(root, limits);
 	}
 
 	// METADATA (RFC 5464)

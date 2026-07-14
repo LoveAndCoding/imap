@@ -129,6 +129,18 @@ export type {
 } from "./protocol/mailbox";
 export type { ListCapabilityProbe, ListOptions } from "./commands/list";
 
+// QUOTA (RFC 9208, spec §3.6, M5.2): `ImapClient.quota`'s public facet
+// surface. `QuotaFacet` is the interface `client.quota` is typed as;
+// `QuotaResult`/`QuotaResourceUsage` are GETQUOTA/SETQUOTA's result shape
+// (also one element of `QuotaRootResult.quotas`); `QuotaRootResult` is
+// GETQUOTAROOT's; `QuotaLimitEntry` is SETQUOTA's per-resource argument
+// shape. See `client/facets/quota.ts`'s header comment for the full facet
+// pattern every later §3.6 facet (acl/metadata/urlauth) reuses.
+export type { QuotaFacet } from "./client/facets/quota";
+export type { QuotaResourceUsage, QuotaResult } from "./commands/quota/get-quota";
+export type { QuotaRootResult } from "./commands/quota/get-quota-root";
+export type { QuotaLimitEntry } from "./commands/quota/set-quota";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,
