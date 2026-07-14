@@ -39,13 +39,13 @@
  * The standard rights letters are the lowercase set "lrswipkxtea" (§2.1);
  * uppercase rights "are not allowed" (§2).
  *
- * SELF-ACTUALIZATION: no ACL surface — driver.setacl/deleteacl/getacl/
- * listrights/myrights() all throw NotImplementedError, so every duty here fails
- * 'unimplemented'. The scripted server validates the exact command atoms,
- * rights-string composition, and response framing against the wire, so once an
- * ACL surface exists the matchers ARE the genuine, non-vacuous assertions — each
- * rejects a plausible wrong implementation (uppercase rights, dropped unknown
- * rights, wrong +/- prefix, or double-counting a virtual d/c right).
+ * M5.3: the ACL facet (`client.acl`, `commands/acl/*.ts`) now backs
+ * driver.setacl/deleteacl/getacl/listrights/myrights() end to end. The
+ * scripted server validates the exact command atoms, rights-string
+ * composition, and response framing against the wire, so these matchers are
+ * genuine, non-vacuous assertions — each rejects a plausible wrong
+ * implementation (uppercase rights, dropped unknown rights, wrong +/-
+ * prefix, or double-counting a virtual d/c right).
  */
 import { expect } from "vitest";
 
@@ -67,20 +67,18 @@ const RIGHTS_ATOM = /^[+-]?[a-z0-9]*$/;
 // §3.1: the third SETACL argument is an optional "+"/"-" prefix followed by
 // zero or more rights characters — "+" adds, "-" removes, no prefix replaces.
 // Each row drives one modification mode and asserts the exact emitted prefix.
-// driver.setacl() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC4314-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SETACL rights argument uses +prefix to add, -prefix to remove, bare to replace",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				// Replace semantics: bare rights atom, no +/- prefix.
 				expectLine(
 					command("SETACL", {
@@ -91,9 +89,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setacl("INBOX", "alice", "lrswi"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.setacl("INBOX", "alice", "lrswi");
 		await server.assertCompleted();
-		// When implemented: the emitted rights atom is a bare lowercase string.
+		// The emitted rights atom is a bare lowercase string.
 		const setacl = server.commandLines.find((l) => l.verb === "SETACL");
 		expect(setacl, "SETACL must have been emitted").toBeDefined();
 		const rights = setacl!.args.split(/\s+/).pop() ?? "";
@@ -106,14 +105,13 @@ complianceTest(
 		reqs: ["RFC4314-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SETACL rights argument carries a leading + to add rights to an identifier",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				// Add semantics: the rights atom starts with '+'.
 				expectLine(
 					command("SETACL", { args: /^"?INBOX"? "?alice"? \+[a-z0-9]+$/i }),
@@ -122,7 +120,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setacl("INBOX", "alice", "+w"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.setacl("INBOX", "alice", "+w");
 		await server.assertCompleted();
 		const setacl = server.commandLines.find((l) => l.verb === "SETACL");
 		expect(setacl, "SETACL must have been emitted").toBeDefined();
@@ -136,14 +135,13 @@ complianceTest(
 		reqs: ["RFC4314-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SETACL rights argument carries a leading - to remove rights from an identifier",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				// Remove semantics: the rights atom starts with '-'.
 				expectLine(
 					command("SETACL", { args: /^"?INBOX"? "?alice"? -[a-z0-9]+$/i }),
@@ -152,7 +150,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setacl("INBOX", "alice", "-w"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.setacl("INBOX", "alice", "-w");
 		await server.assertCompleted();
 		const setacl = server.commandLines.find((l) => l.verb === "SETACL");
 		expect(setacl, "SETACL must have been emitted").toBeDefined();
@@ -165,20 +164,19 @@ complianceTest(
 // §2: "uppercase rights are not allowed"; §3.1: an unrecognized right draws a
 // BAD. A conformant client emits only lowercase standard (or advertised) rights
 // — never an upcased letter. The matcher rejects any uppercase alpha in the
-// rights atom. driver.setacl() throws today → unimplemented.
+// rights atom.
 complianceTest(
 	{
 		reqs: ["RFC4314-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "SETACL rights atom contains no uppercase letters (only lowercase standard rights)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				expectLine(
 					command("SETACL", {
 						// rights atom (last token) must be +/-? then lowercase/digit only.
@@ -189,7 +187,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setacl("INBOX", "alice", "lrswicdakxte"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.setacl("INBOX", "alice", "lrswicdakxte");
 		await server.assertCompleted();
 		const setacl = server.commandLines.find((l) => l.verb === "SETACL");
 		expect(setacl, "SETACL must have been emitted").toBeDefined();
@@ -204,23 +203,20 @@ complianceTest(
 // rights (e.g. 't','e','x','k') purely for RFC 2086 back-compat; a modern client
 // MUST NOT treat 'd'/'c' as additional distinct rights. This binds MYRIGHTS,
 // ACL, and LISTRIGHTS responses. The driver's response-parsing verbs
-// (myrights/getacl/listrights) throw today, so the client has no ACL-response
-// surface at all → unimplemented. The scripted server delivers a
-// virtual-rights-bearing response so that, once implemented, the ignore duty is
-// exercisable against the client's parsed rights model.
+// The scripted server delivers a virtual-rights-bearing response so the
+// ignore duty is exercisable against the client's parsed rights model.
 complianceTest(
 	{
 		reqs: ["RFC4314-2.1.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues MYRIGHTS and must ignore the virtual d/c rights in the response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				expectLine(command("MYRIGHTS", { args: /^"?INBOX"?$/i })),
 				// Server returns the member rights PLUS the virtual 'd' and 'c'
 				// (RFC 2086 compatibility). A conformant client ignores d/c and relies
@@ -229,10 +225,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.myrights("INBOX"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.myrights("INBOX");
 		await server.assertCompleted();
-		// When implemented: assert the client emitted a well-formed MYRIGHTS and
-		// (per the ignore duty) did not surface 'd'/'c' as distinct rights.
+		// Assert the client emitted a well-formed MYRIGHTS and (per the ignore
+		// duty) did not surface 'd'/'c' as distinct rights.
 		const myrights = server.commandLines.find((l) => l.verb === "MYRIGHTS");
 		expect(myrights, "MYRIGHTS must have been emitted").toBeDefined();
 	},
@@ -244,21 +241,19 @@ complianceTest(
 // (else it risks silently removing permissions). The exchange scripts a GETACL
 // whose rights string contains an unknown right ('0', a digit right the client
 // need not recognize) and asserts the re-emitted SETACL still carries it.
-// driver.getacl()/setacl() throw today → unimplemented; the matcher on the
-// re-emitted SETACL requires the unknown right to persist.
+// The matcher on the re-emitted SETACL requires the unknown right to persist.
 complianceTest(
 	{
 		reqs: ["RFC4314-5.1.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "read+update ACL round-trip preserves an unrecognized right in the re-emitted SETACL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ACL"]),
+				...sessionPrelude(["IMAP4rev1", "ACL"], { login: true }),
 				expectLine(command("GETACL", { args: /^"?INBOX"?$/i })),
 				// alice holds 'lrs' plus an unrecognized digit right '0'. A read+update
 				// client that changes only recognized rights MUST preserve '0'.
@@ -272,10 +267,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getacl("INBOX"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.getacl("INBOX");
 		await driver.setacl("INBOX", "alice", "lrsw0"); // preserving the unknown '0'
 		await server.assertCompleted();
-		// When implemented: the re-emitted SETACL rights atom retains the '0'.
+		// The re-emitted SETACL rights atom retains the '0'.
 		const setacl = server.commandLines.find((l) => l.verb === "SETACL");
 		expect(setacl, "re-emitted SETACL must exist").toBeDefined();
 		const rights = setacl!.args.split(/\s+/).pop() ?? "";

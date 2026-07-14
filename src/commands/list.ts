@@ -1,5 +1,5 @@
 import { CapabilityError } from "../errors";
-import { MailboxListing, MailboxStatus } from "../parser";
+import { MailboxListing, MailboxStatus, MyRightsResponse } from "../parser";
 import type { UntaggedResponse } from "../parser";
 import { ciCanonicalFrom, ciEquals } from "../lexer/case-insensitive";
 import { decodeMailboxName } from "../protocol/mailbox-name";
@@ -41,6 +41,11 @@ export interface ListOptions {
 	returnChildren?: boolean;
 	/** `RETURN (STATUS (<items>))` (RFC 5819; requires LIST-STATUS). */
 	returnStatus?: StatusItem[];
+	/** MYRIGHTS return option (RFC 8440; requires LIST-MYRIGHTS) — folds a
+	 *  per-mailbox MYRIGHTS lookup into this LIST, additive to M2's
+	 *  `ListOptions` (a strictly new optional field; every existing option
+	 *  keeps its own number/meaning unchanged). */
+	returnMyRights?: boolean;
 	/** RFC 6154: `true` = the SPECIAL-USE *selection* option (list only
 	 *  special-use mailboxes); `"return"` = the SPECIAL-USE *return* option
 	 *  (annotate results with special-use attributes). */
@@ -292,6 +297,7 @@ export class ListCommand extends Command<MailboxInfo[]> {
 	private readonly selection: readonly string[];
 	private readonly returnAtoms: readonly string[];
 	private readonly statusItems: readonly string[];
+	private readonly wantsMyRights: boolean;
 
 	constructor(opts: ListOptions = {}, caps: ListCapabilityProbe = NO_CAPS) {
 		super();
@@ -356,6 +362,9 @@ export class ListCommand extends Command<MailboxInfo[]> {
 		if (opts.specialUse === "return") {
 			returnAtoms.push("SPECIAL-USE");
 		}
+		if (opts.returnMyRights) {
+			returnAtoms.push("MYRIGHTS");
+		}
 		const statusItems: string[] = [];
 		for (const item of opts.returnStatus ?? []) {
 			const canonical = String(item).toUpperCase();
@@ -371,6 +380,7 @@ export class ListCommand extends Command<MailboxInfo[]> {
 		this.selection = selection;
 		this.returnAtoms = returnAtoms;
 		this.statusItems = statusItems;
+		this.wantsMyRights = Boolean(opts.returnMyRights);
 
 		const extendedRequested =
 			selection.length > 0 ||
@@ -467,6 +477,13 @@ export class ListCommand extends Command<MailboxInfo[]> {
 				{ capability: "SPECIAL-USE", rfc: "RFC6154" },
 			);
 		}
+		if (opts.returnMyRights && !caps.has("LIST-MYRIGHTS")) {
+			throw new CapabilityError(
+				"list: the MYRIGHTS return option requires the LIST-MYRIGHTS " +
+					"capability (RFC 8440), which the server has not advertised",
+				{ capability: "LIST-MYRIGHTS", rfc: "RFC8440" },
+			);
+		}
 		if (opts.referrals && !caps.has("MAILBOX-REFERRALS")) {
 			throw new CapabilityError(
 				"list: referrals (RLIST) requires the MAILBOX-REFERRALS capability " +
@@ -534,6 +551,18 @@ export class ListCommand extends Command<MailboxInfo[]> {
 		) {
 			return true;
 		}
+		// RFC 8440 §3: the per-mailbox `* MYRIGHTS` replies are interleaved
+		// with the LIST lines and belong to THIS command — but only when it
+		// actually asked for them (RETURN (MYRIGHTS)); an unsolicited MYRIGHTS
+		// while a LIST is in flight is someone else's data (e.g. a standalone
+		// `client.acl.myRights()` call racing this LIST).
+		if (
+			this.wantsMyRights &&
+			resp.type === "MYRIGHTS" &&
+			resp.content instanceof MyRightsResponse
+		) {
+			return true;
+		}
 		return false;
 	}
 
@@ -557,6 +586,26 @@ export class ListCommand extends Command<MailboxInfo[]> {
 				for (const info of infos) {
 					if (info.name === status.mailbox) {
 						info.status = status;
+					}
+				}
+			}
+		}
+		if (this.wantsMyRights) {
+			// RFC8440-3-2/-3-3: associate each `* MYRIGHTS` with its LIST entry
+			// by mailbox name — never by arrival-order pairing (the RFC only
+			// constrains that MYRIGHTS never precedes its own mailbox's LIST
+			// line, not that every LIST line gets exactly one). A mailbox with
+			// no paired MYRIGHTS reply (the server couldn't compute rights, or
+			// chose not to) simply has no `myRights` — never invented (I-6),
+			// and never treated as an error (RFC8440-3-3).
+			for (const line of c.untagged("MYRIGHTS")) {
+				if (!(line.content instanceof MyRightsResponse)) {
+					continue;
+				}
+				const mailbox = decodeMailboxName(line.content.mailbox, { utf8Accepted: true });
+				for (const info of infos) {
+					if (info.name === mailbox) {
+						info.myRights = line.content.rights;
 					}
 				}
 			}

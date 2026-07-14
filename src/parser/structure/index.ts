@@ -3,6 +3,7 @@ export { default as TaggedResponse } from "./tagged";
 export { default as UnknownResponse, UnknownContent } from "./unknown";
 export { default as UntaggedResponse } from "./untagged";
 
+export * from "./acl";
 export * from "./capability";
 export * from "./enabled";
 export * from "./expunge";

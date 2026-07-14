@@ -18,20 +18,18 @@
  *                accompanying MYRIGHTS response as a well-formed outcome
  *                (rights lookup unavailable for that mailbox), not an error.
  *   RFC8440-6-1  Client SHOULD scope LIST-MYRIGHTS requests with a narrow
- *                match pattern/selection option (self-actualizing).
+ *                match pattern/selection option.
  *
  * Untestable/cross-referenced, NOT cited here: the untagged MYRIGHTS
  * response's own wire shape (mailbox + rights string; ignoring virtual d/c
  * rights) is already scored under RFC4314-2.1.1-3/§3.5/§3.8 — this file
  * scores only the LIST-side request/ordering/absence delta RFC 8440 adds.
  *
- * OBSERVATION: all four entries are self-actualizing — the public
- * ListOptions surface (M2.7) has no MYRIGHTS return option, so the driver
- * reports the request as NotImplementedError ("LIST return option
- * MYRIGHTS"); driver.myrights() is likewise unimplemented. The annotations
- * stay honest until an ACL-facet milestone adds the surface. Wire forms and
- * the LIST/MYRIGHTS pairing/absence shapes are pinned to RFC 8440's own §1/
- * §3/§4 worked examples.
+ * M5.3: `ListOptions.returnMyRights` (RFC 8440's MYRIGHTS return option) and
+ * `client.acl.myRights()` both now exist (`commands/list.ts`, `client/facets/
+ * acl.ts`) — these four entries are exercised end to end rather than
+ * self-actualizing failures. Wire forms and the LIST/MYRIGHTS pairing/
+ * absence shapes are pinned to RFC 8440's own §1/§3/§4 worked examples.
  */
 import { expect } from "vitest";
 
@@ -61,14 +59,13 @@ complianceTest(
 		reqs: ["RFC8440-3-1", "RFC8440-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'LIST "" % RETURN (MYRIGHTS) interleaves ordered LIST/MYRIGHTS pairs per mailbox',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				expectLine(command("LIST", { args: /^"" % RETURN \(MYRIGHTS\)$/i })),
 				reply("OK LIST completed", [
 					'* LIST () "." "INBOX"',
@@ -79,7 +76,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.list("", "%", { returnOptions: ["MYRIGHTS"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.list("", "%", { returnOptions: ["MYRIGHTS"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();
@@ -101,26 +99,26 @@ complianceTest(
 		reqs: ["RFC8440-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a LIST response with no paired MYRIGHTS reply as a well-formed omission",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				expectLine(command("LIST", { args: /^"" bar RETURN \(MYRIGHTS\)$/i })),
 				// "bar" doesn't exist: LIST reports \NonExistent, no MYRIGHTS reply.
 				reply("OK LIST completed", ['* LIST (\\NonExistent) "." "bar"']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.list("", "bar", { returnOptions: ["MYRIGHTS"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.list("", "bar", { returnOptions: ["MYRIGHTS"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();
-		// When implemented: the client must not error/hang/retry solely because a
-		// mailbox's LIST line arrived with no accompanying MYRIGHTS line.
+		// The client must not error/hang/retry solely because a mailbox's LIST
+		// line arrived with no accompanying MYRIGHTS line.
 		expect(driver.active, "client remains active after a LIST with no paired MYRIGHTS").toBe(
 			true,
 		);
@@ -129,7 +127,7 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC8440-6-1 — scope LIST-MYRIGHTS requests with a narrow match pattern/
-// selection option (self-actualizing)
+// selection option
 // ═════════════════════════════════════════════════════════════════════════════
 // §6: "Clients SHOULD use a suitable match pattern and/or selection option to
 // limit the set of mailboxes returned to only those in whose rights they are
@@ -143,32 +141,38 @@ complianceTest(
 		reqs: ["RFC8440-6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client scopes LIST RETURN (MYRIGHTS) with a narrow match pattern rather than an unqualified wildcard",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(myrightsCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				// A client only interested in the "Archive" subtree's rights SHOULD
 				// scope its LIST pattern to that subtree (e.g. "Archive/%" or
 				// "Archive*"), not sweep the entire mailbox hierarchy with "%"/"*".
 				expectLine({
 					description: "LIST RETURN (MYRIGHTS) scoped to a specific subtree, not an unqualified wildcard sweep",
 					match: (line: string) => {
-						const m = /^"" (\S+) RETURN \(MYRIGHTS\)$/i.exec(line);
+						// `line` is the FULL raw wire line (tag + verb + args, per
+						// `matchers.ts`'s `command()` convention) — the tag MUST be
+						// captured and returned so `doReply()`'s subsequent tagged
+						// reply is addressed to THIS command, not left dangling on
+						// whatever command's tag matched last (`ScriptedServer`'s
+						// `lastTag` is only updated from a returned `result.tag`).
+						const m = /^(\S+) LIST "" (\S+) RETURN \(MYRIGHTS\)$/i.exec(line);
 						if (!m) {
 							return { ok: false, reason: `expected LIST "" <pattern> RETURN (MYRIGHTS), got: '${line}'` };
 						}
-						const [, pattern] = m;
+						const [, tag, pattern] = m;
 						if (pattern === "%" || pattern === "*" || pattern === '"%"' || pattern === '"*"') {
 							return {
 								ok: false,
+								tag,
 								reason: `LIST pattern '${pattern}' is an unqualified wildcard sweep of the entire mailbox hierarchy (RFC8440-6-1 SHOULD violation) — the client is only interested in a subset of mailboxes' rights`,
 							};
 						}
-						return { ok: true };
+						return { ok: true, tag, verb: "LIST", args: line.slice(tag.length + 1) };
 					},
 				}),
 				reply("OK LIST completed", [
@@ -178,10 +182,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		// Intended usage once implemented: a caller wanting only the Archive
 		// subtree's rights scopes the LIST pattern accordingly rather than
 		// sweeping the whole hierarchy.
-		await driver.list("", "Archive/%", { returnOptions: ["MYRIGHTS"] }); // throws today
+		await driver.list("", "Archive/%", { returnOptions: ["MYRIGHTS"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();

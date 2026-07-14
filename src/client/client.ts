@@ -76,6 +76,8 @@ import { CapabilityRegistry } from "./capabilities";
 import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
 import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
+import { AclFacetImpl } from "./facets/acl";
+import type { AclFacet } from "./facets/acl";
 import type { FacetDriver } from "./facets/driver";
 import { QuotaFacetImpl } from "./facets/quota";
 import type { QuotaFacet } from "./facets/quota";
@@ -267,6 +269,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  — identical pattern to `_quota` above; see that field's doc comment
 	 *  and `client/facets/quota.ts`'s header comment for the full rationale. */
 	private _urlauth: UrlauthFacet | null = null;
+	/** Backing field for the lazy `acl` facet property (spec §3.6, M5.3) —
+	 *  same lazy-construction pattern as `_quota` (see that field's doc
+	 *  comment, and `client/facets/quota.ts`'s header comment for the full
+	 *  rationale). */
+	private _acl: AclFacet | null = null;
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -830,6 +837,24 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			this._urlauth = new UrlauthFacetImpl(this.facetDriver());
 		}
 		return this._urlauth;
+	}
+
+	/**
+	 * `acl` (spec §3.6, RFC 4314 + RFC 8440) — M5.3. Same lazy-property
+	 * pattern as `quota` above (see `client/facets/quota.ts`'s header
+	 * comment for the full writeup this getter copies verbatim): a plain
+	 * PROPERTY, never `client.acl()` — backed by `_acl`, constructed on
+	 * FIRST READ and cached thereafter; never pre-built in the constructor.
+	 * Construction itself has no side effects and needs no capability check
+	 * (the check lives in each of `AclFacetImpl`'s methods) — it is safe to
+	 * read `client.acl` even against a server that will never advertise
+	 * `ACL` at all.
+	 */
+	public get acl(): AclFacet {
+		if (!this._acl) {
+			this._acl = new AclFacetImpl(this.facetDriver());
+		}
+		return this._acl;
 	}
 
 	/**

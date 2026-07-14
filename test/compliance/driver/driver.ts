@@ -23,6 +23,8 @@ import type {
 	NotifyEventGroup,
 	NotifyMailboxFilter,
 	NotifySpec,
+	AclResult,
+	ListRightsResult,
 	QuotaLimitEntry,
 	QuotaResult,
 	QuotaRootResult,
@@ -1034,12 +1036,14 @@ export class ComplianceDriver {
 	 *
 	 * The one translation this boundary is allowed to make (same rationale as
 	 * `select()`'s CONDSTORE/QRESYNC note above): a driver request the public
-	 * API **cannot express** throws `NotImplementedError`. That covers (a) an
-	 * option token outside `ListOptions`' vocabulary (e.g. `RETURN (MYRIGHTS)`
-	 * — RFC 8440 has no M2 surface), and (b) a *duplicated* option token:
-	 * every `ListOptions` option is a boolean field, so "the same option
-	 * twice" is structurally inexpressible — which is exactly how the client
-	 * satisfies the RFC5258-3-2/RFC9051-6.3.9-6 SHOULD-NOT (a caller cannot
+	 * API **cannot express** throws `NotImplementedError`. `RETURN (MYRIGHTS)`
+	 * (RFC 8440) now maps to `ListOptions.returnMyRights` (M5.3) — no longer
+	 * one of these unexpressible cases. What remains unexpressible is (a) an
+	 * option token outside `ListOptions`' vocabulary entirely, and (b) a
+	 * *duplicated* option token: every `ListOptions` option is a boolean
+	 * field, so "the same option twice" is structurally inexpressible — which
+	 * is exactly how the client satisfies the RFC5258-3-2/RFC9051-6.3.9-6
+	 * SHOULD-NOT (a caller cannot
 	 * even ask for a duplicate, so none can reach the wire).
 	 */
 	public async list(
@@ -1111,6 +1115,9 @@ export class ComplianceDriver {
 						);
 					}
 					mapped.specialUse = "return";
+					break;
+				case "MYRIGHTS":
+					mapped.returnMyRights = true;
 					break;
 				default:
 					throw new NotImplementedError(`LIST return option ${raw}`);
@@ -1572,25 +1579,25 @@ export class ComplianceDriver {
 		});
 	}
 
-	// ACL (RFC 4314)
-	public async setacl(
-		_mailbox: string,
-		_identifier: string,
-		_rights: string,
-	): Promise<never> {
-		throw new NotImplementedError("SETACL");
+	// ACL (RFC 4314) — M5.3. Zero protocol logic here (I-4): straight
+	// delegation to the lazy `client.acl` facet (`ImapClient.acl`, spec
+	// §3.6), mirroring every other driver method's "thin wrapper over the
+	// public surface" posture (see the QUOTA methods below for the same
+	// shape).
+	public async setacl(mailbox: string, identifier: string, rights: string): Promise<void> {
+		return this.requireClient().acl.set(mailbox, identifier, rights);
 	}
-	public async deleteacl(_mailbox: string, _identifier: string): Promise<never> {
-		throw new NotImplementedError("DELETEACL");
+	public async deleteacl(mailbox: string, identifier: string): Promise<void> {
+		return this.requireClient().acl.delete(mailbox, identifier);
 	}
-	public async getacl(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("GETACL");
+	public async getacl(mailbox: string): Promise<AclResult> {
+		return this.requireClient().acl.get(mailbox);
 	}
-	public async listrights(_mailbox: string, _identifier: string): Promise<never> {
-		throw new NotImplementedError("LISTRIGHTS");
+	public async listrights(mailbox: string, identifier: string): Promise<ListRightsResult> {
+		return this.requireClient().acl.rights(mailbox, identifier);
 	}
-	public async myrights(_mailbox: string): Promise<never> {
-		throw new NotImplementedError("MYRIGHTS");
+	public async myrights(mailbox: string): Promise<string> {
+		return this.requireClient().acl.myRights(mailbox);
 	}
 
 	// QUOTA (RFC 9208, obsoletes RFC 2087) — M5.2. Zero protocol logic here

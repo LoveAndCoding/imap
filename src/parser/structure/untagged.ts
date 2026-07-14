@@ -2,6 +2,7 @@ import { OperatorToken } from "../../lexer/tokens";
 import { ciCanonicalize } from "../../lexer/case-insensitive";
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
+import { AclResponse, ListRightsResponse, MyRightsResponse } from "./acl";
 import { CapabilityList } from "./capability";
 import { EnabledResponse } from "./enabled";
 import { Expunge } from "./expunge";
@@ -18,12 +19,15 @@ import { GenUrlAuthResponse, UrlFetchResponse } from "./urlauth";
 import { VanishedResponse } from "./vanished";
 
 type ContentType =
+	| AclResponse
 	| CapabilityList
 	| EnabledResponse
 	| Expunge
 	| Fetch
 	| GenUrlAuthResponse
 	| IDResponse
+	| ListRightsResponse
+	| MyRightsResponse
 	| NamespaceResponse
 	| QuotaResponse
 	| QuotaRootResponse
@@ -85,9 +89,12 @@ export default class UntaggedResponse {
 
 			const toCheckList = [
 				StatusResponse,
+				AclResponse,
 				CapabilityList,
 				EnabledResponse,
 				IDResponse,
+				ListRightsResponse,
+				MyRightsResponse,
 				NamespaceResponse,
 				QuotaRootResponse,
 				QuotaResponse,

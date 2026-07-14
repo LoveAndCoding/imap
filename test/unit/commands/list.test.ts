@@ -478,4 +478,73 @@ describe("ListCommand (RFC 3501/9051 §6.3.8/§6.3.9 + RFC 5258/5819/6154/3348/2
 		expect(result[0].name).toBe("RealMailbox");
 		expect(unhandled.some((r) => r.type === "LIST")).toBe(true);
 	});
+
+	describe("RETURN (MYRIGHTS) (RFC 8440 -- M5.3)", () => {
+		test("returnMyRights requires LIST-MYRIGHTS -- CapabilityError when absent", () => {
+			let thrown: unknown;
+			try {
+				new ListCommand({ returnMyRights: true }, caps("LIST-EXTENDED"));
+			} catch (err) {
+				thrown = err;
+			}
+			expect(thrown).toBeInstanceOf(CapabilityError);
+			expect((thrown as CapabilityError).capability).toBe("LIST-MYRIGHTS");
+		});
+
+		test("wire form + interleaved * MYRIGHTS claimed into MailboxInfo.myRights, paired by mailbox name", async () => {
+			const { wire, result } = await run(
+				new ListCommand({ pattern: "%", returnMyRights: true }, caps("LIST-MYRIGHTS")),
+				"L22",
+				[
+					'* LIST () "." "INBOX"',
+					'* MYRIGHTS "INBOX" lrswipkxtecda',
+					'* LIST () "." "Archive"',
+					'* MYRIGHTS "Archive" lrswipkxtecd',
+				],
+			);
+			expect(wire).toBe(`L22 LIST "" % RETURN (MYRIGHTS)${CRLF}`);
+			expect(result).toHaveLength(2);
+			expect(result[0].name).toBe("INBOX");
+			expect(result[0].myRights).toBe("lrswipkxtecda");
+			expect(result[1].name).toBe("Archive");
+			expect(result[1].myRights).toBe("lrswipkxtecd");
+		});
+
+		test("RFC8440-3-3: a LIST entry with no paired MYRIGHTS reply simply has no myRights (never invented, I-6)", async () => {
+			const { result } = await run(
+				new ListCommand({ pattern: "%", returnMyRights: true }, caps("LIST-MYRIGHTS")),
+				"L23",
+				[
+					// "bar" doesn't exist -- RFC 8440 §4's own worked example: the
+					// server sends no MYRIGHTS reply for it at all.
+					'* LIST (\\NonExistent) "." "bar"',
+				],
+			);
+			expect(result).toHaveLength(1);
+			expect(result[0].name).toBe("bar");
+			expect(result[0].myRights).toBeUndefined();
+		});
+
+		test("a MYRIGHTS line is NOT claimed when RETURN (MYRIGHTS) was not requested -- flows through the unhandled path (I-6)", async () => {
+			const { result, unhandled } = await run(new ListCommand(), "L24", [
+				'* LIST () "." "INBOX"',
+				'* MYRIGHTS "INBOX" lrs',
+			]);
+			expect(result).toHaveLength(1);
+			expect(result[0].myRights).toBeUndefined();
+			expect(unhandled.some((r) => r.type === "MYRIGHTS")).toBe(true);
+		});
+
+		test("returnMyRights combined with RETURN (STATUS (...)) emits both atoms in one RETURN list", async () => {
+			const { wire } = await run(
+				new ListCommand(
+					{ returnMyRights: true, returnStatus: ["MESSAGES"] },
+					caps("LIST-MYRIGHTS", "LIST-STATUS"),
+				),
+				"L25",
+				[],
+			);
+			expect(wire).toBe(`L25 LIST "" * RETURN (MYRIGHTS STATUS (MESSAGES))${CRLF}`);
+		});
+	});
 });

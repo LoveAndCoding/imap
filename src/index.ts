@@ -155,6 +155,15 @@ export type {
 	UrlFetchOptions,
 	UrlFetchResultItem,
 } from "./commands/urlauth/url-fetch";
+// ACL (RFC 4314, spec §3.6, M5.3): `ImapClient.acl`'s public facet surface.
+// `AclFacet` is the interface `client.acl` is typed as; `AclEntry`/
+// `AclResult` are GETACL's per-identifier/full-mailbox result shape;
+// `ListRightsResult` is LISTRIGHTS'. See `client/facets/acl.ts`'s header
+// comment (and `client/facets/quota.ts`'s canonical facet-pattern writeup)
+// for the full rationale.
+export type { AclFacet } from "./client/facets/acl";
+export type { AclEntry, AclResult } from "./commands/acl/get-acl";
+export type { ListRightsResult } from "./commands/acl/list-rights";
 
 // Error hierarchy (spec §4).
 export {

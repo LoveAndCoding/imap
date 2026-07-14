@@ -133,6 +133,12 @@ export interface NamespaceSet {
  *   OLDNAME extended data item, decoded like `name`.
  * - `childInfo` carries the RFC 5258 CHILDINFO extended item's strings
  *   (selection-option names for which this entry has matching children).
+ * - `myRights` (RFC 8440, M5.3) is present only when the LIST carried
+ *   `RETURN (MYRIGHTS)` and the server sent the paired untagged `* MYRIGHTS`
+ *   for this mailbox (it legally may not — RFC8440-3-3: the server SHOULD,
+ *   not MUST, and omits it entirely when it cannot compute rights for that
+ *   mailbox). Same "absent means not reported, never invented" posture as
+ *   `status` above.
  */
 export interface MailboxInfo {
 	name: string;
@@ -142,4 +148,5 @@ export interface MailboxInfo {
 	status?: Partial<MailboxStatusResult>;
 	oldName?: string;
 	childInfo?: string[];
+	myRights?: string;
 }
