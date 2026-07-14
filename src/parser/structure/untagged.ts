@@ -9,6 +9,7 @@ import { Expunge } from "./expunge";
 import { Fetch } from "./fetch";
 import { IDResponse } from "./id";
 import * as MailboxData from "./mailbox";
+import { MetadataResponse } from "./metadata";
 import { NamespaceResponse } from "./namespace";
 import { QuotaResponse, QuotaRootResponse } from "./quota";
 import { SortResponse } from "./sort";
@@ -28,6 +29,7 @@ type ContentType =
 	| IDResponse
 	| ListRightsResponse
 	| MyRightsResponse
+	| MetadataResponse
 	| NamespaceResponse
 	| QuotaResponse
 	| QuotaRootResponse
@@ -95,6 +97,7 @@ export default class UntaggedResponse {
 				IDResponse,
 				ListRightsResponse,
 				MyRightsResponse,
+				MetadataResponse,
 				NamespaceResponse,
 				QuotaRootResponse,
 				QuotaResponse,

@@ -58,6 +58,14 @@ export interface SearchCriteria {
 	gmailThreadId?: string;
 	gmailMessageId?: string;
 	gmailLabels?: string;
+	/** RFC 5466 §3.1/§4 (FILTERS), M5.4 carry-forward from M4.14: references
+	 *  a named filter stored under `/private|/shared/filters/values/<name>`
+	 *  (see `client/facets/metadata.ts`'s header comment for how a caller
+	 *  creates one — there is no separate creation API, only ordinary
+	 *  `metadata.set()` against that reserved entry). Compiles to the bare
+	 *  `FILTER <filter_name>` search-key (RFC5466-3.1-1), gated on the
+	 *  `FILTERS` capability. */
+	filter?: string;
 	fuzzy?: SearchCriteria;
 	not?: SearchCriteria;
 	or?: SearchCriteria[];
@@ -90,6 +98,89 @@ function assertCap(
 			`SearchCriteria.${key} requires the ${cap} capability${extra ? ` (${extra})` : ""}, ` +
 				"which the server hasn't advertised",
 			{ capability: cap, rfc },
+		);
+	}
+}
+
+/**
+ * RFC 5466 §4 (M5.4): `filter-name = 1*<any ATOM-CHAR except "/">` — at
+ * least one ATOM-CHAR, excluding "/" (which `atom()`'s own ATOM-CHAR
+ * validation otherwise permits, since ordinary IMAP atoms may legally
+ * contain "/" — RFC 5466's filter-name grammar is a STRICTER subset).
+ * Checked here, before `w.atom()` ever runs, so the "/" exclusion is
+ * enforced client-side rather than silently producing an atom `atom()`
+ * itself would have accepted; every other filter-name prohibition (no
+ * "(", ")", "{", SP, "%", "*", DQUOTE, "\", "]", CTL, or non-ASCII) is
+ * already exactly what `CommandWriter.atom()` itself rejects, so this
+ * function doesn't duplicate that half of the grammar.
+ */
+function assertValidFilterName(name: string): void {
+	if (typeof name !== "string" || name.length === 0) {
+		throw new RangeError(
+			"SearchCriteria.filter: filter-name must be a non-empty string (RFC 5466 §4 filter-name)",
+		);
+	}
+	if (name.includes("/")) {
+		throw new RangeError(
+			`SearchCriteria.filter: filter-name ${JSON.stringify(name)} must not contain "/" (RFC 5466 §4)`,
+		);
+	}
+}
+
+/**
+ * Whether `criteria` contains a `filter` key anywhere in its tree — top
+ * level or nested under `not`/`fuzzy`/`or`/`and` — same recursive-walk shape
+ * as `criteriaHasFuzzy()` below. Used by `assertFilterCharsetCompatible()`
+ * (RFC5466-3.1-3: FILTER implies CHARSET UTF-8, so an explicit non-UTF-8/
+ * US-ASCII CHARSET paired with FILTER anywhere in the tree is a hard client-
+ * side prohibition).
+ */
+export function criteriaHasFilter(criteria: SearchCriteria): boolean {
+	if (criteria.filter !== undefined) {
+		return true;
+	}
+	if (criteria.not !== undefined && criteriaHasFilter(criteria.not)) {
+		return true;
+	}
+	if (criteria.fuzzy !== undefined && criteriaHasFilter(criteria.fuzzy)) {
+		return true;
+	}
+	if (criteria.or?.some((c) => criteriaHasFilter(c))) {
+		return true;
+	}
+	if (criteria.and?.some((c) => criteriaHasFilter(c))) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * RFC 5466 §3.1 (M5.4): "use of the FILTER search key implies the CHARSET
+ * 'UTF-8' parameter to the SEARCH/UID SEARCH command. If the SEARCH/UID
+ * SEARCH command includes the explicit CHARSET parameter with the value
+ * other than 'UTF-8' or 'US-ASCII', then such command MUST result in the
+ * tagged BAD response" — a hard client-side prohibition (RFC5466-3.1-3):
+ * this client never emits the illegal combination in the first place (I-9),
+ * rather than relying on the server's own BADCHARSET rejection. Shared by
+ * both SEARCH/UID SEARCH's optional CHARSET clause (`commands/search.ts`)
+ * and SORT/THREAD's mandatory one (`resolveMandatoryCharset` below) — FILTER
+ * is usable "in a SEARCH or any other command that accepts a search
+ * criterion as a parameter" (RFC 5466 Abstract). Only an EXPLICIT charset is
+ * checked — an auto-computed UTF-8 default (this module's own
+ * `criteriaHasNonAscii`-driven fallback) is never itself a violation.
+ */
+export function assertFilterCharsetCompatible(
+	criteria: SearchCriteria,
+	explicitCharset: string | undefined,
+): void {
+	if (
+		explicitCharset !== undefined &&
+		criteriaHasFilter(criteria) &&
+		!/^(?:UTF-8|US-ASCII)$/i.test(explicitCharset)
+	) {
+		throw new RangeError(
+			"SearchCriteria.filter: the FILTER search key MUST NOT be paired with an explicit " +
+				'CHARSET other than "UTF-8"/"US-ASCII" (RFC 5466 §3.1)',
 		);
 	}
 }
@@ -501,6 +592,12 @@ export function compileCriteria(
 				w.atom("X-GM-LABELS");
 				w.astring(value as string);
 				break;
+			case "filter":
+				assertCap(caps, "FILTERS", "filter", "RFC5466");
+				assertValidFilterName(value as string);
+				w.atom("FILTER");
+				w.atom(value as string);
+				break;
 			case "fuzzy":
 				assertCap(caps, "SEARCH=FUZZY", "fuzzy", "RFC6203");
 				w.atom("FUZZY");
@@ -544,6 +641,7 @@ export function compileCriteria(
  * charset string — SORT/THREAD's grammar has no "omit it" alternative.
  */
 export function resolveMandatoryCharset(explicit: string | undefined, criteria: SearchCriteria): string {
+	assertFilterCharsetCompatible(criteria, explicit);
 	if (explicit !== undefined) {
 		return explicit;
 	}

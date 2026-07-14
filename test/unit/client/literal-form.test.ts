@@ -165,7 +165,7 @@ describe("LITERAL+/LITERAL- capability-probe wiring (regression)", () => {
 		).toBe(true);
 	});
 
-	test("APPEND, LITERAL- advertised (≤4096 octets, upload limit known): the literal is non-synchronizing '{n-}'", async () => {
+	test("APPEND, LITERAL- advertised (≤4096 octets, upload limit known): the literal is non-synchronizing '{n+}'", async () => {
 		server = await ScriptedServer.start();
 		server.arm([
 			[
@@ -192,11 +192,17 @@ describe("LITERAL+/LITERAL- capability-probe wiring (regression)", () => {
 		const markers = literalMarkers(append!.args);
 		expect(markers.length).toBeGreaterThanOrEqual(1);
 		for (const m of markers) {
-			expect(m.suffix, "≤4096 octets under LITERAL- must use the '{n-}' form").toBe("-");
+			// M5.4 fix: RFC 7888 (LITERAL-) defines no wire suffix of its own —
+			// the non-synchronizing form is the identical '{n+}' LITERAL+ already
+			// defines, just capped at 4096 octets (see `pickLiteralForm`'s own
+			// doc comment, src/commands/writer.ts). Previously (wrongly) asserted
+			// a literal '{n-}' wire form here, which no conformant server
+			// recognizes as a literal announcement at all.
+			expect(m.suffix, "≤4096 octets under LITERAL- must use the '{n+}' form").toBe("+");
 		}
 	});
 
-	test("APPEND, LITERAL- advertised (>4096 octets): the literal is synchronizing, never '{n-}'", async () => {
+	test("APPEND, LITERAL- advertised (>4096 octets): the literal is synchronizing, never non-sync", async () => {
 		server = await ScriptedServer.start();
 		server.arm([
 			[

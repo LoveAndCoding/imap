@@ -4,6 +4,7 @@ import type { UntaggedResponse } from "../parser";
 import { UID, UIDRange, UIDSet } from "../parser/structure/uid";
 import {
 	NO_SEARCH_CAPS,
+	assertFilterCharsetCompatible,
 	compileCriteria,
 	criteriaHasFuzzy,
 	criteriaHasNonAscii,
@@ -198,6 +199,11 @@ function normalizeSearchOptions(
 			: !caps.has("UTF8=ACCEPT") && criteriaHasNonAscii(criteria)
 				? "UTF-8"
 				: undefined;
+
+	// RFC5466-3.1-3 (M5.4): a FILTER search key anywhere in `criteria` paired
+	// with an EXPLICIT CHARSET other than UTF-8/US-ASCII is a hard client-side
+	// prohibition — checked before any bytes are written (I-9).
+	assertFilterCharsetCompatible(criteria, opts.charset);
 
 	return { returnAtoms, partial, emitReturnClause, charsetToEmit, requestedSave };
 }

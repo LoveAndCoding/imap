@@ -14,10 +14,13 @@ import type {
 	FetchRequest,
 	FetchedMessage,
 	ImapClientConfig,
+	GetMetadataOptions,
 	ListOptions,
 	MailboxInfo,
 	MailboxSession,
 	MailboxStatusResult,
+	MetadataResult,
+	MetadataSetEntry,
 	NamespaceSet,
 	NotifyEventEntry,
 	NotifyEventGroup,
@@ -204,9 +207,10 @@ function withAuthzid(inner: SaslMechanism, authzid: string | undefined): SaslMec
 // option strings onto the public option shape" rule `list()` below already
 // follows for LIST's ad hoc `selectOptions`/`returnOptions` strings. A
 // genuinely unsupported request (an extension key with no `SearchCriteria`
-// field at all, e.g. RFC 5466 FILTER or RFC 5267 UPDATE/CONTEXT -- neither
-// is in the M3.7 §5.3 type) throws `NotImplementedError`, the same "public
-// API cannot express this" outcome `list()` uses for an out-of-vocabulary
+// field at all, e.g. RFC 5267 UPDATE/CONTEXT -- not in the §5.3 type; RFC
+// 5466 FILTER gained a real field, `filter`, at M5.4) throws
+// `NotImplementedError`, the same "public API cannot express this" outcome
+// `list()` uses for an out-of-vocabulary
 // LIST option.
 
 const IMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -302,10 +306,10 @@ function mergeAdHocObject(target: Record<string, unknown>, obj: Record<string, u
 /**
  * Parses ONE raw pre-formed SEARCH-key wire-text fragment (the majority ad
  * hoc convention across the compliance suite, e.g. `"FUZZY SUBJECT work"`,
- * `"X-GM-MSGID 1278455344230334865"`, `"UNSEEN"`, `"SINCE 1-Feb-1994"`) into
- * its real `SearchCriteria` fragment. Recognizes exactly the key spellings
- * these fixtures actually use; anything else (e.g. `"FILTER on-vacation"` --
- * RFC 5466, no `SearchCriteria` field at all) throws `NotImplementedError`.
+ * `"X-GM-MSGID 1278455344230334865"`, `"UNSEEN"`, `"SINCE 1-Feb-1994"`,
+ * `"FILTER on-vacation"` -- RFC 5466, M5.4) into its real `SearchCriteria`
+ * fragment. Recognizes exactly the key spellings these fixtures actually
+ * use; anything else throws `NotImplementedError`.
  */
 function parseAdHocSearchToken(token: string): Record<string, unknown> {
 	const s = token.trim();
@@ -313,6 +317,7 @@ function parseAdHocSearchToken(token: string): Record<string, unknown> {
 	if ((m = /^FUZZY\s+(.+)$/i.exec(s))) {
 		return { fuzzy: parseAdHocSearchToken(m[1]) };
 	}
+	if ((m = /^FILTER\s+(\S+)$/i.exec(s))) return { filter: m[1] };
 	if ((m = /^UNKEYWORD\s+(\S+)$/i.exec(s))) {
 		return { not: { keyword: stripAdHocQuotes(m[1]) } };
 	}
@@ -1614,19 +1619,19 @@ export class ComplianceDriver {
 		return this.requireClient().quota.set(root, limits);
 	}
 
-	// METADATA (RFC 5464)
+	// METADATA (RFC 5464) — M5.4. Zero protocol logic here (I-4): straight
+	// delegation to the lazy `client.metadata` facet (`ImapClient.metadata`,
+	// spec §3.6), mirroring QUOTA's own "thin wrapper over the public
+	// surface" posture above.
 	public async getmetadata(
-		_mailbox: string,
-		_entries: string[],
-		_opts?: { maxsize?: number; depth?: "0" | "1" | "infinity" },
-	): Promise<never> {
-		throw new NotImplementedError("GETMETADATA");
+		mailbox: string,
+		entries: string[],
+		opts?: GetMetadataOptions,
+	): Promise<MetadataResult> {
+		return this.requireClient().metadata.get(mailbox, entries, opts);
 	}
-	public async setmetadata(
-		_mailbox: string,
-		_entries: Array<{ entry: string; value: string | null }>,
-	): Promise<never> {
-		throw new NotImplementedError("SETMETADATA");
+	public async setmetadata(mailbox: string, entries: MetadataSetEntry[]): Promise<void> {
+		return this.requireClient().metadata.set(mailbox, entries);
 	}
 
 	/**

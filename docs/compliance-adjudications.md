@@ -326,6 +326,24 @@ choice at the M4.15 phase-boundary review."
 gains a `filter` key alongside `setmetadata()`/`getmetadata()` landing for
 real.
 
+**Resolved at M5.4:** `SearchCriteria.filter` (`src/commands/search-criteria.ts`,
+gated on the `FILTERS` capability, RFC 5466 §4 filter-name-grammar validated
+before any bytes are written) and the real METADATA facet (`client.metadata.
+get()`/`.set()`, `src/client/facets/metadata.ts`, RFC 5464) landed together,
+exactly as this entry anticipated. All four carry-forward rows now pass
+real, non-vacuous matchers (`test/compliance/specs/ext/filters-5466.test.ts`,
+`expectFailure` markers removed): `RFC5466-3.1-1` (the `SearchCriteria.filter`
+compiler case), `RFC5466-3.2-1`/`RFC5466-3.2-2` (`metadata.set()`'s wire
+form and UTF-8 value encoding), and `RFC5466-4-1` (the shared filter-name
+grammar check, `assertValidFilterName()`, enforced at the SEARCH-key
+emission site). RFC5466-3.1-3's implied-CHARSET prohibition (already real
+before M5.4, since it degrades gracefully on `search()`'s prior
+`NotImplementedError`) is now enforced for real too, via
+`assertFilterCharsetCompatible()` — shared by `SearchCommand` and
+SORT/THREAD's `resolveMandatoryCharset()`. RFC 5466 closes at 100% MUST/
+MUST NOT across both profiles (the remaining rows are untestable by the
+catalog's own tagging, not implementation gaps).
+
 ---
 
 ## RFC7162-3.1.3-5 / RFC7162-3.1.3-6 — deviate (permanent, SHOULD-level, adjudicated at M4.5)

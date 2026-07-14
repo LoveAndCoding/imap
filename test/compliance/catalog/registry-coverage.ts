@@ -267,9 +267,11 @@ export const registryCoverage: RegistryEntry[] = [
 			"bare filter-name argument is preserved (AtomTextCode's bare-vs-parenthesized split, fixed " +
 			"pre-M4.14, already covers this shape) -- M4.14 additionally gives it a dedicated typed " +
 			"TypedResponseCode variant (response-codes.ts/collector.ts) instead of the generic {name, " +
-			"args} fallback. SearchCriteria.filter and filter creation/management (RFC 5464 SETMETADATA " +
-			"under /private|/shared/filters/*) are deferred to M5 alongside the METADATA facet -- " +
-			"option (b), docs/compliance-adjudications.md.",
+			"args} fallback. SearchCriteria.filter (commands/search-criteria.ts, gated on FILTERS) and " +
+			"filter creation/management via the real METADATA facet's setmetadata() (RFC 5464 SETMETADATA " +
+			"under /private|/shared/filters/*) landed at M5.4 -- the option-(b) carry-forward from " +
+			"M4.14, docs/compliance-adjudications.md, closing all four previously-unimplemented rows " +
+			"(RFC5466-3.1-1, -3.2-1, -3.2-2, -4-1).",
 	},
 	{
 		capability: "WITHIN",

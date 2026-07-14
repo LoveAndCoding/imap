@@ -2,7 +2,12 @@ import { describe, expect, test } from "vitest";
 
 import { CapabilityError } from "../../../src/errors";
 import { CommandWriter } from "../../../src/commands/writer";
-import { compileCriteria, criteriaHasNonAscii } from "../../../src/commands/search-criteria";
+import {
+	assertFilterCharsetCompatible,
+	compileCriteria,
+	criteriaHasFilter,
+	criteriaHasNonAscii,
+} from "../../../src/commands/search-criteria";
 import type { SearchCapabilityProbe, SearchCriteria } from "../../../src/commands/search-criteria";
 
 const NO_CAPS: SearchCapabilityProbe = { has: () => false };
@@ -215,6 +220,33 @@ describe("compileCriteria (spec §5.3)", () => {
 			);
 		});
 
+		test("filter requires FILTERS (RFC 5466 §3.1, M5.4 carry-forward)", () => {
+			expect(() => compile({ filter: "on-vacation" }, NO_CAPS)).toThrow(CapabilityError);
+			const caps = capsOf("FILTERS");
+			expect(compile({ filter: "on-vacation" }, caps)).toBe("FILTER on-vacation");
+		});
+
+		test("filter rejects a name containing '/' (RFC 5466 §4 filter-name grammar), even with FILTERS advertised", () => {
+			const caps = capsOf("FILTERS");
+			expect(() => compile({ filter: "a/b" }, caps)).toThrow(RangeError);
+		});
+
+		test("filter rejects an empty name", () => {
+			const caps = capsOf("FILTERS");
+			expect(() => compile({ filter: "" }, caps)).toThrow(RangeError);
+		});
+
+		test("filter rejects a name containing atom-specials (delegated to CommandWriter.atom())", () => {
+			const caps = capsOf("FILTERS");
+			expect(() => compile({ filter: "has space" }, caps)).toThrow(RangeError);
+			expect(() => compile({ filter: "quo\"te" }, caps)).toThrow(RangeError);
+		});
+
+		test("filter accepts the full ATOM-CHAR edge set (digits, '-', '.')", () => {
+			const caps = capsOf("FILTERS");
+			expect(compile({ filter: "Q1-2024.important" }, caps)).toBe("FILTER Q1-2024.important");
+		});
+
 		test("fuzzy requires SEARCH=FUZZY", () => {
 			expect(() => compile({ fuzzy: { subject: "work" } }, NO_CAPS)).toThrow(CapabilityError);
 			const caps = capsOf("SEARCH=FUZZY");
@@ -370,5 +402,50 @@ describe("criteriaHasNonAscii", () => {
 		expect(criteriaHasNonAscii({ all: true, answered: true, larger: 5, before: new Date() })).toBe(
 			false,
 		);
+	});
+});
+
+describe("criteriaHasFilter / assertFilterCharsetCompatible (RFC 5466 §3.1, M5.4)", () => {
+	test("criteriaHasFilter: false when no filter key is present anywhere", () => {
+		expect(criteriaHasFilter({ subject: "hello" })).toBe(false);
+	});
+
+	test("criteriaHasFilter: true at the top level", () => {
+		expect(criteriaHasFilter({ filter: "on-vacation" })).toBe(true);
+	});
+
+	test("criteriaHasFilter: recurses into fuzzy/not/or/and", () => {
+		expect(criteriaHasFilter({ fuzzy: { filter: "x" } })).toBe(true);
+		expect(criteriaHasFilter({ not: { filter: "x" } })).toBe(true);
+		expect(criteriaHasFilter({ or: [{ subject: "a" }, { filter: "x" }] })).toBe(true);
+		expect(criteriaHasFilter({ and: [{ subject: "a" }, { filter: "x" }] })).toBe(true);
+	});
+
+	test("assertFilterCharsetCompatible: no-op when no filter key is present, regardless of charset", () => {
+		expect(() =>
+			assertFilterCharsetCompatible({ subject: "hello" }, "ISO-8859-1"),
+		).not.toThrow();
+	});
+
+	test("assertFilterCharsetCompatible: no-op when charset is undefined (no explicit CHARSET clause)", () => {
+		expect(() => assertFilterCharsetCompatible({ filter: "x" }, undefined)).not.toThrow();
+	});
+
+	test("assertFilterCharsetCompatible: no-op for an explicit UTF-8 or US-ASCII charset", () => {
+		expect(() => assertFilterCharsetCompatible({ filter: "x" }, "UTF-8")).not.toThrow();
+		expect(() => assertFilterCharsetCompatible({ filter: "x" }, "utf-8")).not.toThrow();
+		expect(() => assertFilterCharsetCompatible({ filter: "x" }, "US-ASCII")).not.toThrow();
+	});
+
+	test("assertFilterCharsetCompatible: throws RangeError for any other explicit charset when filter is present (RFC5466-3.1-3)", () => {
+		expect(() => assertFilterCharsetCompatible({ filter: "x" }, "ISO-8859-1")).toThrow(
+			RangeError,
+		);
+	});
+
+	test("assertFilterCharsetCompatible: throws even when the filter key is nested (fuzzy/not/or/and)", () => {
+		expect(() =>
+			assertFilterCharsetCompatible({ or: [{ filter: "x" }] }, "ISO-8859-1"),
+		).toThrow(RangeError);
 	});
 });

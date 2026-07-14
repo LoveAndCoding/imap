@@ -79,6 +79,8 @@ import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "
 import { AclFacetImpl } from "./facets/acl";
 import type { AclFacet } from "./facets/acl";
 import type { FacetDriver } from "./facets/driver";
+import { MetadataFacetImpl } from "./facets/metadata";
+import type { MetadataFacet } from "./facets/metadata";
 import { QuotaFacetImpl } from "./facets/quota";
 import type { QuotaFacet } from "./facets/quota";
 import { UrlauthFacetImpl } from "./facets/urlauth";
@@ -274,6 +276,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  comment, and `client/facets/quota.ts`'s header comment for the full
 	 *  rationale). */
 	private _acl: AclFacet | null = null;
+	/** Backing field for the lazy `metadata` facet property (spec §3.6,
+	 *  RFC 5464, M5.4) — same lazy-property pattern as `_quota` above; see
+	 *  `client/facets/quota.ts`'s header comment for the full rationale and
+	 *  `client/facets/metadata.ts`'s own header comment for the one
+	 *  METADATA-specific deviation (the METADATA/METADATA-SERVER dual gate). */
+	private _metadata: MetadataFacet | null = null;
 
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
@@ -855,6 +863,22 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			this._acl = new AclFacetImpl(this.facetDriver());
 		}
 		return this._acl;
+	}
+
+	/**
+	 * `metadata` (spec §3.6, RFC 5464) — M5.4, copying `quota`'s lazy-property
+	 * pattern verbatim (see that getter's own doc comment): a plain PROPERTY,
+	 * backed by `_metadata`, constructed on FIRST READ and cached thereafter,
+	 * never pre-built in the constructor. Construction itself has no side
+	 * effects and needs no capability check (the check lives in each of
+	 * `MetadataFacetImpl`'s methods) — safe to read even against a server
+	 * that will never advertise `METADATA`/`METADATA-SERVER` at all.
+	 */
+	public get metadata(): MetadataFacet {
+		if (!this._metadata) {
+			this._metadata = new MetadataFacetImpl(this.facetDriver());
+		}
+		return this._metadata;
 	}
 
 	/**

@@ -41,6 +41,8 @@
  * `toTypedResponseCode()` is the one place that builds these from the
  * parser's internal `TextCode` variants.
  */
+// M5.4 (METADATA, RFC 5464) adds the "METADATA" variant below -- LONGENTRIES/
+// MAXSIZE/TOOMANY/NOPRIVATE, the four sub-forms one wire keyword fronts.
 export type TypedResponseCode =
 	| { name: "CLOSED" }
 	| { name: "PERMANENTFLAGS"; flags: string[] }
@@ -98,9 +100,26 @@ export type TypedResponseCode =
 	 *  (unparenthesized) atom argument, verbatim; `null` when a
 	 *  non-conformant server omits it (I-6 tolerance -- never an error). This
 	 *  is the one client-observable duty RFC 5466 itself owns: filters are
-	 *  otherwise pure RFC 5464 SETMETADATA/GETMETADATA machinery (M5's
-	 *  METADATA facet), and `SearchCriteria` deliberately has no `filter` key
-	 *  yet (see `docs/compliance-adjudications.md`) -- shipping this resp-code
-	 *  variant does not depend on that larger decision. */
+	 *  otherwise pure RFC 5464 SETMETADATA/GETMETADATA machinery -- M5.4 adds
+	 *  both the METADATA facet and `SearchCriteria.filter` together (see
+	 *  `docs/compliance-adjudications.md`'s RFC5466 entry for the M4.14/M5.4
+	 *  scope history); this resp-code variant predates and never depended on
+	 *  that carry-forward landing. */
 	| { name: "UNDEFINED-FILTER"; filterName: string | null }
+	/** RFC 5464 §4.2.1/§4.3 (M5.4): a SINGLE wire keyword ("METADATA") fronts
+	 *  four distinct resp-text-code sub-forms -- `"METADATA" SP "LONGENTRIES"
+	 *  SP number` (tagged OK, GETMETADATA's MAXSIZE-truncation signal: the
+	 *  octet count of the largest requested value that exceeded MAXSIZE and
+	 *  was therefore omitted) and `"METADATA" SP ("MAXSIZE" SP number /
+	 *  "TOOMANY" / "NOPRIVATE")` (tagged NO, SETMETADATA failure reasons --
+	 *  value too big / too many annotations / private annotations
+	 *  unsupported on this mailbox). `name` alone can't discriminate these
+	 *  (all four share it), so `subKind` is the real tag; `value` carries the
+	 *  numeric argument for LONGENTRIES/MAXSIZE and stays `null` for the
+	 *  argument-less TOOMANY/NOPRIVATE forms -- never fabricated (I-6). */
+	| {
+			name: "METADATA";
+			subKind: "LONGENTRIES" | "MAXSIZE" | "TOOMANY" | "NOPRIVATE";
+			value: number | null;
+	  }
 	| { name: string; args: string | null };

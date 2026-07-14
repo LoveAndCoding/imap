@@ -227,16 +227,33 @@ function dateTimeText(d: Date): string {
  * non-synchronizing only up to `LITERAL_MINUS_CEILING` octets, synchronizing
  * above it; neither advertised → always synchronizing. LITERAL+ is checked
  * first, so a server advertising both wins on the unconditional form.
+ *
+ * M5.4 fix: RFC 7888 (LITERAL-) defines NO wire-level suffix of its own — a
+ * LITERAL- non-synchronizing literal uses the EXACT SAME `"{" number "+" "}"`
+ * form RFC 7888 (originally RFC 2088, LITERAL+) already defines, differing
+ * from LITERAL+ only in the 4096-octet ceiling above which LITERAL- falls
+ * back to the synchronizing form. This function previously returned a
+ * literal `"-"` suffix for the LITERAL- branch, which got spliced verbatim
+ * into the wire bytes by `emitLiteral()` below (`` `{${data.length}${suffix}}` ``)
+ * — producing a malformed `{n-}` announcement no conformant server (or this
+ * suite's own scripted-server harness, whose `LITERAL_RE` only ever matched
+ * `{n}`/`{n+}`) recognizes as a literal at all. Caught by RFC5466-3.2-1's
+ * rev2 leg (M5.4, FILTERS' UTF-8-value duty forces a non-quotable literal
+ * under a LITERAL- profile) — this is a live protocol-correctness bug for
+ * ANY command emitting an 8-bit/oversized-quotable value under IMAP4rev2
+ * (LITERAL- is a mandatory rev2-core baseline, RFC 9051 §4.3), not scoped to
+ * METADATA/FILTERS, so the fix lives here rather than being special-cased in
+ * either family's command classes.
  */
 function pickLiteralForm(
 	byteLength: number,
 	has: WriterCapabilityProbe,
-): { sync: boolean; suffix: "" | "+" | "-" } {
+): { sync: boolean; suffix: "" | "+" } {
 	if (has("LITERAL+")) {
 		return { sync: false, suffix: "+" };
 	}
 	if (has("LITERAL-") && byteLength <= LITERAL_MINUS_CEILING) {
-		return { sync: false, suffix: "-" };
+		return { sync: false, suffix: "+" };
 	}
 	return { sync: true, suffix: "" };
 }

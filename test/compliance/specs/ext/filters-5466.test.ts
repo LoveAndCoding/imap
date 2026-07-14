@@ -11,17 +11,21 @@
  * Testable catalog ids covered here (catalog/ext/rfc5466.ts; all dual-profile —
  * FILTERS is standalone in rev2):
  *
- *   RFC5466-3.1-1   FILTER <filter_name> search-key wire form (self-act.)
+ *   RFC5466-3.1-1   FILTER <filter_name> search-key wire form.
+ *                     *** REAL as of M5.4 (SearchCriteria.filter) — PASS ***
  *   RFC5466-3.1-2   Accept tagged NO [UNDEFINED-FILTER <name>].
  *                     *** REAL — split legs; both PASS (see PROBE OUTCOME) ***
  *   RFC5466-3.1-3   MUST NOT pair FILTER with an explicit CHARSET other than
- *                   UTF-8/US-ASCII (self-act. negative guard)
- *   RFC5466-3.2-1   Stored filter search-key values MUST be UTF-8 (self-act.)
+ *                   UTF-8/US-ASCII (negative guard; enforced client-side by
+ *                   `assertFilterCharsetCompatible()` as of M5.4)
+ *   RFC5466-3.2-1   Stored filter search-key values MUST be UTF-8.
+ *                     *** REAL as of M5.4 (metadata.set()) — PASS ***
  *   RFC5466-3.2-2   Define/modify a filter via SETMETADATA "" on the reserved
- *                   /private|/shared/filters/values/<name> entries (self-act.)
+ *                   /private|/shared/filters/values/<name> entries.
+ *                     *** REAL as of M5.4 (metadata.set()) — PASS ***
  *   RFC5466-4-1     filter-name grammar (1*ATOM-CHAR except "/") at BOTH
- *                   emission sites: FILTER argument + entry-name segment
- *                   (self-act.)
+ *                   emission sites: FILTER argument + entry-name segment.
+ *                     *** REAL as of M5.4 — PASS ***
  *
  * Untestable ids NOT cited (per catalog testability tags):
  *   RFC5466-3-1 (capability-inventory: FILTERS gate), RFC5466-3.2-3
@@ -71,13 +75,15 @@
  *    SDK surface used to render it through — registry-coverage.ts's note is
  *    updated to match (see `docs/compliance-adjudications.md` for the
  *    SearchCriteria.filter deferral this milestone also records, option (b)).
- *  - Command-emission duties have no implemented surface: driver.search()/
- *    setmetadata() throw NotImplementedError → honest "unimplemented" with the
- *    exact wire form pinned. driver.login()/select() are deliberately un-caught
- *    in the negative-guard test so it cannot pass vacuously on inability.
- *    These four rows (RFC5466-3.1-1, RFC5466-3.2-1, RFC5466-3.2-2,
- *    RFC5466-4-1) carry forward to M5 alongside the METADATA facet and
- *    SearchCriteria.filter — see docs/compliance-adjudications.md.
+ *  - Command-emission duties: REAL as of M5.4. `SearchCriteria.filter`
+ *    (`commands/search-criteria.ts`, gated on `FILTERS`) and the METADATA
+ *    facet's real `setmetadata()` land together, closing the four rows this
+ *    milestone carried forward from M4.14 (RFC5466-3.1-1, RFC5466-3.2-1,
+ *    RFC5466-3.2-2, RFC5466-4-1) — see docs/compliance-adjudications.md for
+ *    the M4.14/M5.4 scope history. Each test below now drives the real
+ *    `search()`/`setmetadata()` wire exchange and asserts on the exact
+ *    scripted wire form, rather than catching an expected
+ *    `NotImplementedError`.
  */
 import { expect } from "vitest";
 
@@ -241,18 +247,18 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-3.1-1 — FILTER <filter_name> search-key wire form (self-actualizing)
+// RFC5466-3.1-1 — FILTER <filter_name> search-key wire form
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.1 Syntax: FILTER <filter_name>; §4: search-key =/ "FILTER" SP filter-name.
 // The anchored matcher pins the SOLE legal form — the atom FILTER, one space,
 // the bare filter-name atom; a quoted name, parenthesized decoration, or any
-// other criterion alongside is rejected. search() throws → unimplemented.
+// other criterion alongside is rejected. REAL as of M5.4: driver.search()
+// delegates through `SearchCriteria.filter`.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH FILTER <filter_name> command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -269,7 +275,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search(["FILTER on-vacation"]);
 		await server.assertCompleted();
@@ -337,14 +343,13 @@ complianceTest(
 // §3.2: a filter is created/modified by storing a NON-NIL value in the
 // "/private/filters/values/<filter_name>" (or /shared/...) SERVER entry — the
 // mailbox argument is the empty string "". The anchored matcher rejects a
-// non-empty mailbox, a wrong hierarchy, or a NIL "definition". setmetadata()
-// throws → unimplemented.
+// non-empty mailbox, a wrong hierarchy, or a NIL "definition". REAL as of
+// M5.4: driver.setmetadata() delegates through the real METADATA facet.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'filter definition is SETMETADATA "" (/private/filters/values/<name> <non-NIL value>)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -366,7 +371,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.setmetadata("", [
 			{ entry: "/private/filters/values/on-vacation", value: "FLAGGED UNDELETED" },
 		]);
@@ -388,14 +393,15 @@ complianceTest(
 // §3.2: 'values of all search keys stored in these entries MUST be encoded in
 // UTF-8.' The consumer supplies a JS string containing non-ASCII (a Cyrillic
 // FROM term); the client chooses the octets it serializes — the emitted value
-// (quoted or literal) must be exactly the UTF-8 encoding of that string.
-// setmetadata() throws → unimplemented.
+// (quoted or literal) must be exactly the UTF-8 encoding of that string. REAL
+// as of M5.4: driver.setmetadata() delegates through the real METADATA facet
+// (`SetMetadataCommand.write()` -> `CommandWriter.nstring()`, which always
+// takes the quoted/literal — never bare-atom — path for a `string` value).
 complianceTest(
 	{
 		reqs: ["RFC5466-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "stored filter value octets are the UTF-8 encoding of the search criterion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -420,7 +426,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.setmetadata("", [
 			{ entry: "/private/filters/values/otpusk", value: criterion },
 		]);
@@ -446,21 +452,21 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-4-1 — filter-name grammar at both emission sites (self-actualizing)
+// RFC5466-4-1 — filter-name grammar at both emission sites
 // ═════════════════════════════════════════════════════════════════════════════
 // §4: filter-name = 1*<any ATOM-CHAR except "/"> — no '/', no UTF-8, none of
 // '(' ')' '{' SP CTL '%' '*' '"' '\' ']'. The grammar governs the FILTER
 // search-key argument AND the <filter_name> segment of the reserved METADATA
 // entry names (the '/' exclusion keeps the name a single hierarchy segment).
 // Driven with a legal name exercising the edge ATOM-CHARs (digits, '-', '.');
-// both emitted sites must carry it verbatim and grammar-clean. search()/
-// setmetadata() throw → unimplemented.
+// both emitted sites must carry it verbatim and grammar-clean. REAL as of
+// M5.4: `SearchCriteria.filter` (search-side) and `metadata.set()` (entry-name
+// side) both delegate through the real wire.
 complianceTest(
 	{
 		reqs: ["RFC5466-4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "emitted filter-name conforms to the filter-name grammar at both emission sites",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -487,7 +493,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search([`FILTER ${name}`]);
 		await driver.setmetadata("", [

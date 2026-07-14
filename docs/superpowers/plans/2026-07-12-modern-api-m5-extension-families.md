@@ -105,7 +105,7 @@ caveat. Concretely, at authoring time:
 | M5.1 SASL SCRAM+ANONYMOUS | IN FLIGHT (worktree, wave 1) |
 | M5.2 QUOTA facet (pattern-setter) | IN FLIGHT (worktree, wave 1) |
 | M5.3 ACL facet | wave 2 (copies M5.2's pattern) |
-| M5.4 METADATA + FILTERS carry-forward | wave 2 |
+| M5.4 METADATA + FILTERS carry-forward | DONE (worktree) |
 | M5.5 URLAUTH | wave 2 |
 | M5.6 REPLACE | wave 2 |
 | M5.7 SAVEDATE/PREVIEW/OBJECTID | wave 3 |

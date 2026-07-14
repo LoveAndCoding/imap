@@ -134,6 +134,41 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 			expect(written.length).toBe(0);
 			void connection; // unused in this synchronous-throw scenario
 		});
+
+		test("filter requires FILTERS (RFC 5466 §3.1, M5.4 carry-forward)", () => {
+			expect(
+				() => new SearchCommand({ filter: "on-vacation" }, undefined, capsProbe([])),
+			).toThrow(CapabilityError);
+			expect(
+				() =>
+					new SearchCommand({ filter: "on-vacation" }, undefined, capsProbe(["FILTERS"])),
+			).not.toThrow();
+		});
+
+		test("filter MUST NOT be paired with an explicit CHARSET other than UTF-8/US-ASCII (RFC5466-3.1-3)", () => {
+			const caps = capsProbe(["FILTERS"]);
+			expect(
+				() =>
+					new SearchCommand(
+						{ filter: "on-vacation" },
+						{ charset: "ISO-8859-1" },
+						caps,
+					),
+			).toThrow(RangeError);
+			// UTF-8/US-ASCII (case-insensitively) stay legal.
+			expect(
+				() =>
+					new SearchCommand({ filter: "on-vacation" }, { charset: "utf-8" }, caps),
+			).not.toThrow();
+			expect(
+				() =>
+					new SearchCommand(
+						{ filter: "on-vacation" },
+						{ charset: "US-ASCII" },
+						caps,
+					),
+			).not.toThrow();
+		});
 	});
 
 	describe("wire form", () => {

@@ -262,6 +262,11 @@ describe("CommandWriter", () => {
 		});
 
 		test("LITERAL- at/under 4096 -> non-synchronizing", () => {
+			// RFC 7888 (LITERAL-) defines no suffix of its own: the wire form is
+			// the identical "{n+}" non-synchronizing announcement LITERAL+
+			// already defines, just capped at 4096 octets (M5.4 fix — this
+			// previously (wrongly) asserted a literal "{4096-}" wire form, which
+			// no conformant server recognizes as a literal announcement at all).
 			const has: WriterCapabilityProbe = (cap) => cap === "LITERAL-";
 			const w = writer(has);
 			w.literal(Buffer.from("x".repeat(4096)));
@@ -269,7 +274,7 @@ describe("CommandWriter", () => {
 			expect(segs).toHaveLength(1);
 			expect(segs[0].awaitContinuation).toBe(false);
 			expect(segs[0].bytes.toString("binary")).toBe(
-				`{4096-}\r\n${"x".repeat(4096)}`,
+				`{4096+}\r\n${"x".repeat(4096)}`,
 			);
 		});
 

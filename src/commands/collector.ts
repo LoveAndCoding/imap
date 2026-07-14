@@ -172,6 +172,34 @@ export function toTypedResponseCode(
 				const raw = code.contents?.[0];
 				return { name: "UNDEFINED-FILTER", filterName: raw ?? null };
 			}
+			case "METADATA": {
+				// RFC 5464 §4.2.1/§4.3 (M5.4): one wire keyword ("METADATA")
+				// fronts four sub-forms -- "LONGENTRIES"/"MAXSIZE"/"TOOMANY"/
+				// "NOPRIVATE" -- distinguished by `contents[0]`, with an
+				// optional numeric argument in `contents[1]` for the first two.
+				// Same bare-argument preservation `AtomTextCode` already gives
+				// UNDEFINED-FILTER above.
+				const sub = code.contents?.[0]?.toUpperCase();
+				if (
+					sub === "LONGENTRIES" ||
+					sub === "MAXSIZE" ||
+					sub === "TOOMANY" ||
+					sub === "NOPRIVATE"
+				) {
+					const raw = code.contents?.[1];
+					return {
+						name: "METADATA",
+						subKind: sub,
+						value: raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null,
+					};
+				}
+				// Unrecognized "METADATA ..." shape from a non-conformant
+				// server: fall back to the open form rather than guess (I-6).
+				return {
+					name,
+					args: code.contents && code.contents.length ? code.contents.join(" ") : null,
+				};
+			}
 			default:
 				return {
 					name,

@@ -164,6 +164,20 @@ export type {
 export type { AclFacet } from "./client/facets/acl";
 export type { AclEntry, AclResult } from "./commands/acl/get-acl";
 export type { ListRightsResult } from "./commands/acl/list-rights";
+// METADATA (RFC 5464, spec §3.6, M5.4): `ImapClient.metadata`'s public facet
+// surface. `MetadataFacet` is the interface `client.metadata` is typed as;
+// `MetadataResult`/`MetadataEntryResult`/`GetMetadataOptions` are
+// GETMETADATA's result/entry/options shapes; `MetadataSetEntry` is
+// SETMETADATA's per-entry argument shape (`value: null` removes the entry).
+// FILTERS (RFC 5466) rides this same facet — no separate type surface of its
+// own — see `client/facets/metadata.ts`'s header comment.
+export type { MetadataFacet } from "./client/facets/metadata";
+export type {
+	GetMetadataOptions,
+	MetadataEntryResult,
+	MetadataResult,
+} from "./commands/metadata/get-metadata";
+export type { MetadataSetEntry } from "./commands/metadata/set-metadata";
 
 // Error hierarchy (spec §4).
 export {
