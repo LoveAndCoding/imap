@@ -97,11 +97,23 @@ between closes; last updated: M3 CLOSED.)*
   ratchet baseline is ALWAYS the last committed milestone
   snapshot plus deltas noted in commit messages; measure per-row, never by
   totals (totals mask offsetting flips — this bit us once in M0.5).
-- **Spend-limit kills:** recurring; latest wave reported "monthly spend
-  limit" (not the rolling-window message). Resume protocol unchanged
-  (SendMessage with last-narration context); user confirmed limits reset on
-  a rolling window and asked only that recurrences be raised, which has
-  been done.
+- **Spend-limit kills:** recurring and ESCALATED mid-M5: an entire
+  8-agent wave (M5.7/M5.8/M5.10/M5.11/M5.12/M5.13/M5.15/CONTEXT) was
+  killed simultaneously by the MONTHLY limit, and immediate resumes died
+  instantly with the same error (limit exhausted, not a rolling blip).
+  Raised to the user. Resume protocol once the limit clears: SendMessage
+  each agent id with its last-narration line (recorded in the session
+  task outputs); each worktree preserves partial work. Mid-M5 in-flight
+  inventory at the pause: M5.15 (was reading untagged.ts for the
+  off-by-one), M5.11 (had just reset its stale worktree), CONTEXT
+  carry-forward (reading contract sources), M5.7 (checking
+  buildFetchedMessage coverage), M5.8 (mid-edit inserting
+  addGmailLabels into mailbox.ts — its worktree has uncommitted partial
+  edits), M5.10 (reading client.ts disconnect handler), M5.12 (reading
+  the plan section), M5.13 (reading spec §5.2/§13). Landed and pushed
+  before the pause: M5.1/2/3/4/5/6/9/14 — live ledger 1054 pass / 6
+  adjudicated violations / problems [] at `d9b0046`. Remaining after
+  the in-flight eight: M5.16 close only.
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before
   deciding: finished-and-verified → commit; half-done → usually keep and
