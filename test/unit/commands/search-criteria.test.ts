@@ -205,6 +205,12 @@ describe("compileCriteria (spec §5.3)", () => {
 			expect(compile({ savedBefore: d }, caps)).toBe("SAVEDBEFORE 28-Dec-2014");
 		});
 
+		test("savedateSupported requires SAVEDATE and compiles to the bare atom", () => {
+			expect(() => compile({ savedateSupported: true }, NO_CAPS)).toThrow(CapabilityError);
+			const caps = capsOf("SAVEDATE");
+			expect(compile({ savedateSupported: true }, caps)).toBe("SAVEDATESUPPORTED");
+		});
+
 		test("gmail* keys require X-GM-EXT-1", () => {
 			expect(() => compile({ gmailRaw: "has:attachment" }, NO_CAPS)).toThrow(CapabilityError);
 			const caps = capsOf("X-GM-EXT-1");

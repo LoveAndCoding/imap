@@ -54,6 +54,13 @@ export interface SearchCriteria {
 	savedateOn?: Date;
 	savedateSince?: Date;
 	savedBefore?: Date;
+	/** RFC 8514 §5 ABNF `search-key =/ ... / "SAVEDATESUPPORTED"` — an
+	 *  argument-less probe distinct from the three date-taking `savedate*`
+	 *  keys above: it matches every message when the mailbox's underlying
+	 *  storage supports the save-date attribute, and none when it doesn't.
+	 *  Only `true` is meaningful (there is no negated wire form); compiles
+	 *  to the bare `SAVEDATESUPPORTED` atom. */
+	savedateSupported?: true;
 	gmailRaw?: string;
 	gmailThreadId?: string;
 	gmailMessageId?: string;
@@ -571,6 +578,10 @@ export function compileCriteria(
 				assertCap(caps, "SAVEDATE", "savedBefore", "RFC8514");
 				w.atom("SAVEDBEFORE");
 				w.date(value as Date);
+				break;
+			case "savedateSupported":
+				assertCap(caps, "SAVEDATE", "savedateSupported", "RFC8514");
+				w.atom("SAVEDATESUPPORTED");
 				break;
 			case "gmailRaw":
 				assertCap(caps, "X-GM-EXT-1", "gmailRaw", "X-GM-EXT-1");

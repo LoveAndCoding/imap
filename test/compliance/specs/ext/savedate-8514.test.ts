@@ -22,12 +22,13 @@
  *   search-key     =/ "SAVEDBEFORE" SP date / "SAVEDON" SP date /
  *                     "SAVEDSINCE" SP date / "SAVEDATESUPPORTED"
  *
- * REAL-SIGNAL STATUS (M3.5): `driver.fetch()` is wired to the real
+ * REAL-SIGNAL STATUS (M3.5/M5.7): `driver.fetch()` is wired to the real
  * `MailboxSession.fetch()` (spec §5.4) -- the two FETCH SAVEDATE entries
  * below are genuine wire-form/parse assertions. `SAVEDATESUPPORTED` (a
- * SEARCH key with no `SearchCriteria` field of its own) stays unimplemented.
- * The scripted server pins the exact FETCH data item and the four
- * SEARCH-key command forms so a wrong spelling is rejected. The FETCH
+ * SEARCH key with no date-taking field of its own) compiles via
+ * `SearchCriteria.savedateSupported: true` (M5.7 carry-forward from the
+ * M3.11 sweep). The scripted server pins the exact FETCH data item and the
+ * four SEARCH-key command forms so a wrong spelling is rejected. The FETCH
  * response legs additionally pin the
  * two-branch (date-time / NIL) response shape the client must accept.
  */
@@ -161,14 +162,14 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 // RFC8514-4.3-4 — SAVEDATESUPPORTED (argument-less probe)
 // ═════════════════════════════════════════════════════════════════════════════
 // SAVEDATESUPPORTED is a boolean probe of whether the mailbox storage supports the
-// save-date attribute; it takes NO date argument. driver.search() throws today →
-// unimplemented. The scripted server pins the bare atom with no argument.
+// save-date attribute; it takes NO date argument. `SearchCriteria.savedateSupported:
+// true` (M5.7) compiles to the bare atom. The scripted server pins the bare atom
+// with no argument.
 complianceTest(
 	{
 		reqs: ["RFC8514-4.3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH SAVEDATESUPPORTED command form (argument-less probe)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -185,9 +186,10 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
-		// SAVEDATESUPPORTED has no SearchCriteria field of its own (spec §5.3
-		// models only the three date-taking SAVED* keys) -- driver.search()
-		// throws NotImplementedError before touching the wire.
+		// SAVEDATESUPPORTED has no date argument (spec §5.3's other three
+		// SAVED* keys all take one) -- `SearchCriteria.savedateSupported: true`
+		// is the dedicated field for it (M5.7 carry-forward from the M3.11
+		// sweep).
 		await driver.search({ key: "SAVEDATESUPPORTED" });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");

@@ -108,7 +108,7 @@ caveat. Concretely, at authoring time:
 | M5.4 METADATA + FILTERS carry-forward | DONE (worktree) |
 | M5.5 URLAUTH | wave 2 |
 | M5.6 REPLACE | wave 2 |
-| M5.7 SAVEDATE/PREVIEW/OBJECTID | wave 3 |
+| M5.7 SAVEDATE/PREVIEW/OBJECTID | DONE (worktree — FETCH items + typed fields + 3 date SEARCH keys pre-existed from M3.5; this task landed the SAVEDATESUPPORTED search key and flipped RFC8514-4.3-4) |
 | M5.8 X-GM-EXT-1 | wave 3 |
 | M5.9 COMPRESS=DEFLATE | IN FLIGHT (worktree, wave 1 — riskiest) |
 | M5.10 UNAUTHENTICATE | wave 3 |

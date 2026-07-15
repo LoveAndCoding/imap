@@ -256,15 +256,16 @@ function mapAdHocHeaderField(field: string, value: string): Record<string, unkno
 
 /** RFC 8514's ad hoc `{ key: "SAVEDBEFORE" | "SAVEDON" | "SAVEDSINCE" |
  *  "SAVEDATESUPPORTED", date?: string }` convention (savedate-8514.test.ts).
- *  `SAVEDATESUPPORTED` has no `SearchCriteria` field of its own (spec §5.3
- *  models only the three date-taking SAVED* keys) -- it stays honestly
- *  unimplemented. */
+ *  `SAVEDATESUPPORTED` is the argument-less probe -- it maps to
+ *  `SearchCriteria.savedateSupported: true` (M5.7 carry-forward), not one of
+ *  the three date-taking SAVED* fields. */
 function fromAdHocSavedateKey(key: string, dateStr: unknown): Record<string, unknown> {
 	const date = typeof dateStr === "string" ? parseImapDateLiteral(dateStr) : undefined;
 	const upper = key.toUpperCase();
 	if (upper === "SAVEDBEFORE" && date) return { savedBefore: date };
 	if (upper === "SAVEDON" && date) return { savedateOn: date };
 	if (upper === "SAVEDSINCE" && date) return { savedateSince: date };
+	if (upper === "SAVEDATESUPPORTED") return { savedateSupported: true };
 	throw new NotImplementedError(`SEARCH key ${JSON.stringify(key)} (no SearchCriteria field for it)`);
 }
 
