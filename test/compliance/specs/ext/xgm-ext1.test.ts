@@ -35,21 +35,24 @@
  *    completed the handshake having received the literal X-GM-EXT-1 token
  *    (a client that choked on an unrecognized vendor token would fail the
  *    prelude itself).
- *  - FETCH-attribute duties (msgid-2/-3, thrid-2/-3, labels-4/-5): the
- *    driver's fetch()/uidFetch() verbs throw NotImplementedError
- *    unconditionally (per the catalog's REV2/REAL-SIGNAL notes elsewhere in
- *    this phase, there is no FetchOptions surface for vendor attributes
- *    either) — self-actualizing unimplemented; the scripted server pins the
+ *  - FETCH-attribute duties (msgid-2/-3, thrid-2/-3, labels-4/-5): REAL
+ *    SIGNAL as of M3.5 — driver.fetch()/uidFetch() translate the vendor
+ *    attribute names into `FetchItems.gmail` (`{ msgId/threadId/labels }`),
+ *    wired through the real FETCH engine; the scripted server pins the
  *    exact FETCH data-item wire form and the worked response shape from the
- *    vendor doc so the matcher is non-vacuous once implemented.
- *  - SEARCH-key duties (msgid-4, thrid-4, labels-8, raw-1/-2): driver.search()
- *    throws NotImplementedError → unimplemented; wire forms pinned from the
- *    vendor doc's worked examples.
- *  - STORE +X-GM-LABELS (labels-6): driver.store() throws NotImplementedError
- *    → unimplemented; wire form pinned to the ADD data-item convention
+ *    vendor doc so the matcher is non-vacuous.
+ *  - SEARCH-key duties (msgid-4, thrid-4, labels-8, raw-1/-2): REAL SIGNAL
+ *    as of M3.7 — driver.search() translates the vendor search keys into
+ *    `SearchCriteria.gmailMessageId/gmailThreadId/gmailLabels/gmailRaw`;
+ *    wire forms pinned from the vendor doc's worked examples.
+ *  - STORE +X-GM-LABELS (labels-6): REAL SIGNAL as of M5.8 — driver.store()
+ *    dispatches `"+X-GM-LABELS"`/`"-X-GM-LABELS"` to the real
+ *    `MailboxSession.addGmailLabels()`/`removeGmailLabels()` (or their
+ *    `.seq` mirrors); wire form pinned to the ADD data-item convention
  *    (`+X-GM-LABELS (label ...)`), the only form the vendor doc documents
  *    with a worked example (see catalog labels-7's honest gap note for the
- *    undocumented remove/replace/.SILENT forms, not asserted here).
+ *    undocumented remove/replace/.SILENT forms, not asserted here — and
+ *    accordingly not exposed by the public API either).
  *  - CREATE/RENAME/DELETE for label lifecycle (labels-2): these are the
  *    ALREADY standard RFC 3501/9051 commands, wired as of M2.3-M2.5; this
  *    entry only pins the X-GM-EXT-1-specific fact that no separate
@@ -290,17 +293,20 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// X-GM-EXT-1-labels-6 — labels added via STORE +X-GM-LABELS (self-actualizing)
+// X-GM-EXT-1-labels-6 — labels added via STORE +X-GM-LABELS (REAL SIGNAL, M5.8)
 // ═════════════════════════════════════════════════════════════════════════════
 // Vendor doc worked example: `a011 STORE 1 +X-GM-LABELS (foo)` producing
 // `* 1 FETCH (X-GM-LABELS (\Inbox \Sent Important "Muy Importante" foo))` /
-// `a011 OK STORE (Success)` — the ADD data-item form. store() throws today.
+// `a011 OK STORE (Success)` — the ADD data-item form. Wired as of M5.8:
+// driver.store("+X-GM-LABELS") dispatches to
+// MailboxSession.seq.addGmailLabels(), which STORE is selected-state-only
+// for — hence the selectExchange the pre-M5.8 (unimplemented-annotated)
+// version of this script did not need.
 complianceTest(
 	{
 		reqs: ["X-GM-EXT-1-labels-6"],
 		profiles: ["rev1", "rev2"],
 		title: "STORE 1 +X-GM-LABELS (foo) adds a label to the message's existing label set",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -308,6 +314,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(gmailCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("STORE", { args: /^1 \+X-GM-LABELS \(foo\)$/i })),
 				reply("OK STORE (Success)", [
 					'* 1 FETCH (X-GM-LABELS (\\Inbox \\Sent Important "Muy Importante" foo))',
@@ -315,8 +322,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.store("1", "+X-GM-LABELS", ["foo"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.store("1", "+X-GM-LABELS", ["foo"]);
 		await server.assertCompleted();
 		const store = server.commandLines.find((l) => l.verb === "STORE");
 		expect(store, "STORE must have been emitted").toBeDefined();

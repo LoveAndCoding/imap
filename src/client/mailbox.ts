@@ -8,6 +8,8 @@ import type { CopyResult } from "../commands/copy";
 import { ExpungeCommand } from "../commands/expunge";
 import { FetchCommand } from "../commands/fetch";
 import type { FetchCapabilityProbe } from "../commands/fetch";
+import { GmailLabelsStoreCommand } from "../commands/gmail-labels";
+import type { GmailLabelsOperation } from "../commands/gmail-labels";
 import { MoveCommand } from "../commands/move";
 import { NoopCommand } from "../commands/noop";
 import { SortCommand } from "../commands/message/sort";
@@ -273,6 +275,23 @@ export interface SequenceFacet {
 	 * forms to drive.
 	 */
 	replace(seq: number, mailbox: string, msg: AppendSource, opts?: AppendOptions): Promise<AppendResult>;
+	/**
+	 * Bare `STORE +X-GM-LABELS` (X-GM-EXT-1, spec §5b, M5.8) -- sequence-
+	 * number-grain mirror of `MailboxSession.addGmailLabels()`, `seqs`
+	 * interpreted as message sequence numbers rather than UIDs (bare `STORE`,
+	 * not `UID STORE`). The vendor doc's own worked example (catalog id
+	 * X-GM-EXT-1-labels-6) is itself a bare-STORE form (`a011 STORE 1
+	 * +X-GM-LABELS (foo)`) -- same "carry the bare-verb form too" rationale
+	 * `replace()` above documents for RFC 8508, applied here since STORE's
+	 * base grammar (which X-GM-LABELS reuses per the vendor doc's own STORE
+	 * cross-reference) has always supported both grains symmetrically, same
+	 * as `addFlags()`/`removeFlags()`.
+	 */
+	addGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void>;
+	/** Bare `STORE -X-GM-LABELS` (X-GM-EXT-1, spec §5b, M5.8) -- sequence-
+	 *  number-grain mirror of `MailboxSession.removeGmailLabels()`; see
+	 *  `addGmailLabels()`'s own doc comment above for the shared rationale. */
+	removeGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void>;
 }
 
 /**
@@ -1257,6 +1276,76 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, method);
 		const probe: StoreCapabilityProbe = { has: (cap) => session.driver.hasCapability(cap) };
 		return session.driver.run(new StoreCommand(kind === "uid", set, operation, flags, opts, probe));
+	}
+
+	// -- message ops: STORE +/-X-GM-LABELS (X-GM-EXT-1, spec §5b, M5.8) ------
+	// Not folded into `addFlags`/`removeFlags` above (spec §5b names these as
+	// their own methods) -- see `GmailLabelsStoreCommand`'s own doc comment
+	// (src/commands/gmail-labels.ts) for why labels get a dedicated command
+	// class rather than reusing `StoreCommand`'s `Flag[]`/`flagList()` path.
+
+	/** `+X-GM-LABELS` (X-GM-EXT-1, not an RFC -- see
+	 *  `test/compliance/catalog/ext/xgmext1.ts`, catalog id
+	 *  X-GM-EXT-1-labels-6). Adds `labels` to every message in `uids` without
+	 *  disturbing any label not named. Gated on the `X-GM-EXT-1` capability
+	 *  (I-9): `CapabilityError`, zero bytes written, when the server hasn't
+	 *  advertised it. */
+	public async addGmailLabels(uids: SequenceInput, labels: string[]): Promise<void> {
+		await MailboxSession.runGmailLabelsStore(this, "uid", uids, "add", labels);
+	}
+
+	/** `-X-GM-LABELS` (X-GM-EXT-1). Removes `labels` from every message in
+	 *  `uids` without disturbing any label not named. Same capability gate as
+	 *  `addGmailLabels()`. */
+	public async removeGmailLabels(uids: SequenceInput, labels: string[]): Promise<void> {
+		await MailboxSession.runGmailLabelsStore(this, "uid", uids, "remove", labels);
+	}
+
+	/**
+	 * Shared STORE/UID STORE +/-X-GM-LABELS implementation behind
+	 * `addGmailLabels`/`removeGmailLabels` and their `.seq` mirrors -- same
+	 * static-widening/facet-delegation shape as `runStore` above. Gated on
+	 * the `X-GM-EXT-1` capability (I-9) BEFORE `GmailLabelsStoreCommand` is
+	 * even constructed -- the explicit, RFC-annotated (vendor-doc-annotated,
+	 * here) precheck plus the command's own `capability = "X-GM-EXT-1"`
+	 * declaration is the same two-layer defense-in-depth pattern
+	 * `unselect()`/`move()`/`replace()` above all use. Rejects `StateError`
+	 * (zero bytes written) once this session is closed, same guard every
+	 * other STORE-family method uses. No `StoreModifiers`/`unchangedSince`
+	 * parameter -- spec §5b declares neither method taking one, so there is
+	 * no CONDSTORE surface to gate here the way `runStore` does.
+	 */
+	static async runGmailLabelsStore(
+		session: MailboxSession,
+		kind: "uid" | "seq",
+		input: SequenceInput,
+		operation: GmailLabelsOperation,
+		labels: string[],
+	): Promise<void> {
+		const method =
+			kind === "uid" ? "addGmailLabels/removeGmailLabels" : "seq.addGmailLabels/seq.removeGmailLabels";
+		session.assertOpen(method);
+		if (!session.driver.hasCapability("X-GM-EXT-1")) {
+			throw new CapabilityError(
+				`${method}() requires the X-GM-EXT-1 capability (Google's Gmail IMAP vendor ` +
+					"extension, not an RFC) -- the server has not advertised support for " +
+					"X-GM-LABELS",
+				{ capability: "X-GM-EXT-1", rfc: "n/a" },
+			);
+		}
+		const set = SequenceSet.from(input).withKind(kind);
+		// Same "$" SEARCHRES gate every other sequence-set-accepting entry
+		// point applies (see `assertSearchResSentinelAllowed()`'s own doc
+		// comment).
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			method,
+		);
+		// M4.13 (RFC 5465 §5.2/§5.3): the '*'-suppression/MSN-prohibition gate
+		// -- see `assertSequenceGrainSafeUnderNotify`'s own doc comment.
+		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, method);
+		await session.driver.run(new GmailLabelsStoreCommand(kind === "uid", set, operation, labels));
 	}
 
 	// -- message ops: COPY/MOVE (spec §5b, M3.8) ------------------------------
@@ -2278,6 +2367,22 @@ class SeqFacet implements SequenceFacet {
 	 *  interpreted as a message sequence number rather than a UID. */
 	replace(seq: number, mailbox: string, msg: AppendSource, opts?: AppendOptions): Promise<AppendResult> {
 		return MailboxSession.runReplace(this.session, seq, mailbox, msg, opts, "seq");
+	}
+
+	/** Sequence-number-grain `STORE +X-GM-LABELS` -- see
+	 *  `MailboxSession.addGmailLabels()`'s doc comment; identical behavior
+	 *  (bare `STORE`, not `UID STORE`), `seqs` interpreted as message
+	 *  sequence numbers rather than UIDs. */
+	addGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void> {
+		return MailboxSession.runGmailLabelsStore(this.session, "seq", seqs, "add", labels);
+	}
+
+	/** Sequence-number-grain `STORE -X-GM-LABELS` -- see
+	 *  `MailboxSession.removeGmailLabels()`'s doc comment; identical behavior
+	 *  (bare `STORE`, not `UID STORE`), `seqs` interpreted as message
+	 *  sequence numbers rather than UIDs. */
+	removeGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void> {
+		return MailboxSession.runGmailLabelsStore(this.session, "seq", seqs, "remove", labels);
 	}
 }
 

@@ -1344,10 +1344,18 @@ export class ComplianceDriver {
 	 * three public methods to call plus `{ silent }`; this is a driver-side
 	 * dispatch choice (I-4: no wire bytes are hand-assembled here), not a
 	 * re-implementation of STORE's wire form, which `StoreCommand` alone
-	 * produces. Any action string outside those six forms (e.g.
-	 * `"+X-GM-LABELS"`, RFC's Gmail-labels extension -- a later milestone's
-	 * `addGmailLabels`/`removeGmailLabels`) stays `NotImplementedError`,
-	 * unchanged from today.
+	 * produces.
+	 *
+	 * `"+X-GM-LABELS"`/`"-X-GM-LABELS"` (X-GM-EXT-1, Google's Gmail vendor
+	 * extension) are real as of M5.8 -- dispatched to
+	 * `MailboxSession.addGmailLabels()`/`removeGmailLabels()` (or their
+	 * `.seq` mirrors) the same way the FLAGS forms dispatch, resolving to an
+	 * empty `StoreResult` (those methods return `void`; there is no CONDSTORE
+	 * `MODIFIED` surface on them). Bare `"X-GM-LABELS"` (replace-all) and
+	 * `.SILENT`-suffixed X-GM-LABELS forms stay `NotImplementedError` -- the
+	 * vendor doc documents neither with a worked example (see catalog id
+	 * X-GM-EXT-1-labels-7's honest gap note) and the public API deliberately
+	 * exposes no method for them.
 	 *
 	 * `opts.unchangedSince` is real as of M4.5 -- the real
 	 * `MailboxSession.addFlags()`/`.removeFlags()`/`.setFlags()` (and their
@@ -1871,8 +1879,9 @@ export class ComplianceDriver {
 	 * Translates a STORE/UID STORE action string (`"+FLAGS"`, `"-FLAGS"`,
 	 * `"FLAGS"`, each optionally suffixed `".SILENT"`) into which of
 	 * `MailboxSession`'s three public STORE-family methods to call plus
-	 * whether `.SILENT` was requested. `null` for anything else (e.g.
-	 * `"+X-GM-LABELS"`) -- the caller keeps that `NotImplementedError`.
+	 * whether `.SILENT` was requested. `null` for anything else -- the
+	 * caller either dispatches it as a Gmail-labels action
+	 * (`parseGmailLabelsAction()` below) or keeps the `NotImplementedError`.
 	 */
 	private static parseStoreAction(
 		action: string,
@@ -1883,6 +1892,22 @@ export class ComplianceDriver {
 		}
 		const operation = match[1] === "+" ? "add" : match[1] === "-" ? "remove" : "replace";
 		return { operation, silent: match[2] !== undefined };
+	}
+
+	/**
+	 * Translates a STORE/UID STORE X-GM-LABELS action string (M5.8,
+	 * X-GM-EXT-1) into which of `MailboxSession`'s two public Gmail-labels
+	 * methods to call. ONLY the `+`/`-` prefixed, non-`.SILENT` forms map --
+	 * the only two the public API exposes (see `store()`'s own doc comment
+	 * for the bare/replace-all and `.SILENT` disposition); everything else is
+	 * `null`, keeping the caller's `NotImplementedError`.
+	 */
+	private static parseGmailLabelsAction(action: string): { operation: "add" | "remove" } | null {
+		const match = /^(\+|-)X-GM-LABELS$/i.exec(action);
+		if (!match) {
+			return null;
+		}
+		return { operation: match[1] === "+" ? "add" : "remove" };
 	}
 
 	/** Shared `store()`/`uidStore()` implementation -- see `store()`'s own
@@ -1896,7 +1921,21 @@ export class ComplianceDriver {
 	): Promise<StoreResult> {
 		const parsed = ComplianceDriver.parseStoreAction(action);
 		if (!parsed) {
-			throw new NotImplementedError(`STORE action ${action}`);
+			const gmail = ComplianceDriver.parseGmailLabelsAction(action);
+			if (!gmail) {
+				throw new NotImplementedError(`STORE action ${action}`);
+			}
+			const gmailSession = this.requireMailboxSession();
+			const gmailTarget = grain === "uid" ? gmailSession : gmailSession.seq;
+			if (gmail.operation === "add") {
+				await gmailTarget.addGmailLabels(seq, flags);
+			} else {
+				await gmailTarget.removeGmailLabels(seq, flags);
+			}
+			// addGmailLabels/removeGmailLabels return void (spec §5b) -- no
+			// CONDSTORE MODIFIED surface exists on them, so the driver's
+			// StoreResult is always empty here.
+			return {};
 		}
 		const session = this.requireMailboxSession();
 		const target = grain === "uid" ? session : session.seq;
