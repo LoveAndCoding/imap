@@ -77,6 +77,51 @@ describe("Parser tolerance backstop (spec §11.2, invariant I-6)", () => {
 		expect(untagged.type).toBe("SORT");
 		expect(untagged.content).toBeInstanceOf(UnknownContent);
 	});
+
+	// M5.15 fix, probed originally by M5.14: the numbered-response fallback's
+	// doc comment always claimed it surfaces "the atom keyword (canonicalized)
+	// as `type`" for an unrecognized "number SP atom ..." response, but the
+	// code read `contentTokens[1]` -- the SP token between the number and the
+	// keyword (never an atom) -- instead of the keyword at index 2, so `.type`
+	// came out "UNKNOWN" for EVERY not-otherwise-recognized numbered response.
+	// REVERT-VERIFIED: with `contentTokens[2]` reverted to `contentTokens[1]`
+	// (src/parser/structure/untagged.ts), this first test fails with
+	// `.type === "UNKNOWN"`; with the fix it passes.
+	test("an unrecognized NUMBERED response surfaces its keyword atom (canonicalized) as `type` (off-by-one fix)", () => {
+		const resp = parseLine(`* 3 FROBFETCH (FLAGS (\\Seen))${CRLF}`);
+
+		expect(resp).toBeInstanceOf(UntaggedResponse);
+		const untagged = resp as UntaggedResponse;
+		expect(untagged.type).toBe("FROBFETCH");
+		expect(untagged.content).toBeInstanceOf(UnknownContent);
+	});
+
+	test("an unrecognized numbered response with lowercase keyword canonicalizes to uppercase", () => {
+		const resp = parseLine(`* 12 frobfetch (x)${CRLF}`);
+		expect((resp as UntaggedResponse).type).toBe("FROBFETCH");
+	});
+
+	test("a numbered response with NO keyword atom after the number still labels UNKNOWN", () => {
+		// "number SP (" -- contentTokens[2] is an operator, not an atom; the
+		// fallback's atom check (not just its index) is what guards this.
+		const resp = parseLine(`* 12 (WAT)${CRLF}`);
+		expect(resp).toBeInstanceOf(UntaggedResponse);
+		const untagged = resp as UntaggedResponse;
+		expect(untagged.type).toBe("UNKNOWN");
+		expect(untagged.content).toBeInstanceOf(UnknownContent);
+	});
+
+	test("the stream survives an unrecognized numbered response (trailing EXISTS still parses)", () => {
+		const lexer = new Lexer();
+		const parser = new Parser();
+		const unknown = parser.parseTokens(
+			lexer.tokenize(`* 3 FROBFETCH (FLAGS (\\Seen))${CRLF}`),
+		);
+		const exists = parser.parseTokens(lexer.tokenize(`* 7 EXISTS${CRLF}`));
+
+		expect((unknown as UntaggedResponse).type).toBe("FROBFETCH");
+		expect((exists as UntaggedResponse).type).toBe("EXISTS");
+	});
 });
 
 describe("VANISHED (RFC 7162 §3.2.10/§7)", () => {

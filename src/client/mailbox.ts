@@ -206,9 +206,11 @@ export interface MailboxUpdatesOptions {
  * The sequence-number-grain mirror facet (spec §5b: "`MailboxSession.seq`
  * ... exposing the same method shapes over sequence numbers"; "unavailable
  * under UIDONLY, RFC 9586 -- every method rejects
- * CapabilityError('UIDONLY active')" -- that gate is not implemented yet,
- * RFC 9586 not being an M3 target; the shape is ready for it, same
- * inert-shape precedent as `StoreModifiers`). Created at M3.7 with its
+ * CapabilityError('UIDONLY active')" -- that gate is REAL as of M5.15
+ * (`assertUidOnlyInactive`, called by every shared `run*` static for the
+ * seq grain; note its documented POLARITY INVERSION: the one
+ * `CapabilityError` in this codebase thrown because a mode is ACTIVE
+ * rather than a capability absent). Created at M3.7 with its
  * first verb, `search()`; M3.6 added the STORE-family mirrors — per the M3
  * plan's shared design note, later message-op tasks (fetch/copy/move/
  * expunge) add their own methods here ADDITIVELY, in their own task, never
@@ -303,6 +305,52 @@ export interface SequenceFacet {
  * numbers IT already knows to be correct, rather than being handed results
  * for messages it never asked about.
  */
+/**
+ * M5.15 (RFC 9586, spec §5b): the UIDONLY lockout -- called by every shared
+ * `run*` static below for its sequence-number ("seq") grain, BEFORE any
+ * command object is constructed or byte written (I-9-style zero-bytes
+ * discipline). Once `ENABLE UIDONLY` has succeeded on this connection, "the
+ * client MUST NOT use message sequence numbers ... as arguments to any IMAP
+ * command for the remainder of the connection" (RFC9586-3-2) -- an
+ * IRREVERSIBLE per-connection mode: RFC 5161 has no un-ENABLE, so there is
+ * no path back to a working `seq` facet short of a new connection
+ * (`client.enabled` is cleared only by disconnect/UNAUTHENTICATE).
+ *
+ * ⚠️ POLARITY INVERSION -- read before pattern-matching this against every
+ * other `CapabilityError` in this codebase. Everywhere else (and in every
+ * prior milestone), `CapabilityError` means a capability is ABSENT: the
+ * server never advertised (or never confirmed ENABLE for) something a method
+ * needs. This is the ONE gate that rejects because a mode is ACTIVE --
+ * `driver.hasCapability("UIDONLY")` returning TRUE is the failure condition.
+ * The error class is reused for message-shape consistency (`{ capability,
+ * rfc }` telling the caller exactly which extension and document to look
+ * at), not because the trigger matches; a reader assuming "CapabilityError
+ * always means capability absent" will misdiagnose this one, which is why
+ * both this comment and `SeqFacet`'s class doc call it out explicitly.
+ *
+ * `driver.hasCapability` is `ImapClient.effectiveCapability()`, which gates
+ * UIDONLY on `_enabled` (genuinely ENABLE-confirmed), never on bare
+ * advertisement -- a server that merely ADVERTISES UIDONLY leaves the `seq`
+ * facet fully usable (RFC 9586 changes nothing until the client opts the
+ * connection in).
+ */
+function assertUidOnlyInactive(driver: MailboxSessionDriver, label: string): void {
+	if (!driver.hasCapability("UIDONLY")) {
+		return;
+	}
+	throw new CapabilityError(
+		`${label}: UIDONLY active -- ENABLE UIDONLY succeeded earlier on this ` +
+			"connection, so message-sequence-number commands are prohibited for " +
+			"the remainder of the connection (RFC 9586: the client MUST NOT use " +
+			"message sequence numbers as arguments to any IMAP command once " +
+			"UIDONLY is enabled; there is no un-ENABLE). Use the UID-grain " +
+			"MailboxSession method of the same name instead, or connect with an " +
+			'explicit `extensions` config that omits "UIDONLY" if this session ' +
+			"must keep its sequence-number facet",
+		{ capability: "UIDONLY", rfc: "RFC9586" },
+	);
+}
+
 function assertSequenceGrainSafeUnderNotify(
 	driver: MailboxSessionDriver,
 	set: SequenceSet,
@@ -1186,6 +1234,12 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const method =
 			kind === "uid" ? "addFlags/removeFlags/setFlags" : "seq.addFlags/seq.removeFlags/seq.setFlags";
 		session.assertOpen(method);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// see `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note).
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		if (opts?.unchangedSince !== undefined) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
 		}
@@ -1317,6 +1371,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<AppendResult> {
 		const label = kind === "uid" ? "replace" : "seq.replace";
 		session.assertOpen(label);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only,
+		// checked BEFORE the REPLACE capability gate (the mode-level refusal is
+		// the more fundamental diagnostic) -- see `assertUidOnlyInactive`'s own
+		// doc comment (incl. its polarity inversion note).
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${label}()`);
+		}
 		// RFC 8508 §3.1 (I-9): CapabilityError, zero bytes written, before
 		// `ReplaceCommand` is even constructed -- same explicit-precheck-plus-
 		// command's-own-declared-capability two-layer pattern `move()` above
@@ -1393,6 +1454,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		label: "expunge" | "seq.expunge",
 	): Promise<number[]> {
 		session.assertOpen(label);
+		// M5.15 (RFC 9586, spec §5b): the UIDONLY lockout covers seq.expunge()
+		// too -- spec §5b's rule is "EVERY method [on the seq facet] rejects",
+		// facet-wide, even though bare EXPUNGE itself carries no
+		// sequence-number argument for RFC9586-3-2 to wire-prohibit: the
+		// method's RESULT (the sequence numbers reported by classic untagged
+		// EXPUNGE responses) cannot exist on a UIDONLY connection (the server
+		// reports expunges via VANISHED, by UID, RFC9586-3-4), so resolving
+		// `[]` while messages genuinely vanished would be silently wrong.
+		// `MailboxSession.expunge()` (no-arg, UID-grain surface) intentionally
+		// stays usable -- same wire form, but its caller gets the vanished
+		// UIDs through the `vanished` event/updates lane. See
+		// `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note).
+		if (label === "seq.expunge") {
+			assertUidOnlyInactive(session.driver, `${label}()`);
+		}
 		if (input === undefined) {
 			return session.driver.run(new ExpungeCommand(undefined, false));
 		}
@@ -1444,6 +1521,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 				? "copy"
 				: "seq.copy";
 		session.assertOpen(label);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only,
+		// before the MOVE capability gate below (mode-level refusal first) --
+		// see `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note).
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${label}()`);
+		}
 		if (
 			isMove &&
 			!session.driver.hasCapability("MOVE") &&
@@ -1559,6 +1643,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<SearchResult> {
 		const method = uid ? "search" : "seq.search";
 		session.assertOpen(method);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only
+		// (bare SEARCH both accepts MSN arguments and RETURNS MSNs; UID SEARCH
+		// stays legal) -- see `assertUidOnlyInactive`'s own doc comment (incl.
+		// its polarity inversion note).
+		if (!uid) {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		if (criteriaHasModSeq(criteria)) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
 		}
@@ -1597,6 +1688,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<SearchResult> {
 		const method = uid ? "sort" : "seq.sort";
 		session.assertOpen(method);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// see `assertUidOnlyInactive`'s own doc comment.
+		if (!uid) {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		// CF3+SF1 (M4-phase-boundary review): `runSearch` already applied both
 		// of these guards; `runSort`/`runThread` previously applied neither,
 		// even though SORT/THREAD share the exact same `SearchCriteria`
@@ -1625,6 +1721,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<ThreadNode[]> {
 		const method = uid ? "thread" : "seq.thread";
 		session.assertOpen(method);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// see `assertUidOnlyInactive`'s own doc comment.
+		if (!uid) {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		// CF3+SF1 (M4-phase-boundary review): see `runSort`'s own comment above.
 		if (criteriaHasModSeq(criteria)) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
@@ -1703,6 +1804,15 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): AsyncIterable<FetchedMessage> {
 		const method = kind === "uid" ? "fetch" : "seq.fetch";
 		session.assertOpen(method);
+		// M5.15 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// thrown synchronously here (before the command exists, zero bytes,
+		// same timing as `assertOpen` above and every other guard in this
+		// method, rather than deferred to first iteration) -- see
+		// `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note).
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		if (opts?.vanished) {
 			if (kind !== "uid") {
 				throw new RangeError(
@@ -2083,10 +2193,17 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
  * additive, merge-friendly, matching `SequenceFacet`'s own doc comment.
  *
  * UIDONLY lockout (RFC 9586, spec §5b: "unavailable under UIDONLY -- every
- * method rejects `CapabilityError('UIDONLY active')`") is explicitly OUT OF
- * SCOPE here -- M5's job once `ENABLE UIDONLY` itself lands; this
- * milestone has no UIDONLY capability tracking to gate on yet, so no
- * method below performs that check.
+ * method rejects `CapabilityError('UIDONLY active')`") is REAL as of M5.15:
+ * every method below reaches a shared `MailboxSession.run*` static whose
+ * seq-grain branch calls `assertUidOnlyInactive()` before any command is
+ * constructed or byte written (zero-bytes discipline, I-9-style). Once
+ * `ENABLE UIDONLY` succeeds, this entire facet is dead for the remainder of
+ * the connection -- irreversibly (RFC 5161 has no un-ENABLE), across
+ * reselects too (`client.enabled` persists per-connection, cleared only by
+ * disconnect/UNAUTHENTICATE). ⚠️ Note the POLARITY INVERSION documented on
+ * `assertUidOnlyInactive` itself: this is the one `CapabilityError` in the
+ * codebase whose trigger is a capability being ACTIVE (ENABLEd), not
+ * absent -- do not "fix" it to match the usual absent-capability pattern.
  */
 class SeqFacet implements SequenceFacet {
 	constructor(private readonly session: MailboxSession) {}

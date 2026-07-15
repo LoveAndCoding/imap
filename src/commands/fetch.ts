@@ -1,8 +1,9 @@
 import type { BodyPartRequest, FetchedMessage, FetchItems, FetchRequest } from "../client/fetch";
 import { buildFetchedMessage, normalizeSectionSpec } from "../client/fetch";
 import { CapabilityError } from "../errors";
-import { Fetch } from "../parser";
+import { Fetch, UidFetch } from "../parser";
 import type { UntaggedResponse } from "../parser";
+import type { ClaimContext } from "./base";
 import { Command } from "./base";
 import type { ResponseCollector } from "./collector";
 import { CommandWriter } from "./writer";
@@ -513,6 +514,21 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	}
 
 	/**
+	 * RFC 9586 (UIDONLY, M5.15): once `ENABLE UIDONLY` has succeeded, the
+	 * server answers UID FETCH with untagged `UIDFETCH` responses instead of
+	 * `FETCH` (RFC9586-3-3) -- the default verb-derived claiming (type
+	 * "FETCH" only) would let those fall through to the generic live-update
+	 * lane and this command would yield zero messages. Claimed
+	 * unconditionally rather than UIDONLY-conditionally: a server that has
+	 * not had UIDONLY enabled never emits UIDFETCH at all (RFC 9586 defines
+	 * the response only under the enabled mode), so the extra type can never
+	 * misattribute anything on a non-UIDONLY connection.
+	 */
+	protected claims(resp: UntaggedResponse, _ctx: ClaimContext): boolean {
+		return resp.type === "FETCH" || resp.type === "UIDFETCH";
+	}
+
+	/**
 	 * Lazily consumes this command's own live collector (see this class's
 	 * doc comment) -- awaits `onCollectorReady()` first so it's safe to call
 	 * before this command has even been submitted to a queue (the M3.5
@@ -521,9 +537,15 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	 */
 	async *messages(): AsyncGenerator<FetchedMessage, void, void> {
 		await this.collectorReady;
-		for await (const resp of this.collector!.live("FETCH")) {
+		// Unfiltered live() (rather than live("FETCH")): `claims()` above
+		// already restricts this collector to FETCH and UIDFETCH responses,
+		// and both types are wanted here -- RFC 9586's UIDFETCH (a
+		// UIDONLY-enabled session) builds the same `FetchedMessage`, `uid`
+		// populated from its leading number, `seq: 0` (see
+		// `FetchedMessage.seq`'s doc comment).
+		for await (const resp of this.collector!.live()) {
 			const content = (resp as UntaggedResponse).content;
-			if (!(content instanceof Fetch)) {
+			if (!(content instanceof Fetch) && !(content instanceof UidFetch)) {
 				continue;
 			}
 			yield await buildFetchedMessage(content, {

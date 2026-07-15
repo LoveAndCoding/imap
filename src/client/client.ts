@@ -63,6 +63,7 @@ import {
 	RecentCount,
 	StatusResponse,
 	TaggedResponse,
+	UidFetch,
 	UnknownResponse,
 	UntaggedResponse,
 	VanishedResponse,
@@ -103,8 +104,7 @@ import type { ClientState } from "./state";
 /**
  * The "understood-enable set" for `extensions: "auto"` (spec §3.4): every
  * capability the client itself knows how to make use of once ENABLEd, that
- * "auto" is willing to turn on automatically without being asked. Grows as
- * later milestones land the extension itself -- `UIDONLY` (M5) is next.
+ * "auto" is willing to turn on automatically without being asked.
  * `IMAP4rev2` is deliberately excluded permanently: enabling it is a profile
  * decision the caller opts into explicitly (a future `profile:"rev2"`
  * config, not yet implemented), never something "auto" reaches for on its
@@ -122,8 +122,24 @@ import type { ClientState } from "./state";
  * neither. Landing this before M4.5/M4.6's capability-gated paths are
  * exercised is deliberate: it gives their "enabled" branches something real
  * to run against instead of only their "not available -> throws" branch.
+ *
+ * M5.15 adds `UIDONLY` (RFC 9586), completing the set spec §3.4 lists --
+ * settled at this task's kickoff against the plan's own file list ("
+ * `AUTO_ENABLE_SET` grows with `UIDONLY` per §3.4") and §3.4's explicit
+ * `UIDONLY` (M5) membership, i.e. it IS auto-enabled, not opt-in-only. This
+ * is a deliberate judgment call worth restating because UIDONLY is
+ * BEHAVIORAL in a way no other member is: once ENABLEd it irreversibly (for
+ * the connection) locks out the entire `MailboxSession.seq` facet (every
+ * method rejects `CapabilityError("UIDONLY active...")`, RFC9586-3-2) and
+ * the server switches to UIDFETCH/VANISHED response forms. That trade is
+ * safe to make automatically because the client genuinely understands the
+ * mode as of this task (UIDFETCH claiming/parsing, VANISHED-for-EXPUNGE,
+ * the seq lockout) and the UID-grain surface -- this library's settled
+ * default grain (spec §5b) -- is unaffected; a caller that needs the `seq`
+ * facet against a UIDONLY-advertising server opts out via an explicit
+ * `extensions` array (or `false`), exactly the escape hatch §3.4 defines.
  */
-const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT", "CONDSTORE", "QRESYNC"];
+const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT", "CONDSTORE", "QRESYNC", "UIDONLY"];
 
 const TLS_MODE_TO_CONNECTION: Record<TlsMode, TLSSetting> = {
 	on: TLSSetting.DEFAULT,
@@ -654,10 +670,21 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * now joins this `_enabled`-gated branch alongside UTF8=ACCEPT. Every
 	 * other capability name falls through to the ordinary advertisement
 	 * check unchanged.
+	 *
+	 * M5.15: `UIDONLY` (RFC 9586) is the third member of the `_enabled`-gated
+	 * branch, for the same "negotiated, never merely advertised" reason as
+	 * QRESYNC -- RFC 9586's entire behavioral shift (the server's
+	 * UIDFETCH/VANISHED response substitution, and the client's own
+	 * MUST-NOT-use-sequence-numbers duty that `MailboxSession.seq`'s lockout
+	 * enforces, RFC9586-3-2) binds only once the client has actually sent
+	 * `ENABLE UIDONLY` and had it confirmed. A server that merely ADVERTISES
+	 * UIDONLY has changed nothing about this session, and the `seq` facet
+	 * must keep working against it -- so the facet's guard reads THIS
+	 * enabled-gated probe, never the bare advertisement.
 	 */
 	private effectiveCapability(cap: string): boolean {
 		const upper = cap.toUpperCase();
-		if (upper === "UTF8=ACCEPT" || upper === "QRESYNC") {
+		if (upper === "UTF8=ACCEPT" || upper === "QRESYNC" || upper === "UIDONLY") {
 			return this._enabled.has(upper);
 		}
 		return this.capabilityRegistry.view.has(cap);
@@ -1579,6 +1606,29 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			MailboxSession.applyFlagsUpdate(session, {
 				seq: content.sequenceNumber,
 				...(typeof uid === "number" ? { uid } : {}),
+				flags: new Set(content.flags.flags.map((f) => f.name)),
+				...(content.modseq !== undefined
+					? {
+							modSeq:
+								typeof content.modseq === "bigint"
+									? content.modseq
+									: BigInt(content.modseq),
+						}
+					: {}),
+			});
+		} else if (content instanceof UidFetch && content.flags) {
+			// RFC 9586 (UIDONLY, M5.15): once UIDONLY is enabled the server's
+			// unsolicited flag-change reports arrive as `* <uid> UIDFETCH
+			// (FLAGS ...)` in place of numbered FETCH (RFC9586-3-3) -- routed
+			// through the SAME `flags` event/updates lane. No message sequence
+			// number exists on such a connection at all, so `seq` carries the
+			// documented `0` sentinel (never a valid MSN, which are 1-based --
+			// same convention as `FetchedMessage.seq`, see that field's doc
+			// comment) and `uid` is always present, taken from the response's
+			// own leading number.
+			MailboxSession.applyFlagsUpdate(session, {
+				seq: 0,
+				uid: content.uid,
 				flags: new Set(content.flags.flags.map((f) => f.name)),
 				...(content.modseq !== undefined
 					? {

@@ -92,6 +92,72 @@ function* fetchMatchIterator(tokens: LexerTokenList): Generator<FetchMatch> {
 	}
 }
 
+// RFC 9586 (UIDONLY, M5.15): uniqueid SP "UIDFETCH" SP msg-att -- the
+// UIDONLY replacement for the untagged FETCH response (once `ENABLE UIDONLY`
+// has succeeded, RFC9586-3-3: "the server MUST NOT send an untagged FETCH
+// response; instead it uses an untagged 'UIDFETCH' response"). Identical
+// msg-att body to plain FETCH, but the leading number is the message's
+// UNIQUE IDENTIFIER (UID), never a message sequence number -- which is the
+// entire point of the extension. Parsing is delegated to `Fetch`'s own
+// msg-att machinery (an internal, discarded `Fetch` instance) rather than
+// duplicating the matcher list; only the number's MEANING differs, so the
+// field here is named `uid` and there is deliberately NO `sequenceNumber`
+// field a consumer could misread as an MSN.
+export class UidFetch {
+	public static readonly commandType = "UIDFETCH";
+
+	public readonly body?: MessageBody;
+	public readonly date?: Date;
+	public readonly envelope?: Envelope;
+	public readonly extensions?: Map<string, ExtensionsSupported>;
+	public readonly flags?: FlagList;
+	public readonly modseq?: number | bigint;
+	public readonly size?: number | bigint;
+	public readonly binarySections?: BinarySection[];
+	public readonly binarySizes?: BinarySize[];
+
+	public static match(tokens: LexerTokenList) {
+		const isMatch = matchesFormat(tokens, [
+			{ type: TokenTypes.number },
+			{ sp: true },
+			{ type: TokenTypes.atom, value: "UIDFETCH" },
+			{ sp: true },
+			{ type: TokenTypes.operator, value: "(" },
+		]);
+
+		if (isMatch) {
+			return new UidFetch(
+				tokens[0].getTrueValue() as number,
+				tokens.slice(5, -1),
+			);
+		}
+
+		return null;
+	}
+
+	constructor(
+		public readonly uid: number,
+		innerTokens: LexerTokenList,
+	) {
+		// Reuse Fetch's msg-att accumulation wholesale (same grammar; RFC 9586
+		// changes only the meaning of the leading number). The throwaway
+		// instance's `sequenceNumber` (fed our UID purely to satisfy the
+		// constructor) is never read again. A UID data item inside the
+		// msg-att would be redundant here (the leading number IS the UID) and
+		// is not surfaced.
+		const parsed = new Fetch(uid, innerTokens);
+		this.body = parsed.body;
+		this.date = parsed.date;
+		this.envelope = parsed.envelope;
+		this.extensions = parsed.extensions;
+		this.flags = parsed.flags;
+		this.modseq = parsed.modseq;
+		this.size = parsed.size;
+		this.binarySections = parsed.binarySections;
+		this.binarySizes = parsed.binarySizes;
+	}
+}
+
 // From spec: nz-number SP "FETCH" SP msg-att
 export class Fetch {
 	public static readonly commandType = "FETCH";

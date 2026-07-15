@@ -24,31 +24,32 @@
  *                RFC3691-1-1/RFC4959-3-3.
  *   RFC9586-3-2  Once UIDONLY is enabled, the client MUST NOT use message
  *                sequence numbers in any command (the `seq` facet lockout).
- *                SELF-ACTUALIZING FAIL — but with a wrinkle: unlike RFC
- *                3691's precedent (where the driving verb itself didn't
- *                exist and threw NotImplementedError), every `seq.*` verb
- *                here already exists and works (M3) — driving it against an
- *                unscripted mock server would send real wire bytes and score
- *                a plain 'violation', not a clean 'unimplemented'. This test
- *                therefore establishes the real precondition (ENABLE UIDONLY
- *                genuinely succeeds, a mailbox is genuinely selected) and
- *                then explicitly throws the driver's own NotImplementedError
- *                documenting the missing gate — the same idiom already used
- *                by specs/rfc9051/2-protocol.test.ts for the $Junk/$NotJunk
- *                SHOULD-half — rather than calling the already-implemented,
- *                not-yet-gated `seq` method against a server that never
- *                scripted a reply for it.
+ *                *** REAL SIGNAL as of M5.15 *** — the lockout is
+ *                implemented (`assertUidOnlyInactive`, src/client/
+ *                mailbox.ts: every `MailboxSession.seq.*` method rejects
+ *                `CapabilityError("UIDONLY active ...")` once ENABLE UIDONLY
+ *                has succeeded, zero bytes written). This test now drives it
+ *                for real: ENABLE UIDONLY genuinely succeeds, a mailbox is
+ *                genuinely selected, then the driver's seq-grain verbs
+ *                (fetch/store/search/expunge — all wired to `.seq.*`) must
+ *                each reject with the UIDONLY CapabilityError and NOTHING
+ *                may reach the wire (no post-SELECT expectation is armed;
+ *                a transcript guard double-checks). The pre-M5.15
+ *                explicit-NotImplementedError idiom this test used is gone.
+ *                ⚠️ Polarity note: this is the codebase's one CapabilityError
+ *                thrown because a capability is ACTIVE, not absent.
  *   RFC9586-3-3  Once UIDONLY is enabled, untagged FETCH responses are
- *                replaced by UIDFETCH. *** REAL SIGNAL *** (tolerance/type-
- *                tagging half only, probed against this session's actual
- *                parser): `Fetch.match()` requires the literal atom 'FETCH',
- *                so 'UIDFETCH' falls to untagged.ts's own documented
- *                tolerance backstop (spec §11.2, invariant I-6) instead —
- *                the response is accepted without killing the parser
- *                stream, and `.type` is correctly canonicalized to
- *                'UIDFETCH'. Full structured msg-att typing is separate
- *                M5.15-scoped plumbing this row's own text does not itself
- *                require.
+ *                replaced by UIDFETCH. *** REAL SIGNAL, typed as of M5.15 ***
+ *                — `UidFetch` (src/parser/structure/fetch/index.ts) parses
+ *                `* <uid> UIDFETCH (msg-att)` typed (uid + the same msg-att
+ *                fields as Fetch), registered in untagged.ts's numbered
+ *                dispatch, so `.type === "UIDFETCH"` and the content is no
+ *                longer the UnknownContent tolerance backstop. (M5.15 also
+ *                fixed the fallback's own off-by-one — contentTokens[1], the
+ *                SP token, read where the keyword atom at [2] was meant — so
+ *                even un-typed numbered keywords now label correctly; see
+ *                test/unit/parser/tolerance.test.ts for the revert-verified
+ *                unit coverage.)
  *   RFC9586-3-4  Once UIDONLY is enabled, untagged EXPUNGE responses are
  *                replaced by VANISHED. *** REAL SIGNAL *** (probed):
  *                `VanishedResponse.match()` (src/parser/structure/
@@ -74,7 +75,6 @@
 import { expect } from "vitest";
 
 import type { ObservedEvent } from "../../driver/driver";
-import { NotImplementedError } from "../../driver/errors";
 import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -181,25 +181,25 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC9586-3-2 — seq facet lockout once UIDONLY is enabled (SELF-ACTUALIZING)
+// RFC9586-3-2 — seq facet lockout once UIDONLY is enabled (REAL SIGNAL, M5.15)
 // ═════════════════════════════════════════════════════════════════════════════
-// The real precondition (ENABLE UIDONLY succeeds, then a mailbox is selected)
-// is driven for real; the lockout itself (every `MailboxSession.seq.*` method
-// must reject `CapabilityError("UIDONLY active")` for the rest of the
-// connection, per mailbox.ts's own `SeqFacet` doc comment) has no
-// implementation at all yet — confirmed against this session's actual
-// source, not assumed. Calling an already-implemented (but not yet
-// UIDONLY-aware) `seq.*` verb here would send real wire bytes this script
-// never arms a reply for, scoring a plain 'violation' rather than a clean
-// 'unimplemented' — so this test stops short of that call and explicitly
-// documents the missing surface instead, exactly like
-// specs/rfc9051/2-protocol.test.ts does for its own SHOULD-half gap.
+// The full duty, driven for real end to end: ENABLE UIDONLY genuinely
+// succeeds against an advertising server, a mailbox is genuinely selected,
+// and then every driver seq-grain verb (each wired straight to
+// `MailboxSession.seq.*` per the bare-verb -> `.seq.<verb>` convention) must
+// reject `CapabilityError` — `capability: "UIDONLY"`, message naming
+// "UIDONLY active" per spec §5b's own wording — with ZERO bytes written:
+// nothing after the SELECT exchange is armed, so any wire byte is an
+// unscripted-command failure, and a transcript guard independently confirms
+// no FETCH/STORE/SEARCH/EXPUNGE line ever appeared. ⚠️ This is the one
+// POLARITY-INVERTED CapabilityError in the client (a mode being ACTIVE, not
+// a capability being absent, is the failure trigger — see
+// `assertUidOnlyInactive`'s doc comment, src/client/mailbox.ts).
 complianceTest(
 	{
 		reqs: ["RFC9586-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "once ENABLE UIDONLY succeeds, MailboxSession.seq.* must reject sequence-numbered commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -210,60 +210,69 @@ complianceTest(
 				expectLine(command("ENABLE", { args: /^UIDONLY$/i })),
 				reply("OK ENABLE completed", ["* ENABLED UIDONLY"]),
 				...selectExchange("INBOX", { exists: 5, profile: ctx.profile }),
+				// NOTHING further armed: the lockout must reject every call
+				// below before a single byte reaches the wire.
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		const enabled = await driver.enable(["UIDONLY"]);
 		await driver.select("INBOX");
+		expect(enabled, "the precondition: UIDONLY genuinely ENABLEd").toContain("UIDONLY");
+
+		const attempts: Array<[string, () => Promise<unknown>]> = [
+			["FETCH (seq grain)", () => driver.fetch("1:5", ["FLAGS"])],
+			["STORE (seq grain)", () => driver.store("1:3", "+FLAGS", ["\\Seen"])],
+			["SEARCH (seq grain)", () => driver.search(["ALL"])],
+			["EXPUNGE (seq-facet)", () => driver.expunge()],
+		];
+		for (const [label, run] of attempts) {
+			let caught: unknown;
+			try {
+				await run();
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught, `${label} must reject once UIDONLY is enabled (RFC 9586)`).toBeDefined();
+			const cap = caught as { name?: string; capability?: string; message?: string };
+			expect(cap.name, `${label}: rejection class`).toBe("CapabilityError");
+			expect(cap.capability, `${label}: CapabilityError.capability`).toBe("UIDONLY");
+			expect(
+				cap.message,
+				`${label}: spec §5b's own wording — CapabilityError("UIDONLY active")`,
+			).toMatch(/UIDONLY active/);
+		}
+
+		// Zero bytes for all four: the armed script is fully consumed (nothing
+		// was armed after SELECT) and no unscripted line arrived...
 		await server.assertCompleted();
-		// Real signal so far: UIDONLY genuinely enabled, a mailbox genuinely
-		// selected — both preconditions for the lockout duty are truly met.
-		expect(enabled).toContain("UIDONLY");
-		// The lockout itself does not exist: src/client/mailbox.ts's SeqFacet
-		// doc comment states outright "UIDONLY lockout ... is explicitly OUT
-		// OF SCOPE here -- M5's job once ENABLE UIDONLY itself lands ... no
-		// method below performs that check." M5.15 adds the gate (and, in the
-		// same task, is expected to extend this test to actually call
-		// e.g. `driver.fetch("1:5", ["FLAGS"])`/`driver.expunge()` and assert
-		// a `CapabilityError` with zero bytes written).
-		throw new NotImplementedError(
-			"MailboxSession.seq.* UIDONLY lockout (RFC 9586: reject " +
-				"CapabilityError('UIDONLY active') on every seq-grain verb once " +
-				"ENABLE UIDONLY has succeeded) -- not implemented yet (M5.15)",
-		);
+		// ...and belt-and-braces, no MSN-grain verb appears in the transcript.
+		expect(
+			server.transcript.clientLines(),
+			"no sequence-numbered command may reach the wire under UIDONLY",
+		).not.toMatch(/\b(FETCH|STORE|SEARCH|EXPUNGE)\b/i);
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC9586-3-3 — UIDFETCH accepted in lieu of FETCH (REAL SIGNAL, tolerance —
-// PROBED, with a genuine, unrelated `.type` mislabeling defect noted)
+// RFC9586-3-3 — UIDFETCH accepted in lieu of FETCH (REAL SIGNAL, typed —
+// M5.15)
 // ═════════════════════════════════════════════════════════════════════════════
-// `Fetch.match()` requires the literal atom "FETCH", so an untagged
-// "UIDFETCH" response cannot match it (or any other untagged-response
-// checker) — untagged.ts's own documented tolerance backstop (I-6) catches
-// it instead: the line is accepted (never a ParsingError that kills the
-// Transform stream), and its raw text is preserved via `UnknownContent`.
-// PROBED (not assumed): this session's own doc comment on that fallback
-// claims it "surface[s] the atom keyword (canonicalized) as `type`" for an
-// unrecognized numbered response, but a direct probe (Lexer+Parser against
-// `* 3 UIDFETCH (FLAGS (\Seen))`) shows `.type` actually comes out
-// "UNKNOWN", not "UIDFETCH" — `contentTokens[1]` (the index that branch
-// reads) is the SP token between the number and the atom, not the atom
-// itself (the atom is at index 2); an apparent off-by-one, pre-existing and
-// unrelated to UIDONLY (it would equally mislabel any other not-otherwise-
-// recognized numbered-response keyword). This test therefore does NOT
-// assert `.type === "UIDFETCH"` (that would be a new, avoidable violation);
-// it asserts what is genuinely true today — the response is accepted
-// without dying and its raw text is preserved and observable — and leaves
-// the `.type` defect as a documented finding for a future fix (flagged in
-// this task's report), not something this catalog row's own text requires
-// beyond "accept the response".
+// As of M5.15 the wire shape `* <uid> UIDFETCH (msg-att)` is parsed TYPED:
+// `UidFetch` (src/parser/structure/fetch/index.ts, registered in
+// untagged.ts's numbered dispatch) surfaces `.type === "UIDFETCH"` with the
+// leading number as `uid` and Fetch's own msg-att fields — no longer the
+// UnknownContent tolerance backstop this test had to settle for at M5.14
+// (whose numbered-response fallback ALSO mislabeled the keyword "UNKNOWN"
+// via a probed off-by-one, fixed by M5.15 and revert-verified in
+// test/unit/parser/tolerance.test.ts). The assertions here are accordingly
+// strengthened from "raw text preserved" to the typed outcome, plus the same
+// non-vacuous stream-survival check as before.
 complianceTest(
 	{
 		reqs: ["RFC9586-3-3"],
 		profiles: ["rev1", "rev2"],
-		title: "client accepts an untagged UIDFETCH response without dying (raw content preserved)",
+		title: "client accepts an untagged UIDFETCH response (typed, UID-addressed) without dying",
 		timeout: 5000,
 	},
 	async () => {
@@ -286,19 +295,21 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
-		// Do not key on `.type` (see the PROBED defect above) — look directly
-		// for an untaggedResponse event whose raw preserved text names UIDFETCH.
-		const seen = await pollFor(() =>
-			driver.events.some((e) => {
-				if (e.type !== "untaggedResponse") return false;
-				const detail = e.detail as { content?: { text?: string } } | undefined;
-				return typeof detail?.content?.text === "string" && /UIDFETCH/i.test(detail.content.text);
-			}),
+		const uidfetch = await waitForUntagged(driver, "UIDFETCH", { timeoutMs: 600 }).catch(
+			() => undefined,
 		);
 		expect(
-			seen,
-			"a '* 3 UIDFETCH (...)' response must be accepted (RFC 9586) without dying the parser",
-		).toBe(true);
+			uidfetch,
+			"a '* 3 UIDFETCH (...)' response must be accepted (RFC 9586) and labeled UIDFETCH",
+		).toBeDefined();
+		// The typed content carries the response's leading number as the UID
+		// (RFC 9586: the message-data number is the unique identifier, never
+		// an MSN) — asserted structurally, same one-level-of-nesting shape as
+		// RFC9586-3-4's VanishedResponse check below.
+		const detail = (uidfetch as ObservedEvent | undefined)?.detail as
+			| { content?: { uid?: number } }
+			| undefined;
+		expect(detail?.content?.uid, "the UIDFETCH number is surfaced as the UID").toBe(3);
 		// Non-vacuous stream-survival check: a trailing response after the
 		// UIDFETCH line must still surface.
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(

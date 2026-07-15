@@ -117,7 +117,24 @@ const rfc9586: CatalogModule = {
 		"proven (by the RFC5255-4.9-1/BADCOMPARATOR precedent) to parse a bare bracketed code " +
 		"without throwing and expose `.kind` correctly -- RFC9586-3-5 is REAL SIGNAL for that " +
 		"tolerance, corroborated by the ruby/net-imap ABNF fragment confirming the exact " +
-		"resp-text-code keyword spelling.",
+		"resp-text-code keyword spelling. " +
+		"[M5.15 UPDATE -- stale-annotation sweep on landing the verb: the implementation-state " +
+		"probe results above describe the tree AS OF M5.14 and are kept for the extraction " +
+		"record, but three of them are no longer current. (1) `AUTO_ENABLE_SET` now DOES " +
+		"include 'UIDONLY' (spec §3.4's listed membership, landed by M5.15), gated in " +
+		"`effectiveCapability()` on genuine ENABLE confirmation like QRESYNC/UTF8=ACCEPT. " +
+		"(2) The `seq` facet lockout is REAL: `assertUidOnlyInactive()` (src/client/mailbox.ts) " +
+		"makes every `seq.*` method reject CapabilityError('UIDONLY active ...', capability " +
+		"'UIDONLY', rfc 'RFC9586') with zero bytes once ENABLE UIDONLY succeeds -- RFC9586-3-2's " +
+		"spec test now drives it for real (the explicit-NotImplementedError idiom is gone). " +
+		"(3) The numbered-response fallback's off-by-one (contentTokens[1] vs [2]) is FIXED " +
+		"(revert-verified in test/unit/parser/tolerance.test.ts), and 'UIDFETCH' no longer even " +
+		"reaches that fallback: `UidFetch` (src/parser/structure/fetch/index.ts) parses " +
+		"'* <uid> UIDFETCH (msg-att)' typed, `FetchCommand` claims/consumes it for in-flight " +
+		"UID FETCH, and unsolicited UIDFETCH flag updates route through the session's " +
+		"live-update lane (uid populated, seq carrying the documented 0 sentinel). The " +
+		"RECONSTRUCTED-QUOTE caveat is NOT lifted by any of this -- re-verify every quote " +
+		"against the primary RFC 9586 text before M6, unchanged.]",
 	requirements: [
 		// ── Extension capability gate ────────────────────────────────────────────
 		{
@@ -195,7 +212,15 @@ const rfc9586: CatalogModule = {
 				"documenting the missing gate -- the same established idiom already used by " +
 				"specs/rfc9051/2-protocol.test.ts for the $Junk/$NotJunk SHOULD-half -- rather " +
 				"than calling the already-implemented, not-yet-gated seq method against an " +
-				"unscripted server.",
+				"unscripted server. " +
+				"[M5.15 UPDATE: the lockout is IMPLEMENTED and this row is REAL SIGNAL -- " +
+				"`assertUidOnlyInactive()` (src/client/mailbox.ts, called by every shared " +
+				"`MailboxSession.run*` static for the seq grain, before any byte) rejects " +
+				"CapabilityError('UIDONLY active ...') once ENABLE UIDONLY has succeeded; the " +
+				"spec test now genuinely ENABLEs, selects, drives seq-grain FETCH/STORE/SEARCH/" +
+				"EXPUNGE, and asserts the rejection plus zero wire bytes. Note the deliberate " +
+				"POLARITY INVERSION documented at the gate: this is the codebase's one " +
+				"CapabilityError triggered by a capability being ACTIVE rather than absent.]",
 		},
 
 		// ── UIDFETCH replaces FETCH ───────────────────────────────────────────────
@@ -242,7 +267,16 @@ const rfc9586: CatalogModule = {
 				"msg-att typing of a UIDFETCH response's own body (equivalent to `Fetch`'s typed " +
 				"fields) is NOT independently required by this row's own text beyond 'accept the " +
 				"response' and is left as M5.15-scoped plumbing, not a separate cataloged duty " +
-				"here.",
+				"here. " +
+				"[M5.15 UPDATE: that plumbing landed. `UidFetch` (src/parser/structure/fetch/" +
+				"index.ts) now parses the response TYPED (leading number surfaced as `uid`, " +
+				"same msg-att fields as Fetch), the probed off-by-one in the numbered-response " +
+				"fallback is fixed (revert-verified, test/unit/parser/tolerance.test.ts), " +
+				"`FetchCommand` claims and consumes UIDFETCH for an in-flight UID FETCH " +
+				"(FetchedMessage.uid set, seq carrying the documented 0 sentinel -- no MSN " +
+				"exists under UIDONLY), and unsolicited UIDFETCH flag updates route through " +
+				"`applyMailboxLiveUpdate` as `flags` events. The spec test's assertions were " +
+				"strengthened accordingly (type UIDFETCH + typed uid, stream survival).]",
 		},
 
 		// ── VANISHED replaces EXPUNGE ─────────────────────────────────────────────

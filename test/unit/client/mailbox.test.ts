@@ -480,7 +480,16 @@ describe("MailboxSession (spec §5b, M2.2 skeleton)", () => {
 
 		test("seq.copy(): runs the bare (seq-grain) 'COPY' verb", async () => {
 			const seenVerbs: string[] = [];
-			const driver = fakeDriver({ onRun: (cmd) => seenVerbs.push(cmd.verb) });
+			// M5.15: the fake driver's default `hasCapability: () => true` would
+			// answer true for "UIDONLY" too, tripping the RFC 9586 seq-facet
+			// lockout (`assertUidOnlyInactive`) that only a genuinely-ENABLEd
+			// UIDONLY session should see -- exclude it explicitly (the real
+			// driver's probe is `effectiveCapability()`, which gates UIDONLY on
+			// `_enabled`, so plain advertisement never trips it in production).
+			const driver = fakeDriver({
+				onRun: (cmd) => seenVerbs.push(cmd.verb),
+				hasCapability: (cap) => cap !== "UIDONLY",
+			});
 			const session = makeSession({}, driver);
 
 			await session.seq.copy("1:5", "Archive");

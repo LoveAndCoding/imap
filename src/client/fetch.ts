@@ -16,6 +16,7 @@ import {
 	Preview,
 	SaveDate,
 	ThreadId,
+	UidFetch,
 } from "../parser";
 
 /**
@@ -229,6 +230,14 @@ export interface FetchedPart {
 }
 
 export interface FetchedMessage {
+	/** Message sequence number -- with one documented exception: a message
+	 *  delivered via an RFC 9586 `UIDFETCH` response (a UIDONLY-enabled
+	 *  session, M5.15) has NO message sequence number at all (the extension's
+	 *  whole point is that MSNs cease to exist on the connection), and `seq`
+	 *  is `0` -- never a valid MSN, which are 1-based (nz-number) -- with
+	 *  `uid` always populated in that case. Chosen over widening this field
+	 *  to `number | undefined`, which would break every existing consumer's
+	 *  arithmetic for a case only UIDONLY sessions ever see. */
 	seq: number;
 	uid?: number;
 	flags?: ReadonlySet<string>;
@@ -498,7 +507,7 @@ export function normalizeSectionSpec(section: string): string {
  * what a conformant server echoes back for that same request.
  */
 export async function buildFetchedMessage(
-	fetch: Fetch,
+	fetch: Fetch | UidFetch,
 	opts: { maxInlineSize: number; forcedStreamSections: ReadonlySet<string> },
 ): Promise<FetchedMessageImpl> {
 	const parts = new Map<string, FetchedPartImpl>();
@@ -581,9 +590,18 @@ export async function buildFetchedMessage(
 		if (gmLabels) gmail.labels = gmLabels.labels.flags.map((f) => f.name);
 	}
 
+	// RFC 9586 (UIDONLY, M5.15): a UIDFETCH response's leading number IS the
+	// UID; no message sequence number exists on a UIDONLY-enabled connection
+	// at all, so `seq` carries the documented `0` sentinel (see
+	// `FetchedMessage.seq`'s own doc comment) rather than a fabricated MSN.
 	return new FetchedMessageImpl({
-		seq: fetch.sequenceNumber,
-		uid: fetch.uid?.id === "*" ? undefined : fetch.uid?.id,
+		seq: fetch instanceof UidFetch ? 0 : fetch.sequenceNumber,
+		uid:
+			fetch instanceof UidFetch
+				? fetch.uid
+				: fetch.uid?.id === "*"
+					? undefined
+					: fetch.uid?.id,
 		flags: fetch.flags ? new Set(fetch.flags.flags.map((f) => f.name)) : undefined,
 		envelope: fetch.envelope ? toEnvelope(fetch.envelope) : undefined,
 		internalDate: fetch.date,

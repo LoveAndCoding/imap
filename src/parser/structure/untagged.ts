@@ -6,7 +6,7 @@ import { AclResponse, ListRightsResponse, MyRightsResponse } from "./acl";
 import { CapabilityList } from "./capability";
 import { EnabledResponse } from "./enabled";
 import { Expunge } from "./expunge";
-import { Fetch } from "./fetch";
+import { Fetch, UidFetch } from "./fetch";
 import { IDResponse } from "./id";
 import * as MailboxData from "./mailbox";
 import { MetadataResponse } from "./metadata";
@@ -36,6 +36,7 @@ type ContentType =
 	| SortResponse
 	| StatusResponse
 	| ThreadResponse
+	| UidFetch
 	| UnknownContent
 	| UrlFetchResponse
 	| VanishedResponse
@@ -136,6 +137,11 @@ export default class UntaggedResponse {
 				MailboxData.ExistsCount,
 				Expunge,
 				Fetch,
+				// RFC 9586 (UIDONLY, M5.15): "* <uid> UIDFETCH (msg-att)" -- the
+				// UIDONLY replacement for the untagged FETCH response; the
+				// keyword atoms differ, so ordering relative to Fetch is
+				// irrelevant.
+				UidFetch,
 				MailboxData.RecentCount,
 			];
 			for (const check of toCheckList) {
@@ -157,10 +163,18 @@ export default class UntaggedResponse {
 				// (canonicalized) as `type` when present so a consumer can
 				// still distinguish future numbered response kinds even
 				// though the content itself is only tolerated raw data.
-				const secondToken = contentTokens[1];
+				//
+				// M5.15 fix (probed by M5.14): `contentTokens` here is the
+				// slice AFTER "* SP", so index 0 is the number, index 1 is the
+				// SP separator, and the keyword atom is at index 2 -- this
+				// branch previously read `contentTokens[1]` (the SP token,
+				// which is never an atom), so every not-otherwise-recognized
+				// numbered response was mislabeled "UNKNOWN" instead of
+				// surfacing its own keyword, contradicting the comment above.
+				const keywordToken = contentTokens[2];
 				this.type =
-					secondToken && secondToken.isType(TokenTypes.atom)
-						? ciCanonicalize(secondToken.getTrueValue())
+					keywordToken && keywordToken.isType(TokenTypes.atom)
+						? ciCanonicalize(keywordToken.getTrueValue())
 						: "UNKNOWN";
 			}
 		} else {
