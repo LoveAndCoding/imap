@@ -141,11 +141,19 @@ between closes; last updated: M3 CLOSED.)*
   M6.3 early), 3-lens phase review (7 findings fixed with revert
   verification — incl. a CRITICAL compress()/unauthenticate()
   hold-before-dispatch queue deadlock, fixed via the `holdOnDispatch`
-  seam), the 33-file stale-annotation sweep, snapshot. NEXT: M6 per
-  `docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md`
-  (M6.3 already done; SHOULD/MAY sweep, RFC 9586 quote re-verification,
-  typedoc, MIGRATION.md, README, CHANGELOG, 1.0.0, final review, THE
-  single PR into `modern-api` — open, never merge) (exit bar: every source family ≥85% MUST
+  seam), the 33-file stale-annotation sweep, snapshot. **M6: CLOSED — version 1.0.0, PR #18 OPEN.**
+  All M6 tasks executed (living table in the M6 plan doc; full ledger in
+  `docs/compliance-history/M6/NOTES.md`): M6.1 sweep (zero unexplained
+  rows; 11 satisfied-by-mechanism ledger entries), M6.2 all five
+  follow-ups fixed zero deferrals (incl. the injection-window close at
+  all three topology switch points), M6.4 typedoc (1029→0 warnings),
+  M6.5 MIGRATION.md, M6.6 README, M6.7 CHANGELOG + 1.0.0 + snapshot
+  (nine byte-identical runs), M6.8 three-lens final review (zero
+  criticals; files-allowlist fix — tarball 708→344 files). THE PR:
+  https://github.com/LoveAndCoding/imap/pull/18 into `modern-api`,
+  opened per the session decision and NEVER merged by automation —
+  merge is the user's call. Post-1.0 carry-forwards are itemized in the
+  M6 NOTES (exit bar: every source family ≥85% MUST
   AND zero unimplemented rows anywhere).
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before

@@ -44,7 +44,7 @@ gates):**
 | M6.6 README rewrite | DONE (📰 — 1194→645 lines; Legacy API section → MIGRATION.md pointer; samples compile-gated) |
 | M6.7 CHANGELOG + 1.0.0 + final snapshot | DONE (🎖️ — version 1.0.0; CHANGELOG; nine byte-identical runs; snapshot docs/compliance-history/M6/) |
 | M6.8 Final phase review | DONE (🔎 — zero criticals; 3 pre-PR fixes: files allowlist, I-9 ledger wording, quickstart UID note; 2 itemized hardening notes) |
-| M6.9 THE PR into modern-api | IN PROGRESS |
+| M6.9 THE PR into modern-api | DONE — PR #18 opened (https://github.com/LoveAndCoding/imap/pull/18), NOT merged (human review) |
 
 ## Status check (verified against the tree at doc-authoring time)
 
