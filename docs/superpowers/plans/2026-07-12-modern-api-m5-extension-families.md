@@ -102,23 +102,23 @@ caveat. Concretely, at authoring time:
 
 | Task | Status |
 |---|---|
-| M5.1 SASL SCRAM+ANONYMOUS | IN FLIGHT (worktree, wave 1) |
-| M5.2 QUOTA facet (pattern-setter) | IN FLIGHT (worktree, wave 1) |
-| M5.3 ACL facet | wave 2 (copies M5.2's pattern) |
-| M5.4 METADATA + FILTERS carry-forward | DONE (worktree) |
-| M5.5 URLAUTH | wave 2 |
-| M5.6 REPLACE | wave 2 |
+| M5.1 SASL SCRAM+ANONYMOUS | MERGED (incl. terminal-AuthError security fix) |
+| M5.2 QUOTA facet (pattern-setter) | MERGED (reference facet pattern) |
+| M5.3 ACL facet | MERGED |
+| M5.4 METADATA + FILTERS carry-forward | MERGED |
+| M5.5 URLAUTH | MERGED (incl. GENURLAUTH/URLFETCH parser handlers) |
+| M5.6 REPLACE | MERGED |
 | M5.7 SAVEDATE/PREVIEW/OBJECTID | DONE (worktree — FETCH items + typed fields + 3 date SEARCH keys pre-existed from M3.5; this task landed the SAVEDATESUPPORTED search key and flipped RFC8514-4.3-4) |
-| M5.8 X-GM-EXT-1 | wave 3 |
-| M5.9 COMPRESS=DEFLATE | IN FLIGHT (worktree, wave 1 — riskiest) |
-| M5.10 UNAUTHENTICATE | wave 3 |
-| M5.11 LANGUAGE/COMPARATOR | wave 3 |
-| M5.12 CONVERT | DONE (worktree) |
-| M5.13 Referrals + UTF8 completion | wave 4 (pure-rev2 codec revisit adjudication) |
-| M5.14 UIDONLY catalog extraction | IN FLIGHT (worktree, wave 1) |
-| M5.15 UIDONLY mode | wave 4 (needs M5.14) |
+| M5.8 X-GM-EXT-1 | MERGED |
+| M5.9 COMPRESS=DEFLATE | MERGED |
+| M5.10 UNAUTHENTICATE | IN FLIGHT (worktree) |
+| M5.11 LANGUAGE/COMPARATOR | MERGED |
+| M5.12 CONVERT | MERGED (commit 83b8bb7; 1112 pass) |
+| M5.13 Referrals + UTF8 completion | MERGED (commit ae83c6b; codec question SETTLED — no raw-UTF-8 arm) |
+| M5.14 UIDONLY catalog extraction | MERGED (RFC 9586 quotes model-knowledge-flagged for M6 re-verification) |
+| M5.15 UIDONLY mode | MERGED |
 | M5.16 milestone close | last |
-| M4 carry-forward: CONTEXT machinery (RFC 5267 4.x, RFC5465-7-1) + UID FETCH PARTIAL (RFC9394-3.3-1) | wave 4 (no original M5 task owns these — added at kickoff) |
+| M4 carry-forward: CONTEXT machinery (RFC 5267 4.x, RFC5465-7-1) + UID FETCH PARTIAL (RFC9394-3.3-1) | IN FLIGHT (worktree) |
 | M4 carry-forward: idle() through the shared refcounted driver | wave 4 or close |
 
 Kickoff validation: M3+M4 CLOSED (the doc was authored mid-M2 — every

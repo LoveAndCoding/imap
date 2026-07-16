@@ -114,6 +114,19 @@ between closes; last updated: M3 CLOSED.)*
   before the pause: M5.1/2/3/4/5/6/9/14 — live ledger 1054 pass / 6
   adjudicated violations / problems [] at `d9b0046`. Remaining after
   the in-flight eight: M5.16 close only.
+- **M5 progress update (post-resume, 2026-07-16):** the killed wave was
+  resumed and has largely LANDED. Merged since `d9b0046`: M5.7, M5.8,
+  M5.15 (+ the untagged.ts numbered-response off-by-one fix), M5.11,
+  M5.13 (`ae83c6b` — referrals + UTF8=ONLY hardening; pure-rev2 codec
+  question SETTLED permanently, no raw-UTF-8 arm), M5.12 (`83b8bb7` —
+  CONVERT both grains, +36 RFC5259 rows). Live ledger at `83b8bb7`:
+  **1112 pass / 6 adjudicated violations / 92 unimplemented / 429
+  untestable / problems []**; 1876 unit tests. Still in flight (two
+  worktrees): M5.10 UNAUTHENTICATE (agent a92b0459889a324bc) and the
+  CONTEXT-machinery carry-forward (agent a03e9adbdac64c5eb — RFC 5267
+  4.x rows, RFC5465-7-1, RFC9394-3.3-1 UID FETCH PARTIAL). After those
+  two merge: M5.16 close only (exit bar: every source family ≥85% MUST
+  AND zero unimplemented rows anywhere).
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before
   deciding: finished-and-verified → commit; half-done → usually keep and
