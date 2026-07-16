@@ -123,7 +123,15 @@ parsing, sort/fetch gating logic.
   unreachable through the egress proxy at extraction time) — M6 must
   re-verify against the published RFC text. The spec lens re-checked
   them against model knowledge at this close and found no discrepancy,
-  but that is not a substitute for the primary source.
+  but that is not a substitute for the primary source. PARTIAL
+  third-party corroboration obtained at M6 kickoff via web-search
+  results (full-text fetches still 403 through the proxy): the core §3
+  duties — client MUST NOT use MSNs (including "*") in any command
+  arguments once UIDONLY is enabled; server MUST return tagged BAD with
+  the UIDREQUIRED response code; server MUST NOT return MSNs in
+  responses — match the catalog extraction and the M5.15
+  implementation. Exact-quote verification of the remaining per-row
+  citations still pending a reachable full text.
 - Pre-existing tickets (unchanged): `mergeIn` bug, whole-message
   `BODY[]` streaming gap over real sockets, below-threshold multi-line
   literal over a real socket, `driver.test.ts` environment failures,
