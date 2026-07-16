@@ -79,13 +79,23 @@ const rfc5267: CatalogModule = {
 		"SHOULD-unique-with-server-MUST-accept-reuse (RFC9051-2.2.1 entries), making 5267's MUST " +
 		"NOT the stricter, still-operative binding for a rev2 client that uses UPDATE. " +
 		"REAL PARSE SURFACE: src/parser/structure/mailbox/search.ts ExtendedSearchResponse " +
-		"already parses * ESEARCH responses and tolerates UNKNOWN return-data pairs via a generic " +
-		"data Map (parenthesized values parse as nested complex values per RFC 4466 " +
+		"already parses * ESEARCH responses and tolerates UNKNOWN return-data pairs via " +
+		"ESearchReturnData (parenthesized values parse as nested complex values per RFC 4466 " +
 		"tagged-ext-val), so ADDTO/REMOVEFROM/PARTIAL acceptance entries are REAL-signal " +
-		"candidates (connectLow + waitForUntagged probes) — with one flagged hazard: the data Map " +
-		"is keyed by modifier name, so an ESEARCH carrying TWO ADDTO pairs (the RFC's 'ADDTO (1 " +
-		"2733) ADDTO (1 2731:2732)' example) may clobber the first pair, a genuine violation " +
-		"candidate for RFC5267-4.3.2-1. NOUPDATE lands in the src/parser/structure/text.code.ts " +
+		"candidates (connectLow + waitForUntagged probes). M6.2 RE-VERIFICATION: an earlier " +
+		"revision of this note flagged a hazard here (\"the data Map is keyed by modifier name, " +
+		"so an ESEARCH carrying TWO ADDTO pairs may clobber the first\") — stale as of this " +
+		"catalog's own inspection of the current source: ExtendedSearchResponse.data is " +
+		"ESearchReturnData, an explicitly array-of-pairs class (never a keyed Map) whose own " +
+		"doc comment names this exact RFC5267-4.3.2-1 duty as the reason it exists (\"A plain " +
+		"Map<string, V> can only ever hold one entry per key, so a second same-named item would " +
+		"silently clobber the first. This keeps every pair, in wire order...\"); `.entries()` " +
+		"is the documented multi-value read surface, `.get()` is last-value-wins for genuinely " +
+		"single-valued keys only (confirmed by an audit of every `.get()` call site in src/ -- " +
+		"exactly one, PARTIAL, itself capped at one-per-command by RFC5267-4.4-2/RFC9394-3.1-3, " +
+		"where last-value-wins is correct because it coincides with \"the only value\"). " +
+		"RFC5267-4.3.2-1 below is a genuine, non-lucky pass, not a violation candidate. " +
+		"NOUPDATE lands in the src/parser/structure/text.code.ts " +
 		"AtomTextCode fallback (same path as the BADURL/TOOBIG precedents) — REAL-signal " +
 		"candidate for RFC5267-4.3.1-1. UPDATE: command-emission entries are genuinely real as " +
 		"of M4.10 (driver.sort()/uidSort()) and M5 (CONTEXT-machinery carry-forward, " +
@@ -546,11 +556,14 @@ const rfc5267: CatalogModule = {
 				"the requested order.') is skipped as server-only. Adjudicated TESTABLE at the " +
 				"library API boundary (not the internal result list, which is RFC5267-4.3.3-1/" +
 				"4.3.4-1 territory): to process items in order the client must first SURFACE all " +
-				"items in wire order, and the existing parse surface has a concrete hazard — " +
-				"ExtendedSearchResponse stores return-data pairs in a Map keyed by modifier name, " +
-				"so the second ADDTO in the C01 example likely clobbers the first (lost data, " +
-				"order unrecoverable). Genuine REAL violation candidate via connectLow + " +
-				"waitForUntagged with the RFC's own two-ADDTO response.",
+				"items in wire order. M6.2 RE-VERIFICATION (this row's own prior note claimed a " +
+				"hazard here -- stale): ExtendedSearchResponse.data is ESearchReturnData, an " +
+				"array-of-pairs class that keeps every same-named item in wire order (never a " +
+				"keyed Map that would clobber a repeat), with `.entries()` as the documented " +
+				"multi-value read surface -- exactly what this duty requires, and exactly why " +
+				"that class exists (see its own doc comment, src/parser/structure/mailbox/" +
+				"search.ts). Genuine, non-lucky REAL pass via connectLow + waitForUntagged with " +
+				"the RFC's own two-ADDTO response: both items surface, in wire order.",
 		},
 		{
 			id: "RFC5267-4.3.2-2",

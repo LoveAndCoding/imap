@@ -511,14 +511,18 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5267-4.3.2-1 — process ADDTO items in order, incl. within ONE response
 // ═════════════════════════════════════════════════════════════════════════════
-// *** EXPECTED HONEST VIOLATION *** — the RFC's §4.3.3 C01 example carries TWO
-// ADDTO return data items in a single ESEARCH ('ADDTO (1 2733) ADDTO
-// (1 2731:2732)'), which only yields 2731:2735 when applied in order. To
-// process the items in order the client must first SURFACE both, in order.
-// ExtendedSearchResponse stores return-data pairs in a Map keyed by modifier
-// name, so the second ADDTO clobbers the first: one item is lost outright and
-// the order is unrecoverable. This test asserts both items are exposed and
-// honestly records the violation.
+// The RFC's §4.3.3 C01 example carries TWO ADDTO return data items in a
+// single ESEARCH ('ADDTO (1 2733) ADDTO (1 2731:2732)'), which only yields
+// 2731:2735 when applied in order. To process the items in order the client
+// must first SURFACE both, in order. M6.2 RE-VERIFICATION: an earlier
+// revision of this comment claimed ExtendedSearchResponse stores return-data
+// pairs in a Map keyed by modifier name (clobbering the second same-named
+// item) -- stale; ExtendedSearchResponse.data is ESearchReturnData, an
+// array-of-pairs class that keeps every same-named item in wire order
+// specifically to satisfy this duty (see its own doc comment,
+// src/parser/structure/mailbox/search.ts). This test asserts both items are
+// exposed, in order, and genuinely passes (both profiles) -- not an honestly
+// recorded violation.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.3.2-1"],

@@ -18,6 +18,7 @@ import { Command } from "../../../src/commands/base";
 import type { ResponseCollector } from "../../../src/commands/collector";
 import type { CommandWriter } from "../../../src/commands/writer";
 import { LoginCommand } from "../../../src/commands/login";
+import { StartTLSCommand } from "../../../src/commands/starttls";
 import {
 	AuthError,
 	CapabilityError,
@@ -679,6 +680,77 @@ describe("ImapClient (spec §3.2/§3.3)", () => {
 			});
 
 			await expect(client.run(cmd)).resolves.toBeUndefined();
+			await server.assertCompleted();
+		});
+	});
+
+	describe("StartTLSCommand.states (M6.2: verify the Layer-2 escape hatch genuinely consumes it)", () => {
+		// `Connection.starttls()`'s own internal, connect()-time choreography
+		// calls `Connection.runCommand()` directly (never `ImapClient.run()`),
+		// so it never consults `states` at all -- see `StartTLSCommand`'s own
+		// doc comment. The ONLY path that reads it is a caller submitting the
+		// command directly through the Layer-2 escape hatch,
+		// `client.run(new StartTLSCommand())` -- these two tests pin that path
+		// both ways (rejected outside `states`, reaches the wire inside it).
+		test("client.run(new StartTLSCommand()) from \"authenticated\" (outside states=[connecting,not-authenticated]): StateError, zero STARTTLS bytes", async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					// SASL-IR so AUTHENTICATE's inline-response wire form (below) is
+					// what the client actually sends -- without it the client uses
+					// the multi-step (continuation) form instead, which wouldn't
+					// match this single-step script's expectation.
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN SASL-IR"]),
+					expectLine(command("AUTHENTICATE", { args: "PLAIN AHUAcA==" })),
+					// The capability code on the tagged OK avoids a follow-up
+					// CAPABILITY round trip this single-step script doesn't expect.
+					reply(
+						"OK [CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN] authenticated",
+					),
+				],
+			]);
+			client = new ImapClient({
+				...baseConfig(server.port),
+				allowInsecureAuth: true,
+				auth: { user: "u", pass: "p" },
+			});
+			await client.connect();
+			expect(client.state).toBe("authenticated");
+			const before = server.transcript.clientLines();
+
+			await expect(client.run(new StartTLSCommand())).rejects.toBeInstanceOf(
+				StateError,
+			);
+
+			expect(server.transcript.clientLines()).toBe(before);
+			expect(server.transcript.clientLines()).not.toMatch(/\bSTARTTLS\b/);
+		});
+
+		test('client.run(new StartTLSCommand()) from "not-authenticated" (inside states): reaches the wire, not rejected by state', async () => {
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					send("* OK ready\r\n"),
+					expectLine(command("CAPABILITY", { args: null })),
+					reply("OK caps", ["* CAPABILITY IMAP4rev1 STARTTLS"]),
+					expectLine(command("STARTTLS", { args: null })),
+					reply("OK begin TLS negotiation"),
+				],
+			]);
+			client = new ImapClient(baseConfig(server.port));
+			await client.connect();
+			expect(client.state).toBe("not-authenticated");
+
+			// The escape hatch's own documented caveat: this resolves once the
+			// tagged OK arrives -- it does NOT perform the real handshake (that
+			// choreography lives entirely in `Connection.starttls()`, the
+			// internal connect()-time path). The assertion here is scoped to
+			// what this test is actually about: `states` does not block a
+			// legal-state submission, and the command's own bytes do reach the
+			// wire.
+			await expect(client.run(new StartTLSCommand())).resolves.toBe(true);
 			await server.assertCompleted();
 		});
 	});

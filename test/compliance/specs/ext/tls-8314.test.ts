@@ -62,6 +62,19 @@
  *   AND that the confidentiality-first STARTTLS sequence the duty presumes
  *   actually completes (ok === true) — both hold: the client never emits
  *   credentials in the clear, and it reaches the protected channel.
+ *
+ * M6.2 flake stabilization (M0 NOTES.md: "occasionally time out under
+ * full-suite parallel TLS load (driver default 3000 ms + backstop); each
+ * passes consistently in isolation"): every test here performs a REAL TLS
+ * handshake, and this environment's small core count (4) means full-suite
+ * parallel runs genuinely contend for CPU during the crypto handshake —
+ * `timeoutMs` (the driver's/client's own connect timeout) and each test's
+ * own vitest `timeout` (which must clear the driver's `timeoutMs + 1000`
+ * backstop window, see `driver.ts`'s `withConnectBackstop`) are raised
+ * uniformly here (2000-3000ms -> 6000ms; 5000ms -> 10000ms) to give a real
+ * handshake enough headroom under contention without masking a genuinely
+ * hung client (the backstop margin is preserved, just wider). This changes
+ * flake PROBABILITY, not any row's pass/violation outcome.
  */
 import { expect } from "vitest";
 
@@ -87,7 +100,7 @@ complianceTest(
 		profiles: ["rev1", "rev2"],
 		title:
 			"Implicit TLS on imaps port: client rejects a certificate whose identity does not match the server",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsImplicit: wrongHost });
@@ -98,7 +111,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: wrongHost.cert,
-			timeoutMs: 2000,
+			timeoutMs: 6000,
 		});
 		// A conformant client must refuse the connection.
 		expect(ok).toBe(false);
@@ -114,7 +127,7 @@ complianceTest(
 		reqs: ["RFC8314-5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client completes a handshake with a TLS 1.2-only server (TLS 1.2+ MUST)",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({
@@ -134,7 +147,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
@@ -153,7 +166,7 @@ complianceTest(
 		reqs: ["RFC8314-5.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client rejects an expired server certificate (PKIX certification-path validation)",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsImplicit: expired });
@@ -167,7 +180,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: expired.cert,
-			timeoutMs: 2000,
+			timeoutMs: 6000,
 		});
 		// A conformant client refuses an expired certificate.
 		expect(ok).toBe(false);
@@ -195,7 +208,7 @@ complianceTest(
 		profiles: ["rev1", "rev2"],
 		title:
 			"client sends no credential command before a minimum-confidentiality TLS session is established",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsUpgrade: localhost });
@@ -221,7 +234,7 @@ complianceTest(
 			port: server.port,
 			security: "starttls",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		// Non-vacuous witness of the prohibition, asserted first so it runs
 		// regardless of the STARTTLS outcome: no credential command may appear in

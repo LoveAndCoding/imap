@@ -149,6 +149,77 @@ async function startPartialInjectionServer(fixture: {
 	return { port: address.port, close: closeServer(server, sockets) };
 }
 
+/**
+ * M6.2 (the STARTTLS plaintext-injection residual M0's notes left open):
+ * greets, advertises STARTTLS, and — in the SAME `write()` call as the
+ * STARTTLS tagged OK — appends a COMPLETE injected line (a real trailing
+ * CRLF, unlike `startPartialInjectionServer`'s deliberately incomplete
+ * residue). `NewlineTranform.process()`'s loop splits and emits EVERY
+ * complete line it finds in one synchronous pass, so — absent the M6.2 fix
+ * — this line reaches the router as a live untagged response before the
+ * TLS handshake ever begins, regardless of how quickly `starttls()`'s own
+ * post-await discard runs; only a synchronous, tagged-response-time discard
+ * (`Connection.armBoundaryInjectionGuard`) can close this gap.
+ */
+async function startCompleteLineInjectionServer(fixture: {
+	key: Buffer;
+	cert: Buffer;
+}): Promise<{ port: number; close: () => Promise<void> }> {
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		let buffered = "";
+		socket.on("data", (chunk: Buffer) => {
+			buffered += chunk.toString("latin1");
+			let idx: number;
+			while ((idx = buffered.indexOf("\r\n")) >= 0) {
+				const line = buffered.slice(0, idx);
+				buffered = buffered.slice(idx + 2);
+				const tag = line.split(" ")[0];
+				if (/\bCAPABILITY\b/i.test(line)) {
+					socket.write(
+						`* CAPABILITY IMAP4rev1 STARTTLS\r\n${tag} OK caps\r\n`,
+					);
+				} else if (/\bSTARTTLS\b/i.test(line)) {
+					socket.removeAllListeners("data");
+					// Tagged OK + a COMPLETE injected line (real CRLF), BOTH in
+					// ONE write() — before any TLS handshake bytes.
+					socket.write(
+						`${tag} OK begin TLS negotiation\r\n* 999 EXISTS\r\n`,
+					);
+					const secured = new tls.TLSSocket(socket, {
+						isServer: true,
+						key: fixture.key,
+						cert: fixture.cert,
+					});
+					secured.on("error", () => undefined);
+					secured.once("secure", () => {
+						let postBuf = "";
+						secured.on("data", (postChunk: Buffer) => {
+							postBuf += postChunk.toString("latin1");
+							let pIdx: number;
+							while ((pIdx = postBuf.indexOf("\r\n")) >= 0) {
+								const pLine = postBuf.slice(0, pIdx);
+								postBuf = postBuf.slice(pIdx + 2);
+								const pTag = pLine.split(" ")[0];
+								if (/\bCAPABILITY\b/i.test(pLine)) {
+									secured.write(
+										`* CAPABILITY IMAP4rev1\r\n${pTag} OK done\r\n`,
+									);
+								}
+							}
+						});
+					});
+				}
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return { port: address.port, close: closeServer(server, sockets) };
+}
+
 describe("STARTTLS upgrade edge cases", () => {
 	let cleanup: (() => Promise<void>) | undefined;
 	let connection: Connection | undefined;
@@ -283,6 +354,43 @@ describe("STARTTLS upgrade edge cases", () => {
 			// The critical assertion: the buffered "* 999 EXI" residue must
 			// never have been reassembled with the post-handshake "STS\r\n"
 			// into a reconstructed "* 999 EXISTS" and surfaced as a response.
+			expect(
+				untaggedEvents.some(
+					(e) =>
+						JSON.stringify(e).includes("999") &&
+						JSON.stringify(e).includes("EXISTS"),
+				),
+			).toBe(false);
+		});
+	});
+
+	describe("M6.2: complete-line STARTTLS plaintext-injection residual (closes the gap MEDIUM-7 left open)", () => {
+		test("a COMPLETE line injected alongside the STARTTLS tagged OK, in the same TCP segment, is discarded before it can ever be parsed as a live response", async () => {
+			const server = await startCompleteLineInjectionServer(localhost);
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.STARTTLS,
+				tlsOptions: { ca: [localhost.cert] },
+				timeout: 2000,
+			});
+
+			const untaggedEvents: unknown[] = [];
+			connection.on("untaggedResponse", (resp) => untaggedEvents.push(resp));
+
+			const ok = await connection.connect();
+
+			// The connection must come up clean and secure — the injected line
+			// must not have corrupted the post-TLS CAPABILITY exchange.
+			expect(ok).toBe(true);
+			expect(connection.isSecure).toBe(true);
+			// The critical assertion: unlike the partial-residue case above, this
+			// injected line is a COMPLETE, well-formed "* 999 EXISTS\r\n" — before
+			// the M6.2 fix, `NewlineTranform.process()`'s synchronous loop would
+			// have already split, pushed, and routed it as a live untagged
+			// response before `starttls()`'s own (post-`await`) discard call ever
+			// ran. It must never surface as one.
 			expect(
 				untaggedEvents.some(
 					(e) =>

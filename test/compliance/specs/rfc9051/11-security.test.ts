@@ -300,12 +300,23 @@ complianceTest(
 // Both legs must complete: the Implicit-TLS leg over a real tls.createServer
 // listener, and the STARTTLS leg driving connection.ts's starttls() upgrade
 // to success (see RFC9051-6.2.1-* / RFC9051-11.1-7).
+//
+// M6.2 flake stabilization (M0 NOTES.md: this test, alongside ext/tls-8314,
+// "occasionally time[s] out under full-suite parallel TLS load ... each
+// passes consistently in isolation"): TWO real, sequential TLS handshakes in
+// one test doubles the exposure to CPU contention under full-suite parallel
+// load (this environment has only 4 cores) — `timeoutMs` for each leg and
+// the test's own vitest `timeout` are raised (3000ms -> 6000ms per leg;
+// 8000ms -> 16000ms overall, clearing two sequential `timeoutMs + 1000`
+// backstop windows, see `driver.ts`'s `withConnectBackstop`) to give real
+// handshakes headroom under contention without masking a genuinely hung
+// client. Changes flake PROBABILITY, not the row's pass outcome.
 complianceTest(
 	{
 		reqs: ["RFC9051-11.2-1"],
 		profiles: ["rev2"],
 		title: "client implements both Implicit TLS and STARTTLS negotiation (two-session pair)",
-		timeout: 8000,
+		timeout: 16000,
 	},
 	async () => {
 		// ── Leg 1: Implicit TLS ──
@@ -317,7 +328,7 @@ complianceTest(
 			port: implicitServer.port,
 			security: "implicit",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		// The Implicit-TLS code path must be reachable and succeed.
 		expect(implicitOk, "Implicit TLS leg must complete the handshake").toBe(true);
@@ -345,7 +356,7 @@ complianceTest(
 			port: starttlsServer.port,
 			security: "starttls",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		// The STARTTLS code path must also be reachable and succeed.
 		expect(starttlsOk, "STARTTLS leg must complete the upgrade").toBe(true);

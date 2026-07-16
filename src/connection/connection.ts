@@ -845,6 +845,61 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		return status;
 	}
 
+	/**
+	 * Complete-line STARTTLS/COMPRESS/UNAUTHENTICATE plaintext-injection
+	 * defense (M6.2 close-out; extends the MEDIUM-7 partial-line discard
+	 * below to the case M0's notes flagged as still open: "a complete
+	 * injected line in the same TCP segment as the tagged OK is parsed
+	 * before the upgrade code can intervene").
+	 *
+	 * The original MEDIUM-7 fix calls `processingPipeline.forceNewLine(false)`
+	 * AFTER `await`ing the negotiation command's settled promise — which is
+	 * exactly right for a genuinely PARTIAL residual line (bytes with no
+	 * trailing CRLF just sit in `pending` until discarded), but too late for
+	 * a COMPLETE injected line: `NewlineTranform.process()`'s `for (;;)` loop
+	 * splits and `emit("line", ...)`s every complete line it finds in
+	 * `pending` in one synchronous pass, and `.pipe()` delivers each pushed
+	 * line synchronously to the lexer/parser/router chain in flowing mode —
+	 * so by the time a Promise continuation (even a "the tagged response
+	 * just resolved" one) actually runs as a microtask, a second complete
+	 * line bundled into the same `data` event as the tagged OK has ALREADY
+	 * been tokenized, parsed, routed, and re-emitted as a live untagged
+	 * response. Awaiting is simply too late.
+	 *
+	 * `Router.routeTagged()` calls `this.host.emitTagged(resp)` (this
+	 * connection's synchronous `taggedResponse` EventEmitter, proven
+	 * synchronous by the existing MEDIUM-6 test,
+	 * `test/unit/connection/starttls-upgrade.test.ts`, which submits a NOOP
+	 * from inside a `taggedResponse` listener and observes it dispatch before
+	 * `starttls()`'s own `await` resumes) BEFORE it resolves the command's
+	 * tag-owner promise — and that whole call is still nested INSIDE the
+	 * very same synchronous call stack `NewlineTranform.process()`'s loop is
+	 * running (line -> lexer -> parser -> router -> this listener, all
+	 * synchronous `.emit()` calls). So a listener registered here that calls
+	 * `forceNewLine(false)` the INSTANT the matching tagged response is
+	 * routed clears `pending` before control ever returns to `process()`'s
+	 * loop for its next iteration — the injected second line's bytes are
+	 * gone before that loop gets a chance to split/emit them, not merely
+	 * discarded after the fact. This is the earliest hook this pipeline
+	 * exposes; matches `resp.tag.id` against `cmd.tag` so it only ever fires
+	 * for the exact isolated command it was armed for (I-1's exclusivity
+	 * means nothing else should be in flight regardless, but matching by tag
+	 * costs nothing and is the correct defense-in-depth posture, same
+	 * "narrow the defense to what evidence requires" discipline as the rest
+	 * of this file). Fires on OK **and** NO/BAD alike — a server that packs
+	 * injected bytes after a REFUSED STARTTLS/COMPRESS/UNAUTHENTICATE is
+	 * exactly as dangerous as one that does it after acceptance.
+	 */
+	private armBoundaryInjectionGuard(cmd: Command<unknown>): () => void {
+		const onTagged = (resp: TaggedResponse) => {
+			if (resp.tag.id === cmd.tag) {
+				this.processingPipeline.forceNewLine(false);
+			}
+		};
+		this.on("taggedResponse", onTagged);
+		return () => this.off("taggedResponse", onTagged);
+	}
+
 	protected async starttls(greeting: StatusResponse): Promise<boolean> {
 		// NOTE: this is invoked from connect() before `this.connected` is
 		// set (that assignment happens after this whole STARTTLS step, once
@@ -904,6 +959,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// zero behavior change here since empty-queue dispatch is already
 		// synchronous either way) so this is the ONE place in the codebase
 		// that ever calls `commandQueue.hold()` directly for this pattern.
+		// M6.2: armed BEFORE dispatch so it's registered no matter how soon
+		// the tagged response comes back — see the method's own doc comment
+		// for why this (not the post-await `forceNewLine(false)` MEDIUM-7
+		// originally relied on) is what actually closes the complete-line
+		// injection gap.
+		const disarmInjectionGuard = this.armBoundaryInjectionGuard(tlsCmd);
 		const negotiationResult = this.runCommand(tlsCmd, { holdOnDispatch: true });
 
 		let startNegotiation: boolean;
@@ -912,6 +973,8 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		} catch (err) {
 			this.commandQueue.release();
 			throw err;
+		} finally {
+			disarmInjectionGuard();
 		}
 
 		if (!startNegotiation) {
@@ -922,15 +985,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			return false;
 		}
 
-		// MEDIUM-7 (STARTTLS command-injection defense): the tagged OK for
-		// STARTTLS was just observed. Discard any buffered-but-not-yet-
-		// complete line sitting in the processing pipeline right now, before
-		// touching the socket at all — the same discard `onSocketClose` does
-		// for the same reason. A server that packs extra plaintext bytes into
-		// the same TCP segment as the tagged OK (the classic STARTTLS
-		// plaintext-injection shape) must never have that residue carried
-		// across the TLS boundary and misread as a post-handshake response.
-		this.processingPipeline.forceNewLine(false);
+		// MEDIUM-7 (STARTTLS command-injection defense) + M6.2's completion of
+		// it: `armBoundaryInjectionGuard` above already discarded any
+		// buffered residue — partial OR complete-line — the instant
+		// STARTTLS's own tagged OK was routed, before touching the socket at
+		// all. Nothing left to do here; `processingPipeline.pending` is
+		// already empty by this point.
 
 		// We already checked for `this.socket` above, so it must still be
 		// set here. Upgrade it in place through the ONE TLS policy module —
@@ -1042,6 +1102,9 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// until release() below (spec §6.1/I-1, RFC4978-3-1: "the client
 		// MUST NOT send any further commands until it has seen the result of
 		// COMPRESS") -- race-free regardless of what else is in flight.
+		// M6.2: same complete-line injection defense as starttls() -- armed
+		// before dispatch, see `armBoundaryInjectionGuard`'s doc comment.
+		const disarmInjectionGuard = this.armBoundaryInjectionGuard(compressCmd);
 		const negotiationResult = this.runCommand(compressCmd, { holdOnDispatch: true });
 
 		let activated: boolean;
@@ -1055,6 +1118,8 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				return false;
 			}
 			throw err;
+		} finally {
+			disarmInjectionGuard();
 		}
 
 		if (!activated) {
@@ -1065,15 +1130,11 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			return false;
 		}
 
-		// MEDIUM-7 parity: the tagged OK for COMPRESS was just observed.
-		// Discard any buffered-but-not-yet-complete line sitting in the
-		// processing pipeline right now, before touching the stream topology
-		// at all -- a server that packs extra bytes into the same TCP
-		// segment as the tagged OK must never have that residue carried
-		// across the compression boundary and misread as a post-negotiation
-		// response (the same STARTTLS-plaintext-injection defense class,
-		// applied to the DEFLATE boundary instead of the TLS one).
-		this.processingPipeline.forceNewLine(false);
+		// MEDIUM-7 parity + M6.2's completion of it: `armBoundaryInjectionGuard`
+		// above already discarded any buffered residue -- partial OR
+		// complete-line -- the instant COMPRESS's own tagged OK was routed,
+		// before touching the stream topology at all. Nothing left to do
+		// here; `processingPipeline.pending` is already empty by this point.
 
 		// Unlike starttls(), the socket itself is never replaced -- only
 		// unpiped from the pipeline so `wrapCompression` can re-pipe it
@@ -1136,6 +1197,14 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 */
 	public async unauthenticate(): Promise<void> {
 		const cmd = new UnauthenticateCommand();
+		// M6.2: same complete-line injection defense as starttls()/compress()
+		// -- armed before dispatch, see `armBoundaryInjectionGuard`'s doc
+		// comment. Applied unconditionally (not only when `this.compression`
+		// is active): UNAUTHENTICATE resets protocol state regardless
+		// (RFC8437-3-5), so a complete line injected alongside its tagged OK
+		// must never be parsed as a live response under the WRONG
+		// (pre-reset) state either, compression or not.
+		const disarmInjectionGuard = this.armBoundaryInjectionGuard(cmd);
 		const result = this.runCommand(cmd, { holdOnDispatch: true });
 
 		try {
@@ -1143,16 +1212,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		} catch (err) {
 			this.commandQueue.release();
 			throw err;
+		} finally {
+			disarmInjectionGuard();
 		}
 
 		if (this.compression) {
-			// MEDIUM-7 parity (same defense class as starttls()/compress()):
-			// the tagged OK was just observed and the server's outgoing
-			// compression layer ends at that OK's CRLF — discard any
-			// buffered-but-incomplete line residue before touching topology,
-			// so post-teardown plaintext is never glued onto pre-teardown
-			// residue.
-			this.processingPipeline.forceNewLine(false);
+			// MEDIUM-7 parity + M6.2's completion of it: `armBoundaryInjectionGuard`
+			// above already discarded any buffered residue -- partial OR
+			// complete-line -- the instant UNAUTHENTICATE's own tagged OK was
+			// routed. Nothing left to do here before touching topology;
+			// `processingPipeline.pending` is already empty by this point.
 
 			// Tear the codec down and restore the direct pipe (the exact
 			// inverse of compress()'s interposition): read side back to

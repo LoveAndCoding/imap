@@ -93,7 +93,7 @@ import { UrlauthFacetImpl } from "./facets/urlauth";
 import type { UrlauthFacet } from "./facets/urlauth";
 import { MailboxSession } from "./mailbox";
 import type { MailboxSessionDriver } from "./mailbox";
-import { ClientStateMachine } from "./state";
+import { ClientStateMachine, IllegalStateTransitionError } from "./state";
 import type { ClientState } from "./state";
 
 /**
@@ -367,6 +367,26 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `StateError` unless the client is `disconnected`. A failed `connect()`
 	 * NEVER leaves a half-open client: every failure path tears the
 	 * connection down and asserts state `disconnected` before rejecting.
+	 *
+	 * `logout()` racing a mid-flight `connect()` (M6.2, M1's own review note):
+	 * `logout()` may legally be called the instant `connect()` returns its
+	 * pending promise (the state machine's any->"logout" edge accepts it from
+	 * "connecting" same as any other state) — and `_logoutPromise`'s
+	 * `doLogout()` moves state to `"logout"` and eventually to
+	 * `"disconnected"` on its OWN timeline, independent of wherever
+	 * `connect()`'s own handshake happens to be. If the greeting/CAPABILITY
+	 * round trip resolves WHILE that race is in flight, `connect()`'s own
+	 * post-greeting `stateMachine.transition(postGreetingState)` call is no
+	 * longer transitioning FROM `"connecting"` (some prefix of `doLogout()`
+	 * already moved it away) — an illegal edge. Pinned typed-error contract
+	 * (`test/unit/client/logout-connect-race.test.ts`): `connect()` rejects
+	 * `StateError` (`state`: whatever `doLogout()` had already reached at the
+	 * moment of the race, `required: ["connecting"]`, `cause`: the internal
+	 * `IllegalStateTransitionError`) — never the raw internal error class —
+	 * and, per the guarantee above, still asserts `disconnected` before
+	 * rejecting (via the same `abortConnect()` every other failure path
+	 * uses); `logout()` itself always settles normally (it owns the race, it
+	 * doesn't lose it) and the client ends up `"disconnected"` either way.
 	 */
 	public async connect(): Promise<void> {
 		if (this.stateMachine.current !== "disconnected") {
@@ -404,7 +424,16 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		const postGreetingState: ClientState = this.connection.authenticated
 			? "authenticated"
 			: "not-authenticated";
-		this.stateMachine.transition(postGreetingState);
+		try {
+			this.stateMachine.transition(postGreetingState);
+		} catch (err) {
+			// M6.2: a concurrent logout() already moved state away from
+			// "connecting" (see this method's own doc comment) -- map the
+			// internal transition error to the public typed one before
+			// tearing down, rather than letting `IllegalStateTransitionError`
+			// leak through `connect()`'s public promise.
+			throw await this.abortConnect(this.mapLogoutRaceError(err));
+		}
 
 		try {
 			// Step 4: ensure capabilities (greeting [CAPABILITY]/post-STARTTLS
@@ -438,7 +467,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// coincidental) is never raced against.
 			await this.maybeCompress();
 		} catch (err) {
-			throw await this.abortConnect(err);
+			// M6.2: defense in depth -- a concurrent logout() could equally
+			// race in during this later window (e.g. mid-`performAuthentication()`)
+			// and surface as a nested `IllegalStateTransitionError`; map it the
+			// same way as the post-greeting transition above rather than
+			// leaking the internal class through a different code path.
+			throw await this.abortConnect(this.mapLogoutRaceError(err));
 		}
 	}
 
@@ -513,6 +547,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `StateError` while `state === "logout"`). Idempotent: a second call
 	 * while a logout is in flight (or already completed) resolves the same
 	 * outcome rather than re-sending LOGOUT.
+	 *
+	 * Racing a mid-flight `connect()` (M6.2, pinned by
+	 * `test/unit/client/logout-connect-race.test.ts`): the any-state ->
+	 * `"logout"` edge (spec §3.1) means this is always legal to call the
+	 * instant `connect()`'s promise is returned, even before the greeting
+	 * has arrived. `logout()` itself always settles normally either way
+	 * (resolves once its own teardown completes) — it is the CONCURRENT
+	 * `connect()` call that observes the interleaving: its own post-greeting
+	 * state transition now races against this method's `doLogout()`, and
+	 * loses. See `connect()`'s own doc comment for the resulting typed-error
+	 * contract (`StateError`, `required: ["connecting"]`) and the guarantee
+	 * that `connect()` still asserts `disconnected` before rejecting. Once
+	 * both promises settle, the client is `"disconnected"` regardless of
+	 * which one "won".
 	 */
 	public async logout(): Promise<void> {
 		if (this.stateMachine.current === "disconnected") {
@@ -2101,5 +2149,28 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			return new ConnectionError(err.message, { phase: "connect", cause: err });
 		}
 		return new ConnectionError(String(err), { phase: "connect", cause: err });
+	}
+
+	/**
+	 * M6.2: maps the internal `IllegalStateTransitionError` a concurrent
+	 * `logout()`/`doLogout()` can provoke mid-`connect()` (see `connect()`'s
+	 * own doc comment for the full race) onto the public `StateError` --
+	 * anything else passes through unchanged (this is a targeted rescue for
+	 * exactly that one internal class, not a general error mapper).
+	 * `state` reports whatever `doLogout()` had already moved the machine to
+	 * by the time this runs (read live, not captured from the thrown error,
+	 * since `logout()`'s own teardown may keep advancing between the failed
+	 * `transition()` call and this handler running); `required` names the
+	 * state `connect()` needed to still be in.
+	 */
+	private mapLogoutRaceError(err: unknown): unknown {
+		if (err instanceof IllegalStateTransitionError) {
+			return new StateError(
+				"connect() lost a race with a concurrent logout(): the client's " +
+					"state changed before connect() could complete",
+				{ state: this.stateMachine.current, required: ["connecting"], cause: err },
+			);
+		}
+		return err;
 	}
 }

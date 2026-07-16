@@ -148,6 +148,43 @@ async function startCompressPartialInjectionServer(): Promise<{
 }
 
 /**
+ * M6.2 (the STARTTLS-class plaintext-injection residual, extended to the
+ * COMPRESS boundary): same shape as `startCompressPartialInjectionServer`,
+ * except the injected line is COMPLETE (a real trailing CRLF) rather than
+ * deliberately incomplete residue. `NewlineTranform.process()`'s loop
+ * splits and emits every complete line it finds in one synchronous pass,
+ * so — absent the M6.2 fix — this line reaches the router as a live
+ * untagged response before compression is even interposed, regardless of
+ * how quickly `compress()`'s own post-await discard runs.
+ */
+async function startCompressCompleteLineInjectionServer(): Promise<{
+	port: number;
+	close: () => Promise<void>;
+}> {
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		linesUntilCompress(socket, (line, tag) => {
+			if (/\bCOMPRESS\b/i.test(line)) {
+				socket.removeAllListeners("data");
+				// Tagged OK + a COMPLETE injected line (real CRLF), both
+				// uncompressed, in ONE write() — before any DEFLATE bytes.
+				socket.write(`${tag} OK COMPRESS active\r\n* 999 EXISTS\r\n`);
+				const inflate = zlib.createInflateRaw();
+				const deflate = zlib.createDeflateRaw();
+				socket.pipe(inflate);
+				deflate.pipe(socket);
+				wireCompressedNoopResponder(inflate, deflate);
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return { port: address.port, close: closeServer(server, sockets) };
+}
+
+/**
  * M5.16 (Finding 1, CRITICAL queue-deadlock fix) — a server that DELAYS its
  * NOOP reply, so a client-side `compress()` call issued right after the NOOP
  * is dispatched is GUARANTEED to still be racing NOOP's outstanding tagged
@@ -355,6 +392,34 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 				(e) => JSON.stringify(e).includes("999") && JSON.stringify(e).includes("EXISTS"),
 			),
 			"the pre-compression residue must never be reassembled into a post-COMPRESS response",
+		).toBe(false);
+	});
+
+	test("M6.2: a COMPLETE line injected alongside the COMPRESS tagged OK, in the same TCP segment, is discarded before it can ever be parsed as a live response", async () => {
+		const server = await startCompressCompleteLineInjectionServer();
+		cleanup = server.close;
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: server.port,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+
+		const untaggedEvents: unknown[] = [];
+		connection.on("untaggedResponse", (resp) => untaggedEvents.push(resp));
+
+		await connection.connect();
+		const activated = await connection.compress();
+		expect(activated).toBe(true);
+
+		// Drive a real round trip over the compressed channel.
+		await connection.runCommand(new NoopCommand());
+
+		expect(
+			untaggedEvents.some(
+				(e) => JSON.stringify(e).includes("999") && JSON.stringify(e).includes("EXISTS"),
+			),
+			"a complete line injected in the same TCP segment as the COMPRESS tagged OK must never be parsed as a live response",
 		).toBe(false);
 	});
 

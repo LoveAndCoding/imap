@@ -220,7 +220,7 @@ export const registryCoverage: RegistryEntry[] = [
 		capability: "CONTEXT=SEARCH",
 		status: "cataloged",
 		source: "RFC5267",
-		note: "SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM (two-ADDTO Map-clobber measured as a violation).",
+		note: "SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM (M6.2: both items of a two-ADDTO response measured as a genuine pass -- ESearchReturnData is array-of-pairs, not a clobbering Map; see RFC5267-4.3.2-1).",
 	},
 	{
 		capability: "CONTEXT=SORT",
