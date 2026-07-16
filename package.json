@@ -28,7 +28,7 @@
 	},
 	"scripts": {
 		"build": "tsc -d",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc -p test/docs/tsconfig.json --noEmit",
 		"lint": "eslint .",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
