@@ -32,6 +32,20 @@ gates):**
 
 ---
 
+## Per-task status (living — added at M6 kickoff, keep current)
+
+| Task | Status |
+|---|---|
+| M6.1 SHOULD/MAY sweep | DONE (📖 — triage: implement-now/new-adjudication EMPTY; 11 satisfied-by-mechanism grouped ledger entries; SHOULD 92.9% raw / 100% excl. adjudicated, zero unexplained rows) |
+| M6.2 Tracked follow-ups | DONE (🔐 — all five fixed, zero deferrals; incl. plaintext-injection residual closed at all three switch points; 6× byte-identical compliance runs; also: typecheck:compliance ES2022 alignment landed separately 🔧) |
+| M6.3 RFC 4422 adjudications | DONE EARLY at M5.16 (⚖️) |
+| M6.4 typedoc | DONE (📚 — 1029→0 warnings; docs/api/ gitignored, npm run docs) |
+| M6.5 MIGRATION.md | DONE (🧳 — samples compile-gated via test/docs/) |
+| M6.6 README rewrite | IN FLIGHT (worktree) |
+| M6.7 CHANGELOG + 1.0.0 + final snapshot | pending (needs M6.6) |
+| M6.8 Final phase review | pending |
+| M6.9 THE PR into modern-api | last (open, never merge) |
+
 ## Status check (verified against the tree at doc-authoring time)
 
 **This document is being authored far ahead of the tree — mid-M2, before
