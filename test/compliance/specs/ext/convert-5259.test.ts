@@ -63,10 +63,16 @@
  *   conversions-cmd = "CONVERSIONS" SP from-mime-type-req SP to-mime-type-req
  *                                                → CONVERSIONS text/* text/plain
  *   convert-cmd     = "CONVERT" SP sequence-set SP section SP convert-params
- *                                                → CONVERT 1:3 TEXT (text/plain)
+ *                                                → CONVERT 1:3 TEXT ("text/plain")
  *   uid-convert     = "UID CONVERT" SP uid-set SP section SP convert-params
- *                                                → UID CONVERT 4,8 TEXT (text/html (CHARSET UTF-8))
+ *                                                → UID CONVERT 4,8 TEXT ("text/html" (CHARSET UTF-8))
  *   default-conversion = "NIL"                  → CONVERT 1 TEXT (NIL)
+ * convert-params = "(" (quoted-to-mime-type / default-conversion) ... — the
+ * destination MIME type is QUOTED (`quoted-to-mime-type`); only the NIL
+ * default-conversion marker is a bare atom. M5.16 (Finding 3) corrected every
+ * matcher below that previously pinned the (non-compliant) unquoted
+ * `(text/plain)` form the pre-fix `ConvertCommand` emitted — a matcher
+ * CORRECTION, not a widening: it now pins the ABNF-required quoted form.
  * Each matcher anchors the FULL argument string so a plausible wrong impl —
  * unparenthesized convert-params, a destination type paired with BODY[HEADER],
  * a message-number sequence-set on UID CONVERT — is rejected, never
@@ -411,7 +417,7 @@ complianceTest(
 	{
 		reqs: ["RFC5259-3.1-1", "RFC5259-5.1-1"],
 		profiles: ["rev1", "rev2"],
-		title: "CONVERT command form is gated on the CONVERT capability; CONVERT 1:3 TEXT (text/plain)",
+		title: 'CONVERT command form is gated on the CONVERT capability; CONVERT 1:3 TEXT ("text/plain")',
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -420,7 +426,11 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
-				expectLine(command("CONVERT", { args: /^1:3 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): the destination MIME type is QUOTED on the
+				// wire (RFC 5259 §10's `quoted-to-mime-type` ABNF production) --
+				// this matcher was corrected from the unquoted `(text/plain)` form
+				// it previously (incorrectly) pinned.
+				expectLine(command("CONVERT", { args: /^1:3 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("converted body")']),
 			],
 		]);
@@ -431,7 +441,7 @@ complianceTest(
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
-		expect(convert!.args).toMatch(/^1:3 TEXT \(text\/plain\)$/i);
+		expect(convert!.args).toMatch(/^1:3 TEXT \("text\/plain"\)$/i);
 	},
 );
 
@@ -487,7 +497,7 @@ complianceTest(
 	{
 		reqs: ["RFC5259-6-5"],
 		profiles: ["rev1", "rev2"],
-		title: "UID CONVERT command form: UID CONVERT 4,8 TEXT (text/html) with UID sequence-set argument",
+		title: 'UID CONVERT command form: UID CONVERT 4,8 TEXT ("text/html") with UID sequence-set argument',
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -496,7 +506,10 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 8 }),
-				expectLine(command("UID CONVERT", { args: /^4,8 TEXT \(text\/html\)$/i })),
+				// M5.16 (Finding 3): destination quoted, RFC 5259 §10's
+				// `quoted-to-mime-type` production -- matcher correction (was
+				// pinning the unquoted, non-compliant form).
+				expectLine(command("UID CONVERT", { args: /^4,8 TEXT \("text\/html"\)$/i })),
 				reply("OK UID CONVERT completed", [
 					'* CONVERTED (TAG "a1") UID 4 TEXT ("<html>...</html>")',
 					'* CONVERTED (TAG "a1") UID 8 TEXT ("<html>...</html>")',
@@ -510,7 +523,7 @@ complianceTest(
 		await server.assertCompleted();
 		const uidConvert = server.commandLines.find((l) => l.verb === "UID CONVERT");
 		expect(uidConvert, "UID CONVERT must have been emitted").toBeDefined();
-		expect(uidConvert!.args).toMatch(/^4,8 TEXT \(text\/html\)$/i);
+		expect(uidConvert!.args).toMatch(/^4,8 TEXT \("text\/html"\)$/i);
 	},
 );
 
@@ -578,8 +591,10 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction, see
+				// the header's own note (RFC 5259 §10 `quoted-to-mime-type`).
 				expectLine(
-					command("CONVERT", { args: /^1 TEXT \(text\/plain \(ChArSeT "UTF-8"\)\)$/i }),
+					command("CONVERT", { args: /^1 TEXT \("text\/plain" \(ChArSeT "UTF-8"\)\)$/i }),
 				),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("hi")']),
 			],
@@ -623,7 +638,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("hi")']),
 			],
 		]);
@@ -655,9 +672,11 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
 				expectLine(
 					command("CONVERT", {
-						args: /^1 BODYPARTSTRUCTURE \(image\/png\)$/i,
+						args: /^1 BODYPARTSTRUCTURE \("image\/png"\)$/i,
 					}),
 				),
 				reply("OK CONVERT completed", [
@@ -700,7 +719,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain \(BINARY\.SIZE\)\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain" \(BINARY\.SIZE\)\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") BINARY.SIZE 128']),
 			],
 		]);
@@ -727,7 +748,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain \(BINARY\.SIZE\)\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain" \(BINARY\.SIZE\)\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") BINARY.SIZE 256']),
 			],
 		]);
@@ -810,8 +833,10 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 99 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
 				expectLine(
-					command("CONVERT", { args: /^99 TEXT \(text\/plain \(CHARSET "bogus"\)\)$/i }),
+					command("CONVERT", { args: /^99 TEXT \("text\/plain" \(CHARSET "bogus"\)\)$/i }),
 				),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT (ERROR "unknown charset" BADPARAMETERS NIL text/plain (CHARSET "bogus"))',
@@ -841,7 +866,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 HEADER \(text\/html\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 HEADER \("text\/html"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") HEADER (ERROR "CHARSET required" MISSINGPARAMETERS text/plain text/html (CHARSET))',
 				]),
@@ -878,7 +905,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT ("converted ok") BINARY.SIZE (ERROR "n/a" BADPARAMETERS NIL text/plain ())',
 				]),
@@ -917,7 +946,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT (ERROR "try later" TEMPFAIL 5)',
 				]),
@@ -952,9 +983,11 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/html\)$/i })),
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/html"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a2") TEXT ("<html/>")']),
 			],
 		]);
@@ -992,7 +1025,9 @@ complianceTest(
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
 				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
 				expectLine(command("STORE", { args: /^1 \+FLAGS \(\\Seen\)$/i })),
 				reply("OK Store completed", ["* 1 FETCH (FLAGS (\\Seen))"]),

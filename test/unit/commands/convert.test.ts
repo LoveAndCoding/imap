@@ -69,13 +69,17 @@ describe("ConvertCommand (RFC 5259 §6 -- CONVERT / UID CONVERT, M5.12)", () => 
 		expect(cmd.verb).toBe("UID CONVERT");
 	});
 
-	test("wire form: concrete destination MIME type -- CONVERT 1:3 TEXT (text/plain)", async () => {
+	test('wire form: concrete destination MIME type -- CONVERT 1:3 TEXT ("text/plain")', async () => {
 		const { connection, written, router } = makeFakeConnection();
 		const cmd = new ConvertCommand(false, "1:3", "TEXT", "text/plain");
 		const resultPromise = executeCommand(connection, cmd, "A1");
 		await flushMicrotasks();
+		// M5.16 (Finding 3): the destination MIME type is QUOTED on the wire
+		// (RFC 5259 §10's `quoted-to-mime-type` ABNF production) -- matcher
+		// correction, was previously pinning the unquoted (non-compliant) form
+		// `ConvertCommand` used to emit.
 		expect(Buffer.concat(written).toString("ascii")).toBe(
-			`A1 CONVERT 1:3 TEXT (text/plain)${CRLF}`,
+			`A1 CONVERT 1:3 TEXT ("text/plain")${CRLF}`,
 		);
 		router.routeTagged(parseLine(`A1 OK CONVERT completed${CRLF}`) as TaggedResponse);
 		await expect(resultPromise).resolves.toEqual({ converted: [] });
@@ -101,8 +105,11 @@ describe("ConvertCommand (RFC 5259 §6 -- CONVERT / UID CONVERT, M5.12)", () => 
 			});
 			void executeCommand(connection, cmd, "A3");
 			await flushMicrotasks();
+			// M5.16 (Finding 3): destination quoted -- matcher correction, see
+			// the wire-form test above for the ABNF citation. Param NAMES stay
+			// bare atoms (RFC5259-7-1) -- unaffected by this fix.
 			expect(Buffer.concat(written).toString("ascii")).toBe(
-				`A3 CONVERT 1 TEXT (text/plain (ChArSeT "UTF-8" BINARY.SIZE))${CRLF}`,
+				`A3 CONVERT 1 TEXT ("text/plain" (ChArSeT "UTF-8" BINARY.SIZE))${CRLF}`,
 			);
 			router.routeTagged(parseLine(`A3 OK done${CRLF}`) as TaggedResponse);
 		},
@@ -122,13 +129,15 @@ describe("ConvertCommand (RFC 5259 §6 -- CONVERT / UID CONVERT, M5.12)", () => 
 		router.routeTagged(parseLine(`A4 OK done${CRLF}`) as TaggedResponse);
 	});
 
-	test("wire form: UID grain -- UID CONVERT 4,8 TEXT (text/html)", async () => {
+	test('wire form: UID grain -- UID CONVERT 4,8 TEXT ("text/html")', async () => {
 		const { connection, written, router } = makeFakeConnection();
 		const cmd = new ConvertCommand(true, "4,8", "TEXT", "text/html");
 		void executeCommand(connection, cmd, "A5");
 		await flushMicrotasks();
+		// M5.16 (Finding 3): destination quoted -- matcher correction, see the
+		// first wire-form test above for the ABNF citation.
 		expect(Buffer.concat(written).toString("ascii")).toBe(
-			`A5 UID CONVERT 4,8 TEXT (text/html)${CRLF}`,
+			`A5 UID CONVERT 4,8 TEXT ("text/html")${CRLF}`,
 		);
 		router.routeTagged(parseLine(`A5 OK done${CRLF}`) as TaggedResponse);
 	});
@@ -205,8 +214,10 @@ describe("ConvertCommand (RFC 5259 §6 -- CONVERT / UID CONVERT, M5.12)", () => 
 		const cmd = new ConvertCommand(false, "1", "BODY[1.2]", "text/plain");
 		void executeCommand(connection, cmd, "A9");
 		await flushMicrotasks();
+		// M5.16 (Finding 3): destination quoted -- matcher correction, see the
+		// first wire-form test above for the ABNF citation.
 		expect(Buffer.concat(written).toString("ascii")).toBe(
-			`A9 CONVERT 1 BODY[1.2] (text/plain)${CRLF}`,
+			`A9 CONVERT 1 BODY[1.2] ("text/plain")${CRLF}`,
 		);
 		router.routeTagged(parseLine(`A9 OK done${CRLF}`) as TaggedResponse);
 	});

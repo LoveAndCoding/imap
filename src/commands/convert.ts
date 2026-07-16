@@ -26,13 +26,20 @@ import type { CommandWriter } from "./writer";
  * convert-5259.test.ts's anchored matchers):
  *   convert-cmd  = "CONVERT" SP sequence-set SP data-item SP convert-params
  *   uid-convert  = "UID CONVERT" SP uid-set SP data-item SP convert-params
- *   convert-params carries the destination MIME type (e.g. `text/plain`) or
- *   the literal atom NIL (RFC5259-6-2's "default conversion" marker), then
- *   an optional nested parenthesized transcoding-param list:
- *     (text/plain)                       -- concrete destination, no params
- *     (NIL)                              -- default conversion
- *     (text/plain (CHARSET "UTF-8"))     -- valued param (value quoted)
- *     (NIL (AVAILABLECONVERSIONS))       -- bare (valueless) param
+ *   convert-params = "(" (quoted-to-mime-type / default-conversion) ...
+ *   convert-params carries the destination MIME type QUOTED (e.g.
+ *   `"text/plain"` -- RFC 5259 §10's `quoted-to-mime-type` production) or
+ *   the literal atom NIL (RFC5259-6-2's "default conversion" marker, which
+ *   stays a bare atom per `default-conversion = "NIL"`), then an optional
+ *   nested parenthesized transcoding-param list (param NAMES stay bare
+ *   atoms, RFC5259-7-1 -- only the destination MIME type itself is quoted):
+ *     ("text/plain")                       -- concrete destination, no params
+ *     (NIL)                                -- default conversion
+ *     ("text/plain" (CHARSET "UTF-8"))     -- valued param (value quoted)
+ *     (NIL (AVAILABLECONVERSIONS))         -- bare (valueless) param
+ *   M5.16 (Finding 3) fixed this command emitting the destination as a bare
+ *   atom (`(text/plain)`) -- RFC 5259's ABNF requires the QUOTED form; the
+ *   NIL marker was, and remains, correctly bare.
  *
  * Construction rules enforced BY THE CALLER, not re-validated here: the
  * CHARSET-REQUIRED duty for BODY[...HEADER]/[...MIME] conversions
@@ -115,11 +122,15 @@ export interface ConvertResult {
 const DATA_ITEM_RE = /^[\x21-\x7e]+$/;
 const DATA_ITEM_FORBIDDEN_RE = /[(){}"\\% ]/;
 
-/** Same framing-safety floor for a destination MIME type token (emitted
- *  bare, per the suite's pinned `(text/plain)` form) and for param names.
- *  MIME types/param names are token-shaped per their own grammars; this
- *  validation is the writer-level injection guard, not a re-validation of
- *  the MIME grammar itself (the server owns that). */
+/** Same framing-safety floor for a destination MIME type token (now emitted
+ *  QUOTED via `quotedOrLiteral`, RFC 5259 §10's `quoted-to-mime-type`
+ *  production -- M5.16 Finding 3; this pre-validation still keeps the input
+ *  itself token-shaped before it's quoted, rather than loosening to
+ *  "anything `quotedOrLiteral` can escape") and for param names (which DO
+ *  stay bare atoms on the wire, RFC5259-7-1). MIME types/param names are
+ *  token-shaped per their own grammars; this validation is the writer-level
+ *  injection guard, not a re-validation of the MIME grammar itself (the
+ *  server owns that). */
 function assertWireToken(value: string, what: string): void {
 	if (
 		typeof value !== "string" ||
@@ -184,7 +195,14 @@ export class ConvertCommand extends Command<ConvertResult> {
 				// never an empty string or omitted argument (RFC5259-6-2).
 				params.atom("NIL");
 			} else {
-				params.raw(this.spec.destination);
+				// M5.16 (Finding 3): RFC 5259's own ABNF (§10) is
+				// `convert-params = "(" (quoted-to-mime-type / default-conversion)
+				// ...` -- the destination MIME type is a QUOTED string
+				// (`quoted-to-mime-type`), never a bare atom; only the NIL marker
+				// above stays bare. `quotedOrLiteral` (the same call the nested
+				// CHARSET value below already uses) emits `"text/plain"`, not the
+				// unquoted `text/plain` this previously wrote.
+				params.quotedOrLiteral(this.spec.destination);
 			}
 			const entries = Object.entries(this.spec.params ?? {});
 			if (entries.length > 0) {

@@ -88,15 +88,21 @@ const rfc2193: CatalogModule = {
 		"situation this phase also handles elsewhere. REAL-SIGNAL NOTE (mirrors RFC2221's identical " +
 		"mechanism and the Phase 5 UNDEFINED-FILTER precedent in ext/rfc5466.ts): 'REFERRAL' is not a " +
 		"named text-code kind in src/parser/structure/text.code.ts's switch and falls through to " +
-		"`default: code = new AtomTextCode(kind, contents)`. AtomTextCode.contents drops any bare " +
-		"(unparenthesized) argument via splitSpaceSeparatedList's default '(' start-token; per §6's " +
-		"ABNF 'referral_response_code = \"[\" \"REFERRAL\" 1*(SPACE <url>) \"]\"' the URL(s) are bare " +
-		"space-separated tokens with no enclosing parens, so the expected honest outcome mirrors " +
-		"RFC2221 exactly: kind === 'REFERRAL' should survive intact (genuine PASS for entries 2, 4, 5, " +
-		"6), while the URL argument(s) — critically including the SECOND URL when RENAME sends a pair, " +
-		"and any THIRD+ URL in a multi-replica SELECT response — are expected to be dropped entirely " +
-		"(genuine VIOLATION for entries 1 and 3, and for the URL-recovery half of 2/4/5/6). Command-" +
-		"emission duties (entries 7-8, RLIST/RLSUB): driver.rlist()/driver.rlsub() verbs now exist " +
+		"`default: code = new AtomTextCode(kind, contents)`. Per §6's ABNF 'referral_response_code = " +
+		"\"[\" \"REFERRAL\" 1*(SPACE <url>) \"]\"' the URL(s) are bare space-separated tokens with no " +
+		"enclosing parens. HISTORICAL (superseded, M5.16 Finding 7): at AUTHORING TIME, " +
+		"AtomTextCode.contents dropped any bare (unparenthesized) argument via " +
+		"splitSpaceSeparatedList's default '(' start-token, so the then-expected honest outcome was " +
+		"kind === 'REFERRAL' surviving intact (genuine PASS for entries 2, 4, 5, 6) while the URL " +
+		"argument(s) — critically including the SECOND URL when RENAME sends a pair, and any THIRD+ " +
+		"URL in a multi-replica SELECT response — were expected to be dropped entirely (predicted " +
+		"genuine VIOLATION for entries 1 and 3, and for the URL-recovery half of 2/4/5/6). PRESENT " +
+		"TRUTH: that bare-argument-drop defect has since been fixed (AtomTextCode now selects null/" +
+		"null delimiters for a non-parenthesized argument list, per that class's own doc comment, so " +
+		"top-level space-separated bare arguments survive in order instead of being dropped) — every " +
+		"one of entries 1-6 now PASSES for real, including the URL-recovery duties (entries 1, 3) this " +
+		"note used to predict as violations. Command-emission duties (entries 7-8, RLIST/RLSUB): " +
+		"driver.rlist()/driver.rlsub() verbs now exist " +
 		"in driver.ts (added by commit 74a9620, Phase 6 Task 1) and throw NotImplementedError, so " +
 		"they remain self-actualizing/unimplemented (an honest not-yet-implemented report) rather " +
 		"than REAL -- not because the verbs are absent. " +
@@ -168,11 +174,15 @@ const rfc2193: CatalogModule = {
 				"the first one it happens to notice). Grounded in §3's 'The REFERRAL response code " +
 				"MUST contain as an argument a one or more valid URLs separated by a space' and 'A " +
 				"server MAY respond with multiple IMAP mailbox referrals if there is more than one " +
-				"replica of the mailbox.' PROBED MECHANISM (derivable from parser source, per this " +
-				"module's extractionNote): AtomTextCode's bare-argument-drop defect empties " +
-				"code.contents regardless of whether one or many URLs are present, so the expected " +
-				"honest outcome is a genuine VIOLATION — the client currently cannot recover even a " +
-				"single URL, let alone preserve a multi-URL order.",
+				"replica of the mailbox.' HISTORICAL (superseded, M5.16 Finding 7): at authoring time " +
+				"this note predicted a genuine VIOLATION, reasoning that AtomTextCode's bare-argument " +
+				"handling emptied code.contents for any unparenthesized argument list (REFERRAL's URLs " +
+				"included) regardless of count. That defect was since fixed by the AtomTextCode bare-" +
+				"argument split (src/parser/structure/text.code.ts: a leading '(' selects the " +
+				"parenthesized-tuple delimiters, anything else selects null/null so top-level space-" +
+				"separated bare arguments — e.g. REFERRAL's URL list — survive in order instead of " +
+				"being silently dropped) — this row now PASSES for real: every listed URL is recovered, " +
+				"in order.",
 		},
 
 		// ── §4.1 SELECT, EXAMINE, DELETE, SUBSCRIBE, UNSUBSCRIBE, STATUS and APPEND Referrals ──
@@ -245,10 +255,12 @@ const rfc2193: CatalogModule = {
 				"distinct from RFC2193-3-3 (recover every URL) because RENAME's two-URL semantics are " +
 				"a PAIRED interpretation (URL 1 = old name, URL 2 = new name) rather than a flat list " +
 				"of interchangeable replica URLs as in SELECT/multi-replica responses — a client must " +
-				"assign positional meaning to the pair, not merely retain both strings. PROBED " +
-				"MECHANISM: same AtomTextCode bare-argument-drop defect applies to every URL in the " +
-				"pair equally (contents comes back [] regardless of arity), so the expected honest " +
-				"outcome is a genuine VIOLATION identical in kind to RFC2193-3-3's.",
+				"assign positional meaning to the pair, not merely retain both strings. HISTORICAL " +
+				"(superseded, M5.16 Finding 7): at authoring time this note predicted a genuine " +
+				"VIOLATION identical in kind to RFC2193-3-3's, reasoning that the same AtomTextCode " +
+				"bare-argument-drop defect applied to every URL in the pair equally. Since fixed by the " +
+				"AtomTextCode bare-argument split (see RFC2193-3-3's own note for the mechanism) — this " +
+				"row now PASSES for real: both URLs in the pair are recovered, positionally.",
 		},
 		{
 			id: "RFC2193-4.3-2",

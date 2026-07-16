@@ -239,6 +239,21 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	private _serverId: IdResponseMap = null;
 	private _logoutPromise: Promise<void> | null = null;
+	/**
+	 * M5.16 (Finding 5): de-dups CONCURRENT `unauthenticate()` calls, mirroring
+	 * `_logoutPromise`'s own pattern -- two overlapping callers both pass the
+	 * (state-machine-only, not-yet-changed-until-the-tagged-OK) precondition
+	 * gates and would otherwise both issue their own UNAUTHENTICATE, with the
+	 * second landing on an already-unauthenticated server (a confusing tagged
+	 * BAD/NO instead of the same clean outcome the first caller sees). UNLIKE
+	 * `_logoutPromise` (never cleared -- the connection is terminally closing
+	 * anyway), this one MUST clear once the in-flight attempt settles
+	 * (success OR failure): `unauthenticate()` can legitimately be called
+	 * again LATER, after a fresh `authenticate()` on the same connection, and
+	 * that later call must be a genuine new attempt, not permanently wedged
+	 * onto this already-settled one.
+	 */
+	private _unauthenticatePromise: Promise<void> | null = null;
 	/** The most recent connection-level error observed via `connectionError`,
 	 *  consumed (and cleared) by the very next `disconnected` bridge so the
 	 *  resulting `close` event can report it — see `wireConnectionEvents()`. */
@@ -1994,6 +2009,24 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			);
 		}
 
+		// M5.16 (Finding 5): the precondition gates above run FRESH on every
+		// call (state doesn't change until the tagged OK, so a concurrent
+		// second caller passes them identically) -- only the actual wire
+		// round trip + bookkeeping below is de-duped, mirroring `logout()`/
+		// `_logoutPromise`'s own shape.
+		if (this._unauthenticatePromise) {
+			return this._unauthenticatePromise;
+		}
+		const attempt = this.doUnauthenticate();
+		this._unauthenticatePromise = attempt;
+		try {
+			return await attempt;
+		} finally {
+			this._unauthenticatePromise = null;
+		}
+	}
+
+	private async doUnauthenticate(): Promise<void> {
 		const epochBefore = this.capabilityRegistry.view.epoch;
 		await this.connection.unauthenticate();
 

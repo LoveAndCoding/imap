@@ -627,8 +627,20 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.socket.destroy(error);
 	}
 
-	public async runCommand<T>(command: Command<T>): Promise<T> {
-		return this.commandQueue.add<T>(command);
+	/**
+	 * `holdOnDispatch` (M5.16, CRITICAL deadlock fix) is threaded straight
+	 * through to `CommandQueue.add()` — see that method's doc comment. It
+	 * lets an isolated command (COMPRESS/UNAUTHENTICATE/STARTTLS) request
+	 * that the queue be held at the exact moment ITS bytes are written,
+	 * instead of the caller calling `commandQueue.hold()` right after this
+	 * call returns (which only reliably lands at the same moment when the
+	 * queue happens to be empty).
+	 */
+	public async runCommand<T>(
+		command: Command<T>,
+		options?: { holdOnDispatch?: boolean },
+	): Promise<T> {
+		return this.commandQueue.add<T>(command, options);
 	}
 
 	/**
@@ -881,16 +893,18 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		}
 
 		const tlsCmd = new StartTLSCommand();
-		// `runCommand()` synchronously adds the command to its (isolated,
-		// because StartTLSCommand.requiresOwnContext) queue context, which —
-		// since the queue isn't held yet — synchronously writes the STARTTLS
-		// command bytes before this call returns. Holding the queue right
-		// after that still lets STARTTLS's own bytes through while blocking
-		// every other command from writing anything until release() below —
-		// the §6.1 drain guarantee behind I-1 (no bytes between the STARTTLS
-		// tagged OK and handshake completion).
-		const negotiationResult = this.runCommand(tlsCmd);
-		this.commandQueue.hold();
+		// M5.16: `holdOnDispatch` engages the hold at the exact moment
+		// STARTTLS's own bytes are written (see `CommandQueue.add()`'s doc
+		// comment), rather than right after `runCommand()` returns. STARTTLS
+		// is only ever invoked here, pre-greeting during connect(), when the
+		// queue is guaranteed empty — so the old "hold right after
+		// runCommand()" pattern was never actually racy for THIS call site
+		// (dispatch is synchronous with an empty queue). Migrated anyway for
+		// uniformity with `compress()`/`unauthenticate()` (same fixed seam,
+		// zero behavior change here since empty-queue dispatch is already
+		// synchronous either way) so this is the ONE place in the codebase
+		// that ever calls `commandQueue.hold()` directly for this pattern.
+		const negotiationResult = this.runCommand(tlsCmd, { holdOnDispatch: true });
 
 		let startNegotiation: boolean;
 		try {
@@ -1009,15 +1023,26 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		}
 
 		const compressCmd = new CompressCommand();
-		// Same choreography as starttls(): `runCommand()` synchronously
-		// writes COMPRESS DEFLATE's bytes (queueMode "isolated", queue not
-		// yet held) before this call returns; holding right after still lets
-		// COMPRESS's own bytes through while blocking every other command's
-		// bytes until release() below (spec §6.1/I-1, RFC4978-3-1: "the
-		// client MUST NOT send any further commands until it has seen the
-		// result of COMPRESS").
-		const negotiationResult = this.runCommand(compressCmd);
-		this.commandQueue.hold();
+		// M5.16 (CRITICAL — queue deadlock fix): `holdOnDispatch` engages the
+		// hold at the exact moment COMPRESS's own bytes are actually written,
+		// not right after `runCommand()` returns. Those two moments only
+		// coincide when the queue happens to be empty at call time (a bare
+		// `commandQueue.hold()` here used to assume that unconditionally) --
+		// if a pipelined command is still in flight, or an isolated context
+		// (e.g. an active IDLE round) is current, COMPRESS is queued BEHIND
+		// it and doesn't dispatch until later, once its context is promoted.
+		// Calling `hold()` immediately in that case would engage it before
+		// COMPRESS ever dispatches, so `dispatch()` would see `isHeld()` and
+		// park COMPRESS in `pending` forever -- nothing flushes `pending`
+		// except `release()`, which only runs once COMPRESS's own promise
+		// settles, which now never happens: a permanent deadlock. Engaging
+		// the hold via the dispatch hook instead still guarantees COMPRESS's
+		// own bytes go out (the hook fires AFTER `dispatch()`'s `isHeld()`
+		// check already passed) while blocking every other command's bytes
+		// until release() below (spec §6.1/I-1, RFC4978-3-1: "the client
+		// MUST NOT send any further commands until it has seen the result of
+		// COMPRESS") -- race-free regardless of what else is in flight.
+		const negotiationResult = this.runCommand(compressCmd, { holdOnDispatch: true });
 
 		let activated: boolean;
 		try {
@@ -1082,17 +1107,27 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * live one layer up in `ImapClient.unauthenticate()` — this method owns
 	 * only the exchange and the codec teardown.
 	 *
-	 * Choreography mirrors `compress()` exactly: `runCommand()` writes the
-	 * (isolated) command's bytes synchronously before the queue is held;
-	 * `hold()` then blocks every other write until `release()`, so nothing
-	 * can cross the teardown boundary through a stale (still-compressing)
-	 * write path — this window is what makes "the client's outgoing layer
-	 * terminates after the command's CRLF" true in effect: the command line
-	 * is the LAST compressed thing this client writes, since no other write
-	 * can happen until after the codec is gone. A tagged NO/BAD propagates
-	 * as a rejection (unlike COMPRESS's swallowed decline — a server that
-	 * refuses UNAUTHENTICATE leaves the connection state unchanged, and the
-	 * caller must know); the queue is released and the topology untouched.
+	 * Choreography mirrors `compress()` exactly: `holdOnDispatch` (M5.16)
+	 * engages the hold the instant the (isolated) command's bytes are
+	 * actually written, wherever in the queue that ends up happening — see
+	 * `CompressCommand`'s call site and `CommandQueue.add()`'s doc comment
+	 * for why "right after `runCommand()` returns" is NOT reliably the same
+	 * moment (a pipelined command still in flight, or an active IDLE round,
+	 * defers this command's dispatch until later — a plain `hold()` there
+	 * would engage too early and wedge this command in `pending` forever).
+	 * Once engaged, the hold blocks every other write until `release()`, so
+	 * nothing can cross the teardown boundary through a stale
+	 * (still-compressing) write path — this window is what makes "the
+	 * client's outgoing layer terminates after the command's CRLF" true in
+	 * effect: the command line is the LAST compressed thing this client
+	 * writes, since no other write can happen until after the codec is gone.
+	 * A tagged NO/BAD propagates as a rejection (unlike COMPRESS's swallowed
+	 * decline — a server that refuses UNAUTHENTICATE leaves the connection
+	 * state unchanged, and the caller must know); the queue is released and
+	 * the topology untouched. If the command never dispatches at all (e.g.
+	 * the connection tears down first), the hook never fires, so the hold is
+	 * never spuriously engaged — `release()` is a documented no-op when not
+	 * currently held, so the `catch` below stays correct either way.
 	 *
 	 * When compression was never active this reduces to a plain isolated
 	 * round trip (the hold/release pair is kept unconditionally for a
@@ -1101,8 +1136,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 */
 	public async unauthenticate(): Promise<void> {
 		const cmd = new UnauthenticateCommand();
-		const result = this.runCommand(cmd);
-		this.commandQueue.hold();
+		const result = this.runCommand(cmd, { holdOnDispatch: true });
 
 		try {
 			await result;

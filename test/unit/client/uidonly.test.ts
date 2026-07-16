@@ -82,7 +82,24 @@ function selectSteps(mailbox: string, exists: number): ScriptStep[] {
 	];
 }
 
-const UIDONLY_CAPS = ["IMAP4rev1", "ENABLE", "UIDONLY", "UIDPLUS", "MOVE", "REPLACE", "SORT", "THREAD=REFERENCES"];
+const UIDONLY_CAPS = [
+	"IMAP4rev1",
+	"ENABLE",
+	"UIDONLY",
+	"UIDPLUS",
+	"MOVE",
+	"REPLACE",
+	"SORT",
+	"THREAD=REFERENCES",
+	// M5.16 (Finding 2): CONVERT/X-GM-EXT-1 advertised too, so the seq-grain
+	// lockout tests below prove they're rejected BECAUSE of UIDONLY (not
+	// merely because the underlying extension itself is unadvertised) --
+	// same reasoning `expectUidOnlyLockout()` already checks via
+	// `cap.capability === "UIDONLY"` -- and so the UID-grain equivalents can
+	// genuinely round-trip in the "still works" test.
+	"CONVERT",
+	"X-GM-EXT-1",
+];
 
 function expectUidOnlyLockout(err: unknown, label: string): void {
 	expect(err, `${label} must reject once UIDONLY is enabled`).toBeInstanceOf(CapabilityError);
@@ -135,6 +152,14 @@ describe("UIDONLY seq-facet lockout (RFC 9586, RFC9586-3-2, spec §5b -- M5.15)"
 			// fetchOne() delegates through seq.fetch(); async wrapper turns its
 			// synchronous throw into this promise's rejection.
 			["seq.fetchOne()", async () => session.seq.fetchOne(1, { flags: true })],
+			// M5.16 (Finding 2): seq.convert()/seq.addGmailLabels()/
+			// seq.removeGmailLabels() previously fell through this lockout
+			// entirely (missing `assertUidOnlyInactive()` calls in
+			// `runConvert`/`runGmailLabelsStore`) -- they'd have emitted an
+			// MSN-addressed CONVERT/STORE command instead of rejecting.
+			["seq.convert()", () => session.seq.convert("1:3", "TEXT", "text/plain")],
+			["seq.addGmailLabels()", () => session.seq.addGmailLabels("1:3", ["foo"])],
+			["seq.removeGmailLabels()", () => session.seq.removeGmailLabels("1:3", ["foo"])],
 		];
 		for (const [label, run] of attempts) {
 			let caught: unknown;

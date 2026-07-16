@@ -1377,6 +1377,15 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		const method =
 			kind === "uid" ? "addGmailLabels/removeGmailLabels" : "seq.addGmailLabels/seq.removeGmailLabels";
 		session.assertOpen(method);
+		// M5.16 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// see `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note). Missing here until M5.16 (Finding 2) even though
+		// every sibling `run*` static already applies it -- +/-X-GM-LABELS'
+		// seq grain emits an MSN-addressed STORE exactly like `runStore`'s own
+		// seq grain does, the same RFC 9586 §3.2 MSN prohibition.
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${method}()`);
+		}
 		if (!session.driver.hasCapability("X-GM-EXT-1")) {
 			throw new CapabilityError(
 				`${method}() requires the X-GM-EXT-1 capability (Google's Gmail IMAP vendor ` +
@@ -1597,6 +1606,15 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	): Promise<ConvertResult> {
 		const label = kind === "uid" ? "convert" : "seq.convert";
 		session.assertOpen(label);
+		// M5.16 (RFC 9586, RFC9586-3-2): the UIDONLY lockout, seq grain only --
+		// see `assertUidOnlyInactive`'s own doc comment (incl. its polarity
+		// inversion note). Missing here until M5.16 (Finding 2) even though
+		// every sibling `run*` static already applies it -- seq.convert()'s
+		// sequence-set argument is exactly as MSN-addressed as FETCH/STORE/
+		// COPY's, the same RFC 9586 §3.2 MSN prohibition.
+		if (kind === "seq") {
+			assertUidOnlyInactive(session.driver, `${label}()`);
+		}
 		// RFC 5259 §3.1 (I-9): CapabilityError, zero bytes written, before
 		// `ConvertCommand` is even constructed -- same explicit-precheck-plus-
 		// command's-own-declared-capability two-layer pattern `move()`/

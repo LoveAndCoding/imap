@@ -82,6 +82,33 @@ interface QueuedCommand {
 	readonly command: Command<unknown>;
 	readonly resolve: (value: unknown) => void;
 	readonly reject: (reason: unknown) => void;
+	/**
+	 * M5.16 (CRITICAL — queue deadlock fix): invoked synchronously from
+	 * `startCommand()`, immediately BEFORE this command's bytes are written
+	 * (`executeCommand()` is the very next thing called). This is the one
+	 * race-free moment for an isolated command to request "hold the queue
+	 * for my exclusive window" (COMPRESS/UNAUTHENTICATE/STARTTLS, spec
+	 * §6.1/I-1): by the time `startCommand()` runs, `dispatch()` has already
+	 * consulted `isHeld()` and decided NOT to park this command in
+	 * `pending` — so calling `hold()` from this hook can never retroactively
+	 * block the very write it is meant to guard, yet nothing else can
+	 * dispatch between this call and the write that follows it (both happen
+	 * synchronously, one after the other, with no intervening await).
+	 *
+	 * Previously `compress()`/`unauthenticate()` called `commandQueue.hold()`
+	 * right after `runCommand()` returned, trusting the doc-comment claim
+	 * that `runCommand()` "synchronously writes the bytes" — true only when
+	 * the queue was EMPTY at call time (`add()`'s own synchronous dispatch
+	 * path below). With another context active (a pipelined command still
+	 * in flight, or an isolated IDLE round already current), the isolated
+	 * command is instead queued BEHIND it and doesn't dispatch until later,
+	 * once its context is promoted — by which point `hold()` had already
+	 * engaged, so `dispatch()` saw `isHeld()` and routed the command into
+	 * `pending` forever (nothing flushes `pending` except `release()`,
+	 * which only these same methods call, gated on the very command's
+	 * completion that could now never happen: a permanent deadlock).
+	 */
+	readonly onDispatch?: () => void;
 }
 
 export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
@@ -120,13 +147,20 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		return this.commands.size;
 	}
 
-	/** Submits `command`, returning the promise its execution will settle. */
-	public add<T>(command: Command<T>): Promise<T> {
+	/**
+	 * Submits `command`, returning the promise its execution will settle.
+	 * `onDispatch` (M5.16), if given, fires the instant this specific
+	 * command is about to write its bytes — see `QueuedCommand.onDispatch`'s
+	 * own doc comment for why this is the only race-free seam for an
+	 * isolated command's hold-the-queue request.
+	 */
+	public add<T>(command: Command<T>, onDispatch?: () => void): Promise<T> {
 		return new Promise<T>((resolve, reject) => {
 			const qc: QueuedCommand = {
 				command,
 				resolve: resolve as (value: unknown) => void,
 				reject,
+				onDispatch,
 			};
 			this.commands.add(qc);
 			if (this.running) {
@@ -216,6 +250,9 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 		}
 
 		this.emit("commandStart", qc.command);
+		// M5.16: fire the dispatch hook synchronously, one statement before
+		// the write it guards — see `QueuedCommand.onDispatch`'s doc comment.
+		qc.onDispatch?.();
 		const tag = this.nextTag();
 		const run = executeCommand(this.connection, qc.command, tag);
 		run.then(qc.resolve, qc.reject);
@@ -273,8 +310,17 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	 * both modes; "isolated" is additionally the mode STARTTLS/etc. combine
 	 * with an explicit `hold()`/`release()` window for I-1's stronger
 	 * continuation-exclusivity guarantee.
+	 *
+	 * `holdOnDispatch` (M5.16, CRITICAL deadlock fix): when set, `hold()` is
+	 * engaged the instant THIS command actually dispatches (its bytes are
+	 * about to be written), not at submission time — see
+	 * `QueuedCommand.onDispatch`'s doc comment for the race this closes.
+	 * Used by `Connection.compress()`/`unauthenticate()`/`starttls()`, all of
+	 * which need "nothing else is ever written between my tagged OK and the
+	 * topology swap that follows it" regardless of whether the queue was
+	 * empty or another context was still active when they were called.
 	 */
-	add<T>(command: Command<T>): Promise<T> {
+	add<T>(command: Command<T>, options?: { holdOnDispatch?: boolean }): Promise<T> {
 		const mode = command.queueMode;
 		const waiting = this.waitingContext;
 		const needsNewContext =
@@ -289,7 +335,10 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 		}
 
 		// We just created it if it doesn't exist, so this is a safe add
-		return (this.waitingContext as AsyncQueueContext).add(command);
+		return (this.waitingContext as AsyncQueueContext).add(
+			command,
+			options?.holdOnDispatch ? () => this.hold() : undefined,
+		);
 	}
 
 	/**
@@ -353,8 +402,13 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	 * active when the hold is lifted — contexts consult `isHeld()` at
 	 * dispatch time, not just at creation time, so a context promoted to
 	 * active *during* a hold still withholds its writes. Used by the
-	 * STARTTLS upgrade to guarantee nothing is written between the STARTTLS
-	 * tagged OK and TLS handshake completion.
+	 * STARTTLS/COMPRESS/UNAUTHENTICATE isolated-command upgrades to
+	 * guarantee nothing else is written between their own tagged OK and the
+	 * topology swap that follows it — normally engaged via `add()`'s
+	 * `holdOnDispatch` option (M5.16) rather than called directly, so the
+	 * hold lands at the specific command's actual dispatch instant instead
+	 * of at submission time (see that option's doc comment for why the two
+	 * can differ).
 	 */
 	hold(): void {
 		this.held = true;

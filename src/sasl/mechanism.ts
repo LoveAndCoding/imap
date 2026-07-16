@@ -42,6 +42,18 @@ export interface SaslContext {
  * so `createMechanism()` always hands back a fresh instance — never a
  * shared singleton — precisely so that state cannot leak between attempts
  * or connections.
+ *
+ * CONTRACT NOTE (M5.16, Finding 6): that freshness guarantee is specific to
+ * the registry-name path (`createMechanism()`/`ImapAuthConfig.mechanisms`
+ * entries given as strings). `ImapAuthConfig.mechanisms` also accepts a
+ * literal `SaslMechanism` OBJECT supplied directly by the caller —
+ * `resolveMechanism()` (`src/client/auth.ts`) hands that instance back
+ * UNCHANGED, so it is reused verbatim across every attempt/reconnect, never
+ * reconstructed. An implementation of this interface MUST therefore
+ * reinitialize ALL per-attempt state in `start()` (never assume its
+ * constructor already established a clean slate) if it is meant to be safe
+ * to supply as such a literal instance — `ScramMechanism` (`sasl/scram.ts`)
+ * follows this rule; see its own `ScramMechanismOptions` doc comment.
  */
 export interface SaslMechanism {
 	/** Canonical upper-case SASL mechanism name, e.g. "PLAIN" (RFC 4422 §3.1

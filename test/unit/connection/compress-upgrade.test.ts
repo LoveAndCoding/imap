@@ -148,6 +148,68 @@ async function startCompressPartialInjectionServer(): Promise<{
 }
 
 /**
+ * M5.16 (Finding 1, CRITICAL queue-deadlock fix) — a server that DELAYS its
+ * NOOP reply, so a client-side `compress()` call issued right after the NOOP
+ * is dispatched is GUARANTEED to still be racing NOOP's outstanding tagged
+ * response: `CompressCommand` (`queueMode: "isolated"`) needs a context of
+ * its own and, with NOOP's pipeline context still active and non-empty, that
+ * context is created but not yet promoted/dispatched (`CommandQueue.add()`'s
+ * own doc comment) — exactly the structural shape Finding 1 describes.
+ * Before the fix, `compress()` called `commandQueue.hold()` immediately
+ * after `runCommand()` returned even though COMPRESS hadn't dispatched yet;
+ * by the time NOOP finished and COMPRESS's context was promoted,
+ * `dispatch()` saw `isHeld()` and parked COMPRESS in `pending` forever — a
+ * permanent deadlock this test's bounded timeout turns into a fast failure
+ * instead of a hung suite.
+ */
+async function startNoopThenCompressServer(): Promise<{
+	port: number;
+	close: () => Promise<void>;
+	/** `true` once COMPRESS's line arrived STRICTLY after NOOP's own tagged
+	 *  OK was written — the wire-order proof the finding asks for. `undefined`
+	 *  until COMPRESS has actually been observed. */
+	compressArrivedAfterNoopReply: () => boolean | undefined;
+}> {
+	let noopReplied = false;
+	let orderResult: boolean | undefined;
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		let compressed = false;
+		linesUntilCompress(socket, (line, tag) => {
+			if (compressed) return;
+			if (/\bNOOP\b/i.test(line)) {
+				// Deliberately delayed: guarantees the client's compress()
+				// call (issued immediately after NOOP, client-side) is still
+				// racing NOOP's tagged response when it's made.
+				setTimeout(() => {
+					noopReplied = true;
+					socket.write(`${tag} OK noop done\r\n`);
+				}, 100);
+			} else if (/\bCOMPRESS\b/i.test(line)) {
+				orderResult = noopReplied;
+				compressed = true;
+				socket.removeAllListeners("data");
+				socket.write(`${tag} OK COMPRESS active\r\n`);
+				const inflate = zlib.createInflateRaw();
+				const deflate = zlib.createDeflateRaw();
+				socket.pipe(inflate);
+				deflate.pipe(socket);
+				wireCompressedNoopResponder(inflate, deflate);
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return {
+		port: address.port,
+		close: closeServer(server, sockets),
+		compressArrivedAfterNoopReply: () => orderResult,
+	};
+}
+
+/**
  * Implicit-TLS server (real handshake, same cert-fixture pattern as
  * `starttls-upgrade.test.ts`) that ALSO negotiates COMPRESS once secure —
  * proves compression genuinely layers underneath TLS (RFC4978-3-4/-3-5):
@@ -226,6 +288,43 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 		// or reject (garbage bytes fail to parse).
 		await expect(connection.runCommand(new NoopCommand())).resolves.toBeNull();
 	});
+
+	test(
+		"M5.16 Finding 1: compress() called while a pipelined NOOP is still awaiting its " +
+			"tagged response -- both complete, compression activates afterward, correct wire order",
+		{ timeout: 3000 }, // hard-timeout guard: the pre-fix deadlock would hang past this
+		async () => {
+			const server = await startNoopThenCompressServer();
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 2000,
+			});
+			await connection.connect();
+
+			// NOOP is issued but the server deliberately delays its tagged OK
+			// (see `startNoopThenCompressServer`'s own doc comment) -- compress()
+			// is called immediately after, while NOOP's context is still active
+			// and non-empty, forcing CompressCommand's isolated context to be
+			// created but not yet promoted/dispatched.
+			const noopPromise = connection.runCommand(new NoopCommand());
+			const compressPromise = connection.compress();
+
+			await expect(noopPromise).resolves.toBeNull();
+			await expect(compressPromise).resolves.toBe(true);
+			expect(connection.isCompressed).toBe(true);
+			expect(
+				server.compressArrivedAfterNoopReply(),
+				"COMPRESS must never reach the wire before NOOP's own tagged OK, proving " +
+					"the isolated context genuinely waited its turn instead of racing ahead",
+			).toBe(true);
+
+			// Round-trip proof compression is genuinely active afterward.
+			await expect(connection.runCommand(new NoopCommand())).resolves.toBeNull();
+		},
+	);
 
 	test("MEDIUM-7 parity: buffered plaintext residue at the COMPRESS boundary is discarded, not reassembled with the compressed continuation", async () => {
 		const server = await startCompressPartialInjectionServer();

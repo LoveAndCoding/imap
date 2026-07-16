@@ -211,6 +211,41 @@ describe("ScramMechanism", () => {
 			await expect(mech.finish(null, c)).resolves.toBeUndefined();
 		});
 
+		test("finish() resolves when the server-final-message is an EMPTY continuation ('+' with no bytes)", async () => {
+			//Arrange: distinct from "never presented" above -- here `step()` IS
+			// called again for the server-final phase, but with a zero-length
+			// challenge. Same documented tolerance (RFC5802-5.1-14's shape),
+			// exercised on the actual empty-string path through
+			// `handleServerFinal()` rather than never reaching it at all.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+
+			//Act
+			await mech.step(Buffer.alloc(0), c);
+
+			//Assert
+			await expect(mech.finish(null, c)).resolves.toBeUndefined();
+		});
+
+		test("M5.16 Finding 4: finish() REJECTS when the server-final-message is NON-EMPTY but garbled (no 'e='/'v='/'m=')", async () => {
+			//Arrange: something arrived over the wire, but it isn't a
+			// recognizable SCRAM server-final-message at all -- must fail
+			// closed (no verified ServerSignature was ever produced), never
+			// collapse into the "nothing was sent" tolerance above.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+
+			//Act
+			await mech.step(Buffer.from("this is not a scram attribute list", "utf8"), c);
+
+			//Assert
+			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
+		});
+
 		test("an 'e=' server-final-message is rejected by finish()", async () => {
 			//Arrange
 			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });

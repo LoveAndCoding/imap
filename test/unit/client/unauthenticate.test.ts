@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 
-import { command } from "../../compliance/harness/matchers";
+import { bareLine, command } from "../../compliance/harness/matchers";
 import {
 	endCompression,
 	expectLine,
@@ -118,6 +118,72 @@ describe("ImapClient.unauthenticate() (RFC 8437, M5.10)", () => {
 		// The resp-code's set is CURRENT (not invalidated after being ingested):
 		expect(client.supports("AUTH=PLAIN")).toBe(true);
 		expect(client.supports("UNAUTHENTICATE")).toBe(false);
+		await server.assertCompleted();
+	});
+
+	test("M5.16 Finding 5: two concurrent unauthenticate() calls issue exactly one wire command; both promises resolve", async () => {
+		const caps = ["IMAP4rev1", "UNAUTHENTICATE"];
+		server = await ScriptedServer.start();
+		server.arm([
+			[
+				...authenticatedPrelude(caps),
+				expectLine(UNAUTH_LINE),
+				reply("OK UNAUTHENTICATE completed"),
+			],
+		]);
+		client = new ImapClient({ ...baseConfig(server.port), auth: { user: "u", pass: "p" } });
+		await client.connect();
+
+		// Fired back-to-back, synchronously -- both must observe the state
+		// machine still "authenticated" (it only transitions on the tagged
+		// OK), so without the de-dup guard both would issue their own
+		// UNAUTHENTICATE, and the script above (which arms only ONE) would
+		// fail on the second, unscripted command.
+		const first = client.unauthenticate();
+		const second = client.unauthenticate();
+
+		await expect(first).resolves.toBeUndefined();
+		await expect(second).resolves.toBeUndefined();
+		expect(client.state).toBe("not-authenticated");
+		await server.assertCompleted();
+		expect(
+			server.commandLines.filter((l) => l.verb === "UNAUTHENTICATE"),
+			"exactly one UNAUTHENTICATE must have reached the wire for two concurrent calls",
+		).toHaveLength(1);
+	});
+
+	test("M5.16 Finding 5: the de-dup guard clears on settle -- a LATER call (after fresh authenticate()) is a genuine new attempt", async () => {
+		const caps = ["IMAP4rev1", "UNAUTHENTICATE"];
+		server = await ScriptedServer.start();
+		server.arm([
+			[
+				...authenticatedPrelude(caps),
+				expectLine(UNAUTH_LINE),
+				reply("OK UNAUTHENTICATE completed"),
+				expectLine(command("LOGIN")),
+				reply(`OK [CAPABILITY ${caps.join(" ")}] LOGIN completed`),
+				expectLine(UNAUTH_LINE),
+				reply("OK UNAUTHENTICATE completed"),
+			],
+		]);
+		client = new ImapClient({
+			...baseConfig(server.port),
+			auth: { user: "u", pass: "p", mechanisms: [] },
+		});
+		await client.connect();
+
+		await client.unauthenticate();
+		expect(client.state).toBe("not-authenticated");
+
+		await client.authenticate({ user: "u2", pass: "p2", mechanisms: [] });
+		expect(client.state).toBe("authenticated");
+
+		// If the guard failed to clear, this second call would just return the
+		// FIRST (already-settled) attempt's promise instead of issuing a fresh
+		// UNAUTHENTICATE -- the script above, which arms a SECOND one, would
+		// then never see it and time out on `assertCompleted()`.
+		await client.unauthenticate();
+		expect(client.state).toBe("not-authenticated");
 		await server.assertCompleted();
 	});
 
@@ -293,6 +359,89 @@ describe("ImapClient.unauthenticate() (RFC 8437, M5.10)", () => {
 
 		// Re-auth over the now-uncompressed pipe round-trips.
 		await client.authenticate({ user: "u2", pass: "p2", mechanisms: [] });
+		expect(client.state).toBe("authenticated");
+		await server.assertCompleted();
+	});
+
+	test(
+		"M5.16 Finding 1: called while an ACTIVE idle() round is running -- DONE ends the round, " +
+			"UNAUTHENTICATE dispatches after, session invalidated with reason 'unauthenticated', no hang",
+		{ timeout: 3000 }, // hard-timeout guard: the pre-fix deadlock would hang past this
+		async () => {
+			const caps = ["IMAP4rev1", "IDLE", "UNAUTHENTICATE"];
+			server = await ScriptedServer.start();
+			server.arm([
+				[
+					...authenticatedPrelude(caps),
+					...selectExchange("INBOX", { exists: 3 }),
+					expectLine(command("IDLE", { args: null })),
+					send("+ idling\r\n"),
+					expectLine(bareLine("DONE")),
+					reply("OK IDLE terminated"),
+					expectLine(UNAUTH_LINE),
+					reply("OK UNAUTHENTICATE completed"),
+				],
+			]);
+			client = new ImapClient({ ...baseConfig(server.port), auth: { user: "u", pass: "p" } });
+			await client.connect();
+			const session = await client.select("INBOX");
+
+			let closedReason: MailboxClosedReason | undefined;
+			session.on("closed", (reason) => {
+				closedReason = reason;
+			});
+
+			// Nobody calls done() -- IDLE's isolated context is left CURRENT,
+			// exactly the shape Finding 1 describes: `unauthenticate()` below
+			// must itself force the round to end (DONE), not get wedged behind
+			// it.
+			await session.idle();
+
+			await client.unauthenticate();
+
+			expect(closedReason).toBe("unauthenticated");
+			expect(session.closed).toBe(true);
+			expect(client.state).toBe("not-authenticated");
+			expect(client.mailbox).toBeNull();
+			await server.assertCompleted();
+
+			// Wire-ORDERING proof (the script's step sequence alone wouldn't
+			// catch a client that got the interleaving wrong -- same technique
+			// `idle-ordering.test.ts` established): IDLE, then DONE, then
+			// UNAUTHENTICATE, strictly in that order.
+			const wire = server.transcript.format();
+			const idleAt = wire.search(/C: [^\n]*IDLE/);
+			const doneAt = wire.search(/C: [^\n]*DONE/);
+			const unauthAt = wire.search(/C: [^\n]*UNAUTHENTICATE/);
+			expect(idleAt, "the IDLE line must appear on the wire").toBeGreaterThanOrEqual(0);
+			expect(doneAt, "DONE must follow IDLE").toBeGreaterThan(idleAt);
+			expect(unauthAt, "UNAUTHENTICATE must follow DONE").toBeGreaterThan(doneAt);
+		},
+	);
+
+	test("M5.16 Finding 1: a command queued behind a rejected UNAUTHENTICATE still runs (release() on the failure path)", async () => {
+		const caps = ["IMAP4rev1", "UNAUTHENTICATE"];
+		server = await ScriptedServer.start();
+		server.arm([
+			[
+				...authenticatedPrelude(caps),
+				expectLine(UNAUTH_LINE),
+				reply("NO administrative lock"),
+				expectLine(command("NOOP", { args: null })),
+				reply("OK noop done"),
+			],
+		]);
+		client = new ImapClient({ ...baseConfig(server.port), auth: { user: "u", pass: "p" } });
+		await client.connect();
+
+		const unauthPromise = client.unauthenticate();
+		// Queued immediately behind the still-in-flight (isolated)
+		// UNAUTHENTICATE -- must not be stranded once UNAUTHENTICATE is
+		// rejected; `release()` on the catch path must still flush it.
+		const noopPromise = client.noop();
+
+		await expect(unauthPromise).rejects.toBeInstanceOf(ServerNoError);
+		await expect(noopPromise).resolves.toBeUndefined();
 		expect(client.state).toBe("authenticated");
 		await server.assertCompleted();
 	});

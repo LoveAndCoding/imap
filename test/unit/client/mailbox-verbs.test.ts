@@ -1006,7 +1006,11 @@ describe("MailboxSession.convert() + seq facet (RFC 5259 §6, M5.12)", () => {
 		client = new ImapClient(baseConfig(server.port));
 		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
 			...selectInboxSteps(8),
-			expectLine(command("UID CONVERT", { args: /^4,8 TEXT \(text\/html\)$/i })),
+			// M5.16 (Finding 3): destination MIME type is QUOTED on the wire
+			// (RFC 5259 §10's `quoted-to-mime-type` ABNF production) -- matcher
+			// correction, was previously pinning the unquoted (non-compliant)
+			// form `ConvertCommand` used to emit.
+			expectLine(command("UID CONVERT", { args: /^4,8 TEXT \("text\/html"\)$/i })),
 			reply("OK UID CONVERT completed", [
 				'* CONVERTED (TAG "a1") UID 4 TEXT ("<html/>")',
 				'* CONVERTED (TAG "a1") UID 8 TEXT ("<html/>")',
@@ -1027,7 +1031,9 @@ describe("MailboxSession.convert() + seq facet (RFC 5259 §6, M5.12)", () => {
 		client = new ImapClient(baseConfig(server.port));
 		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
 			...selectInboxSteps(3),
-			expectLine(command("CONVERT", { args: /^1:3 TEXT \(text\/plain\)$/i })),
+			// M5.16 (Finding 3): destination quoted -- matcher correction, see
+			// the sibling UID CONVERT test above for the ABNF citation.
+			expectLine(command("CONVERT", { args: /^1:3 TEXT \("text\/plain"\)$/i })),
 			reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
 		]);
 
@@ -1089,7 +1095,9 @@ describe("MailboxSession.convert() + seq facet (RFC 5259 §6, M5.12)", () => {
 		client = new ImapClient(baseConfig(server.port));
 		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
 			...selectInboxSteps(100),
-			expectLine(command("UID CONVERT", { args: /^1:100 TEXT \(text\/plain\)$/i })),
+			// M5.16 (Finding 3): destination quoted -- matcher correction, see
+			// the "convert(): UID CONVERT..." test above for the ABNF citation.
+			expectLine(command("UID CONVERT", { args: /^1:100 TEXT \("text\/plain"\)$/i })),
 			reply("NO [MAXCONVERTMESSAGES 5] Too many messages"),
 		]);
 
