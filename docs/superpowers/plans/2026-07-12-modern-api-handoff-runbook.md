@@ -121,11 +121,12 @@ between closes; last updated: M3 CLOSED.)*
   question SETTLED permanently, no raw-UTF-8 arm), M5.12 (`83b8bb7` —
   CONVERT both grains, +36 RFC5259 rows). Live ledger at `83b8bb7`:
   **1112 pass / 6 adjudicated violations / 92 unimplemented / 429
-  untestable / problems []**; 1876 unit tests. Still in flight (two
-  worktrees): M5.10 UNAUTHENTICATE (agent a92b0459889a324bc) and the
-  CONTEXT-machinery carry-forward (agent a03e9adbdac64c5eb — RFC 5267
-  4.x rows, RFC5465-7-1, RFC9394-3.3-1 UID FETCH PARTIAL). After those
-  two merge: M5.16 close only (exit bar: every source family ≥85% MUST
+  untestable / problems []**; 1876 unit tests. CONTEXT-machinery
+  carry-forward MERGED (+10 rows — RFC5267-4.1-1/4.3-2/4.3.5-1,
+  RFC5465-7-1, RFC9394-3.3-1 both profiles; deferral adjudication
+  resolved): ledger now **1122 pass / 6 / problems []**, 1910 unit
+  tests. Still in flight (one worktree): M5.10 UNAUTHENTICATE (agent
+  a92b0459889a324bc). After it merges: M5.16 close only (exit bar: every source family ≥85% MUST
   AND zero unimplemented rows anywhere).
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before

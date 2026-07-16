@@ -118,7 +118,7 @@ caveat. Concretely, at authoring time:
 | M5.14 UIDONLY catalog extraction | MERGED (RFC 9586 quotes model-knowledge-flagged for M6 re-verification) |
 | M5.15 UIDONLY mode | MERGED |
 | M5.16 milestone close | last |
-| M4 carry-forward: CONTEXT machinery (RFC 5267 4.x, RFC5465-7-1) + UID FETCH PARTIAL (RFC9394-3.3-1) | IN FLIGHT (worktree) |
+| M4 carry-forward: CONTEXT machinery (RFC 5267 4.x, RFC5465-7-1) + UID FETCH PARTIAL (RFC9394-3.3-1) | MERGED (+10 rows; RFC9394-3.3-1 deferral resolved; 1122 pass) |
 | M4 carry-forward: idle() through the shared refcounted driver | wave 4 or close |
 
 Kickoff validation: M3+M4 CLOSED (the doc was authored mid-M2 — every
