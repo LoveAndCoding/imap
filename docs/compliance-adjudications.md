@@ -884,11 +884,16 @@ AUTHENTICATE.
 ## I-9 — Capability-gated commands write zero bytes when the capability is absent
 
 **Mechanism:** Every capability-gated public method checks the live
-`CapabilityView` and throws `CapabilityError` (`src/errors.ts`) *before*
-the underlying `Command` subclass is ever constructed, so the prohibited
-option/verb never reaches `CommandWriter` and never reaches the wire — the
-same "gate before construction" shape repeated at each of the ~20 call
-sites that import `CapabilityError` across `src/client/` and
+`CapabilityView` and throws `CapabilityError` (`src/errors.ts`) *before
+dispatch* — zero bytes are written when the capability is absent, because
+command construction alone never touches the socket. At most call sites
+the gate additionally precedes the `Command` subclass's construction; a
+few (e.g. `ImapClient.create()`, whose own comment documents that
+argument validation deliberately precedes the capability probe) construct
+first and gate before `run()` dispatches — the zero-bytes guarantee is
+identical either way (M6.8 review correction: the earlier wording
+overclaimed construction-ordering uniformity). The same shape repeats at
+each of the ~20 call sites that import `CapabilityError` across `src/client/` and
 `src/commands/`, rather than a bespoke prohibition per extension. Each row
 below was verified to have a compliance test that actually scripts the
 capability as ABSENT and checks the wire stayed clean (not merely a test

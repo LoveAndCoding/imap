@@ -42,8 +42,55 @@ session directive, unchanged since M0.
 | M6.5 MIGRATION.md | 770-line node-imap → 1.0 guide; all 18 destination samples compile-gated (`test/docs/migration-samples.ts` wired into `npm run typecheck`, gate proven by deliberate-error injection). |
 | M6.6 README | Full rewrite around ImapClient (1194 → 645 lines); stale Legacy API section → MIGRATION.md pointer; false Roadmap removed; 18 samples compile-gated (`test/docs/readme-samples.ts`); node-imap attribution kept. |
 | M6.7 CHANGELOG + 1.0.0 + snapshot | This document. `CHANGELOG.md` (Keep-a-Changelog; M0–M6 arc; honest breaking-changes section pointing at MIGRATION.md); `package.json` version → 1.0.0, description rewritten; build/exports/pack verified. |
-| M6.8 Final phase review | See section below (filled at review completion). |
+| M6.8 Final phase review | Three lenses over the whole effort — see section below. |
 | M6.9 THE PR | Opened into `modern-api` after M6.8 (never merged by this project's automation — human review). |
+
+## M6.8 — Final phase-boundary review outcome
+
+Three lenses over the whole M0–M6 effort (invariants+scope, security,
+docs+ledger accuracy). **Zero criticals.** Fixed pre-PR:
+
+1. **Packaging**: no `files` allowlist meant `npm pack` shipped 708
+   files / 24.9 MB unpacked (typedoc HTML, all six compliance-history
+   snapshots, internal planning docs, `.claude/` tooling). Allowlist
+   added (`dist`, README, CHANGELOG, LICENSE, MIGRATION.md,
+   compliance-adjudications.md).
+2. **Ledger accuracy**: the M6.1 I-9 entry overclaimed
+   "gate-before-construction" uniformity — corrected to the true
+   invariant (gate before dispatch, zero bytes; `create()` documents its
+   construct-first ordering).
+3. **README quickstart**: added the one-line UID-grain note
+   (`fetch()` = `UID FETCH`; `seq.fetch()` for MSNs), mirrored in the
+   compiled samples file.
+
+Verified clean: all 13 §12 invariants have single-chokepoint
+enforcement with pinning unit tests; every §13 non-goal confirmed
+absent (no scope creep); TLS option enforcement, dual credential
+chokepoints (`run()` + `performAuthSelection()`), constant-time SCRAM
+`v=` comparison + terminal-failure no-fallback, log/credential hygiene,
+CRLF-injection-proof `CommandWriter`, bounded literal allocation,
+LOGINDISABLED/STARTTLS-mandatory refusals; ledger complete in both
+directions (all 8 non-pass rows entry-mapped; ~15-entry reverse sample
+plus two M6.1 group samples all consistent); README quickstart RUNS
+verbatim against a scripted server; typedoc output matches the three
+public entry points; all doc links/anchors resolve.
+
+Itemized (not fixed — hardening notes for post-1.0):
+
+- **zlib boundary synchronicity** (Low-Medium uncertainty): the
+  UNAUTHENTICATE-while-compressed injection guard relies on the inflate
+  stream delivering the tagged-OK-plus-injected-line pair in one
+  synchronous emission. Empirically pinned by
+  `test/unit/connection/unauthenticate-boundary.test.ts` but not
+  architecturally guaranteed against every deflate framing a malicious
+  server could choose. Suggested hardening: a second-layer discard
+  keyed off the codec-teardown step itself, not just the pipeline's
+  pending buffer.
+- **RFC 2047 header-field decoding** (uncertainty, pre-existing parser
+  behavior): `decodeWords` decodes encoded-words in ENVELOPE/header
+  FIELD text (display names/subjects). Body content is untouched, so
+  this is read as outside §13's "no MIME decoding" non-goal's intent —
+  recorded so the boundary stays deliberate.
 
 ## Adjudication tally (final, 1.0)
 

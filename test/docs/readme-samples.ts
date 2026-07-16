@@ -38,6 +38,8 @@ export async function quickstart(): Promise<void> {
 	await client.connect(); // connects, negotiates TLS, authenticates, ENABLEs
 	const mailbox = await client.select("INBOX");
 
+	// fetch() addresses messages by UID (wire: UID FETCH); use
+	// mailbox.seq.fetch() to address by message sequence number instead.
 	for await (const message of mailbox.fetch("1:10", {
 		envelope: true,
 		flags: true,

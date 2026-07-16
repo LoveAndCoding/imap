@@ -7,6 +7,14 @@
 	],
 	"description": "A spec-compliant, fully typed IMAP client for Node.js — promise and async-iterable API, IMAP4rev1 + IMAP4rev2, with a per-RFC-requirement compliance suite",
 	"main": "./dist/index.js",
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE",
+		"docs/MIGRATION.md",
+		"docs/compliance-adjudications.md"
+	],
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {

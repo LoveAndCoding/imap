@@ -43,8 +43,8 @@ gates):**
 | M6.5 MIGRATION.md | DONE (🧳 — samples compile-gated via test/docs/) |
 | M6.6 README rewrite | DONE (📰 — 1194→645 lines; Legacy API section → MIGRATION.md pointer; samples compile-gated) |
 | M6.7 CHANGELOG + 1.0.0 + final snapshot | DONE (🎖️ — version 1.0.0; CHANGELOG; nine byte-identical runs; snapshot docs/compliance-history/M6/) |
-| M6.8 Final phase review | IN PROGRESS |
-| M6.9 THE PR into modern-api | last (open, never merge) |
+| M6.8 Final phase review | DONE (🔎 — zero criticals; 3 pre-PR fixes: files allowlist, I-9 ledger wording, quickstart UID note; 2 itemized hardening notes) |
+| M6.9 THE PR into modern-api | IN PROGRESS |
 
 ## Status check (verified against the tree at doc-authoring time)
 
