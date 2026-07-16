@@ -17,10 +17,7 @@
  *     RFC5802-5.1-10  'c=' first component is the client-first-message's GS2 header.
  *     RFC5802-5.1-12  'p=' proof is the client-computed, base64-encoded ClientProof.
  *     RFC5802-5.1-13  'v=' verifier is the ServerSignature the client uses to verify the server.
- *     RFC5802-6-2     Channel-binding-capable client MUST use 'p' when server offers -PLUS.
  *     RFC5802-6-3     Client without channel-binding support MUST use 'n'.
- *     RFC5802-6.1-1   'tls-unique' is the default channel binding type.
- *     RFC5802-6.1-2   Client SHOULD implement 'tls-unique' if it implements any channel binding.
  *     RFC5802-7-1     gs2-cbind-flag / gs2-header ABNF.
  *     RFC5802-7-2     client-first-message / client-final-message ABNF.
  *     RFC5802-7-3     cbind-data present iff gs2-cbind-flag is 'p'.
@@ -29,13 +26,18 @@
  *     RFC5802-5.1-1   'a=' authzid syntax matches 'n='s comma/equals quoting rule.
  *     RFC5802-5.1-3   Client SHOULD SASLprep the username; SHOULD abort on preparation failure.
  *     RFC5802-5.1-5   Presence of the reserved 'm=' attribute MUST cause authentication failure.
- *     RFC5802-5.1-11  'c=' second component is the channel's binding data, iff channel binding used.
  *     RFC5802-5.1-14  Client MAY receive no server-final-message at all on failure.
  *     RFC5802-5.1-15  Client MUST fail authentication on an unsupported mandatory extension.
  *     RFC5802-5.1-16  Client MUST ignore unknown optional extension attributes.
  *   RFC 7677 (test/compliance/catalog/ext/rfc7677.ts):
  *     RFC7677-3-1     SCRAM-SHA-256(-PLUS) = SCRAM-SHA-1(-PLUS) with SHA-256 substituted for HMAC()/H().
- *     RFC7677-4-1     -PLUS variant MUST be used over TLS w/ session-hash negotiated, or no resumption.
+ *
+ * NOT cited here (M5.16 adjudication, untestable/capability-inventory — see
+ * docs/compliance-adjudications.md and each id's catalog untestableRationale):
+ * RFC5802-5.1-11, RFC5802-6-2, RFC5802-6.1-1, RFC5802-6.1-2, RFC7677-4-1. All
+ * five are conditional on this client supporting/using SCRAM channel binding
+ * (the -PLUS mechanism variants), which is a permanent design non-goal (spec
+ * §13) this client will never satisfy, exactly like RFC5802-6-1 below.
  *
  * SCRAM/SHA-1/SHA-256 DERIVATION (Node crypto: HMAC + SHA-1/SHA-256 + PBKDF2
  * for Hi(); scratch script re-run and cross-checked against each RFC's own
@@ -81,8 +83,7 @@
  * M5.1: `ScramMechanism` (src/sasl/scram.ts) is a real, registered mechanism
  * for SCRAM-SHA-1/SCRAM-SHA-256 (never the -PLUS/channel-binding variants —
  * a permanent non-goal, spec §13 — those mechanism names are never
- * registered, so any test naming them stays 'unimplemented' forever by
- * design). `ComplianceDriver.authenticate()`'s `opts.user`/`opts.pass`/
+ * registered). `ComplianceDriver.authenticate()`'s `opts.user`/`opts.pass`/
  * `opts.scramNonce` overrides (driver.ts) let a script reproduce the RFC's
  * own fixed worked-example identity/nonce against a client whose normal
  * behavior is a genuinely random nonce per attempt (RFC5802-5.1-7). Every
@@ -91,13 +92,14 @@
  * framing) and every `send()` of a subsequent server message carries the
  * required "+ " continuation prefix.
  *
- * KNOWN, DOCUMENTED, PERMANENT NON-PASSES (see each test's own comment):
- * the -PLUS-named tests (RFC5802-5.1-11/-6-2/-6.1-1/-6.1-2, RFC7677-4-1) —
- * mechanism names never registered ('unimplemented' forever, by design).
- * RFC5802-6-1 is NOT cited by any test: its duty binds only a channel-
- * binding-capable client, an antecedent this library permanently cannot
- * satisfy — reclassified untestable/capability-inventory in rfc5802.ts at
- * M5.1 (see the in-file note where its test used to live).
+ * RFC5802-6-1, RFC5802-5.1-11, RFC5802-6-2, RFC5802-6.1-1, RFC5802-6.1-2, and
+ * RFC7677-4-1 are NOT cited by any test: every one of their duties binds only
+ * a channel-binding-capable client (or a client using a -PLUS mechanism
+ * variant), an antecedent this library permanently cannot satisfy (spec §13
+ * non-goal) — reclassified untestable/capability-inventory in rfc5802.ts/
+ * rfc7677.ts (RFC5802-6-1 at M5.1; the other five at M5.16, see
+ * docs/compliance-adjudications.md and the in-file notes where their tests
+ * used to live).
  *
  * The forged-ServerSignature duty (RFC5802-5-3/-5.1-13) passes genuinely:
  * `finish()`'s rejection is TERMINAL (`AuthError.terminal`, M5.1 security
@@ -1225,79 +1227,16 @@ complianceTest(
 	},
 );
 
-// ── RFC5802-5.1-11: 'c=' cbind-data present iff channel binding is used ───
-// For a 'p'-flag (channel-binding) exchange, the base64-decoded 'c=' value
-// MUST carry the external channel's actual binding bytes appended after the
-// gs2-header. This client has no TLS channel-binding implementation, so this
-// documents/pins the expected 'p'-flag wire shape (gs2-header + cbind-data)
-// for when that capability lands — self-actualizes on authenticate() first.
-complianceTest(
-	{
-		reqs: ["RFC5802-5.1-11"],
-		profiles: ["rev1", "rev2"],
-		title: "'c=' carries the channel's binding data appended after the gs2-header when channel binding is used ('p' flag)",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const v = VECTORS.sha1;
-		// A hypothetical tls-unique channel-binding-data value the client would
-		// append after its own 'p=tls-unique,,' gs2-header once channel binding
-		// is implemented.
-		const fakeCbindData = Buffer.from("FAKE-TLS-UNIQUE-CBIND-DATA", "utf8");
-		const gs2Header = "p=tls-unique,,";
-		const expectedCbindInput = Buffer.concat([Buffer.from(gs2Header, "utf8"), fakeCbindData]);
-
-		const cbindFinalMatcher = {
-			description: "SCRAM client-final-message 'c=' carries gs2-header + cbind-data (channel binding in use)",
-			match: (line: string) => {
-				const m = /^c=([A-Za-z0-9+/=]+),r=([^,]*),p=([A-Za-z0-9+/=]+)$/.exec(line);
-				if (!m) {
-					return { ok: false, reason: `client-final-message must be 'c=..,r=..,p=..', got: '${line}'` };
-				}
-				const [, cB64] = m;
-				const cDecoded = Buffer.from(cB64, "base64");
-				if (!cDecoded.equals(expectedCbindInput)) {
-					return {
-						ok: false,
-						reason:
-							`c= decodes to ${cDecoded.length} bytes, expected gs2-header ('${gs2Header}') ` +
-							`+ ${fakeCbindData.length}-byte cbind-data (RFC5802-5.1-11) — got no trailing cbind-data`,
-					};
-				}
-				return { ok: true };
-			},
-		};
-
-		const server = await f.startServer({ tlsImplicit: localhost });
-		server.arm([
-			[
-				// CAPABILITY advertises the -PLUS variant so a channel-binding
-				// capable client would select the 'p' flag (RFC5802-6-2).
-				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1", "AUTH=SCRAM-SHA-1-PLUS"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1-PLUS(?: [A-Za-z0-9+/=]+)?$/i })),
-				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "p" })),
-				reply("NO AUTHENTICATE failed"),
-			],
-		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "implicit",
-			ca: localhost.cert,
-			timeoutMs: 3000,
-		});
-		await driver.authenticate("SCRAM-SHA-1-PLUS"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// This client implements no channel binding today — the cbindFinalMatcher
-		// above documents the expected 'p'-flag c= shape for when it lands;
-		// unimplemented either way today (SCRAM-SHA-1-PLUS is not a recognized
-		// mechanism string yet).
-		void cbindFinalMatcher;
-	},
-);
+// ── RFC5802-5.1-11: NOT cited (untestable, capability-inventory) ───────────
+// "followed by the external channel's channel binding data, if and only if
+// the client is using channel binding." — the duty binds only a client that
+// supports and uses channel binding (the p-flag path), and this library
+// permanently implements none (spec §13 non-goal; no -PLUS mechanism name is
+// ever registered). The antecedent is structurally unsatisfiable, so the row
+// is classified untestable (see rfc5802.ts's RFC5802-5.1-11
+// untestableRationale, reclassified at M5.16); every 'c=' value this client
+// emits is the no-cbind-data shape (RFC5802-5.1-10), genuinely asserted by
+// the RFC5802-7-3-citing test below.
 
 // ── RFC5802-5.1-14: client MAY receive no server-final-message at all ─────
 // On failed authentication the ENTIRE server-final-message is OPTIONAL — a
@@ -1362,157 +1301,29 @@ complianceTest(
 	},
 );
 
-// ── RFC5802-6-2: channel-binding-capable client MUST use 'p' when server offers -PLUS ─
-// A client that supports mechanism negotiation and channel binding, seeing
-// the server's CAPABILITY advertise the -PLUS variant, MUST select the 'p'
-// gs2-cbind-flag (never falling back to 'y' or 'n') to actually engage
-// channel binding rather than merely tolerate its absence.
-complianceTest(
-	{
-		reqs: ["RFC5802-6-2"],
-		profiles: ["rev1", "rev2"],
-		title: "channel-binding-capable client uses 'p' (not 'n'/'y') when the server advertises the -PLUS variant",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const v = VECTORS.sha1;
-		const server = await f.startServer({ tlsImplicit: localhost });
-		server.arm([
-			[
-				// CAPABILITY advertises BOTH the bare and -PLUS variants.
-				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1", "AUTH=SCRAM-SHA-1-PLUS"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1-PLUS(?: [A-Za-z0-9+/=]+)?$/i })),
-				send("+ \r\n"),
-				// A channel-binding-capable client MUST use 'p' here, never 'n'/'y'.
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "p" })),
-				reply("NO AUTHENTICATE failed"),
-			],
-		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "implicit",
-			ca: localhost.cert,
-			timeoutMs: 3000,
-		});
-		await driver.authenticate("SCRAM-SHA-1-PLUS"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// This client implements no channel binding at all today, so it cannot
-		// negotiate -PLUS or emit a 'p' flag; the expectation above documents
-		// the channel-binding-capable-client duty for when it lands.
-	},
-);
-
-// ── RFC5802-6.1-1/-6.1-2: 'tls-unique' is the default/SHOULD-implement channel binding type ─
-// When the client uses channel binding, the cb-name it sends in a 'p='
-// gs2-cbind-flag MUST default to 'tls-unique' absent an IMAP-specific
-// override (IMAP specifies none), and the client SHOULD implement
-// 'tls-unique' if it implements any channel-binding type at all.
-complianceTest(
-	{
-		reqs: ["RFC5802-6.1-1", "RFC5802-6.1-2"],
-		profiles: ["rev1", "rev2"],
-		title: "channel-binding client's 'p=' cb-name defaults to 'tls-unique'",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const v = VECTORS.sha1;
-		const tlsUniqueFlag = {
-			description: "SCRAM client-first-message with gs2-cbind-flag 'p=tls-unique'",
-			match: (line: string) => {
-				const m = /^p=([A-Za-z0-9.-]+),/.exec(line);
-				if (!m) {
-					return { ok: false, reason: `expected a 'p=<cb-name>' gs2-cbind-flag, got: '${line}'` };
-				}
-				const [, cbName] = m;
-				if (cbName !== "tls-unique") {
-					return {
-						ok: false,
-						reason: `cb-name '${cbName}' != default/SHOULD-implement 'tls-unique' (RFC5802-6.1-1/-6.1-2)`,
-					};
-				}
-				return scramClientFirstMessage({ username: v.username, expectFlag: "p" }).match(line);
-			},
-		};
-		const server = await f.startServer({ tlsImplicit: localhost });
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1", "AUTH=SCRAM-SHA-1-PLUS"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1-PLUS(?: [A-Za-z0-9+/=]+)?$/i })),
-				send("+ \r\n"),
-				expectLine(tlsUniqueFlag),
-				reply("NO AUTHENTICATE failed"),
-			],
-		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "implicit",
-			ca: localhost.cert,
-			timeoutMs: 3000,
-		});
-		await driver.authenticate("SCRAM-SHA-1-PLUS"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// No channel-binding implementation exists today (see RFC5802-6-2's
-		// note) — this documents the 'tls-unique' default/SHOULD for when it
-		// lands.
-	},
-);
-
-// ── RFC7677-4-1: -PLUS variant MUST be used over TLS w/ session-hash, or no resumption ─
-// Either (a) the underlying TLS channel negotiated the RFC 7627 session-hash/
-// extended-master-secret extension before a -PLUS channel-binding mechanism
-// is used, or (b) the TLS session in use is NOT a resumed session. Neither
-// channel binding nor TLS-session-introspection exist in this client today,
-// so this documents the expected refusal-to-proceed behavior for a resumed
-// session lacking the extension.
-complianceTest(
-	{
-		reqs: ["RFC7677-4-1"],
-		profiles: ["rev1", "rev2"],
-		title: "client refuses SCRAM-SHA-256-PLUS over a resumed TLS session lacking the session-hash extension",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const server = await f.startServer({ tlsImplicit: localhost });
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-256", "AUTH=SCRAM-SHA-256-PLUS"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-256-PLUS(?: [A-Za-z0-9+/=]+)?$/i })),
-				send("+ \r\n"),
-				// A compliant client that detects (a) a resumed TLS session and
-				// (b) no negotiated RFC 7627 session-hash extension MUST refuse to
-				// proceed with the -PLUS mechanism over that connection — e.g. abort
-				// or fall back to the non-PLUS variant — rather than trusting a
-				// channel-binding value derived from a vulnerable TLS channel.
-				expectLine({
-					description: "client refuses/aborts -PLUS rather than sending a client-first-message that trusts the resumed session",
-					match: (line: string) => ({
-						ok: line === "*",
-						reason: `expected '*' abort (or non-PLUS fallback, not reached here) refusing -PLUS over an unsafe resumed session, got: '${line}'`,
-					}),
-				}),
-				reply("NO AUTHENTICATE failed"),
-			],
-		]);
-		const driver = f.newDriver();
-		await driver.connect({
-			host: "127.0.0.1",
-			port: server.port,
-			security: "implicit",
-			ca: localhost.cert,
-			timeoutMs: 3000,
-		});
-		// No TLS-session-resumption/session-hash introspection surface exists on
-		// this driver today, so the "resumed session lacking session-hash" precondition
-		// itself cannot be scripted at the TLS layer — authenticate() throws first,
-		// self-actualizing the failure while documenting the intended refusal script.
-		await driver.authenticate("SCRAM-SHA-256-PLUS"); // throws NotImplementedError today
-		await server.assertCompleted();
-	},
-);
+// ── RFC5802-6-2 / RFC5802-6.1-1 / RFC5802-6.1-2 / RFC7677-4-1: NOT cited ───
+// (untestable, capability-inventory, M5.16 adjudication) ────────────────────
+// RFC5802-6-2 ("clients that support mechanism negotiation and channel
+// binding MUST use a 'p' gs2-cbind-flag when the server offers the
+// PLUS-variant"), RFC5802-6.1-1/-6.1-2 (the 'tls-unique' default/
+// SHOULD-implement channel-binding-type duties, conditional on "the client
+// uses channel binding" / "if they implement any channel binding"), and
+// RFC7677-4-1 (the -PLUS-over-TLS-session-hash MUST, conditional on the
+// client "using" a -PLUS mechanism) are all conditional on this client
+// supporting SASL channel binding or selecting a SCRAM-*-PLUS mechanism
+// variant. This client deliberately does not implement or advertise
+// SCRAM-*-PLUS (spec §13 non-goal; it correctly sends gs2-cbind-flag 'n' per
+// the RFC5802-6-3-citing tests above), which RFC 5802 explicitly permits for
+// non-channel-binding clients. The conditional can never fire for a
+// conformant deployment of this client, so all four rows are classified
+// untestable/capability-inventory (see rfc5802.ts's/rfc7677.ts's
+// untestableRationale on each; docs/compliance-adjudications.md's M5.16
+// entry) — the same never-reachable-affordance reasoning as RFC5802-6-1
+// above. A prior version of this file scripted hypothetical
+// AUTH=SCRAM-SHA-1-PLUS/SCRAM-SHA-256-PLUS exchanges and asserted the
+// driver's post-throw NotImplementedError state as placeholders for these
+// four duties; removed here since the rows no longer self-actualize as
+// "unimplemented" — they are untestable regardless of implementation
+// status. Reactivation condition: implementing SCRAM-*-PLUS (tls-exporter
+// per RFC 9266) is a legitimate potential post-1.0 feature; if it lands,
+// these rows must be reclassified testable and re-scripted.

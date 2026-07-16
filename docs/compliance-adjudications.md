@@ -547,3 +547,134 @@ mirror (tracking every message's current UID keyed by its current MSN,
 updated on every EXISTS/EXPUNGE/VANISHED), re-decide whether the seq-grain
 methods should transparently re-address by UID instead of refusing —
 out of scope for any milestone currently planned.
+
+---
+
+## RFC 4422 §3.6/§3.7/§6.1.1/§6.1.5 SASL security-layer rows — untestable/capability-inventory (adjudicated at M5.16, formalizing M6.3 early)
+
+**Requirement:** RFC4422-3.6-1 (MUST install a negotiated security layer on
+a successful outcome), RFC4422-3.7-1 (MUST close the connection on
+security-layer encode/decode failure), RFC4422-3.7-2 (MUST NOT exceed the
+peer's negotiated maximum outgoing protected-buffer size), RFC4422-3.7-3
+(SHOULD close on receipt of an oversized length field), RFC4422-6.1.1-1
+(SHOULD close on a security-layer integrity failure), and RFC4422-6.1.5-2
+(SHOULD close on receipt of an oversized protected buffer) — each × rev1/
+rev2 (12 rows). Every one of these duties is conditional on "a security
+layer was negotiated" (RFC4422-3.6-1's own words) or on one already being
+installed and active (§3.7/§6.1.1/§6.1.5's shared antecedent).
+
+**Decision:** Reclassified `testable` → `untestable` (theme
+`capability-inventory`) in `test/compliance/catalog/ext/rfc4422.ts`, one
+`untestableRationale` per row. This formalizes, ahead of schedule, the task
+`docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md` §M6.3
+reserved for M6 ("Formalize the RFC 4422 security-layer adjudications") —
+M6.3 itself named this decision shape ("vacuous-by-design... adjudicate at
+M6") and listed its dependency as "M5.16 (final mechanism list settled)";
+with M5.16 now the milestone actually doing the settling, the adjudication
+is written here instead of waiting for M6. The four rows M6.3's text did not
+originally enumerate by name (RFC4422-3.7-3, RFC4422-6.1.1-1,
+RFC4422-6.1.5-2 — M6.3 listed only 3.6-1/3.7-1/3.7-2) are included in this
+same batch because they share the identical antecedent and rationale; no
+partial formalization would make sense. The compliance specs
+(`test/compliance/specs/ext/sasl-4422.test.ts`) had their four
+`complianceTest` blocks exercising these ids (previously scripting a
+hypothetical `AUTH=GSSAPI` exchange and asserting the driver's
+post-`NotImplementedError` state) removed, replaced by a pointer comment —
+mirroring how RFC5802-6-1 was handled at M5.1 (its test removed, replaced by
+an in-file note) since these rows are untestable regardless of
+implementation status, not merely unimplemented today.
+
+**Rationale:**
+1. Every SASL mechanism this client implements or has ever implemented —
+   PLAIN, LOGIN (not SASL, but the fallback), OAUTHBEARER, XOAUTH2,
+   CRAM-MD5, EXTERNAL, SCRAM-SHA-1/SCRAM-SHA-256 (without `-PLUS`), and
+   ANONYMOUS, the closed list at spec §9.2 — negotiates NO SASL security
+   layer. RFC 5802 §5.2 states this outright for SCRAM; none of the others
+   ever offered one either. GSSAPI/DIGEST-MD5, the two mechanisms that
+   would trigger this row family, are not implemented and are not on this
+   client's pre-1.0 roadmap.
+2. Confidentiality/integrity for this client are provided by TLS (spec
+   §10), its one supported security layer — not by a SASL security layer.
+   The RFC's own §3.7/§6.1.1/§6.1.5 fault-handling duties are about SASL
+   security-layer buffers/integrity checks specifically, a wire shape this
+   client's TLS-only posture never produces.
+3. Because no mechanism this client implements ever installs a SASL
+   security layer, the conditional in every one of these six rows can never
+   fire for a conformant deployment of this client: there is no code path
+   through the actual API in which the install-on-success duty, the
+   encode/decode-failure close duty, the outgoing-buffer-size duty, or the
+   oversized-inbound-length/integrity-failure close duties could be either
+   honored or violated. This is the same never-reachable-affordance
+   reasoning already applied to RFC5802-6-1 (reclassified untestable/
+   capability-inventory at M5.1) and to the RFC9525 URI-ID/SRV-ID rows that
+   theme was first established for.
+4. This is a reclassification of testability, not a deviation from the
+   requirement — the client is not declining to comply with any of these
+   MUSTs/SHOULDs; the duties simply never come into play given this
+   client's actual mechanism inventory.
+
+**Reactivation condition:** if this client ever adds a SASL mechanism that
+negotiates a security layer (e.g. GSSAPI, DIGEST-MD5) post-1.0, all six
+rows must be reclassified `testable` again and re-scripted against that
+mechanism's real security-layer surface — written into each row's own
+`untestableRationale` so the catalog is self-policing.
+
+---
+
+## SCRAM channel-binding rows (RFC 5802 §5.1/§6/§6.1, RFC 7677 §4) — untestable/capability-inventory (adjudicated at M5.16)
+
+**Requirement:** RFC5802-5.1-11 (MUST: 'c=' second component is the
+channel's binding data, present iff channel binding is used), RFC5802-6-2
+(MUST: channel-binding-capable client uses 'p' gs2-cbind-flag when the
+server offers the `-PLUS` variant), RFC5802-6.1-1 (MUST: 'tls-unique' is the
+default channel-binding type), RFC5802-6.1-2 (SHOULD: implement
+'tls-unique' if implementing any channel binding), and RFC7677-4-1 (MUST:
+`-PLUS` variant used only over a TLS channel with the session-hash extension
+negotiated, or without session resumption) — each × rev1/rev2 (10 rows).
+Every one of these duties is conditional on this client supporting/using
+SASL channel binding or a SCRAM `-PLUS` mechanism variant.
+
+**Decision:** Reclassified `testable` → `untestable` (theme
+`capability-inventory`) in `test/compliance/catalog/ext/rfc5802.ts` and
+`test/compliance/catalog/ext/rfc7677.ts`, one `untestableRationale` per row,
+mirroring RFC5802-6-1's existing untestable classification (M5.1) exactly.
+The four `complianceTest` blocks in
+`test/compliance/specs/ext/sasl-scram-5802-7677.test.ts` that exercised
+these ids (previously scripting hypothetical `AUTH=SCRAM-SHA-1-PLUS`/
+`SCRAM-SHA-256-PLUS` exchanges and asserting the driver's post-throw
+`NotImplementedError` state) were removed, replaced by a single pointer
+comment in the same style as the existing RFC5802-6-1 note.
+
+**Rationale:**
+1. This client deliberately does not implement or advertise
+   SCRAM-`*`-PLUS: channel binding is a permanent design non-goal (spec
+   §13; spec §9.2 "no channel binding = `-PLUS` variants out of scope"),
+   not a not-yet-built feature. RFC 5802 explicitly permits this for
+   non-channel-binding clients — the RFC5802-6-3 "MUST use an 'n'
+   gs2-cbind-flag" branch this client always takes, already genuinely
+   asserted passing by the RFC5802-6-3-citing tests.
+2. Because this client never selects a `-PLUS` mechanism name and never
+   constructs a 'p' gs2-cbind-flag, none of these rows' antecedents can
+   ever be satisfied: no 'c=' value with trailing cbind-data is ever built
+   (RFC5802-5.1-11), no CAPABILITY-driven 'p'-flag selection ever happens
+   (RFC5802-6-2), no cb-name default/SHOULD-implement decision is ever
+   exercised (RFC5802-6.1-1/-6.1-2), and no `-PLUS` mechanism is ever used
+   over any TLS channel, safe or not (RFC7677-4-1, whose own applicability
+   note already recorded "neither implemented today" — this entry settles
+   that these five never activate, permanently, absent the reactivation
+   condition below).
+3. Same never-reachable-affordance reasoning as RFC5802-6-1 (reclassified
+   untestable/capability-inventory at M5.1): a wire exchange showing this
+   client's actual, compliant 'n'-flag behavior carries zero information
+   about any of these five rows' channel-binding-capable-client duties.
+4. This is a reclassification of testability, not a deviation — the client
+   is not declining to comply with any of these MUSTs/SHOULDs; they simply
+   never come into play given this client's permanent non-implementation of
+   channel binding.
+
+**Reactivation condition:** implementing SCRAM-`*`-PLUS (tls-exporter
+channel binding per RFC 9266, rather than the deprecated tls-unique/
+tls-server-end-point types) is a legitimate potential post-1.0 feature. If
+it lands, all five rows must be reclassified `testable` again and
+re-scripted against the real channel-binding surface — written into each
+row's own `untestableRationale` so the catalog is self-policing.

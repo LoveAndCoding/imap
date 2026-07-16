@@ -11,33 +11,29 @@
  *   RFC4422-3.4-1   After a challenge, the client's only legal moves are respond or abort.
  *   RFC4422-3.4.1-1 Authorization-identity string MUST NOT contain NUL; absent == empty.
  *   RFC4422-3.5-1   Client aborts via a protocol-specific abort message (IMAP: '*').
- *   RFC4422-3.6-1   Client MUST install a negotiated security layer on a successful outcome.
- *   RFC4422-3.7-1   Client MUST close the connection on security-layer encode/decode failure.
- *   RFC4422-3.7-2   Outgoing protected buffer MUST NOT exceed the peer's negotiated maximum.
- *   RFC4422-3.7-3   Client SHOULD close on receipt of an oversized length field.
- *   RFC4422-6.1.1-1 Client SHOULD close on a security-layer integrity failure.
- *   RFC4422-6.1.5-2 Client SHOULD close on receipt of an oversized protected buffer.
  *
  * Untestable ids in this source are NOT cited (per the batch rules): RFC4422-3.2-1
  * ('best' mechanism selection — internal-decision), RFC4422-3.4.1-2 (non-empty
  * authzid semantics — user-intent-policy), RFC4422-6.1.2-1 (minimum security
- * policy — user-intent-policy), and RFC4422-6.1.5-1 (blind-allocation — an
- * internal memory strategy). See the catalog module for their rationales.
+ * policy — user-intent-policy), RFC4422-6.1.5-1 (blind-allocation — an
+ * internal memory strategy), and (M5.16 adjudication, see
+ * docs/compliance-adjudications.md) RFC4422-3.6-1, RFC4422-3.7-1, RFC4422-3.7-2,
+ * RFC4422-3.7-3, RFC4422-6.1.1-1, RFC4422-6.1.5-2 — every one of this client's
+ * SASL mechanisms negotiates no security layer, so the whole family's
+ * security-layer-install/encode/decode/integrity/oversized-buffer duties are
+ * conditional-vacuous (capability-inventory). See the catalog module for all
+ * their rationales.
  *
  * SELF-ACTUALIZATION: driver.authenticate() is implemented for PLAIN and (as
  * of src/sasl/cram-md5.ts) CRAM-MD5, so the PLAIN-driven duties below
  * (RFC4422-3.1-1/3.3-1, RFC4422-3.4.1-1) and the CRAM-MD5-driven duty
  * (RFC4422-3-1) now exercise the real wire form via the scripted server
- * exchange. Duties that depend on a negotiated SASL security layer (which
- * this library has no mechanism for — GSSAPI is not on this library's
- * roadmap) still throw NotImplementedError and remain annotated
- * 'unimplemented'; their post-throw assertions document the exact wire check
- * that becomes genuine once such a surface exists. NEVER a vacuous pass.
+ * exchange. NEVER a vacuous pass.
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { close, destroy, expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -260,138 +256,24 @@ complianceTest(
 	},
 );
 
-// ── RFC4422-3.6-1: install the negotiated security layer on success ────────
-// If the outcome is successful and a security layer was negotiated, the client
-// MUST install that layer. This binds only mechanisms that negotiate a layer
-// (GSSAPI/DIGEST-MD5-class); PLAIN/OAUTHBEARER offer none. There is no
-// security-layer mechanism surface at all, so this self-actualizes as
-// unimplemented: authenticate() throws before any layer could be installed.
-complianceTest(
-	{
-		reqs: ["RFC4422-3.6-1"],
-		profiles: ["rev1", "rev2"],
-		title: "client installs a negotiated SASL security layer upon a successful outcome",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const server = await f.startServer();
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=GSSAPI"]),
-				// A security-layer-negotiating mechanism would drive a multi-step
-				// exchange; the client has no such surface, so authenticate() throws.
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				reply("OK AUTHENTICATE completed"),
-			],
-		]);
-		const driver = await f.connectPlain(server);
-		await driver.authenticate("GSSAPI"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// When implemented for a layer-negotiating mechanism: after the tagged OK,
-		// subsequent client octets are wrapped per the negotiated layer's framing.
-		expect(driver.active).toBe(true);
-	},
-);
-
-// ── RFC4422-3.7-1 / RFC4422-6.1.1-1: close on encode/decode/integrity fault ─
-// Once a security layer is installed, the client MUST close the connection on
-// an encode/decode failure (3.7-1) and SHOULD close on a reported integrity
-// failure (6.1.1-1). The server-side stimulus (an undecodable/corrupt protected
-// buffer) is scripted; the client's mandated reaction is to close. No layer
-// surface exists, so authenticate() throws first → unimplemented.
-complianceTest(
-	{
-		reqs: ["RFC4422-3.7-1", "RFC4422-6.1.1-1"],
-		profiles: ["rev1", "rev2"],
-		title: "client closes the connection on a security-layer decode/integrity failure",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const server = await f.startServer();
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=GSSAPI"]),
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				reply("OK AUTHENTICATE completed"),
-				// After the (hypothetical) layer install, the server sends an
-				// undecodable protected buffer; a conformant client closes.
-				send("\x00\x00\x00\x04\xde\xad\xbe\xef"),
-				destroy(),
-			],
-		]);
-		const driver = await f.connectPlain(server);
-		await driver.authenticate("GSSAPI"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// When implemented: the client MUST have torn the connection down rather
-		// than processing the corrupt buffer.
-		expect(driver.active).toBe(false);
-	},
-);
-
-// ── RFC4422-3.7-2: outgoing protected buffer within negotiated maximum ─────
-// The length of a client-produced protected buffer MUST be no larger than the
-// maximum the peer expects. Observable only once a layer with a negotiated
-// maximum is installed and the client is producing protected output — no such
-// surface exists, so authenticate() throws → unimplemented.
-complianceTest(
-	{
-		reqs: ["RFC4422-3.7-2"],
-		profiles: ["rev1", "rev2"],
-		title: "client-produced protected buffer never exceeds the negotiated maximum size",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const server = await f.startServer();
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=GSSAPI"]),
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				reply("OK AUTHENTICATE completed"),
-			],
-		]);
-		const driver = await f.connectPlain(server);
-		await driver.authenticate("GSSAPI"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// When implemented: every client-sent protected buffer's four-octet length
-		// prefix is <= the server's negotiated maximum receive-buffer size.
-		expect(driver.active).toBe(true);
-	},
-);
-
-// ── RFC4422-3.7-3 / RFC4422-6.1.5-2: close on oversized inbound length ──────
-// On receipt of a length field greater than the negotiated maximum, the client
-// SHOULD close the connection (3.7-3), and SHOULD likewise close on detecting
-// an oversized protected block (6.1.5-2, the active-attack framing of the same
-// duty). The server sends an absurd four-octet length prefix; the client must
-// not read/allocate for it. No layer surface → authenticate() throws.
-complianceTest(
-	{
-		reqs: ["RFC4422-3.7-3", "RFC4422-6.1.5-2"],
-		profiles: ["rev1", "rev2"],
-		title: "client closes on an oversized inbound protected-buffer length field",
-		expectFailure: "unimplemented",
-		timeout: 5000,
-	},
-	async () => {
-		const server = await f.startServer();
-		server.arm([
-			[
-				...sessionPrelude(["IMAP4rev1", "AUTH=GSSAPI"]),
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				reply("OK AUTHENTICATE completed"),
-				// Declared length 0xFFFFFFFF — far beyond any sane negotiated maximum.
-				send("\xff\xff\xff\xff"),
-				close(),
-			],
-		]);
-		const driver = await f.connectPlain(server);
-		await driver.authenticate("GSSAPI"); // throws NotImplementedError today
-		await server.assertCompleted();
-		// When implemented: the client closes rather than allocating on the
-		// attacker-declared length.
-		expect(driver.active).toBe(false);
-	},
-);
+// ── RFC4422-3.6-1 / 3.7-1 / 3.7-2 / 3.7-3 / 6.1.1-1 / 6.1.5-2: NOT cited ────
+// (untestable, capability-inventory, M5.16 adjudication) ────────────────────
+// "If the outcome is successful and a security layer was negotiated..."
+// (3.6-1) and the whole §3.7/§6.1.1/§6.1.5 security-layer fault-handling
+// family it gates are all conditional on a SASL security layer having been
+// negotiated. Every SASL mechanism this client implements (PLAIN, OAUTHBEARER,
+// XOAUTH2, CRAM-MD5, EXTERNAL, SCRAM-SHA-1/SCRAM-SHA-256 without -PLUS,
+// ANONYMOUS — spec §9.2's closed list) negotiates NO SASL security layer;
+// this client's confidentiality/integrity comes from TLS (spec §10) instead.
+// The conditional can never fire for a conformant deployment of this client,
+// so all six rows are classified untestable/capability-inventory (see
+// rfc4422.ts's untestableRationale on each; docs/compliance-adjudications.md's
+// M5.16 entry) — the same never-reachable-affordance reasoning as
+// RFC5802-6-1. A prior version of this file scripted a hypothetical
+// AUTH=GSSAPI exchange and asserted the driver's post-throw
+// NotImplementedError state as a placeholder for these six duties; removed
+// here since the rows no longer self-actualize as "unimplemented" — they are
+// untestable regardless of implementation status. Reactivation condition: if
+// this client ever adds a security-layer-negotiating mechanism (e.g. GSSAPI,
+// DIGEST-MD5) post-1.0, these rows must be reclassified testable and
+// re-scripted.

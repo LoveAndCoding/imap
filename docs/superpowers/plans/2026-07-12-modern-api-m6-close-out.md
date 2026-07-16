@@ -207,6 +207,15 @@ is implicated, a ledger entry). Silence is not an option for any of them.
 
 ## M6.3 — Formalize the RFC 4422 security-layer adjudications
 
+**COMPLETED EARLY at M5.16** — see
+`docs/compliance-adjudications.md`'s "RFC 4422 §3.6/§3.7/§6.1.1/§6.1.5 SASL
+security-layer rows" entry. All 6 pre-identified rows plus 6 more sharing the
+identical antecedent (RFC4422-3.7-3, RFC4422-6.1.1-1, RFC4422-6.1.5-2, each
+× rev1/rev2) were reclassified `untestable`/`capability-inventory` in the
+same batch as the SCRAM channel-binding rows below, once M5.16 settled the
+final mechanism list this task's own "Depends on" line was waiting for. No
+further M6 action needed for this task.
+
 **Files:** `docs/compliance-adjudications.md`.
 
 The 6 rows — RFC4422-3.6-1, RFC4422-3.7-1, RFC4422-3.7-2, each × rev1/rev2
