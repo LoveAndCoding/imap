@@ -546,4 +546,124 @@ describe("FetchCommand (RFC 3501/9051 §6.4.5/§6.4.9, M3.5)", () => {
 			).toThrow(CapabilityError);
 		});
 	});
+
+	describe("PARTIAL modifier (RFC 9394 §3.3, M5 CONTEXT-machinery carry-forward)", () => {
+		const partialOnly: FetchCapabilityProbe = { has: (cap) => cap === "PARTIAL" };
+
+		test("'(PARTIAL m:n)' trails the item list on UID FETCH (RFC 9394 §3.3's own example shape)", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			// items.uid is suppressed on UID FETCH (UID is implicit there,
+			// RFC9051-6.4.9-3 -- writeFetchItems' documented normalization), so
+			// the RFC example's '(UID FLAGS)' compiles to the equivalent '(FLAGS)'.
+			const cmd = new FetchCommand(
+				seqSet("25900:26600"),
+				{ uid: true, flags: true },
+				true,
+				1024,
+				partialOnly,
+				undefined,
+				false,
+				{ from: -1, to: -3 },
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 UID FETCH 25900:26600 (FLAGS) (PARTIAL -1:-3)${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("positive range form '(PARTIAL 1:500)'", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new FetchCommand(
+				seqSet("1:*"),
+				{ flags: true },
+				true,
+				1024,
+				partialOnly,
+				undefined,
+				false,
+				{ from: 1, to: 500 },
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 UID FETCH 1:* (FLAGS) (PARTIAL 1:500)${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("partial shares the ONE modifier list with CHANGEDSINCE/VANISHED (RFC 4466 fetch-modifiers)", async () => {
+			const { connection, written, router } = makeFakeConnection();
+			const cmd = new FetchCommand(
+				seqSet(1),
+				{ flags: true },
+				true,
+				1024,
+				ALL_CAPS,
+				12345n,
+				true,
+				{ from: 1, to: 100 },
+			);
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			expect(Buffer.concat(written).toString("ascii")).toBe(
+				`A1 UID FETCH 1 (FLAGS) (CHANGEDSINCE 12345 VANISHED PARTIAL 1:100)${CRLF}`,
+			);
+			router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+			await resultPromise;
+		});
+
+		test("partial on a plain (non-UID) FETCH throws RangeError synchronously, zero bytes (§3.3 extends UID FETCH only)", () => {
+			expect(
+				() =>
+					new FetchCommand(
+						seqSet(1, "seq"),
+						{ flags: true },
+						false,
+						1024,
+						ALL_CAPS,
+						undefined,
+						false,
+						{ from: 1, to: 100 },
+					),
+			).toThrow(RangeError);
+		});
+
+		test("partial without the PARTIAL capability throws CapabilityError synchronously, zero bytes", () => {
+			expect(
+				() =>
+					new FetchCommand(seqSet(1), { flags: true }, true, 1024, NO_CAPS, undefined, false, {
+						from: 1,
+						to: 100,
+					}),
+			).toThrow(CapabilityError);
+		});
+
+		test("partial range validation: zero or mixed-sign endpoints throw RangeError (RFC 9394 §4)", () => {
+			for (const range of [
+				{ from: 0, to: 5 },
+				{ from: 1, to: 0 },
+				{ from: -1, to: 100 },
+				{ from: 1.5, to: 3 },
+			]) {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ flags: true },
+							true,
+							1024,
+							partialOnly,
+							undefined,
+							false,
+							range,
+						),
+					JSON.stringify(range),
+				).toThrow(RangeError);
+			}
+		});
+	});
 });

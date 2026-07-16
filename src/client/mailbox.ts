@@ -2,6 +2,7 @@ import { TypedEmitter } from "tiny-typed-emitter";
 
 import type { AppendCapabilityProbe, AppendOptions, AppendResult, AppendSource } from "../commands/append";
 import type { Command } from "../commands/base";
+import { CancelUpdateCommand } from "../commands/cancel-update";
 import { CloseCommand } from "../commands/close";
 import { ConvertCommand } from "../commands/convert";
 import type { ConvertResult, ConvertTransformation } from "../commands/convert";
@@ -814,6 +815,34 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 */
 	public async search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult> {
 		return MailboxSession.runSearch(this, criteria, opts, true);
+	}
+
+	/**
+	 * CANCELUPDATE (RFC 5267 §4.3.5, M5 CONTEXT-machinery carry-forward) --
+	 * discards the update registration(s) created by earlier `search()`/
+	 * `sort()` (or `.seq` mirror) calls made with `SearchOptions.update`,
+	 * naming each by the issuing command's tag (`SearchResult.updateTag`).
+	 * Once the tagged OK arrives the server stops sending ADDTO/REMOVEFROM
+	 * notifications for those contexts (RFC 5267 §4.3.5; notifications
+	 * already in flight may still arrive and are tolerated as data through
+	 * the same documented seam `SearchOptions.update` describes).
+	 *
+	 * Grain-less by nature (a tag names a command, not messages), so there is
+	 * deliberately NO `seq.cancelUpdate()` mirror -- same "no mechanical
+	 * mirror where the argument isn't grain-addressed" reasoning as
+	 * `seq.expunge()`'s doc comment.
+	 *
+	 * Capability gate: `CONTEXT=SEARCH` or `CONTEXT=SORT` (RFC 5267 --
+	 * whichever extension created the context; either token licenses the
+	 * command), enforced by `CancelUpdateCommand`'s constructor before any
+	 * bytes are written (I-9). Rejects `StateError` (zero bytes) if this
+	 * session is already closed, same precondition as every method here.
+	 */
+	public async cancelUpdate(tags: string | readonly string[]): Promise<void> {
+		this.assertOpen("cancelUpdate");
+		const list = typeof tags === "string" ? [tags] : tags;
+		const probe = { has: (cap: string) => this.driver.hasCapability(cap) };
+		await this.driver.run(new CancelUpdateCommand(list, probe));
 	}
 
 	// -- message ops: SORT/THREAD (spec §5.6/§5b, M4.9) -----------------------
@@ -2009,6 +2038,19 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		if (opts?.changedSince !== undefined) {
 			MailboxSession.assertModSeqUsable(session, `${method}()`);
 		}
+		// M5 CONTEXT-machinery carry-forward (RFC 9394 §3.3, RFC9394-3.3-1):
+		// the (PARTIAL m:n) FETCH modifier extends UID FETCH specifically --
+		// same structural UID-grain-only precondition (and the same refusal
+		// posture) as `vanished` above; the PARTIAL capability gate and range
+		// validation live in `FetchCommand`'s constructor (CapabilityError/
+		// RangeError, zero bytes written either way, I-9).
+		if (opts?.partial !== undefined && kind !== "uid") {
+			throw new RangeError(
+				`${method}(): the PARTIAL FETCH modifier is only allowed on UID FETCH ` +
+					"(RFC 9394 §3.3 extends the UID FETCH command) -- call fetch() (not " +
+					"seq.fetch()) if you need it",
+			);
+		}
 		const set = SequenceSet.from(input).withKind(kind);
 		// RFC 5182 §2.1's "$" SEARCHRES sentinel gate AT POINT OF USE (I-9):
 		// `SequenceSet` itself deliberately leaves this "gated on capability
@@ -2034,6 +2076,7 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			probe,
 			opts?.changedSince,
 			opts?.vanished === true,
+			opts?.partial,
 		);
 		// Kicks off the actual submission/dispatch (write, wait-for-tagged,
 		// settle, cleanup) in the background -- by the time this call returns

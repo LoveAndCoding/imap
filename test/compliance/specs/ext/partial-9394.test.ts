@@ -50,10 +50,12 @@
  *    ["24000:24500","NIL"]; and the NEGATIVE-range echo '(-1:-100 ...)' also
  *    parses cleanly (the lexer tolerates the MINUS tokens inside the
  *    parenthesized tagged-ext-val) — probed outcomes, not assumptions.
- *  - Every emission duty self-actualizes: driver.uidSearch()/uidFetch() throw
- *    NotImplementedError (and FetchOptions carries no partial member — the
- *    3.3-1 test passes the intended option shape through a cast so the
- *    missing surface is honestly recorded) → honest "unimplemented".
+ *  - Every emission duty self-actualizes against REAL surfaces:
+ *    `SearchOptions.partial` (M4.10) drives the 3.1-x rows, and — M5
+ *    CONTEXT-machinery carry-forward, resolving RFC9394-3.3-1's adjudicated
+ *    deferral — `FetchModifiers.partial` ({ from, to }, PARTIAL-gated, UID
+ *    FETCH only) drives 3.3-1 through the driver's own typed
+ *    `FetchOptions.partial` ("m:n" range string).
  */
 import { expect } from "vitest";
 
@@ -110,8 +112,8 @@ function partialCaps(profile: string): string[] {
 // §3.1: the first 500 results are requested by 'PARTIAL 1:500'. The matcher
 // requires the PARTIAL atom inside the RETURN (...) list followed by a
 // positive nz-number range — a bare PARTIAL, a 0 endpoint, a '*', or a
-// minus-prefixed endpoint (mixed form) fails. driver.uidSearch() throws
-// today → unimplemented.
+// minus-prefixed endpoint (mixed form) fails. Driven for real through
+// `SearchOptions.partial` (M4.10).
 complianceTest(
 	{
 		reqs: ["RFC9394-3.1-1", "RFC9394-4-1"],
@@ -248,25 +250,33 @@ complianceTest(
 // §3.3's example verbatim: 'UID FETCH 25900:26600 (UID FLAGS) (PARTIAL -1:-3)'
 // — the modifier rides the parenthesized modifier list AFTER the fetch items
 // (fetch-modifier =/ modifier-partial), gated on the PARTIAL capability alone.
-// The driver's FetchOptions carries no partial member and uidFetch() throws →
-// the missing surface is honestly recorded as unimplemented.
+// M5 CONTEXT-machinery carry-forward (resolving this row's adjudicated M3
+// deferral, docs/compliance-adjudications.md): `FetchModifiers.partial`
+// ({ from, to }, UID FETCH only) is real, driven through the driver's typed
+// `FetchOptions.partial` range string. UID FETCH needs the selected state,
+// so the drive now includes LOGIN + SELECT.
 complianceTest(
 	{
 		reqs: ["RFC9394-3.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID FETCH form: (PARTIAL -1:-3) fetch modifier in the modifier list after the items",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(partialCaps(ctx.profile)),
+				...sessionPrelude(partialCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 100 }),
 				expectLine(
 					command("UID FETCH", {
 						// seq-set, item list, THEN the parenthesized PARTIAL modifier.
-						args: /^25900:26600 \(UID FLAGS\) \(PARTIAL -[1-9][0-9]*:-[1-9][0-9]*\)$/i,
+						// The RFC example's explicit UID item is optional on the wire:
+						// UID is implicit in every UID FETCH response (RFC9051-6.4.9-3),
+						// and this client's documented normalization suppresses the
+						// redundant atom -- '(FLAGS)' and '(UID FLAGS)' are equivalent
+						// forms, both accepted.
+						args: /^25900:26600 \((?:UID )?FLAGS\) \(PARTIAL -[1-9][0-9]*:-[1-9][0-9]*\)$/i,
 					}),
 				),
 				reply("OK UID FETCH completed", [
@@ -277,13 +287,15 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// The intended option surface (no `partial` member exists on FetchOptions
-		// today — the cast records the shape this test will drive once it does).
-		const opts = { partial: "-1:-3" } as unknown as FetchOptions;
-		await driver.uidFetch("25900:26600", ["UID", "FLAGS"], opts); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		const opts: FetchOptions = { partial: "-1:-3" };
+		const messages = await driver.uidFetch("25900:26600", ["UID", "FLAGS"], opts);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "UID FETCH");
 		expect(fetch, "UID FETCH must have been emitted").toBeDefined();
+		// Non-vacuous acceptance half: the page's three FETCH responses arrived.
+		expect(messages.length, "all three paged FETCH responses must surface").toBe(3);
 	},
 );
 

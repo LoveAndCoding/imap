@@ -1108,13 +1108,16 @@ complianceTest(
 // §7/§8 modifier-update = "UPDATE" [ "(" fetch-att *(SP fetch-att) ")" ]: when
 // the server also supports CONTEXT=SEARCH, the UPDATE return option may carry
 // a parenthesized fetch-att list (the RFC's own example command). Doubly
-// conditional — the capability list advertises NOTIFY + CONTEXT=SEARCH.
+// conditional — the capability list advertises NOTIFY + CONTEXT=SEARCH, and
+// the real `SearchOptions.update` fetch-atts form (M5 CONTEXT-machinery
+// carry-forward) is gated on exactly that conjunction (`normalizeUpdate
+// Option()`, src/commands/search.ts); the driver's ad hoc
+// `return: ["UPDATE (…)"]` token translates onto `update: { fetchAtts }`.
 complianceTest(
 	{
 		reqs: ["RFC5465-7-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'SEARCH RETURN (COUNT UPDATE (fetch-atts)) FROM "boss" command form',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1127,16 +1130,19 @@ complianceTest(
 				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
 				// §7's example: fetch-atts parenthesized INSIDE the UPDATE option.
+				// FROM's astring value may legally ride bare (boss is all-ATOM-CHAR)
+				// or quoted -- both accepted, same quoting-variance allowance as
+				// RFC5267-3-1's (?:UTF-8|"UTF-8") matcher.
 				expectLine(
 					command("SEARCH", {
-						args: /^RETURN \(COUNT UPDATE \(UID BODY\.PEEK\[HEADER\.FIELDS \(TO FROM SUBJECT\)\]\)\) FROM "boss"$/i,
+						args: /^RETURN \(COUNT UPDATE \(UID BODY\.PEEK\[HEADER\.FIELDS \(TO FROM SUBJECT\)\]\)\) FROM (?:"boss"|boss)$/i,
 					}),
 				),
 				reply("OK SEARCH completed", ["* ESEARCH (TAG \"a4\") COUNT 4"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search([{ from: "boss" }], {
 			return: ["COUNT", "UPDATE (UID BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT)])"],

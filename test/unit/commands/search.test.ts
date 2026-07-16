@@ -145,6 +145,61 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 			).not.toThrow();
 		});
 
+		test("update requires CONTEXT=SEARCH (RFC 5267 §4.1, M5 carry-forward)", () => {
+			expect(
+				() => new SearchCommand({ all: true }, { update: true }, capsProbe(["ESEARCH"])),
+			).toThrow(CapabilityError);
+			expect(
+				() =>
+					new SearchCommand({ all: true }, { update: true }, capsProbe(["CONTEXT=SEARCH"])),
+			).not.toThrow();
+		});
+
+		test("update with fetch-atts additionally requires NOTIFY (RFC 5465 §7)", () => {
+			expect(
+				() =>
+					new SearchCommand(
+						{ all: true },
+						{ update: { fetchAtts: ["UID"] } },
+						capsProbe(["ESEARCH", "CONTEXT=SEARCH"]),
+					),
+			).toThrow(CapabilityError);
+			expect(
+				() =>
+					new SearchCommand(
+						{ all: true },
+						{ update: { fetchAtts: ["UID"] } },
+						capsProbe(["ESEARCH", "CONTEXT=SEARCH", "NOTIFY"]),
+					),
+			).not.toThrow();
+		});
+
+		test("update fetch-atts must be a non-empty array of non-empty strings", () => {
+			const caps = capsProbe(["ESEARCH", "CONTEXT=SEARCH", "NOTIFY"]);
+			expect(
+				() => new SearchCommand({ all: true }, { update: { fetchAtts: [] } }, caps),
+			).toThrow(RangeError);
+			expect(
+				() =>
+					new SearchCommand(
+						{ all: true },
+						{ update: { fetchAtts: ["UID", ""] } },
+						caps,
+					),
+			).toThrow(RangeError);
+		});
+
+		test("CONTEXT=SEARCH alone carries the RETURN clause (no separate ESEARCH token needed, RFC 5267 §4.1)", () => {
+			expect(
+				() =>
+					new SearchCommand(
+						{ all: true },
+						{ return: ["COUNT"], update: true },
+						capsProbe(["CONTEXT=SEARCH"]),
+					),
+			).not.toThrow();
+		});
+
 		test("filter MUST NOT be paired with an explicit CHARSET other than UTF-8/US-ASCII (RFC5466-3.1-3)", () => {
 			const caps = capsProbe(["FILTERS"]);
 			expect(
@@ -247,6 +302,38 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 		test("UID SEARCH wire verb", async () => {
 			expect(await wireArgsOf({ all: true }, undefined, ["ESEARCH"], true)).toBe("ALL");
 		});
+
+		test("RETURN (UPDATE) — bare update rides the RETURN list (RFC 5267 §4.3)", async () => {
+			expect(
+				await wireArgsOf({ deleted: true }, { update: true }, ["ESEARCH", "CONTEXT=SEARCH"], true),
+			).toBe("RETURN (UPDATE) DELETED");
+		});
+
+		test("RETURN (COUNT UPDATE) — update follows the plain atoms", async () => {
+			expect(
+				await wireArgsOf(
+					{ deleted: true },
+					{ return: ["COUNT"], update: true },
+					["ESEARCH", "CONTEXT=SEARCH"],
+					true,
+				),
+			).toBe("RETURN (COUNT UPDATE) DELETED");
+		});
+
+		test("RETURN (COUNT UPDATE (fetch-atts)) — RFC 5465 §7's own example form", async () => {
+			// FROM's value goes through astring(): "boss" is all-ATOM-CHAR, so it
+			// rides bare (spec-equivalent to the RFC example's quoted "boss").
+			expect(
+				await wireArgsOf(
+					{ from: "boss" },
+					{
+						return: ["COUNT"],
+						update: { fetchAtts: ["UID", "BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT)]"] },
+					},
+					["ESEARCH", "CONTEXT=SEARCH", "NOTIFY"],
+				),
+			).toBe("RETURN (COUNT UPDATE (UID BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT)])) FROM boss");
+		});
 	});
 
 	describe("accept(): classic untagged SEARCH response", () => {
@@ -299,6 +386,32 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 			);
 			router.routeTagged(parseLine(`A283 OK SEARCH completed${CRLF}`) as TaggedResponse);
 			await expect(resultPromise).resolves.toEqual({ uids: [2, 10, 11] });
+		});
+
+		test("updateTag exposes the issuing command's tag when update was requested (RFC 5267 §4.3)", async () => {
+			const caps = ["ESEARCH", "CONTEXT=SEARCH"];
+			const { connection, router } = makeFakeConnection(caps);
+			const cmd = new SearchCommand({ deleted: true }, { update: true, return: ["COUNT"] }, capsProbe(caps), true);
+			const resultPromise = executeCommand(connection, cmd, "B01");
+			await flushMicrotasks();
+			router.routeUntagged(
+				parseLine(`* ESEARCH (TAG "B01") UID COUNT 2${CRLF}`) as UntaggedResponse,
+			);
+			router.routeTagged(parseLine(`B01 OK UID SEARCH completed${CRLF}`) as TaggedResponse);
+			const result = await resultPromise;
+			expect(result.updateTag).toBe("B01");
+			expect(result.count).toBe(2);
+		});
+
+		test("updateTag is absent when update was not requested", async () => {
+			const { connection, router } = makeFakeConnection(["ESEARCH"]);
+			const cmd = new SearchCommand({ deleted: true }, { return: ["COUNT"] }, capsProbe(["ESEARCH"]));
+			const resultPromise = executeCommand(connection, cmd, "A1");
+			await flushMicrotasks();
+			router.routeUntagged(parseLine(`* ESEARCH (TAG "A1") COUNT 2${CRLF}`) as UntaggedResponse);
+			router.routeTagged(parseLine(`A1 OK SEARCH completed${CRLF}`) as TaggedResponse);
+			const result = await resultPromise;
+			expect(result.updateTag).toBeUndefined();
 		});
 
 		test("item-less ESEARCH (no match) is a valid empty result", async () => {

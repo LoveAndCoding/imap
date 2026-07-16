@@ -6,6 +6,7 @@ import type { UntaggedResponse } from "../parser";
 import type { ClaimContext } from "./base";
 import { Command } from "./base";
 import type { ResponseCollector } from "./collector";
+import { validatePartialRange } from "./search";
 import { CommandWriter } from "./writer";
 
 /** Minimal structural shape `FetchCommand` needs from its sequence-set
@@ -329,6 +330,7 @@ function compileFetchWire(
 	caps: FetchCapabilityProbe,
 	changedSince: bigint | undefined,
 	vanished: boolean,
+	partial: { from: number; to: number } | undefined,
 ): void {
 	w.sequenceSet(set);
 	if (typeof request === "string") {
@@ -346,43 +348,7 @@ function compileFetchWire(
 	} else {
 		w.list((inner) => writeFetchItems(inner, request, uidGrain, caps));
 	}
-	if (changedSince !== undefined) {
-		if (!caps.has("CONDSTORE")) {
-			throw new CapabilityError(
-				"FetchModifiers.changedSince requires the CONDSTORE capability " +
-					"(RFC 7162 §3.1.4.1), which the server hasn't advertised",
-				{ capability: "CONDSTORE", rfc: "RFC7162" },
-			);
-		}
-		// RFC 7162 §7 chgsince-fetch-mod: the modifier list follows the item
-		// list (or macro) -- 'FETCH <set> <items> (CHANGEDSINCE <mod-sequence>)'
-		// (§3.1.4.1 Example 12).
-		w.list((inner) => {
-			inner.atom("CHANGEDSINCE").bignumber(changedSince);
-			if (vanished) {
-				// RFC 7162 §3.2.6 rexpunges-fetch-mod: VANISHED rides INSIDE the
-				// same modifier list as CHANGEDSINCE (never a separate list), only
-				// on UID FETCH (`MailboxSession.runFetch()`'s own `RangeError` gate
-				// already refuses a bare-FETCH caller before this point is ever
-				// reached), and only once QRESYNC has been positively ENABLEd.
-				if (!uidGrain) {
-					throw new RangeError(
-						"FetchModifiers.vanished is only allowed on UID FETCH (RFC 7162 " +
-							"§3.2.6), never plain FETCH",
-					);
-				}
-				if (!caps.has("QRESYNC")) {
-					throw new CapabilityError(
-						"FetchModifiers.vanished requires a positive 'ENABLE QRESYNC' + " +
-							"'* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4/§3.2.6), " +
-							"which this connection hasn't completed",
-						{ capability: "QRESYNC", rfc: "RFC7162" },
-					);
-				}
-				inner.atom("VANISHED");
-			}
-		});
-	} else if (vanished) {
+	if (changedSince === undefined && vanished) {
 		// Mirrors `MailboxSession.runFetch()`'s own `RangeError` for the same
 		// case (RFC7162-3.2.6-2) -- kept here too so a caller reaching this
 		// command directly via the `client.run()` escape hatch (bypassing
@@ -391,6 +357,73 @@ function compileFetchWire(
 			"FetchModifiers.vanished must be specified together with changedSince " +
 				"(RFC 7162 §3.2.6)",
 		);
+	}
+	if (changedSince !== undefined || partial !== undefined) {
+		// RFC 4466 fetch-modifiers: ONE parenthesized modifier list follows the
+		// item list (or macro) -- every requested modifier rides inside it
+		// ('FETCH <set> <items> (CHANGEDSINCE <mod-sequence>)', RFC 7162
+		// §3.1.4.1 Example 12; 'UID FETCH <set> <items> (PARTIAL -1:-3)',
+		// RFC 9394 §3.3's own example).
+		w.list((inner) => {
+			if (changedSince !== undefined) {
+				if (!caps.has("CONDSTORE")) {
+					throw new CapabilityError(
+						"FetchModifiers.changedSince requires the CONDSTORE capability " +
+							"(RFC 7162 §3.1.4.1), which the server hasn't advertised",
+						{ capability: "CONDSTORE", rfc: "RFC7162" },
+					);
+				}
+				inner.atom("CHANGEDSINCE").bignumber(changedSince);
+				if (vanished) {
+					// RFC 7162 §3.2.6 rexpunges-fetch-mod: VANISHED rides INSIDE the
+					// same modifier list as CHANGEDSINCE (never a separate list), only
+					// on UID FETCH (`MailboxSession.runFetch()`'s own `RangeError` gate
+					// already refuses a bare-FETCH caller before this point is ever
+					// reached), and only once QRESYNC has been positively ENABLEd.
+					if (!uidGrain) {
+						throw new RangeError(
+							"FetchModifiers.vanished is only allowed on UID FETCH (RFC 7162 " +
+								"§3.2.6), never plain FETCH",
+						);
+					}
+					if (!caps.has("QRESYNC")) {
+						throw new CapabilityError(
+							"FetchModifiers.vanished requires a positive 'ENABLE QRESYNC' + " +
+								"'* ENABLED QRESYNC' exchange (RFC 7162 §3.2.3/§3.2.4/§3.2.6), " +
+								"which this connection hasn't completed",
+							{ capability: "QRESYNC", rfc: "RFC7162" },
+						);
+					}
+					inner.atom("VANISHED");
+				}
+			}
+			if (partial !== undefined) {
+				// RFC 9394 §3.3 (M5 CONTEXT-machinery carry-forward, resolving the
+				// RFC9394-3.3-1 adjudicated deferral): the (PARTIAL m:n) FETCH
+				// modifier extends the UID FETCH command specifically -- never bare
+				// FETCH (`MailboxSession.runFetch()`'s RangeError gate mirrors this
+				// for its own callers; this check covers the `client.run()` escape
+				// hatch) -- and is gated on the PARTIAL capability alone (§3.3's own
+				// gate; unlike the SEARCH-side option, §3.3 postdates RFC 5267 and
+				// names no CONTEXT=* alternative for FETCH).
+				if (!uidGrain) {
+					throw new RangeError(
+						"FetchModifiers.partial is only allowed on UID FETCH (RFC 9394 " +
+							"§3.3 extends the UID FETCH command), never plain FETCH",
+					);
+				}
+				if (!caps.has("PARTIAL")) {
+					throw new CapabilityError(
+						"FetchModifiers.partial requires the PARTIAL capability " +
+							"(RFC 9394 §3.3), which the server hasn't advertised",
+						{ capability: "PARTIAL", rfc: "RFC9394" },
+					);
+				}
+				const range = validatePartialRange(partial, "FetchModifiers.partial");
+				inner.atom("PARTIAL");
+				inner.atom(`${range.from}:${range.to}`);
+			}
+		});
 	}
 }
 
@@ -462,6 +495,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	private readonly forcedStreamSections: ReadonlySet<string>;
 	private readonly changedSince: bigint | undefined;
 	private readonly vanished: boolean;
+	private readonly partial: { from: number; to: number } | undefined;
 
 	private collector: ResponseCollector | undefined;
 	private resolveCollectorReady!: () => void;
@@ -475,6 +509,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		caps: FetchCapabilityProbe = NO_FETCH_CAPS,
 		changedSince?: bigint,
 		vanished = false,
+		partial?: { from: number; to: number },
 	) {
 		super();
 		this.verb = uidGrain ? "UID FETCH" : "FETCH";
@@ -485,6 +520,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		this.maxInlineSizeValue = maxInlineSize;
 		this.changedSince = changedSince;
 		this.vanished = vanished;
+		this.partial = partial;
 		this.forcedStreamSections =
 			typeof request === "object" ? collectForcedStreamSections(request) : new Set();
 		// Pre-compile once against a throwaway writer purely to surface any
@@ -498,6 +534,7 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 			caps,
 			changedSince,
 			vanished,
+			partial,
 		);
 		this.collectorReady = new Promise((resolve) => {
 			this.resolveCollectorReady = resolve;
@@ -505,7 +542,16 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 	}
 
 	protected write(w: CommandWriter): void {
-		compileFetchWire(w, this.set, this.request, this.uidGrain, this.caps, this.changedSince, this.vanished);
+		compileFetchWire(
+			w,
+			this.set,
+			this.request,
+			this.uidGrain,
+			this.caps,
+			this.changedSince,
+			this.vanished,
+			this.partial,
+		);
 	}
 
 	protected onCollectorReady(c: ResponseCollector): void {

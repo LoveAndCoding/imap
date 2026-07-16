@@ -122,9 +122,12 @@ function compileThreadWire(
  * catalog's REV2 ADJUDICATION note applies here too: THREAD is never folded
  * into IMAP4rev2 core, so there is no OR-with-rev2 gate.
  *
- * ESORT SEAM (M4.10, RFC 5267): same posture as `SortCommand` -- `opts.
- * return`/`.partial` are typed (via the shared `SearchOptions`) but throw
- * `CapabilityError` synchronously until ESORT/CONTEXT=SEARCH lands.
+ * ESORT SEAM (M4.10, RFC 5267; re-verified at the M5 CONTEXT-machinery
+ * carry-forward): `opts.return`/`.partial`/`.update` are typed (via the
+ * shared `SearchOptions`) but throw `CapabilityError` synchronously --
+ * PERMANENTLY, not "until a later milestone": RFC 5267 extends only SEARCH
+ * and SORT, never THREAD, so there is no spec-legal wire form for these
+ * options on this command at all.
  */
 export class ThreadCommand extends Command<ThreadNode[]> {
 	readonly verb: string;
@@ -163,11 +166,13 @@ export class ThreadCommand extends Command<ThreadNode[]> {
 				{ capability: requiredCap, rfc: "RFC5256" },
 			);
 		}
-		if (opts.return !== undefined || opts.partial !== undefined) {
+		if (opts.return !== undefined || opts.partial !== undefined || opts.update !== undefined) {
 			throw new CapabilityError(
-				`${this.verb}: RETURN (...)/PARTIAL result options are not implemented ` +
-					"until a later milestone (ESORT, RFC 5267; PARTIAL, RFC 9394) -- call " +
-					"thread() without `opts.return`/`opts.partial` today",
+				`${this.verb}: RETURN (...)/PARTIAL/UPDATE result options are not defined ` +
+					"for THREAD -- RFC 5267 extends only SEARCH and SORT (§3/§4), and RFC " +
+					"9394's PARTIAL likewise never touches THREAD; call thread() without " +
+					"`opts.return`/`opts.partial`/`opts.update` (M5 carry-forward note: " +
+					"SEARCH and SORT now implement all three for real)",
 				{ capability: "ESORT", rfc: "RFC5267" },
 			);
 		}

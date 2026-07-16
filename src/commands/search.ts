@@ -31,11 +31,38 @@ import { CommandWriter } from "./writer";
  * key in `criteria` (RFC6203-4-3's explicit "MUST NOT be used unless a FUZZY
  * search key is also given") -- both enforced by `normalizeSearchOptions`
  * below before any bytes are written (I-9).
+ *
+ * `update` (M5 CONTEXT-machinery carry-forward, RFC 5267 §4.3): requests the
+ * `UPDATE` return option, registering this command's results as an updating
+ * context -- the server subsequently pushes unsolicited `* ESEARCH (TAG
+ * "<tag>") ... ADDTO/REMOVEFROM (...)` notifications correlated by this
+ * command's own tag (exposed as `SearchResult.updateTag`) as the result set
+ * changes. Gated on the `CONTEXT=SEARCH` capability (RFC5267-4.1-1's MUST
+ * NOT; `SortCommand`'s equivalent is gated on `CONTEXT=SORT` per
+ * RFC5267-4.1-2). The object form carries RFC 5465 §7's optional
+ * parenthesized fetch-att list (`UPDATE (UID BODY.PEEK[...])`) and is
+ * additionally gated on the `NOTIFY` capability (§7: defined only when the
+ * server supports both NOTIFY and CONTEXT=SEARCH); `fetchAtts` entries are
+ * RAW, pre-formed wire tokens, exactly like `NotifyEventEntry.fetchAtts`
+ * (see `protocol/vocabularies.ts`'s doc comment for that established
+ * judgment) -- NOTIFY and UPDATE share the same pure pass-through posture
+ * for this escape-hatch list.
+ *
+ * DOCUMENTED SEAM for the update notifications themselves: they arrive
+ * AFTER this command has completed, so no in-flight command claims them --
+ * they surface through `ImapClient.connection`'s `untaggedResponse` events
+ * (type `"ESEARCH"`, an `ExtendedSearchResponse` whose repeatable
+ * `ADDTO`/`REMOVEFROM` return-data pairs are preserved in wire order by
+ * `ESearchReturnData.entries()`, RFC5267-4.3.2-1). No dedicated typed client
+ * event is layered on top this milestone -- a deliberate minimal surface
+ * (the compliance rows pin acceptance + ordering, not a context-tracking
+ * API); cancel a registration with `MailboxSession.cancelUpdate()`.
  */
 export interface SearchOptions {
 	charset?: string;
 	return?: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "SAVE" | "RELEVANCY">;
 	partial?: { from: number; to: number };
+	update?: boolean | { fetchAtts: readonly string[] };
 }
 
 /**
@@ -50,6 +77,15 @@ export interface SearchOptions {
  * item, with its (possibly negative, newest-first) requested range echoed
  * back verbatim alongside the expanded UID list for that page (`NIL` —
  * "nothing in this range" — surfaces as an empty `uids` array).
+ *
+ * `updateTag` (RFC 5267 §4.3, M5 CONTEXT-machinery carry-forward) is set
+ * only when `SearchOptions.update` was requested: the tag this command went
+ * out under, which is the ONLY correlator the server's subsequent
+ * ADDTO/REMOVEFROM update notifications carry (`* ESEARCH (TAG "<tag>")
+ * ...`) and the argument `MailboxSession.cancelUpdate()` takes to end the
+ * registration (RFC 5267 §4.3.5). Tags are never reused within a session
+ * (RFC5267-4.3-2 -- the queue's tag allocator is a monotonic counter), so
+ * this correlator stays unambiguous for the connection's lifetime.
  */
 export interface SearchResult {
 	uids?: number[];
@@ -59,13 +95,119 @@ export interface SearchResult {
 	modSeq?: bigint;
 	saved?: boolean;
 	partial?: { range: string; uids: number[] };
+	updateTag?: string;
 }
 
 const RETURN_VOCAB: ReadonlySet<string> = new Set(["MIN", "MAX", "ALL", "COUNT", "SAVE", "RELEVANCY"]);
 
+/** `SearchOptions.update` after validation: `false` (absent/explicitly off),
+ *  `true` (bare `UPDATE`), or the fetch-att-carrying object form. */
+export type NormalizedUpdateOption = false | true | { fetchAtts: readonly string[] };
+
+/**
+ * Validates and capability-gates `SearchOptions.update` for BOTH commands
+ * that carry it (M5 CONTEXT-machinery carry-forward): SEARCH/UID SEARCH
+ * (`contextCapability: "CONTEXT=SEARCH"`, RFC5267-4.1-1) and SORT/UID SORT
+ * (`"CONTEXT=SORT"`, RFC5267-4.1-2) -- one shared normalizer rather than two
+ * forks of the same gate, mirroring how `esearchToSearchResult()` is shared
+ * for the response side. The fetch-atts object form (RFC 5465 §7) is
+ * additionally gated on `NOTIFY` regardless of which verb carries it (§7's
+ * own precondition is "servers supporting both NOTIFY and CONTEXT=SEARCH";
+ * SORT inherits the same conjunction via RFC 5267 §4.1's shared
+ * search-return-opts grammar). Throws before any bytes are written (I-9).
+ */
+export function normalizeUpdateOption(
+	update: SearchOptions["update"],
+	caps: SearchCapabilityProbe,
+	verb: string,
+	contextCapability: "CONTEXT=SEARCH" | "CONTEXT=SORT",
+): NormalizedUpdateOption {
+	if (update === undefined || update === false) {
+		return false;
+	}
+	if (!caps.has(contextCapability)) {
+		throw new CapabilityError(
+			`${verb}: the UPDATE return option requires the ${contextCapability} ` +
+				"capability (RFC 5267 §4.1), which the server hasn't advertised",
+			{ capability: contextCapability, rfc: "RFC5267" },
+		);
+	}
+	if (update === true) {
+		return true;
+	}
+	if (typeof update !== "object" || update === null || !Array.isArray(update.fetchAtts)) {
+		throw new RangeError(
+			`${verb}: SearchOptions.update must be a boolean or { fetchAtts: string[] }`,
+		);
+	}
+	if (update.fetchAtts.length === 0) {
+		throw new RangeError(
+			`${verb}: SearchOptions.update.fetchAtts must be non-empty when given -- ` +
+				'RFC 5465 §7\'s modifier-update grammar is UPDATE ["(" fetch-att *(SP ' +
+				'fetch-att) ")"]; pass update: true for the bare (attribute-less) form',
+		);
+	}
+	for (const att of update.fetchAtts) {
+		if (typeof att !== "string" || att.length === 0) {
+			throw new RangeError(
+				`${verb}: SearchOptions.update.fetchAtts entries must be non-empty ` +
+					"strings (raw fetch-att wire tokens, RFC 5465 §7)",
+			);
+		}
+	}
+	if (!caps.has("NOTIFY")) {
+		throw new CapabilityError(
+			`${verb}: an UPDATE return option carrying a fetch-att list is defined ` +
+				"only when the server supports both NOTIFY and " +
+				`${contextCapability} (RFC 5465 §7), and NOTIFY hasn't been advertised ` +
+				"-- pass update: true for the bare RFC 5267 §4.3 form instead",
+			{ capability: "NOTIFY", rfc: "RFC5465" },
+		);
+	}
+	return { fetchAtts: [...update.fetchAtts] };
+}
+
+/**
+ * Shared validation for the `{ from, to }` PARTIAL range shape (RFC 9394 §4
+ * partial-range / RFC 5267 §4.4): both endpoints non-zero integers of the
+ * SAME sign (two positive nz-numbers, or two minus-prefixed ones for RFC
+ * 9394's newest-first paging -- never mixed, never 0, never "*"). Used by
+ * `SearchOptions.partial` (here), `SortCommand`'s PARTIAL-on-SORT (M5
+ * carry-forward), and `FetchModifiers.partial` (RFC 9394 §3.3, whose §3.3
+ * modifier explicitly shares "the same syntax as the PARTIAL SEARCH result
+ * option"). Throws `RangeError` before any bytes are written (I-9).
+ */
+export function validatePartialRange(
+	partial: { from: number; to: number },
+	label: string,
+): { from: number; to: number } {
+	const { from, to } = partial;
+	if (
+		typeof from !== "number" ||
+		typeof to !== "number" ||
+		!Number.isInteger(from) ||
+		!Number.isInteger(to) ||
+		from === 0 ||
+		to === 0
+	) {
+		throw new RangeError(
+			`${label}: from/to must both be non-zero integers (RFC 9394 §4 partial-range)`,
+		);
+	}
+	if (from < 0 !== to < 0) {
+		throw new RangeError(
+			`${label}: from/to must share the same sign — RFC 9394 §4's ` +
+				"partial-range is EITHER two positive nz-numbers OR two minus-prefixed " +
+				"ones, never mixed",
+		);
+	}
+	return { from, to };
+}
+
 interface NormalizedSearchOptions {
 	returnAtoms: string[];
 	partial?: { from: number; to: number };
+	update: NormalizedUpdateOption;
 	emitReturnClause: boolean;
 	charsetToEmit?: string;
 	requestedSave: boolean;
@@ -93,14 +235,30 @@ function normalizeSearchOptions(
 		}
 	}
 	const requestedSave = returnAtoms.includes("SAVE");
-	const emitReturnClause = opts.return !== undefined || opts.partial !== undefined;
+	// M5 CONTEXT-machinery carry-forward: UPDATE (RFC 5267 §4.3, CONTEXT=SEARCH-
+	// gated; the fetch-atts form additionally NOTIFY-gated per RFC 5465 §7).
+	const update = normalizeUpdateOption(opts.update, caps, "SEARCH", "CONTEXT=SEARCH");
+	const emitReturnClause =
+		opts.return !== undefined || opts.partial !== undefined || update !== false;
 
-	if (emitReturnClause && !caps.has("ESEARCH") && !caps.has("IMAP4rev2")) {
+	// The RETURN (...) carrier: ESEARCH (RFC 4731), IMAP4rev2 (RFC 9051 §6.4.4
+	// folds it into core), or CONTEXT=SEARCH -- RFC 5267 §4.1: "Servers
+	// advertising CONTEXT=SEARCH ... support ... [ESEARCH]" makes the context
+	// token its own implicit carrier of the extended-SEARCH syntax (a server
+	// may advertise CONTEXT=SEARCH without separately re-advertising ESEARCH,
+	// e.g. the RFC 5465 §7 capability set NOTIFY + CONTEXT=SEARCH).
+	if (
+		emitReturnClause &&
+		!caps.has("ESEARCH") &&
+		!caps.has("IMAP4rev2") &&
+		!caps.has("CONTEXT=SEARCH")
+	) {
 		throw new CapabilityError(
-			"SearchOptions.return/.partial: the RETURN (...) result-option syntax " +
-				"requires the ESEARCH capability (RFC 4731) or an IMAP4rev2 server " +
-				"(RFC 9051 §6.4.4, which folds it into core), neither of which the " +
-				"server has advertised",
+			"SearchOptions.return/.partial/.update: the RETURN (...) result-option " +
+				"syntax requires the ESEARCH capability (RFC 4731), an IMAP4rev2 " +
+				"server (RFC 9051 §6.4.4, which folds it into core), or CONTEXT=SEARCH " +
+				"(RFC 5267 §4.1, which implies the extended-SEARCH support), none of " +
+				"which the server has advertised",
 			{ capability: "ESEARCH", rfc: "RFC4731" },
 		);
 	}
@@ -163,27 +321,7 @@ function normalizeSearchOptions(
 					"— a command MUST NOT contain more than one of PARTIAL/ALL (RFC 9394 §3.1)",
 			);
 		}
-		const { from, to } = opts.partial;
-		if (
-			typeof from !== "number" ||
-			typeof to !== "number" ||
-			!Number.isInteger(from) ||
-			!Number.isInteger(to) ||
-			from === 0 ||
-			to === 0
-		) {
-			throw new RangeError(
-				"SearchOptions.partial: from/to must both be non-zero integers (RFC 9394 §4 partial-range)",
-			);
-		}
-		if (from < 0 !== to < 0) {
-			throw new RangeError(
-				"SearchOptions.partial: from/to must share the same sign — RFC 9394 §4's " +
-					"partial-range is EITHER two positive nz-numbers OR two minus-prefixed " +
-					"ones, never mixed",
-			);
-		}
-		partial = { from, to };
+		partial = validatePartialRange(opts.partial, "SearchOptions.partial");
 	}
 
 	// RFC 6855 §3: once UTF8=ACCEPT is actually ENABLEd (not merely
@@ -205,7 +343,32 @@ function normalizeSearchOptions(
 	// prohibition — checked before any bytes are written (I-9).
 	assertFilterCharsetCompatible(criteria, opts.charset);
 
-	return { returnAtoms, partial, emitReturnClause, charsetToEmit, requestedSave };
+	return { returnAtoms, partial, update, emitReturnClause, charsetToEmit, requestedSave };
+}
+
+/**
+ * Writes the `UPDATE` return option (with RFC 5465 §7's optional
+ * parenthesized fetch-att list) into an already-open `RETURN (...)` group --
+ * shared verbatim by `compileSearchWire` below and `SortCommand`'s
+ * `compileSortWire` (M5 CONTEXT-machinery carry-forward), the same
+ * one-compiler-for-the-same-wire-shape rule `esearchToSearchResult()`
+ * follows. Fetch-atts are raw pre-formed tokens written via `raw()`,
+ * mirroring `commands/notify.ts`'s `writeEvents()` (the established
+ * fetch-att pass-through precedent).
+ */
+export function writeUpdateReturnOption(w: CommandWriter, update: NormalizedUpdateOption): void {
+	if (update === false) {
+		return;
+	}
+	w.atom("UPDATE");
+	if (update !== true && update.fetchAtts.length > 0) {
+		const atts = update.fetchAtts;
+		w.list((fw) => {
+			for (const att of atts) {
+				fw.raw(att);
+			}
+		});
+	}
 }
 
 function compileSearchWire(
@@ -222,6 +385,10 @@ function compileSearchWire(
 			for (const atom of normalized.returnAtoms) {
 				inner.atom(atom);
 			}
+			// RFC 5267 §4.3 / RFC 5465 §7 (M5 carry-forward): UPDATE rides the
+			// same RETURN list, after the plain atoms (matching RFC 5465 §7's own
+			// worked example, 'RETURN (COUNT UPDATE (...))').
+			writeUpdateReturnOption(inner, normalized.update);
 			if (normalized.partial) {
 				inner.atom("PARTIAL");
 				inner.atom(`${normalized.partial.from}:${normalized.partial.to}`);
@@ -435,7 +602,7 @@ export class SearchCommand extends Command<SearchResult> {
 			.filter((line) => line.content instanceof ExtendedSearchResponse);
 		if (esearchLines.length > 0) {
 			const content = esearchLines[esearchLines.length - 1].content as ExtendedSearchResponse;
-			return this.fromEsearch(content);
+			return this.withUpdateTag(this.fromEsearch(content));
 		}
 
 		const searchLines = c.untagged("SEARCH").filter((line) => line.content instanceof SearchResponse);
@@ -448,7 +615,7 @@ export class SearchCommand extends Command<SearchResult> {
 			if (this.normalized.requestedSave) {
 				result.saved = true;
 			}
-			return result;
+			return this.withUpdateTag(result);
 		}
 
 		// No untagged data at all: a legal outcome for a SAVE-only RETURN
@@ -457,6 +624,18 @@ export class SearchCommand extends Command<SearchResult> {
 		const result: SearchResult = {};
 		if (this.normalized.requestedSave) {
 			result.saved = true;
+		}
+		return this.withUpdateTag(result);
+	}
+
+	/** Stamps `SearchResult.updateTag` (RFC 5267 §4.3's update correlator --
+	 *  see that field's own doc comment) whenever THIS command requested
+	 *  `UPDATE`. `this.tag` is always assigned by the time `accept()` runs
+	 *  (the queue assigns it at write time, and `accept()` only runs after
+	 *  the tagged response), so the guard is defensive only. */
+	private withUpdateTag(result: SearchResult): SearchResult {
+		if (this.normalized.update !== false && this.tag !== undefined) {
+			result.updateTag = this.tag;
 		}
 		return result;
 	}
@@ -478,9 +657,13 @@ export class SearchCommand extends Command<SearchResult> {
 	 *     at most one PARTIAL pair and `.get()`'s "last value wins" coincides
 	 *     with "the only value". `.entries()` would only matter for a
 	 *     genuinely repeatable modifier such as RFC 5267's ADDTO/REMOVEFROM
-	 *     (CONTEXT/ESORT) — outside `SearchOptions.return`'s vocabulary this
-	 *     command supports, so those never populate this map for a SEARCH
-	 *     response in the first place.
+	 *     (CONTEXT updates, M5 carry-forward) — those arrive as UNSOLICITED
+	 *     ESEARCH responses after this command has completed (see
+	 *     `SearchOptions.update`'s documented seam), not as return data in
+	 *     this command's own claimed response, so they never populate the map
+	 *     THIS mapping reads (and are tolerated as data if a server ever
+	 *     inlines one early, per `ESearchReturnData`'s order-preserving
+	 *     storage).
 	 *
 	 * The actual field-by-field mapping now lives in the module-level,
 	 * exported `esearchToSearchResult()` above (M4.10) — `SortCommand` reuses

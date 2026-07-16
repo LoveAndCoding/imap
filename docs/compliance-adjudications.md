@@ -292,6 +292,26 @@ task than folded silently into this phase's fixes.
 CONTEXT=SEARCH/CONTEXT=SORT and the rest of RFC 9394's currently-untested
 rows) re-decides whether `FetchModifiers` gains a `partial` field.
 
+**Resolved at the M5 CONTEXT-machinery carry-forward task (the wave-4 task
+added at M5 kickoff for the RFC 5267 §4 machinery + this row):**
+`FetchModifiers` DID gain a `partial` field — `partial?: { from: number; to:
+number }` (`src/client/fetch.ts`), the shape deliberately mirroring
+`SearchOptions.partial` because §3.3 defines the modifier as having "the
+same syntax as the PARTIAL SEARCH result option" (both endpoints non-zero
+same-sign integers; minus-prefixed = RFC 9394's newest-first addressing).
+Exactly the anticipated gates landed: `(PARTIAL m:n)` rides RFC 4466's one
+fetch-modifier list after the items (`compileFetchWire`,
+`src/commands/fetch.ts`), gated on the PARTIAL capability alone
+(CapabilityError) and on the UID grain — `seq.fetch()` refuses it with
+`RangeError` at both `MailboxSession.runFetch()` and the command compiler
+(the same two-layer mirror `vanished` uses), zero bytes written either way
+(I-9). The compliance driver's shim gap this entry described is gone: the
+ad hoc `FetchOptions` gained a typed `partial?: string` ("m:n") member
+translated onto the real shape, and `RFC9394-3.3-1`'s test now drives the
+real surface (`test/compliance/specs/ext/partial-9394.test.ts`,
+`expectFailure` marker removed; the drive gained the LOGIN + SELECT the
+selected-state UID FETCH precondition requires) — passing on both profiles.
+
 ---
 
 ## RFC5466 (FILTERS) — `SearchCriteria.filter` deferred to M5 alongside METADATA (adjudicated at M4.14, option (b))

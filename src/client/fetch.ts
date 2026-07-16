@@ -150,10 +150,25 @@ export type FetchRequest = string | FetchItems;
  * changedSince-required and UID-grain-only checks, both `RangeError`) and
  * `FetchCommand`'s own constructor (the QRESYNC-ENABLEd capability check,
  * `CapabilityError`) -- see both of those doc comments.
+ *
+ * `partial` is real as of the M5 CONTEXT-machinery carry-forward (RFC 9394
+ * §3.3, resolving the RFC9394-3.3-1 adjudicated deferral -- see
+ * `docs/compliance-adjudications.md`): the `(PARTIAL m:n)` FETCH modifier,
+ * paging the RESULT SET of the FETCH itself (which messages are reported) --
+ * distinct from `BodyPartRequest.partial`'s `<start.length>` octet window
+ * (which bytes of one message's part are returned). The `{ from, to }` shape
+ * deliberately mirrors `SearchOptions.partial` because §3.3 defines the
+ * modifier as having "the same syntax as the PARTIAL SEARCH result option":
+ * both endpoints non-zero integers of the same sign, minus-prefixed for RFC
+ * 9394's newest-first ("from the end") addressing (e.g. `{ from: -1, to: -3
+ * }` = the three highest-UID messages of the set). Gated on the `PARTIAL`
+ * capability alone (§3.3's own gate) and legal ONLY on UID FETCH -- §3.3
+ * extends "the UID FETCH command", never bare FETCH, so `seq.fetch()`
+ * refuses it with `RangeError` exactly like `vanished`.
  */
 export type FetchModifiers =
-	| { changedSince?: bigint; vanished?: false }
-	| { changedSince: bigint; vanished: true };
+	| { changedSince?: bigint; vanished?: false; partial?: { from: number; to: number } }
+	| { changedSince: bigint; vanished: true; partial?: { from: number; to: number } };
 
 /** One address (spec §5.4, RFC 9051 §7.5.2). Group markers (`AddressGroup`
  *  boundaries in the underlying parser, e.g. "undisclosed-recipients") are

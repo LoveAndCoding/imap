@@ -1,6 +1,7 @@
 export * from "./append";
 export * from "./authenticate";
 export * from "./base";
+export * from "./cancel-update";
 export * from "./capability";
 export * from "./close";
 export * from "./collector";

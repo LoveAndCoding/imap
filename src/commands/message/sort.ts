@@ -1,4 +1,4 @@
-import { CapabilityError, NotImplementedError } from "../../errors";
+import { CapabilityError } from "../../errors";
 import { ExtendedSearchResponse, SortResponse } from "../../parser";
 import type { UntaggedResponse } from "../../parser";
 import type { SortKey } from "../../protocol/vocabularies";
@@ -12,8 +12,13 @@ import {
 	resolveMandatoryCharset,
 } from "../search-criteria";
 import type { SearchCapabilityProbe, SearchCriteria } from "../search-criteria";
-import { esearchToSearchResult } from "../search";
-import type { SearchOptions, SearchResult } from "../search";
+import {
+	esearchToSearchResult,
+	normalizeUpdateOption,
+	validatePartialRange,
+	writeUpdateReturnOption,
+} from "../search";
+import type { NormalizedUpdateOption, SearchOptions, SearchResult } from "../search";
 import { CommandWriter } from "../writer";
 
 /**
@@ -54,13 +59,17 @@ import { CommandWriter } from "../writer";
  * §3.1 — distinct from plain SEARCH's ESEARCH/IMAP4rev2 gate, since ESORT is
  * its own capability token and SORT never folds into IMAP4rev2 core).
  *
- * `SearchOptions.partial` (RFC 9394/RFC 5267 §4.4 PARTIAL) stays OUT OF
- * SCOPE this milestone for SORT specifically: PARTIAL-on-SORT rides RFC
- * 5267's CONTEXT=SORT machinery (§4.1/§4.4), which this milestone's plan
- * explicitly defers (see this module's own M4.10 plan citation) — passing
- * it throws a `NotImplementedError`, an honest "not built yet" rather than
- * a capability-shaped refusal (contrast plain SEARCH's `SearchOptions.
- * partial`, which IS implemented, `search.ts`).
+ * `SearchOptions.partial` (RFC 5267 §4.4 PARTIAL-on-SORT; range grammar
+ * shared with RFC 9394 §4, including the minus-prefixed newest-first form
+ * RFC 9394 layers on) is REAL as of the M5 CONTEXT-machinery carry-forward
+ * task (it was an honest `NotImplementedError` through M4.10): gated on
+ * `PARTIAL` (RFC 9394) OR `CONTEXT=SORT` (RFC 5267 §4.1/§4.4, PARTIAL's
+ * original CONTEXT-extension definition), mirroring plain SEARCH's own
+ * PARTIAL-or-CONTEXT=SEARCH gate in `search.ts`. `SearchOptions.update`
+ * (RFC 5267 §4.3 UPDATE-on-SORT) lands with it, gated on `CONTEXT=SORT`
+ * (RFC5267-4.1-2's MUST NOT) via the shared `normalizeUpdateOption()` —
+ * see `SearchOptions.update`'s own doc comment (`search.ts`) for the
+ * update-notification seam and `SearchResult.updateTag` correlator.
  */
 
 const SORT_BASE_ATOMS: ReadonlySet<string> = new Set([
@@ -182,6 +191,8 @@ function compileSortCriteria(
 
 interface NormalizedSortReturn {
 	returnAtoms: readonly string[];
+	partial?: { from: number; to: number };
+	update: NormalizedUpdateOption;
 	emitReturnClause: boolean;
 	requestedSave: boolean;
 }
@@ -204,14 +215,6 @@ function normalizeSortReturnOptions(
 	criteria: SearchCriteria,
 	caps: SearchCapabilityProbe,
 ): NormalizedSortReturn {
-	if (opts.partial !== undefined) {
-		throw new NotImplementedError(
-			`${verb} RETURN (PARTIAL ...): PARTIAL-on-SORT rides RFC 5267's CONTEXT=SORT ` +
-				"machinery (§4.1/§4.4), out of scope this milestone (M4.10 plan) -- call " +
-				"sort()/uidSort() without `opts.partial`, or use `search()`/`uidSearch()`'s " +
-				"own (implemented) `opts.partial` instead",
-		);
-	}
 	const returnAtoms: string[] = [];
 	if (opts.return !== undefined) {
 		if (!Array.isArray(opts.return)) {
@@ -228,16 +231,50 @@ function normalizeSortReturnOptions(
 			returnAtoms.push(atom);
 		}
 	}
-	const emitReturnClause = opts.return !== undefined;
+	// M5 CONTEXT-machinery carry-forward: UPDATE-on-SORT (RFC 5267 §4.3,
+	// CONTEXT=SORT-gated per RFC5267-4.1-2; the fetch-atts form additionally
+	// NOTIFY-gated) and PARTIAL-on-SORT (RFC 5267 §4.4, gated PARTIAL-or-
+	// CONTEXT=SORT below).
+	const update = normalizeUpdateOption(opts.update, caps, verb, "CONTEXT=SORT");
+	let partial: { from: number; to: number } | undefined;
+	if (opts.partial !== undefined) {
+		// Same OR-gate rationale as plain SEARCH's `SearchOptions.partial`
+		// (`search.ts`): RFC 5267 §4.4 defined PARTIAL under the CONTEXT
+		// extensions (CONTEXT=SORT for the SORT command) before RFC 9394 split
+		// it into its own standalone PARTIAL capability -- either token
+		// legitimately licenses the option.
+		if (!caps.has("PARTIAL") && !caps.has("CONTEXT=SORT")) {
+			throw new CapabilityError(
+				`${verb}: RETURN (PARTIAL m:n) requires the PARTIAL capability ` +
+					"(RFC 9394) or CONTEXT=SORT (RFC 5267 §4.4, PARTIAL's original " +
+					"definition for SORT), neither of which the server has advertised",
+				{ capability: "CONTEXT=SORT", rfc: "RFC5267" },
+			);
+		}
+		if (returnAtoms.includes("ALL")) {
+			throw new RangeError(
+				`${verb}: partial cannot be combined with return: [...,"ALL",...] — a ` +
+					"command MUST NOT contain more than one of PARTIAL/ALL (RFC 5267 §4.4)",
+			);
+		}
+		partial = validatePartialRange(opts.partial, `${verb} SearchOptions.partial`);
+	}
+	const emitReturnClause =
+		opts.return !== undefined || partial !== undefined || update !== false;
 	// RFC 5267 §3.1: "Servers advertising the capability 'ESORT' support the
 	// return options specified in [ESEARCH] in the SORT command" -- distinct
 	// from plain SEARCH's ESEARCH/IMAP4rev2 gate (RFC5267-3.1-1): SORT never
 	// folds into IMAP4rev2 core (catalog REV2 ADJUDICATION note), so there is
-	// no OR-with-rev2 branch here.
-	if (emitReturnClause && !caps.has("ESORT")) {
+	// no OR-with-rev2 branch here. CONTEXT=SORT is accepted as an implicit
+	// carrier (M5 carry-forward): RFC 5267 §4.1's context extensions build on
+	// the same extended-SORT syntax, so a server advertising CONTEXT=SORT
+	// supports it without separately re-advertising ESORT -- mirroring the
+	// CONTEXT=SEARCH-as-ESEARCH-carrier reading in `search.ts`.
+	if (emitReturnClause && !caps.has("ESORT") && !caps.has("CONTEXT=SORT")) {
 		throw new CapabilityError(
 			`${verb}: RETURN (...) result options require the ESORT capability ` +
-				"(RFC 5267 §3.1), which the server hasn't advertised",
+				"(RFC 5267 §3.1) or CONTEXT=SORT (RFC 5267 §4.1, which implies the " +
+				"extended-SORT support), neither of which the server has advertised",
 			{ capability: "ESORT", rfc: "RFC5267" },
 		);
 	}
@@ -252,7 +289,7 @@ function normalizeSortReturnOptions(
 	if (returnAtoms.includes("RELEVANCY")) {
 		assertRelevancyUsageAllowed(caps, criteria);
 	}
-	return { returnAtoms, emitReturnClause, requestedSave };
+	return { returnAtoms, partial, update, emitReturnClause, requestedSave };
 }
 
 function compileSortWire(
@@ -271,6 +308,14 @@ function compileSortWire(
 		w.list((inner) => {
 			for (const atom of normalizedReturn.returnAtoms) {
 				inner.atom(atom);
+			}
+			// M5 carry-forward: UPDATE (RFC 5267 §4.3) and PARTIAL (§4.4) ride
+			// the same RETURN list, in the same atoms-then-UPDATE-then-PARTIAL
+			// order `compileSearchWire` (search.ts) emits.
+			writeUpdateReturnOption(inner, normalizedReturn.update);
+			if (normalizedReturn.partial) {
+				inner.atom("PARTIAL");
+				inner.atom(`${normalizedReturn.partial.from}:${normalizedReturn.partial.to}`);
 			}
 		});
 	}
@@ -382,7 +427,9 @@ export class SortCommand extends Command<SearchResult> {
 			.filter((line) => line.content instanceof ExtendedSearchResponse);
 		if (esearchLines.length > 0) {
 			const content = esearchLines[esearchLines.length - 1].content as ExtendedSearchResponse;
-			return esearchToSearchResult(content, { requestedSave: this.normalizedReturn.requestedSave });
+			return this.withUpdateTag(
+				esearchToSearchResult(content, { requestedSave: this.normalizedReturn.requestedSave }),
+			);
 		}
 
 		const lines = c.untagged("SORT").filter((line) => line.content instanceof SortResponse);
@@ -393,7 +440,7 @@ export class SortCommand extends Command<SearchResult> {
 			if (this.normalizedReturn.requestedSave) {
 				result.saved = true;
 			}
-			return result;
+			return this.withUpdateTag(result);
 		}
 		const content = lines[lines.length - 1].content as SortResponse;
 		const result: SearchResult = { uids: [...content.ids] };
@@ -409,6 +456,16 @@ export class SortCommand extends Command<SearchResult> {
 		}
 		if (this.normalizedReturn.requestedSave) {
 			result.saved = true;
+		}
+		return this.withUpdateTag(result);
+	}
+
+	/** Mirrors `SearchCommand.withUpdateTag()` exactly (M5 carry-forward):
+	 *  RFC 5267 §4.3's update notifications for a SORT context are correlated
+	 *  by THIS command's tag the same way SEARCH's are. */
+	private withUpdateTag(result: SearchResult): SearchResult {
+		if (this.normalizedReturn.update !== false && this.tag !== undefined) {
+			result.updateTag = this.tag;
 		}
 		return result;
 	}

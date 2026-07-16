@@ -134,13 +134,19 @@ export interface SelectOptions {
 }
 
 /**
- * Options carried by FETCH/UID FETCH (RFC 7162 modifiers).
+ * Options carried by FETCH/UID FETCH (RFC 7162 + RFC 9394 modifiers).
  *  - `changedSince`: append the `(CHANGEDSINCE n)` modifier.
  *  - `vanished`: append the `VANISHED` modifier (UID FETCH under QRESYNC).
+ *  - `partial`: append the `(PARTIAL m:n)` modifier (RFC 9394 §3.3, UID
+ *    FETCH only) -- a raw `"m:n"` wire-form range string (possibly
+ *    minus-prefixed on both ends for newest-first paging), translated onto
+ *    the real `FetchModifiers.partial` `{ from, to }` shape (M5
+ *    CONTEXT-machinery carry-forward, resolving RFC9394-3.3-1's deferral).
  */
 export interface FetchOptions {
 	changedSince?: bigint;
 	vanished?: boolean;
+	partial?: string;
 }
 
 /**
@@ -211,11 +217,12 @@ function withAuthzid(inner: SaslMechanism, authzid: string | undefined): SaslMec
 // option strings onto the public option shape" rule `list()` below already
 // follows for LIST's ad hoc `selectOptions`/`returnOptions` strings. A
 // genuinely unsupported request (an extension key with no `SearchCriteria`
-// field at all, e.g. RFC 5267 UPDATE/CONTEXT -- not in the §5.3 type; RFC
-// 5466 FILTER gained a real field, `filter`, at M5.4) throws
-// `NotImplementedError`, the same "public API cannot express this" outcome
-// `list()` uses for an out-of-vocabulary
-// LIST option.
+// field at all -- RFC 5466 FILTER gained a real field, `filter`, at M5.4;
+// RFC 5267's UPDATE return option gained the real `SearchOptions.update`
+// field at the M5 CONTEXT-machinery carry-forward, leaving only the CONTEXT
+// hint atom with no public surface) throws `NotImplementedError`, the same
+// "public API cannot express this" outcome `list()` uses for an
+// out-of-vocabulary LIST option.
 
 const IMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -367,28 +374,63 @@ function parseAdHocSearchToken(token: string): Record<string, unknown> {
 	throw new NotImplementedError(`SEARCH criteria token ${JSON.stringify(token)}`);
 }
 
+/** Splits a raw fetch-att blob (`"UID BODY.PEEK[HEADER.FIELDS (TO FROM
+ *  SUBJECT)]"`) into its top-level space-separated tokens, respecting
+ *  parenthesis/bracket nesting so an embedded header-field list stays one
+ *  token -- the shape `SearchOptions.update.fetchAtts` (raw pre-formed wire
+ *  tokens, the same convention as `NotifyEventEntry.fetchAtts`) expects. */
+function splitTopLevelTokens(s: string): string[] {
+	const out: string[] = [];
+	let depth = 0;
+	let current = "";
+	for (const ch of s) {
+		if (ch === "(" || ch === "[") depth++;
+		else if (ch === ")" || ch === "]") depth--;
+		if (ch === " " && depth === 0) {
+			if (current.length > 0) out.push(current);
+			current = "";
+		} else {
+			current += ch;
+		}
+	}
+	if (current.length > 0) out.push(current);
+	return out;
+}
+
 /** A `RETURN (...)` option token from the ad hoc `SearchOptions.return`
  *  array: the closed MIN/MAX/ALL/COUNT/RELEVANCY vocabulary (M4.11, RFC 6203
  *  §4/§6 adds RELEVANCY to the real `SearchOptions.return` union alongside
  *  plain SEARCH's RFC 4731 four), `"PARTIAL m:n"` (RFC 9394 -- extracted
- *  into the real `SearchOptions.partial` field, not `.return`), or `"SAVE"`
+ *  into the real `SearchOptions.partial` field, not `.return`), `"SAVE"`
  *  (extracted into `saveRequested`, so it merges with the ad hoc
  *  criteria-object `{ save: true }` convention below into one real `return`
- *  array with no duplicate). Anything else (RFC 5267 UPDATE/CONTEXT --
- *  neither in the §5.3 `SearchOptions.return` union, out of scope this
- *  milestone) throws `NotImplementedError`. */
+ *  array with no duplicate), or -- M5 CONTEXT-machinery carry-forward --
+ *  `"UPDATE"`/`"UPDATE (fetch-atts...)"` (RFC 5267 §4.3 / RFC 5465 §7,
+ *  extracted into the real `SearchOptions.update` field: `true` for the
+ *  bare form, `{ fetchAtts }` for the parenthesized one). Anything else
+ *  (e.g. RFC 5267's CONTEXT hint -- deliberately no public surface, its
+ *  emission row is untestable-internal-decision) throws
+ *  `NotImplementedError`. */
 function parseAdHocReturnItem(
 	item: string,
 ):
 	| { atom: "MIN" | "MAX" | "ALL" | "COUNT" | "RELEVANCY" }
 	| { save: true }
-	| { partial: { from: number; to: number } } {
+	| { partial: { from: number; to: number } }
+	| { update: true | { fetchAtts: string[] } } {
 	const upper = item.trim().toUpperCase();
 	if (upper === "MIN" || upper === "MAX" || upper === "ALL" || upper === "COUNT" || upper === "RELEVANCY") {
 		return { atom: upper };
 	}
 	if (upper === "SAVE") {
 		return { save: true };
+	}
+	if (upper === "UPDATE") {
+		return { update: true };
+	}
+	const updateMatch = /^UPDATE\s+\(([\s\S]*)\)$/i.exec(item.trim());
+	if (updateMatch) {
+		return { update: { fetchAtts: splitTopLevelTokens(updateMatch[1]) } };
 	}
 	const partialMatch = /^PARTIAL\s+(-?\d+):(-?\d+)$/i.exec(item.trim());
 	if (partialMatch) {
@@ -438,6 +480,7 @@ function translateAdHocSearch(
 	let saveRequested = false;
 	const returnAtoms: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "RELEVANCY"> = [];
 	let partial: { from: number; to: number } | undefined;
+	let update: true | { fetchAtts: string[] } | undefined;
 
 	if (typeof rawCriteria === "string") {
 		criteria.seq = rawCriteria;
@@ -475,15 +518,23 @@ function translateAdHocSearch(
 		const parsed = parseAdHocReturnItem(item);
 		if ("atom" in parsed) returnAtoms.push(parsed.atom);
 		else if ("save" in parsed) saveRequested = true;
+		else if ("update" in parsed) update = parsed.update;
 		else partial = parsed.partial;
 	}
 
 	const opts: RealSearchOptions = {};
 	if (charset !== undefined) opts.charset = charset;
-	if (returnGiven || saveRequested) {
+	// An UPDATE-only ad hoc `return` array maps to the real `update` FIELD,
+	// not a real `return` array -- suppress the empty `return: []` in that
+	// case (it would otherwise change the wire form from 'RETURN (UPDATE)'
+	// to the same thing, harmlessly, but a bare `update` alone is the
+	// truthful public-API translation of what the spec file asked for).
+	const bareReturn = update === undefined && partial === undefined;
+	if ((returnGiven && (returnAtoms.length > 0 || bareReturn)) || saveRequested) {
 		opts.return = saveRequested ? [...returnAtoms, "SAVE"] : [...returnAtoms];
 	}
 	if (partial) opts.partial = partial;
+	if (update !== undefined) opts.update = update;
 
 	return { criteria: criteria as SearchCriteria, opts };
 }
@@ -751,13 +802,30 @@ function translateAdHocFetchItems(rawItems: string[]): FetchRequest {
  * observes, not a driver-level swallow.
  */
 function translateAdHocFetchModifiers(opts: FetchOptions | undefined): RealFetchModifiers | undefined {
-	if (opts?.changedSince === undefined && opts?.vanished === undefined) {
+	if (opts?.changedSince === undefined && opts?.vanished === undefined && opts?.partial === undefined) {
 		return undefined;
 	}
+	// M5 CONTEXT-machinery carry-forward (RFC 9394 §3.3): the ad hoc raw
+	// "m:n" range string -> the real `{ from, to }` shape. A malformed string
+	// (no colon / non-numeric) passes NaN endpoints through, so the real
+	// `validatePartialRange()`'s RangeError is what the test observes -- the
+	// same no-driver-level-swallow posture as `vanished` below.
+	const partial = (() => {
+		if (opts.partial === undefined) return {};
+		const [from, to] = opts.partial.split(":").map(Number);
+		return { partial: { from, to } };
+	})();
 	if (opts.vanished) {
-		return { changedSince: opts.changedSince, vanished: true } as unknown as RealFetchModifiers;
+		return {
+			changedSince: opts.changedSince,
+			vanished: true,
+			...partial,
+		} as unknown as RealFetchModifiers;
 	}
-	return opts.changedSince !== undefined ? { changedSince: opts.changedSince } : undefined;
+	if (opts.changedSince !== undefined) {
+		return { changedSince: opts.changedSince, ...partial };
+	}
+	return "partial" in partial ? partial : undefined;
 }
 
 /**
@@ -1350,16 +1418,11 @@ export class ComplianceDriver {
 	 * intercept.
 	 */
 	public async fetch(seq: string, items: string[], opts?: FetchOptions): Promise<FetchedMessage[]> {
-		// RFC 9394 §3.3's `(PARTIAL m:n)` FETCH MODIFIER (paging the RESULT SET
-		// of a FETCH command itself -- distinct from `BodyPartRequest.partial`'s
-		// `<start.length>` octet window, and from SEARCH's own PARTIAL return
-		// option) has no surface on `FetchOptions`/`FetchModifiers` at all --
-		// a spec file that reaches for it does so via an `as unknown as
-		// FetchOptions` cast (see ext/partial-9394.test.ts), so this checks for
-		// it defensively at runtime rather than through the declared type.
-		if ((opts as { partial?: unknown } | undefined)?.partial !== undefined) {
-			throw new NotImplementedError("FETCH (PARTIAL m:n fetch modifier, RFC 9394 §3.3)");
-		}
+		// `opts.partial` (RFC 9394 §3.3) is real as of the M5 CONTEXT-machinery
+		// carry-forward -- but the modifier extends UID FETCH only, so a caller
+		// reaching for it on THIS bare (sequence-number-grain) verb sees the
+		// real `RangeError` `MailboxSession.runFetch()` throws for exactly that
+		// case, not a driver-level intercept (same posture as `vanished`).
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
@@ -1466,11 +1529,11 @@ export class ComplianceDriver {
 		items: string[],
 		opts?: FetchOptions,
 	): Promise<FetchedMessage[]> {
-		// See `fetch()`'s own doc comment above for why this is checked at
-		// runtime rather than through the declared `FetchOptions` type.
-		if ((opts as { partial?: unknown } | undefined)?.partial !== undefined) {
-			throw new NotImplementedError("UID FETCH (PARTIAL m:n fetch modifier, RFC 9394 §3.3)");
-		}
+		// `opts.partial` (RFC 9394 §3.3's `(PARTIAL m:n)` UID FETCH modifier)
+		// is real as of the M5 CONTEXT-machinery carry-forward, resolving the
+		// RFC9394-3.3-1 adjudicated deferral -- translated by
+		// `translateAdHocFetchModifiers()` above, gates enforced by the real
+		// `FetchCommand`/`MailboxSession.runFetch()`.
 		const session = this.requireMailboxSession();
 		const request = translateAdHocFetchItems(items);
 		const out: FetchedMessage[] = [];
@@ -1820,6 +1883,20 @@ export class ComplianceDriver {
 			charset !== undefined ? { charset } : undefined,
 		);
 		return session.thread(algorithm as ThreadAlgorithm, realCriteria, realOpts);
+	}
+
+	/**
+	 * CANCELUPDATE (RFC 5267 §4.3.5) -- M5 CONTEXT-machinery carry-forward.
+	 * Wired to `MailboxSession.cancelUpdate()` directly (the command is
+	 * `command-select` grammar, selected-state only, and grain-less -- see
+	 * that method's own doc comment for why there is no `.seq` mirror).
+	 * `tags` are the issuing searching commands' tags, passed through
+	 * verbatim; the real `CancelUpdateCommand` owns all validation and the
+	 * CONTEXT=SEARCH/CONTEXT=SORT capability gate (I-4/I-9).
+	 */
+	public async cancelUpdate(tags: string[]): Promise<void> {
+		const session = this.requireMailboxSession();
+		await session.cancelUpdate(tags);
 	}
 
 	/**
