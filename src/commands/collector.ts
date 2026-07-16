@@ -161,6 +161,16 @@ export function toTypedResponseCode(
 					value: raw !== undefined && /^\d+$/.test(raw) ? BigInt(raw) : null,
 				};
 			}
+			case "BADCOMPARATOR": {
+				// RFC 5255 §4.9 (M5.11): `"BADCOMPARATOR" [SP charset]` -- a
+				// tagged-NO code for a COMPARATOR change with no matching
+				// installed comparator. The optional trailing charset is a
+				// bare (unparenthesized) argument `AtomTextCode`'s
+				// bare-vs-parenthesized split already preserves in
+				// `contents[0]`; absent -> `null`, never fabricated (I-6).
+				const raw = code.contents?.[0];
+				return { name: "BADCOMPARATOR", charset: raw ?? null };
+			}
 			case "UNDEFINED-FILTER": {
 				// RFC 5466 §3.1/§4 (FILTERS), M4.14: `"UNDEFINED-FILTER" SP
 				// filter-name` -- a bare (unparenthesized) atom naming the

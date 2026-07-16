@@ -179,6 +179,14 @@ export type {
 } from "./commands/metadata/get-metadata";
 export type { MetadataSetEntry } from "./commands/metadata/set-metadata";
 
+// LANGUAGE / COMPARATOR (RFC 5255, M5.11): `ImapClient.language()`'s and
+// `ImapClient.comparator()`'s result shapes (ordinary capability-gated
+// client methods, not §3.6 facets). The `LanguageResponse`/
+// `ComparatorResponse` parser structures ride the `export * from "./parser"`
+// line below, like every other untagged-response structure.
+export type { LanguageResult } from "./commands/language";
+export type { ComparatorResult } from "./commands/comparator";
+
 // Error hierarchy (spec §4).
 export {
 	ImapError,

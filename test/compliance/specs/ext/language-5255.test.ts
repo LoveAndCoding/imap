@@ -58,6 +58,23 @@
  * namespace-prefix/TRANSLATION conversion, ui-presentation — see the catalog
  * module).
  *
+ * M5.11 STATUS UPDATE (read the PROBE notes below as history, not live
+ * findings): the parser-death findings the original probes recorded were
+ * closed in two waves — (1) the M0.5-era tolerance backstop
+ * (`UntaggedResponse`'s `UnknownContent` fallback + the per-checker
+ * try/catch; commit "Parser tolerance batch") turned the LANGUAGE/
+ * COMPARATOR/BADCOMPARATOR shapes into accepted-but-untyped data, which is
+ * when the RFC5255-3.3-x/4.8-x/4.9-1 tests below started passing; (2)
+ * M5.11 (this task) added the TYPED `LanguageResponse`/`ComparatorResponse`
+ * structures (src/parser/structure/language.ts), the `LanguageCommand`/
+ * `ComparatorCommand` classes, and the `ImapClient.language()`/
+ * `ImapClient.comparator()` surfaces — so `driver.language()`/
+ * `driver.comparator()` are now REAL and every former
+ * `expectFailure: "unimplemented"` annotation in this file is gone. The
+ * AtomTextCode bare-argument drop described for [BADCOMPARATOR US-ASCII]
+ * was separately fixed (see text.code.ts's two-shape handling) before this
+ * task; its test passes for real.
+ *
  * REAL-SIGNAL-FIRST — PROBED BEFORE WRITING (connectLow):
  *  - `* LANGUAGE (EN)` / `* LANGUAGE (EN DE IT)`: grepped src/parser for
  *    "LANGUAGE" — zero hits outside an unrelated capability-string mention.
@@ -108,7 +125,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { selectExchange, sessionPrelude } from "../../runner/state";
+import { loginExchange, selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -141,7 +158,8 @@ function langCaps(profile: string): string[] {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5255-3.3-1 — single-tag LANGUAGE response = active-language change
-// (REAL — HONEST VIOLATION)
+// (REAL — was an honest violation when probed; passing since the tolerance
+// batch, TYPED since M5.11 — see the M5.11 STATUS UPDATE in the header)
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.2 worked example shape: 'C: D003 LANGUAGE "default"' / 'S: * LANGUAGE
 // (DE)'. PROBED: no LANGUAGE matcher exists in UntaggedResponse's checklist —
@@ -195,7 +213,8 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5255-3.3-2 — multi-tag LANGUAGE response = enumeration, no change
-// (REAL — HONEST VIOLATION)
+// (REAL — was an honest violation when probed; passing since the tolerance
+// batch, TYPED since M5.11 — see the M5.11 STATUS UPDATE in the header)
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.2 worked example: 'C: a002 LANGUAGE' (enumeration request) / 'S: * LANGUAGE
 // (EN DE IT i-default)'. Same failure mode as RFC5255-3.3-1 — no LANGUAGE
@@ -355,7 +374,8 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5255-4.8-1 / RFC5255-4.8-2 — untagged COMPARATOR response, one-field form
-// (REAL — HONEST VIOLATION)
+// (REAL — was an honest violation when probed; passing since the tolerance
+// batch, TYPED since M5.11 — see the M5.11 STATUS UPDATE in the header)
 // ═════════════════════════════════════════════════════════════════════════════
 // §4.8 worked shape: '* COMPARATOR i;basic' — a single comp-sel-quoted field
 // naming the now-active comparator, sent with no match list (exactly one
@@ -406,7 +426,8 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5255-4.8-3 — untagged COMPARATOR response, two-field form with match list
-// (REAL — HONEST VIOLATION)
+// (REAL — was an honest violation when probed; passing since the tolerance
+// batch, TYPED since M5.11 — see the M5.11 STATUS UPDATE in the header)
 // ═════════════════════════════════════════════════════════════════════════════
 // §4.8 worked shape: '* COMPARATOR i;basic (i;basic i;unicode-casemap)' — the
 // optional second field (a parenthesized match list) is present only when
@@ -460,15 +481,15 @@ complianceTest(
 // observable today only as a driven capability-inventory fact: a client that
 // issues LANGUAGE against a server advertising only LANGUAGE (no NAMESPACE)
 // is not itself a wire-observable violation of THIS document (NAMESPACE
-// support is the client's own internal readiness), so the test measures the
-// self-actualizing surface — language() throws → unimplemented, with the
-// wire form pinned for the future.
+// support is the client's own internal readiness — the parser's NAMESPACE
+// structure, including extension data, landed in M2.10), so the test drives
+// the real surface (M5.11): a bare `language()` emits the no-argument
+// enumeration request and accepts the multi-tag response.
 complianceTest(
 	{
 		reqs: ["RFC5255-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "LANGUAGE command form: enumeration request (no arguments)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -481,11 +502,15 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.language(); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.language();
 		await server.assertCompleted();
 		const lang = server.commandLines.find((l) => l.verb === "LANGUAGE");
 		expect(lang, "LANGUAGE must have been emitted").toBeDefined();
+		expect(
+			result.languages,
+			"the multi-tag enumeration must surface every listed language, in order",
+		).toEqual(["EN", "DE", "IT", "i-default"]);
 	},
 );
 
@@ -496,13 +521,12 @@ complianceTest(
 // §3.2 worked examples: 'C: d003 LANGUAGE en fr' (§3.5 ABNF language-range =
 // astring), and 'C: D003 LANGUAGE "default"'. The matcher anchors the exact
 // argument list so a wrong impl (comma-joined, bracketed, or a non-astring
-// token) is rejected. language() throws today → unimplemented.
+// token) is rejected. Driven for real since M5.11.
 complianceTest(
 	{
 		reqs: ["RFC5255-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'LANGUAGE command form: LANGUAGE en fr (RFC 4647 language-range list)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -515,12 +539,16 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.language(["en", "fr"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.language(["en", "fr"]);
 		await server.assertCompleted();
 		const lang = server.commandLines.find((l) => l.verb === "LANGUAGE");
 		expect(lang, "LANGUAGE must have been emitted").toBeDefined();
 		expect(lang!.args, "arguments must be bare astring language ranges").toMatch(/^en fr$/i);
+		expect(
+			result.active,
+			"a single-tag LANGUAGE response to a change request names the now-active language",
+		).toBe("FR");
 	},
 );
 
@@ -529,7 +557,6 @@ complianceTest(
 		reqs: ["RFC5255-3.2-3"],
 		profiles: ["rev1", "rev2"],
 		title: 'LANGUAGE command form: LANGUAGE "default" (reserved pseudo-range)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -542,8 +569,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.language(["default"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.language(["default"]);
 		await server.assertCompleted();
 		const lang = server.commandLines.find((l) => l.verb === "LANGUAGE");
 		expect(lang, "LANGUAGE must have been emitted").toBeDefined();
@@ -560,13 +587,15 @@ complianceTest(
 // The client's command-emission half: issuing LANGUAGE and expecting the
 // tagged OK plus untagged LANGUAGE response to complete the exchange (the
 // PARSE half of the untagged response itself is separately measured, REAL,
-// by RFC5255-3.3-1/-2 above via connectLow). language() throws today.
+// by RFC5255-3.3-1/-2 above via connectLow). Driven for real since M5.11:
+// the untagged LANGUAGE rides BEFORE the tagged OK here, and the command's
+// result is built from it — accepting-and-attributing the mid-command
+// response is exactly the §3.2 duty.
 complianceTest(
 	{
 		reqs: ["RFC5255-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client completes a LANGUAGE exchange and accepts the untagged response before the tagged OK",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -579,9 +608,14 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.language(["de"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.language(["de"]);
 		await server.assertCompleted();
+		expect(
+			result.active,
+			"the LANGUAGE response preceding the tagged OK must have been accepted " +
+				"and surfaced as the newly active language",
+		).toBe("DE");
 	},
 );
 
@@ -591,13 +625,22 @@ complianceTest(
 // LANGUAGE is valid in all states; a conformant client wanting localized
 // human-readable text — including localized authentication error text —
 // issues it BEFORE LOGIN/AUTHENTICATE. The script pins that ordering: a
-// LANGUAGE line must precede the LOGIN line. language()/login() throw today.
+// LANGUAGE line must precede the LOGIN line. Driven for real since M5.11 —
+// `LanguageCommand.states` includes "not-authenticated" precisely so this
+// SHOULD is achievable (unusual among extension commands). FIXTURE FIX
+// (M5.11, same class as the RFC5255-4.2-2 investigation-note repairs): the
+// original script replied a bare "OK LOGIN completed" with no [CAPABILITY]
+// code — fine while login() threw before reaching the wire, but a REAL
+// login re-issues CAPABILITY after any tagged OK that lacks the code (spec
+// §3.3 step 5, RFC3501/9051-6.2.2-4), which the script never expected and
+// would stall on. `loginExchange(caps)` folds the code into the tagged OK,
+// the same convention sessionPrelude's own login:true path uses. The wire
+// fact this row measures (LANGUAGE precedes LOGIN) is unaffected.
 complianceTest(
 	{
 		reqs: ["RFC5255-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues LANGUAGE before LOGIN/AUTHENTICATE when both are used",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -607,13 +650,12 @@ complianceTest(
 				...sessionPrelude(langCaps(ctx.profile), { profile: ctx.profile }),
 				expectLine(command("LANGUAGE", { args: /^de$/i })),
 				reply("OK LANGUAGE completed", ["* LANGUAGE (DE)"]),
-				expectLine(command("LOGIN")),
-				reply("OK LOGIN completed"),
+				...loginExchange(langCaps(ctx.profile)),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.language(["de"]); // throws NotImplementedError today
-		await driver.login("user", "pass").catch(() => undefined);
+		await driver.language(["de"]);
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 		const verbs = server.commandLines.map((l) => l.verb);
 		const langIdx = verbs.indexOf("LANGUAGE");
@@ -628,19 +670,33 @@ complianceTest(
 // RFC5255-3.1-3 — client MUST re-issue LANGUAGE after a security layer is
 // subsequently negotiated (driven)
 // ═════════════════════════════════════════════════════════════════════════════
-// The client issues LANGUAGE pre-STARTTLS, then negotiates TLS (via the
-// connect() security:"starttls" path — there is no separate starttls() verb
-// on this driver), and a conformant client re-issues a fresh LANGUAGE
-// afterward so a prior man-in-the-middle tampering with the unprotected
-// negotiation cannot persist. The script pins both LANGUAGE occurrences
-// (pre- and post-upgrade) plus the STARTTLS command between them; the first
-// throwing call (language()) drives the honest 'unimplemented' outcome.
+// The duty is CONDITIONAL on its trigger: a client that issued LANGUAGE and
+// THEN negotiates a security layer on the same connection must re-issue it
+// (so a pre-upgrade man-in-the-middle's tampering with the unprotected
+// negotiation cannot persist). REWRITTEN AT M5.11 (the original script —
+// LANGUAGE, then STARTTLS, then LANGUAGE again — was authored while
+// language() still threw, and pinned a sequence NO caller of the real
+// surface can produce): in this client the trigger condition is
+// STRUCTURALLY UNREACHABLE, so the MUST is satisfied vacuously —
+//  (a) TLS: STARTTLS runs exclusively inside `connect()`'s §3.3 ritual,
+//      BEFORE the command surface (`client.language()`) is usable — there
+//      is no public path to issue LANGUAGE first and upgrade after (and no
+//      driver starttls() verb, for the same reason);
+//  (b) SASL: no mechanism this library ships (PLAIN, CRAM-MD5, EXTERNAL,
+//      SCRAM-SHA-1/-256 without -PLUS, ANONYMOUS, XOAUTH2) ever negotiates
+//      a SASL security layer — the same structural vacuity as the six
+//      RFC4422 security-layer rows (M6's adjudication sweep).
+// What CAN be measured is the reachable half of the ordering fact: a driven
+// LANGUAGE on a session whose security posture never changes afterward,
+// with the transcript guard that no security-layer negotiation (STARTTLS)
+// ever follows it un-re-issued. If a future milestone ever adds a
+// post-connect upgrade path, this test MUST be rewritten to drive the
+// original interleaved sequence.
 complianceTest(
 	{
 		reqs: ["RFC5255-3.1-3"],
 		profiles: ["rev1", "rev2"],
-		title: "client re-issues LANGUAGE after STARTTLS when it had issued one pre-TLS",
-		expectFailure: "unimplemented",
+		title: "client re-issues LANGUAGE after a security layer (vacuous: no post-LANGUAGE security-layer negotiation is reachable)",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -654,26 +710,23 @@ complianceTest(
 				...sessionPrelude(caps, { profile: ctx.profile }),
 				expectLine(command("LANGUAGE", { args: /^de$/i })),
 				reply("OK LANGUAGE completed", ["* LANGUAGE (DE)"]),
-				expectLine(command("STARTTLS", { args: null })),
-				reply("OK Begin TLS negotiation now"),
-				// After the (unimplemented) TLS upgrade, a fresh LANGUAGE must ride.
-				expectLine(command("LANGUAGE", { args: /^de$/i })),
-				reply("OK LANGUAGE completed", ["* LANGUAGE (DE)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// language() throws NotImplementedError today — the unguarded first call
-		// drives the honest unimplemented classification; the wire sequence this
-		// script pins (LANGUAGE, STARTTLS, LANGUAGE again) documents the duty for
-		// when both LANGUAGE and the STARTTLS upgrade path exist.
 		await driver.language(["de"]);
-		await driver.language(["de"]).catch(() => undefined);
 		await server.assertCompleted();
-		const langCount = server.commandLines.filter((l) => l.verb === "LANGUAGE").length;
+		const verbs = server.commandLines.map((l) => l.verb);
+		const langIdx = verbs.indexOf("LANGUAGE");
+		expect(langIdx, "LANGUAGE must have been emitted").toBeGreaterThanOrEqual(0);
+		// The vacuity guard: the trigger condition (a security-layer
+		// negotiation AFTER the LANGUAGE command) must never have occurred —
+		// STARTTLS was advertised and the client still cannot reach it from
+		// the post-connect surface LANGUAGE lives on.
 		expect(
-			langCount,
-			"LANGUAGE must be re-issued after STARTTLS if it was issued before",
-		).toBeGreaterThanOrEqual(2);
+			verbs.slice(langIdx + 1),
+			"no security-layer negotiation may follow LANGUAGE on this connection " +
+				"(the re-issue duty's trigger is structurally unreachable)",
+		).not.toContain("STARTTLS");
 	},
 );
 
@@ -681,9 +734,12 @@ complianceTest(
 // RFC5255-4.7-1 — COMPARATOR valid only in authenticated/selected state
 // (self-actualizing)
 // ═════════════════════════════════════════════════════════════════════════════
-// No driven COMPARATOR verb exists on the driver; the compliance duty is a
-// never-emitted-pre-auth constraint, exercised as a negative transcript
-// guard against a not-yet-authenticated connection.
+// Driven for real since M5.11: `ComparatorCommand.states` is
+// ["authenticated", "selected"] (RFC5255-4.7-1's own state list), so a
+// pre-auth `comparator()` call is rejected client-side (`StateError`) with
+// ZERO bytes written (I-9-style zero-bytes discipline) — the strongest
+// observable form of "never emits COMPARATOR before authentication". The
+// transcript guard then confirms the wire stayed clean end-to-end.
 complianceTest(
 	{
 		reqs: ["RFC5255-4.7-1"],
@@ -699,9 +755,17 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		// No COMPARATOR verb exists on the driver surface; there is nothing to
-		// drive that could emit it pre-auth. driver.login() drives the scripted
-		// LOGIN exchange above; the transcript guard below is the real assertion.
+		// Pre-auth attempt: must be refused locally (I18NLEVEL=2 IS advertised,
+		// so this rejection is the state gate, not the capability gate).
+		const preAuthError = await driver.comparator().then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect(
+			preAuthError,
+			"a COMPARATOR attempt before authentication must be rejected client-side " +
+				"(RFC 5255 §4.7: valid in authenticated and selected states only)",
+		).toBeInstanceOf(Error);
 		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(
@@ -719,16 +783,23 @@ complianceTest(
 // §4.7 worked examples: 'a002 COMPARATOR' (query) and 'A001 COMPARATOR
 // "cz;*" i;basic' (change, with the first-match-wins parenthetical governing
 // resolution order when multiple installed comparators match) / 'A001
-// COMPARATOR "default"' (change). No COMPARATOR verb exists on the driver;
-// these wire forms are pinned via the scripted server for the future. There
-// is no driver.comparator()-style verb to issue, so this test only drives
-// login() (now implemented) and completes the session — a vacuous pass with
-// no COMPARATOR-shaped assertion until such a verb exists.
+// COMPARATOR "default"' (change). Driven for real since M5.11 (this test
+// was a vacuous login-only pass while no driver surface existed):
+//  - 4.7-2 (dual purpose): a bare `comparator()` emits the no-argument
+//    query form and accepts the response naming the current comparator;
+//    a with-args call emits the change form;
+//  - 4.7-3 (first-match-wins): the caller's preference order survives onto
+//    the wire verbatim — the matcher anchors "cz;*" BEFORE i;basic, so an
+//    impl that reorders/sorts arguments is rejected;
+//  - 4.7-4 (argument encoding): each argument is either the reserved quoted
+//    token "default" or an RFC 4790 collation spec — `cz;*` (wildcard, not
+//    ATOM-CHAR-only) rides quoted, `i;basic` (all ATOM-CHAR) rides bare,
+//    exactly the worked example's own encodings.
 complianceTest(
 	{
 		reqs: ["RFC5255-4.7-2", "RFC5255-4.7-3", "RFC5255-4.7-4"],
 		profiles: ["rev1", "rev2"],
-		title: 'COMPARATOR command form: bare query vs. COMPARATOR "default"/collation-spec change with first-match-wins ordering (driver has no surface yet)',
+		title: 'COMPARATOR command form: bare query vs. COMPARATOR "default"/collation-spec change with first-match-wins ordering',
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -737,10 +808,39 @@ complianceTest(
 				? ["IMAP4rev2", "LITERAL-", "I18NLEVEL=2"]
 				: ["IMAP4rev1", "I18NLEVEL=2"];
 		const server = await f.startServer();
-		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
+		server.arm([
+			[
+				...sessionPrelude(caps, { profile: ctx.profile, login: true }),
+				// Query form (no arguments): the response names the currently
+				// active comparator, one-field shape (no change → no match list).
+				expectLine(command("COMPARATOR", { args: null })),
+				reply("OK COMPARATOR completed", ["* COMPARATOR i;basic"]),
+				// Change form, first-match-wins order pinned: "cz;*" first
+				// (quoted — contains the RFC 4790 wildcard), i;basic second
+				// (bare atom). Two comparators matched → two-field response.
+				expectLine(command("COMPARATOR", { args: /^"cz;\*" i;basic$/ })),
+				reply("OK COMPARATOR completed", [
+					"* COMPARATOR i;unicode-casemap (i;unicode-casemap i;basic)",
+				]),
+				// Change form, reserved token: always the quoted literal.
+				expectLine(command("COMPARATOR", { args: /^"default"$/ })),
+				reply("OK COMPARATOR completed", ["* COMPARATOR i;octet"]),
+			],
+		]);
 		const driver = await f.connectPlain(server);
-		// There is no driver.comparator()-style verb yet to drive.
 		await driver.login("user", "pass");
+		const query = await driver.comparator();
+		expect(
+			query.comparator,
+			"a no-argument COMPARATOR must surface the currently active comparator (§4.7 query form)",
+		).toBe("i;basic");
+		const changed = await driver.comparator(["cz;*", "i;basic"]);
+		expect(
+			changed.comparator,
+			"a with-arguments COMPARATOR must surface the newly active comparator (§4.7 change form)",
+		).toBe("i;unicode-casemap");
+		const dflt = await driver.comparator(["default"]);
+		expect(dflt.comparator).toBe("i;octet");
 		await server.assertCompleted();
 	},
 );

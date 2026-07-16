@@ -26,6 +26,10 @@ import {
 	sanitizeIdValues,
 } from "../commands";
 import type { Command } from "../commands/base";
+import { ComparatorCommand } from "../commands/comparator";
+import type { ComparatorResult } from "../commands/comparator";
+import { LanguageCommand } from "../commands/language";
+import type { LanguageResult } from "../commands/language";
 import type {
 	AppendMessageEntry,
 	AppendOptions,
@@ -1765,6 +1769,78 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			);
 		}
 		await this.connection.compress();
+	}
+
+	/**
+	 * LANGUAGE (spec §3.2's `language(tags?)`, RFC 5255 §3.2) — M5.11. Not a
+	 * §3.6 facet — an ordinary capability-gated `ImapClient` method, same
+	 * placement rationale as `notify()`/`namespaces()` (client-level, never
+	 * mailbox-scoped).
+	 *
+	 * With no arguments: an enumeration request (the server lists its
+	 * supported languages, changing nothing). With one or more RFC 4647
+	 * language ranges (e.g. `["en", "fr"]`, first-match preference order):
+	 * requests localization of all subsequent human-readable text. The
+	 * reserved token `"default"` requests the server administrator's
+	 * preferred language (RFC 5255 §3.2). See `LanguageResult` for how the
+	 * single-tag (active-language change) and multi-tag (enumeration)
+	 * response shapes are distinguished.
+	 *
+	 * Valid in ALL states — including before authentication, which RFC 5255
+	 * §3.1 actively recommends (localized error text for the authentication
+	 * exchange itself, RFC5255-3.1-2).
+	 *
+	 * Capability-gated on `LANGUAGE` (never folded into IMAP4rev2 core, no
+	 * OR-with-rev2 branch), `CapabilityError` with zero bytes written (I-9)
+	 * when absent — the explicit check here carries the RFC-annotated error;
+	 * `LanguageCommand` also declares `capability: "LANGUAGE"` so the
+	 * `run()` escape hatch enforces the same gate for direct submissions.
+	 */
+	public async language(tags?: string[]): Promise<LanguageResult> {
+		if (!this.capabilityRegistry.view.has("LANGUAGE")) {
+			throw new CapabilityError(
+				"language() requires the LANGUAGE capability (RFC 5255 §3.1), " +
+					"which the server hasn't advertised",
+				{ capability: "LANGUAGE", rfc: "RFC5255" },
+			);
+		}
+		return this.run(new LanguageCommand(tags ?? []));
+	}
+
+	/**
+	 * COMPARATOR (RFC 5255 §4.7) — M5.11, the I18NLEVEL=2 collation-
+	 * negotiation sibling of `language()` (same RFC, same capability family,
+	 * independent commands — landed together per the M5 plan). Not a §3.6
+	 * facet — an ordinary capability-gated `ImapClient` method.
+	 *
+	 * With no arguments: queries the active comparator. With one or more
+	 * arguments: changes the active comparator — each argument is either the
+	 * reserved token `"default"` (the server's default comparator) or an
+	 * RFC 4790 collation specification (e.g. `"i;basic"`, `"cz;*"`), and
+	 * argument ORDER is a preference list (first-match-wins when an argument
+	 * matches several installed comparators, RFC 5255 §4.7). The active
+	 * comparator then governs SEARCH's BCC/BODY/CC/FROM/SUBJECT/TEXT/TO/
+	 * HEADER keys, SORT's CC/FROM/SUBJECT/TO keys, and THREAD's subject
+	 * comparisons (RFC 5255 §4.2).
+	 *
+	 * Capability-gated on `I18NLEVEL=2` specifically — the COMPARATOR
+	 * command exists only at level 2 (RFC 5255 §4.4); an `I18NLEVEL=1`
+	 * server performs its own comparator selection with no client-side
+	 * negotiation surface (§4.3), so level 1 alone still rejects
+	 * `CapabilityError`, zero bytes written (I-9). A change request no
+	 * installed comparator matches rejects with a `ServerNoError` whose
+	 * typed `code` carries the `[BADCOMPARATOR]` resp-code (RFC 5255 §4.9).
+	 */
+	public async comparator(preferences?: string[]): Promise<ComparatorResult> {
+		if (!this.capabilityRegistry.view.has("I18NLEVEL=2")) {
+			throw new CapabilityError(
+				"comparator() requires the I18NLEVEL=2 capability (RFC 5255 §4.4 — " +
+					"the COMPARATOR command exists only at level 2), which the server " +
+					"hasn't advertised",
+				{ capability: "I18NLEVEL=2", rfc: "RFC5255" },
+			);
+		}
+		return this.run(new ComparatorCommand(preferences ?? []));
 	}
 
 	/**

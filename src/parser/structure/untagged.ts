@@ -8,6 +8,7 @@ import { EnabledResponse } from "./enabled";
 import { Expunge } from "./expunge";
 import { Fetch, UidFetch } from "./fetch";
 import { IDResponse } from "./id";
+import { ComparatorResponse, LanguageResponse } from "./language";
 import * as MailboxData from "./mailbox";
 import { MetadataResponse } from "./metadata";
 import { NamespaceResponse } from "./namespace";
@@ -22,11 +23,13 @@ import { VanishedResponse } from "./vanished";
 type ContentType =
 	| AclResponse
 	| CapabilityList
+	| ComparatorResponse
 	| EnabledResponse
 	| Expunge
 	| Fetch
 	| GenUrlAuthResponse
 	| IDResponse
+	| LanguageResponse
 	| ListRightsResponse
 	| MyRightsResponse
 	| MetadataResponse
@@ -94,8 +97,10 @@ export default class UntaggedResponse {
 				StatusResponse,
 				AclResponse,
 				CapabilityList,
+				ComparatorResponse,
 				EnabledResponse,
 				IDResponse,
+				LanguageResponse,
 				ListRightsResponse,
 				MyRightsResponse,
 				MetadataResponse,

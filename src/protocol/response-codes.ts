@@ -122,4 +122,16 @@ export type TypedResponseCode =
 			subKind: "LONGENTRIES" | "MAXSIZE" | "TOOMANY" | "NOPRIVATE";
 			value: number | null;
 	  }
+	/** RFC 5255 §4.9 (I18NLEVEL=2), M5.11: `"BADCOMPARATOR" [SP charset]`
+	 *  rides a tagged NO refusing a COMPARATOR change none of whose
+	 *  arguments matched an installed comparator ("NO - No matching
+	 *  comparator found", RFC5255-4.9-1) — surfaced on the `ServerNoError`
+	 *  `ComparatorCommand`'s rejection carries. `charset` is the optional
+	 *  bare (unparenthesized) trailing argument, verbatim; `null` when
+	 *  absent (the common argument-less `[BADCOMPARATOR]` form — never
+	 *  fabricated, I-6). Same dedicated-shape-upgrade rationale as
+	 *  UNDEFINED-FILTER above: `AtomTextCode`'s bare-argument path already
+	 *  preserved the data, this variant just gives callers a structured
+	 *  field instead of the open `args` string. */
+	| { name: "BADCOMPARATOR"; charset: string | null }
 	| { name: string; args: string | null };

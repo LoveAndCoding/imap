@@ -10,6 +10,7 @@ export * from "./expunge";
 export * from "./fetch";
 export * from "./flag";
 export * from "./id";
+export * from "./language";
 export * from "./metadata";
 export * from "./namespace";
 export * from "./quota";

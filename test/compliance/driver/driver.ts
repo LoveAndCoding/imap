@@ -8,6 +8,7 @@ import { Connection, ImapClient, StateError } from "../../../src/index";
 import type {
 	AppendMessageEntry,
 	AppendResult as ClientAppendResult,
+	ComparatorResult,
 	CopyResult,
 	FetchItems,
 	FetchModifiers as RealFetchModifiers,
@@ -15,6 +16,7 @@ import type {
 	FetchedMessage,
 	ImapClientConfig,
 	GetMetadataOptions,
+	LanguageResult,
 	ListOptions,
 	MailboxInfo,
 	MailboxSession,
@@ -1798,8 +1800,29 @@ export class ComplianceDriver {
 	// ---- Phase 6: i18n + misc + vendor family -------------------------------
 	// LANGUAGE/I18NLEVEL (RFC 5255), CONVERT (RFC 5259), URLAUTH (RFC 4467),
 	// URLAUTH=BINARY (RFC 5524), MAILBOX-REFERRALS (RFC 2193)
-	public async language(_tags?: string[]): Promise<never> {
-		throw new NotImplementedError("LANGUAGE");
+	/**
+	 * LANGUAGE (RFC 5255 §3.2) -- M5.11. Wired to `client.language(...)`
+	 * directly (client-level, not mailbox-scoped -- LANGUAGE governs the
+	 * whole connection's human-readable text, same placement rationale as
+	 * `notify()`). No arguments = enumeration request; `tags` are RFC 4647
+	 * language ranges passed straight through (I-4 -- `LanguageCommand`'s
+	 * own constructor validates range syntax and `ImapClient.language()`
+	 * enforces the LANGUAGE capability gate, zero bytes written on refusal,
+	 * I-9).
+	 */
+	public async language(tags?: string[]): Promise<LanguageResult> {
+		return this.requireClient().language(tags);
+	}
+	/**
+	 * COMPARATOR (RFC 5255 §4.7) -- M5.11. Wired to `client.comparator(...)`
+	 * directly. No arguments = query the active comparator; `preferences`
+	 * are `"default"`/RFC 4790 collation specs in first-match-wins order,
+	 * passed straight through (I-4 -- `ComparatorCommand` validates the
+	 * argument syntax and `ImapClient.comparator()` enforces the
+	 * I18NLEVEL=2 capability gate, zero bytes written on refusal, I-9).
+	 */
+	public async comparator(preferences?: string[]): Promise<ComparatorResult> {
+		return this.requireClient().comparator(preferences);
 	}
 	public async convert(
 		_seq: string,
