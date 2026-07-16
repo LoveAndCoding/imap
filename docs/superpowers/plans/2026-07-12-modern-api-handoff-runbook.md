@@ -124,9 +124,22 @@ between closes; last updated: M3 CLOSED.)*
   untestable / problems []**; 1876 unit tests. CONTEXT-machinery
   carry-forward MERGED (+10 rows — RFC5267-4.1-1/4.3-2/4.3.5-1,
   RFC5465-7-1, RFC9394-3.3-1 both profiles; deferral adjudication
-  resolved): ledger now **1122 pass / 6 / problems []**, 1910 unit
-  tests. Still in flight (one worktree): M5.10 UNAUTHENTICATE (agent
-  a92b0459889a324bc). After it merges: M5.16 close only (exit bar: every source family ≥85% MUST
+  resolved). M5.10 UNAUTHENTICATE MERGED (`2e9c481`, +16 RFC8437 rows;
+  plan recommendation-(a) rejected-and-amended — RFC 8437 §6 extends
+  command-select too; harness gained real DEFLATE script steps).
+  Ledger at `2e9c481`: **1138 pass / 6 adjudicated violations / 24
+  unimplemented / 429 untestable / problems []**, 1921 unit tests.
+  ALL M5 implementation tasks merged. M5.16 close IN PROGRESS: the 24
+  remaining unimplemented row-profiles are (a) RFC4422 security-layer
+  ×6 ids + SCRAM channel-binding ×5 ids (RFC5802/RFC7677) — both
+  vacuous-conditional (no supported mechanism negotiates a SASL
+  security layer; no -PLUS support), being reclassified untestable per
+  the RFC5802-6-1 precedent with M5.16 adjudication entries (this
+  completes M6's reserved RFC4422 task early), and (b)
+  RFC9051-2.3.2-1/-2 rev2 keyword semantics — being implemented.
+  Exit-bar note: RFC4422 70% / RFC7677 50% MUST are artifacts of the
+  vacuous-conditional rows; post-reclassification every source meets
+  the ≥85% MUST bar (exit bar: every source family ≥85% MUST
   AND zero unimplemented rows anywhere).
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before
