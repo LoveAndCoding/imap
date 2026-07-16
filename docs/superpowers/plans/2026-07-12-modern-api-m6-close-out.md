@@ -41,8 +41,8 @@ gates):**
 | M6.3 RFC 4422 adjudications | DONE EARLY at M5.16 (⚖️) |
 | M6.4 typedoc | DONE (📚 — 1029→0 warnings; docs/api/ gitignored, npm run docs) |
 | M6.5 MIGRATION.md | DONE (🧳 — samples compile-gated via test/docs/) |
-| M6.6 README rewrite | IN FLIGHT (worktree) |
-| M6.7 CHANGELOG + 1.0.0 + final snapshot | pending (needs M6.6) |
+| M6.6 README rewrite | DONE (📰 — 1194→645 lines; Legacy API section → MIGRATION.md pointer; samples compile-gated) |
+| M6.7 CHANGELOG + 1.0.0 + final snapshot | IN PROGRESS |
 | M6.8 Final phase review | pending |
 | M6.9 THE PR into modern-api | last (open, never merge) |
 
