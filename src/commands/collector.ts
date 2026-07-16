@@ -182,6 +182,18 @@ export function toTypedResponseCode(
 				const raw = code.contents?.[0];
 				return { name: "UNDEFINED-FILTER", filterName: raw ?? null };
 			}
+			case "REFERRAL": {
+				// RFC 2193 §3/§6 / RFC 2221 §3/§5 (M5.13): `"REFERRAL"
+				// 1*(SP <url>)` -- one or more BARE (unparenthesized)
+				// space-separated URLs. `AtomTextCode`'s bare-vs-parenthesized
+				// split preserves them all, in the server's preference order
+				// (RFC 2193 §3; positional old/new pair on a RENAME referral,
+				// §4.3). A missing argument from a non-conformant server
+				// surfaces as `[]` rather than an error (I-6). See the
+				// `TypedResponseCode` variant's doc comment for the
+				// never-auto-follow posture.
+				return { name: "REFERRAL", urls: code.contents ? [...code.contents] : [] };
+			}
 			case "METADATA": {
 				// RFC 5464 §4.2.1/§4.3 (M5.4): one wire keyword ("METADATA")
 				// fronts four sub-forms -- "LONGENTRIES"/"MAXSIZE"/"TOOMANY"/

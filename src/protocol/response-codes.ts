@@ -134,4 +134,21 @@ export type TypedResponseCode =
 	 *  preserved the data, this variant just gives callers a structured
 	 *  field instead of the open `args` string. */
 	| { name: "BADCOMPARATOR"; charset: string | null }
+	/** RFC 2193 (mailbox referrals) / RFC 2221 (login referrals), M5.13:
+	 *  `"REFERRAL" 1*(SP <url>)` rides a tagged NO (a referred SELECT/CREATE/
+	 *  RENAME/COPY/LOGIN/..., RFC 2193 §4 / RFC 2221 §4.1), a tagged OK (RFC
+	 *  2221 §4's "personal mailboxes are elsewhere" qualified success), or an
+	 *  untagged BYE (RFC 2221 §4.2's connection-startup redirection). `urls`
+	 *  preserves EVERY space-separated URL in the server's stated preference
+	 *  order (RFC 2193 §3: first = most preferred; on a RENAME referral the
+	 *  pair is positional -- urls[0] = old name, urls[1] = new name, RFC 2193
+	 *  §4.3); it is `[]` when a non-conformant server sent no argument (I-6,
+	 *  never fabricated). URLs may be of ANY scheme (RFC 2193 §3: the client
+	 *  must be prepared for a URL of any type) and are surfaced verbatim.
+	 *  This client surfaces referrals as data on the relevant errors/results
+	 *  (spec §3.6's note: referrals are NOT a facet) and NEVER auto-follows
+	 *  one -- following a referral means opening a new connection to another
+	 *  host (RFC 2193 §4.1/RFC 2221 §4), which is the consumer's decision,
+	 *  same "no auto-XYZ magic" posture as MOVE emulation and TRYCREATE. */
+	| { name: "REFERRAL"; urls: string[] }
 	| { name: string; args: string | null };

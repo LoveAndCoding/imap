@@ -1861,11 +1861,19 @@ export class ComplianceDriver {
 	public async resetkey(mailbox?: string, mechanisms?: string[]): Promise<void> {
 		return this.requireClient().urlauth.resetKey(mailbox, mechanisms);
 	}
-	public async rlist(_ref: string, _pattern: string): Promise<never> {
-		throw new NotImplementedError("RLIST");
+	/** RLIST (RFC 2193 §5.1) -- M5.13. Wired through the public
+	 *  `list({ referrals: true })` fold-in M2.7 built (spec §3.6's note:
+	 *  RLIST/RLSUB fold into `list()`; there is no separate raw-RLIST public
+	 *  surface, deliberately) -- `ListCommand` swaps the wire verb to RLIST
+	 *  and gates on MAILBOX-REFERRALS with zero bytes when absent (I-9). */
+	public async rlist(ref: string, pattern: string): Promise<MailboxInfo[]> {
+		return this.requireClient().list({ ref, pattern, referrals: true });
 	}
-	public async rlsub(_ref: string, _pattern: string): Promise<never> {
-		throw new NotImplementedError("RLSUB");
+	/** RLSUB (RFC 2193 §5.2) -- M5.13. Wired through `lsub(ref, pattern,
+	 *  { referrals: true })`, the LSUB sibling of the RLIST fold-in above;
+	 *  same MAILBOX-REFERRALS gate (I-9). */
+	public async rlsub(ref: string, pattern: string): Promise<MailboxInfo[]> {
+		return this.requireClient().lsub(ref, pattern, { referrals: true });
 	}
 
 	// ------------------------------------------------------------------------

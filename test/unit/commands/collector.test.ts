@@ -516,4 +516,73 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			filterName: null,
 		});
 	});
+
+	// M5.13 (referrals, RFC 2193/2221): `"REFERRAL" 1*(SP <url>)` -- one or
+	// more BARE (unparenthesized) space-separated URLs, preserved verbatim
+	// and in the server's stated preference order. Surfaced as data only;
+	// the client never auto-follows a referral.
+	test("REFERRAL carries the referral URL, verbatim (RFC 2221 §4.1 worked example)", () => {
+		const tagged = parseLine(
+			`A001 NO [REFERRAL IMAP://MIKE@SERVER2/] Specified user is invalid on this server. Try SERVER2.${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: ["IMAP://MIKE@SERVER2/"],
+		});
+	});
+
+	test("REFERRAL preserves EVERY URL, in order, when multiple are given (RFC 2193 §3/§4.3)", () => {
+		// RFC 2193 §3: preference order across replicas; §4.3: a RENAME pair
+		// is positional (urls[0] = old name, urls[1] = new name).
+		const tagged = parseLine(
+			`A1 NO [REFERRAL IMAP://user;AUTH=*@SERVER2/OldBox IMAP://user;AUTH=*@SERVER2/NewBox] Try RENAME on SERVER2.${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: ["IMAP://user;AUTH=*@SERVER2/OldBox", "IMAP://user;AUTH=*@SERVER2/NewBox"],
+		});
+	});
+
+	test("REFERRAL also rides a tagged OK (RFC 2221 §4's qualified success) with the same typed shape", () => {
+		const tagged = parseLine(
+			`A001 OK [REFERRAL IMAP://MATTHEW@SERVER2/] Specified user's personal mailboxes located on Server2, but public mailboxes are available.${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: ["IMAP://MATTHEW@SERVER2/"],
+		});
+	});
+
+	// RFC 2193 §3: the client MUST be prepared for a URL of any type --
+	// non-IMAP schemes surface verbatim, never rejected or filtered.
+	test("REFERRAL surfaces a non-IMAP-scheme URL verbatim (RFC 2193 §3: any URL type)", () => {
+		const tagged = parseLine(
+			`A1 NO [REFERRAL http://example.com/elsewhere] See elsewhere.${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: ["http://example.com/elsewhere"],
+		});
+	});
+
+	// I-6 tolerance: both RFCs mandate at least one URL, but a
+	// non-conformant bare [REFERRAL] still surfaces by name with urls: []
+	// rather than throwing or fabricating.
+	test("REFERRAL tolerates a missing URL argument (I-6): urls comes back []", () => {
+		const tagged = parseLine(`A1 NO [REFERRAL] gone${CRLF}`) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: [],
+		});
+	});
+
+	test("REFERRAL dispatches case-insensitively on the resp-code keyword", () => {
+		const tagged = parseLine(
+			`A1 NO [referral IMAP://MIKE@SERVER2/] Try SERVER2.${CRLF}`,
+		) as TaggedResponse;
+		expect(toTypedResponseCode(tagged.status.text?.code)).toEqual({
+			name: "REFERRAL",
+			urls: ["IMAP://MIKE@SERVER2/"],
+		});
+	});
 });

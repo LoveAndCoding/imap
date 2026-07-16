@@ -128,6 +128,7 @@ export type {
 	StatusItem,
 } from "./protocol/mailbox";
 export type { ListCapabilityProbe, ListOptions } from "./commands/list";
+export type { LsubOptions } from "./commands/lsub";
 
 // QUOTA (RFC 9208, spec §3.6, M5.2): `ImapClient.quota`'s public facet
 // surface. `QuotaFacet` is the interface `client.quota` is typed as;

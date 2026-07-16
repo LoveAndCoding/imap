@@ -39,6 +39,7 @@ import type {
 import type { CreateMailboxOptions } from "../commands/create";
 import type { IdResponseMap } from "../commands/id";
 import type { ListOptions } from "../commands/list";
+import type { LsubOptions } from "../commands/lsub";
 import type { SelectOptions, SelectResult } from "../commands/select";
 import type {
 	MailboxStatusResult,
@@ -605,9 +606,29 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * The server's ENABLED response (possibly empty, per RFC 5161 §3.2 -- a
 	 * no-op is a successful completion, not an error) is merged into
 	 * `client.enabled` and also returned directly.
+	 *
+	 * RFC 6855 §6 (RFC6855-6-2, M5.13): a request for `UTF8=ONLY` is
+	 * canonicalized to `UTF8=ACCEPT` before anything reaches the wire --
+	 * 'For the client, "ENABLE UTF8=ACCEPT" is always used -- never "ENABLE
+	 * UTF8=ONLY"'. UTF8=ONLY is a server-side announcement ("I require
+	 * UTF-8"), not an enableable capability name; the client's confirmation
+	 * token is always UTF8=ACCEPT regardless of which of the two the server
+	 * advertised. Without this rewrite, a caller-supplied
+	 * `enableExtensions(["UTF8=ONLY"])` would have passed
+	 * `isEnableAdvertised` (the server DOES advertise that string) and put
+	 * the forbidden `ENABLE UTF8=ONLY` on the wire.
 	 */
 	public async enableExtensions(caps: string[]): Promise<string[]> {
-		const advertised = caps.filter((cap) => this.isEnableAdvertised(cap));
+		const canonicalized: string[] = [];
+		for (const cap of caps) {
+			const mapped = cap.toUpperCase() === "UTF8=ONLY" ? "UTF8=ACCEPT" : cap;
+			// Dedup post-rewrite (case-insensitively) so "UTF8=ONLY" alongside
+			// "UTF8=ACCEPT" in one request doesn't emit the token twice.
+			if (!canonicalized.some((c) => c.toUpperCase() === mapped.toUpperCase())) {
+				canonicalized.push(mapped);
+			}
+		}
+		const advertised = canonicalized.filter((cap) => this.isEnableAdvertised(cap));
 		if (advertised.length === 0) {
 			return [];
 		}
@@ -1045,9 +1066,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `list({ subscribed: true })`). Note the LSUB-specific `\Noselect`
 	 * semantics and the "LIST flags are more authoritative" precedence rule
 	 * documented on `LsubCommand`.
+	 *
+	 * `opts.referrals` (M5.13, strictly additive): emit RLSUB instead
+	 * (RFC 2193 §5.2 mailbox referrals — the LSUB sibling of
+	 * `list({ referrals: true })`'s RLIST fold-in). Gated on the
+	 * MAILBOX-REFERRALS capability, `CapabilityError` with zero bytes
+	 * written when absent (I-9) — enforced synchronously by the command
+	 * constructor against the live capability registry, same as `list()`.
 	 */
-	public async lsub(ref: string, pattern: string): Promise<MailboxInfo[]> {
-		return this.run(new LsubCommand(ref, pattern));
+	public async lsub(
+		ref: string,
+		pattern: string,
+		opts?: LsubOptions,
+	): Promise<MailboxInfo[]> {
+		return this.run(new LsubCommand(ref, pattern, opts, this.capabilityRegistry.view));
 	}
 
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See
@@ -1697,14 +1729,54 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			return;
 		}
 		const extensions = this.config.extensions;
-		if (extensions === false) {
+		if (extensions !== false) {
+			const requested = extensions === "auto" ? AUTO_ENABLE_SET : extensions;
+			if (requested.length > 0) {
+				await this.enableExtensions([...requested]);
+			}
+		}
+		this.warnIfUtf8OnlyUnaccepted();
+	}
+
+	/**
+	 * RFC 6855 §6 (RFC6855-6-3, M5.13): a server advertising `UTF8=ONLY`
+	 * REQUIRES UTF-8 support -- "clients MUST use the 'ENABLE UTF8=ACCEPT'
+	 * command before using this server" (RFC6855-6-1), and it will reject
+	 * commands that depend on the un-enabled legacy behavior with
+	 * `NO [CANNOT]`. With the default `extensions: "auto"` this client
+	 * complies automatically (`UTF8=ACCEPT` is in `AUTO_ENABLE_SET`, and
+	 * `isEnableAdvertised` counts a UTF8=ONLY announcement as advertising
+	 * UTF8=ACCEPT), so this warning is unreachable on default config against
+	 * a conformant server. It fires only when the CALLER opted the session
+	 * out of compliance -- `extensions: false`, or an explicit list omitting
+	 * UTF8=ACCEPT -- or when the server declined the ENABLE. Per
+	 * RFC6855-6-3's "encouraged to at least detect the announcement and
+	 * provide an informative error message to the end-user", the detection
+	 * is surfaced through the config logger (this headless library's
+	 * user-notification channel, same as the UIDVALIDITY-change warning);
+	 * the session itself is NOT torn down or refused locally -- proceeding
+	 * (and surfacing the server's own typed NO [CANNOT] rejections per §7.1)
+	 * honors the caller's explicit configuration, consistent with the
+	 * codebase's "no auto-XYZ magic" posture.
+	 */
+	private warnIfUtf8OnlyUnaccepted(): void {
+		if (!this.capabilityRegistry.view.has("UTF8=ONLY")) {
 			return;
 		}
-		const requested = extensions === "auto" ? AUTO_ENABLE_SET : extensions;
-		if (requested.length === 0) {
+		if (this._enabled.has("UTF8=ACCEPT")) {
 			return;
 		}
-		await this.enableExtensions([...requested]);
+		this.config.logger?.({
+			level: "warn",
+			message:
+				"the server advertises UTF8=ONLY (RFC 6855 §6: it requires UTF-8 " +
+				"support and will reject legacy non-UTF-8 behavior), but UTF8=ACCEPT " +
+				"was not enabled for this session -- clients MUST use ENABLE " +
+				"UTF8=ACCEPT before using such a server; expect NO [CANNOT] " +
+				"rejections. Use the default extensions: \"auto\" (or include " +
+				"UTF8=ACCEPT in the extensions list) to comply",
+			detail: { code: "UTF8ONLYNOTENABLED" },
+		});
 	}
 
 	/**

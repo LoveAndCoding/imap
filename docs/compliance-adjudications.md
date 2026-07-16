@@ -112,7 +112,7 @@ signal exists).
 
 ---
 
-## Pure-rev2-only mailbox-name codec direction — deviate (temporary, revisit at M5)
+## Pure-rev2-only mailbox-name codec direction — deviate (SETTLED at M5.13: permanent, no raw-UTF-8 arm)
 
 **Context:** RFC 9051 Appendix A's mUTF-7-compatibility MUST (A-2) and the
 ENABLE gate (A-1) are conditioned on a server advertising BOTH IMAP4rev1
@@ -122,12 +122,12 @@ IMAP4rev2-only clients and servers", and RFC9051-5.1-1 frames Net-Unicode
 names as the rev2 default. Such a server has no obligation to decode
 mUTF-7.
 
-**Decision:** The client currently sends modified UTF-7 for non-ASCII
-mailbox names whenever `UTF8=ACCEPT` is not ENABLEd, including against
-pure-rev2-only servers — one codec rule for every session, matching the
-compliance suite's rev2 fixtures (which advertise `IMAP4rev2 LITERAL-`
-and pin mUTF-7 forms as the expected behavior; the extrapolation is
-documented in test prose at rfc9051/5-operational.test.ts).
+**Decision:** The client sends modified UTF-7 for non-ASCII mailbox names
+whenever `UTF8=ACCEPT` is not ENABLEd, including against pure-rev2-only
+servers — one codec rule for every session, matching the compliance
+suite's rev2 fixtures (which advertise `IMAP4rev2 LITERAL-` and pin mUTF-7
+forms as the expected behavior; the extrapolation is documented in test
+prose at rfc9051/5-operational.test.ts).
 
 **Residual risk:** a pure-rev2-only server lacking an mUTF-7 decoder
 would store a shifted name literally. Mitigations: genuine rev2 servers
@@ -136,10 +136,51 @@ UTF8=ACCEPT (which the default `extensions:"auto"` config ENABLEs,
 making the raw-UTF-8 arm active); the deviation is only reachable with
 `extensions:false` or a rev2-only server that omits UTF8=ACCEPT.
 
-**Revisit:** M5's UTF8=ACCEPT/ONLY behaviors task re-decides whether the
-codec gains a pure-rev2 (IMAP4rev2 without IMAP4rev1) raw-UTF-8 arm; the
-spec §5.2 text was amended at the M2 review to match the implemented
-rule and points here.
+**M5.13 re-decision (this entry's scheduled revisit — the codec does NOT
+gain a pure-rev2 raw-UTF-8 arm; the M2 rule above is now permanent):**
+
+1. **The pins are real and passing.** The rev2 compliance fixtures are
+   themselves pure-rev2-only sessions (`sessionPrelude(profile:"rev2")`
+   advertises exactly `IMAP4rev2 LITERAL-` — no IMAP4rev1, no
+   UTF8=ACCEPT), and four passing rows pin exact mUTF-7 wire forms on
+   them: RFC9051-A-4/A-5/A-8 pin `R&AOk-sum&AOk-`/`caf&AOk-` verbatim,
+   and RFC9051-A-7 asserts the client corrects (never transmits verbatim)
+   a non-conformant embedded-`&` name — under a raw-UTF-8 arm that name
+   passes through unchanged, a genuine violation, not just a changed
+   expectation. `test/unit/client/utf8-accept-effective.test.ts` pins the
+   same rule at the unit grain. A raw-UTF-8 arm regresses all of them.
+2. **Posture coherence.** The client's settled, permanent §3.4/§13
+   posture (see the RFC9051-A-1 entry above) is that it never ENABLEs
+   IMAP4rev2 and speaks rev1-compatible syntax to rev2 servers in every
+   session. The rev2 test prose (rfc9051/5-operational.test.ts's
+   RFC9051-5.1-6 note, A-appendices.test.ts's header) already builds on
+   this: every rev2-server session IS the rev1-interop mode Appendix A.1
+   exists for. A mailbox-name-only rev2 arm would make the client's
+   syntax claims internally inconsistent — raw rev2-only name forms from
+   a client that otherwise deliberately never opts into rev2 behavior.
+3. **Compliance does not require the arm.** RFC9051-5.1-1's create-side
+   clause is a MAY ("Client implementations MAY attempt to create
+   Net-Unicode mailbox names"); declining the permission is compliant.
+   RFC9051-A-3 makes mUTF-7 *not required* for rev2-only clients — it
+   nowhere forbids a client that intends rev1 interop from using it.
+   The MUST half of 5.1-1 (interpret inbound 8-bit LIST names as
+   Net-Unicode) is orthogonal to the outbound codec and already honored.
+4. **The residual risk stays narrow and now has a standards-track path.**
+   The RFC 6855 §3 channel (ENABLE UTF8=ACCEPT) is the deliberate,
+   negotiated route to raw UTF-8 and is active by default
+   (`extensions:"auto"`); M5.13 additionally treats a `UTF8=ONLY`
+   announcement as advertising UTF8=ACCEPT for the auto-ENABLE (RFC 6855
+   §6) and logs a warning when a caller-configured session cannot comply.
+   The unmitigated corner remains exactly what M2 recorded:
+   `extensions:false` (explicit caller opt-out) against a rev2-only
+   server with no UTF8=ACCEPT — a caller-chosen configuration whose
+   failure mode (a literally-stored shifted name) is visible and
+   reversible, not data loss.
+
+The spec §5.2 text was amended at the M2 review to match the implemented
+rule and re-amended at M5.13 to record this outcome; both point here.
+`src/protocol/mailbox-name.ts`'s module doc comment carries the same
+settled-rule note.
 
 ---
 

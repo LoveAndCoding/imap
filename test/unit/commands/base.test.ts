@@ -141,6 +141,27 @@ describe("Command base (spec §7.1)", () => {
 			expect(err).toBeInstanceOf(ServerBadError);
 			expect((err as ServerBadError).status).toBe("BAD");
 		});
+
+		// M5.13 (referrals, RFC 2193 §4): a referred command's tagged NO
+		// carries [REFERRAL <url>...]; the default onError mapping surfaces
+		// it as the typed { name: "REFERRAL", urls } code on the error --
+		// spec §3.6's "typed response codes on the relevant errors/results"
+		// note. Data only: nothing here (or anywhere) auto-follows the URL.
+		test("tagged NO [REFERRAL <url>...] surfaces the typed REFERRAL code (urls, in order) on ServerNoError", () => {
+			const cmd = new TestCommand();
+			Command.assignTag(cmd, "A00001");
+			const tagged = parseLine(
+				`A00001 NO [REFERRAL IMAP://user;AUTH=*@SERVER2/INBOX IMAP://user;AUTH=*@SERVER3/INBOX] Remote mailbox. Try a replica.${CRLF}`,
+			) as TaggedResponse;
+
+			const err = Command.mapError(cmd, tagged);
+
+			expect(err).toBeInstanceOf(ServerNoError);
+			expect((err as ServerNoError).code).toEqual({
+				name: "REFERRAL",
+				urls: ["IMAP://user;AUTH=*@SERVER2/INBOX", "IMAP://user;AUTH=*@SERVER3/INBOX"],
+			});
+		});
 	});
 
 	describe("hasContinuationHook / handleContinuation", () => {

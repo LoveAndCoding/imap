@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { LsubCommand } from "../../../src/commands/lsub";
+import { CapabilityError } from "../../../src/errors";
 import { executeCommand } from "../../../src/connection/execute-command";
 import { Router } from "../../../src/connection/router";
 import Lexer from "../../../src/lexer/lexer";
@@ -121,5 +122,37 @@ describe("LsubCommand (RFC 3501 §6.3.9, rev1 only)", () => {
 	test("argument validation throws RangeError before any bytes", () => {
 		expect(() => new LsubCommand("", "")).toThrow(RangeError);
 		expect(() => new LsubCommand(42 as unknown as string, "*")).toThrow(RangeError);
+	});
+});
+
+describe("RLSUB (RFC 2193 §5.2 mailbox referrals, M5.13)", () => {
+	const withReferrals = { has: (cap: string) => cap === "MAILBOX-REFERRALS" };
+
+	test("opts.referrals swaps the verb to RLSUB; wire form matches §6's ABNF (rlsub = 'RLSUB' SP mailbox SP list_mailbox)", async () => {
+		const cmd = new LsubCommand("", "*", { referrals: true }, withReferrals);
+		expect(cmd.verb).toBe("RLSUB");
+		const { wire, result } = await run(cmd, "S5", ['* LSUB () "/" INBOX']);
+		expect(wire).toBe(`S5 RLSUB "" *${CRLF}`);
+		// RFC 2193 §5.2: responses arrive as ordinary untagged LSUB lines --
+		// same claiming/typing as plain LSUB.
+		expect(result).toHaveLength(1);
+		expect(result[0].name).toBe("INBOX");
+	});
+
+	test("referrals without MAILBOX-REFERRALS: CapabilityError from the constructor, zero bytes (I-9)", () => {
+		let err: unknown;
+		try {
+			new LsubCommand("", "*", { referrals: true });
+		} catch (e) {
+			err = e;
+		}
+		expect(err).toBeInstanceOf(CapabilityError);
+		expect((err as CapabilityError).capability).toBe("MAILBOX-REFERRALS");
+		expect((err as CapabilityError).rfc).toBe("RFC2193");
+	});
+
+	test("no referrals option: plain LSUB regardless of the capability probe (no gate to trip)", () => {
+		expect(new LsubCommand("", "*", {}, withReferrals).verb).toBe("LSUB");
+		expect(new LsubCommand("", "*").verb).toBe("LSUB");
 	});
 });

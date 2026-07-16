@@ -178,7 +178,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	// -- mailbox management (authenticated state) ---------------------------
 	list(opts?: ListOptions): Promise<MailboxInfo[]>;
-	lsub(ref: string, pattern: string): Promise<MailboxInfo[]>;  // rev1 only
+	lsub(ref: string, pattern: string, opts?: { referrals?: boolean }): Promise<MailboxInfo[]>;  // rev1 only; opts.referrals → RLSUB (RFC 2193, added M5.13, additive)
 	status(mailbox: string, items: StatusItem[]): Promise<MailboxStatusResult>;
 	create(mailbox: string, opts?: { specialUse?: SpecialUse }): Promise<void>;
 	delete(mailbox: string): Promise<void>;
@@ -436,8 +436,22 @@ the original "∨ server is rev2" disjunct was wrong both ways — literal
 implementation would violate RFC 9051 A-2 against dual-advertising servers,
 while pure-rev2-only servers (no IMAP4rev1 token) genuinely fall outside
 Appendix A's apparatus; that narrower pure-rev2 case is adjudicated in
-docs/compliance-adjudications.md and revisited by M5's UTF8=ACCEPT/ONLY
-task.]
+docs/compliance-adjudications.md.] [Re-amended at M5.13, closing the M2
+revisit: the codec permanently does NOT gain a pure-rev2 raw-UTF-8 arm —
+one codec rule for every session, mUTF-7 until this client's own `ENABLE
+UTF8=ACCEPT` is confirmed. Rationale in the adjudication entry ("Pure-
+rev2-only mailbox-name codec direction"): the rev2 fixtures pin the mUTF-7
+forms (RFC9051-A-4/A-5/A-7/A-8), the client's permanent §3.4/§13 rev1-
+compatible-syntax posture makes a revision-keyed name arm incoherent, and
+RFC9051-5.1-1's create clause is a MAY. UTF8=ONLY (RFC 6855 §6): the
+client treats the announcement as advertising UTF8=ACCEPT for ENABLE
+purposes (auto-ENABLEd under the default `extensions:"auto"`), always
+sends `ENABLE UTF8=ACCEPT` — never `ENABLE UTF8=ONLY`, requests for which
+are canonicalized to UTF8=ACCEPT — and, when a caller-configured session
+leaves UTF8=ACCEPT un-enabled against a UTF8=ONLY server, detects the
+announcement and warns via the config logger (RFC6855-6-3) rather than
+refusing locally; the server's own `NO [CANNOT]` rejections then surface
+as typed errors per §7.1.]
 
 ### 5.3 Search criteria
 

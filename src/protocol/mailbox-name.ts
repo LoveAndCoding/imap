@@ -15,8 +15,17 @@ import { imap } from "utf7";
  * "+" survives as ordinary printable ASCII, and the modified-BASE64
  * alphabet substitutes "," for "/" so a mailbox-name delimiter of "/" is
  * never mistaken for BASE64 padding) unless the caller says the transport
- * already accepts raw UTF-8 (`UTF8=ACCEPT` enabled, or a rev2 server —
- * RFC 6855 §4).
+ * already accepts raw UTF-8 (`UTF8=ACCEPT` genuinely ENABLEd by this
+ * session — RFC 6855 §3). SETTLED at M5.13 (re-deciding the M2
+ * adjudication "Pure-rev2-only mailbox-name codec direction",
+ * docs/compliance-adjudications.md): there is deliberately NO third,
+ * server-revision-keyed arm — a server advertising IMAP4rev2 (with or
+ * without IMAP4rev1) does not, by advertisement alone, flip this codec to
+ * raw UTF-8. One codec rule for every session: mUTF-7 until THIS client's
+ * own ENABLE UTF8=ACCEPT is confirmed. See the adjudication entry for the
+ * full rationale (the client's permanent rev1-compatible-syntax posture per
+ * spec §3.4/§13, RFC9051-5.1-1's create clause being a MAY, and the rev2
+ * compliance fixtures pinning the mUTF-7 forms via RFC9051-A-4/A-5/A-7/A-8).
  *
  * Dependency decision: this module uses the repo's existing `utf7`
  * dependency's `imap.encode`/`imap.decode` (git+https://github.com/
@@ -48,9 +57,11 @@ import { imap } from "utf7";
  */
 
 /** Whether the mailbox-name argument/result already travels as raw UTF-8
- *  on the wire (server advertises `UTF8=ACCEPT` and the client has enabled
- *  it, or the server is IMAP4rev2 — RFC 6855 §4) rather than needing the
- *  modified-UTF-7 codec (RFC 3501 §5.1.3). */
+ *  on the wire (this session has actually ENABLEd `UTF8=ACCEPT` and had it
+ *  confirmed — RFC 6855 §3; never from a bare advertisement or from the
+ *  server's revision, per the settled M5.13 codec decision in the module
+ *  doc comment above) rather than needing the modified-UTF-7 codec
+ *  (RFC 3501 §5.1.3). */
 export interface MailboxNameCodecOptions {
 	utf8Accepted: boolean;
 }
