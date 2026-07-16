@@ -4,12 +4,15 @@
 		"outDir": null,
 		"rootDir": null,
 		"types": ["node"],
-		// import.meta requires an ES-module target. ES2020 (not ES2022+) keeps
-		// useDefineForClassFields=false, matching the root build's semantics for
-		// the src/ files this project pulls in. The root tsconfig now targets
-		// ES2022, so this must be pinned explicitly rather than inherited.
-		"target": "es2020",
-		"module": "es2020",
+		// import.meta requires an ES-module target. ES2022 matches the root
+		// build's target (and therefore its useDefineForClassFields semantics)
+		// for the src/ files this suite pulls in — the earlier es2020 pin's
+		// "match the root" rationale went stale when the root moved to ES2022,
+		// and its es2020 lib lacked the Error `cause` option src/errors.ts and
+		// scripted-server.ts use (the two long-standing typecheck:compliance
+		// errors, cleared at M6.2's follow-up).
+		"target": "es2022",
+		"module": "es2022",
 		"moduleResolution": "node",
 		// "node" (aka "node10") is deprecated as of TS 6; this suite
 		// deliberately keeps it (see above) rather than adopting "bundler"/
