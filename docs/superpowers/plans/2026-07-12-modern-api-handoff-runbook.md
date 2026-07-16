@@ -129,17 +129,23 @@ between closes; last updated: M3 CLOSED.)*
   command-select too; harness gained real DEFLATE script steps).
   Ledger at `2e9c481`: **1138 pass / 6 adjudicated violations / 24
   unimplemented / 429 untestable / problems []**, 1921 unit tests.
-  ALL M5 implementation tasks merged. M5.16 close IN PROGRESS: the 24
-  remaining unimplemented row-profiles are (a) RFC4422 security-layer
-  ×6 ids + SCRAM channel-binding ×5 ids (RFC5802/RFC7677) — both
-  vacuous-conditional (no supported mechanism negotiates a SASL
-  security layer; no -PLUS support), being reclassified untestable per
-  the RFC5802-6-1 precedent with M5.16 adjudication entries (this
-  completes M6's reserved RFC4422 task early), and (b)
-  RFC9051-2.3.2-1/-2 rev2 keyword semantics — being implemented.
-  Exit-bar note: RFC4422 70% / RFC7677 50% MUST are artifacts of the
-  vacuous-conditional rows; post-reclassification every source meets
-  the ≥85% MUST bar (exit bar: every source family ≥85% MUST
+  ALL M5 implementation tasks merged.
+- **M5: CLOSED.** Snapshot + full notes in `docs/compliance-history/M5/`
+  (NOTES.md has the complete ledger, adjudication batch, review
+  findings, and M6 carry-forwards). Final: **1138 pass / 6 adjudicated
+  violations / 2 adjudicated-unimplemented (RFC9051-2.3.2-1/-2 rev2,
+  M3.5 permanent scope boundary re-ratified) / 451 untestable /
+  problems []**; 1928 unit tests; exit bar MET (all 121 source-profiles
+  ≥85% MUST; zero non-adjudicated unimplemented). M5.16 executed: the
+  22-row security-layer/channel-binding adjudication batch (completes
+  M6.3 early), 3-lens phase review (7 findings fixed with revert
+  verification — incl. a CRITICAL compress()/unauthenticate()
+  hold-before-dispatch queue deadlock, fixed via the `holdOnDispatch`
+  seam), the 33-file stale-annotation sweep, snapshot. NEXT: M6 per
+  `docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md`
+  (M6.3 already done; SHOULD/MAY sweep, RFC 9586 quote re-verification,
+  typedoc, MIGRATION.md, README, CHANGELOG, 1.0.0, final review, THE
+  single PR into `modern-api` — open, never merge) (exit bar: every source family ≥85% MUST
   AND zero unimplemented rows anywhere).
 - Every commit is pushed; the tree should be clean between tasks. If a
   fresh session finds uncommitted work, `git status` + read the diff before

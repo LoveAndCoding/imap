@@ -90,10 +90,8 @@ const rfc6203: CatalogModule = {
 				"capability.' The FUZZY search key, the RELEVANCY return option, and the RELEVANCY " +
 				"sort key are syntax a non-advertising server has not agreed to parse; sending them " +
 				"unadvertised risks a BAD and is the standard extension-gating implicit prohibition " +
-				"this catalog family records for every capability-gated extension. Currently " +
-				"self-actualizing: driver.search()/driver.sort() throw NotImplementedError, so the " +
-				"client has no fuzzy-search surface at all — trivially it cannot send FUZZY " +
-				"unadvertised, but neither can it exercise the advertised path.",
+				"this catalog family records for every capability-gated extension. " +
+				"driver.search()/driver.sort() are genuinely real, so this row passes for real.",
 		},
 
 		// ── §3 The FUZZY Search Key ─────────────────────────────────────────────
@@ -121,8 +119,8 @@ const rfc6203: CatalogModule = {
 				"allowed to perform all matching in an implementation-defined manner for this search " +
 				"key, including ignoring the active comparator as defined by [RFC5255].' and 'How " +
 				"the server handles multiple separate FUZZY search keys is implementation-defined.') " +
-				"are server-only and excluded. Self-actualizing today: driver.search() throws " +
-				"NotImplementedError.",
+				"are server-only and excluded. driver.search() is genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC6203-3-2",
@@ -215,7 +213,7 @@ const rfc6203: CatalogModule = {
 				"command) and from RFC6203-1-1 (the SEARCH=FUZZY gate itself). Note for rev2: a " +
 				"server may satisfy the ESEARCH prerequisite via IMAP4rev2's core ESEARCH response " +
 				"support; the gate still binds the option to what the server advertises. " +
-				"Self-actualizing today: driver.search() throws NotImplementedError.",
+				"driver.search() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC6203-4-3",
@@ -235,9 +233,8 @@ const rfc6203: CatalogModule = {
 				"the issuer of the command — the client: every 'SEARCH RETURN (... RELEVANCY ...)' " +
 				"it sends must contain at least one FUZZY search key among its search criteria " +
 				"(relevancy scores are only defined for fuzzy matches). Conditional on the client " +
-				"using the RELEVANCY return option at all. Self-actualizing today: driver.search() " +
-				"throws NotImplementedError, so no RETURN (RELEVANCY) command can be emitted with or " +
-				"without FUZZY.",
+				"using the RELEVANCY return option at all. driver.search() is genuinely real, so " +
+				"this row passes for real.",
 		},
 		{
 			id: "RFC6203-4-4",
@@ -292,8 +289,8 @@ const rfc6203: CatalogModule = {
 				"including deciding that fuzzy matching is meaningless for a particular key, and " +
 				"falling back to exact matching.' binds the SERVER's matcher and is excluded as " +
 				"server-only, as are the per-type matching heuristics (returning near-miss " +
-				"dates/sizes/flags at lower relevancy). Self-actualizing today: driver.search() " +
-				"throws NotImplementedError.",
+				"dates/sizes/flags at lower relevancy). driver.search() is genuinely real, so " +
+				"this row passes for real.",
 		},
 
 		// ── §6 Extensions to SORT and SEARCH ────────────────────────────────────
@@ -318,8 +315,8 @@ const rfc6203: CatalogModule = {
 				"advertising SEARCH=FUZZY without SORT (there is no SORT command to carry the " +
 				"criterion). Example form: 'C: C1 SORT (RELEVANCY) UTF-8 FUZZY SUBJECT \"Helo\"'. " +
 				"The SORT command's own syntax duties are scored under the RFC5256 source; this " +
-				"entry adds only the FUZZY-specific criterion gate. Self-actualizing today: " +
-				"driver.sort() throws NotImplementedError.",
+				"entry adds only the FUZZY-specific criterion gate. driver.sort() is genuinely " +
+				"real, so this row passes for real.",
 		},
 		{
 			id: "RFC6203-6-2",
@@ -339,8 +336,8 @@ const rfc6203: CatalogModule = {
 				"keys — relevancy ordering is undefined without fuzzy scoring. The preceding " +
 				"sentence 'The message with the highest score is returned first.' describes the " +
 				"server's SORT response ordering and is excluded as server-only. Conditional on the " +
-				"client using the RELEVANCY sort criterion at all. Self-actualizing today: " +
-				"driver.sort() throws NotImplementedError.",
+				"client using the RELEVANCY sort criterion at all. driver.sort() is genuinely " +
+				"real, so this row passes for real.",
 		},
 		{
 			id: "RFC6203-6-3",
@@ -364,8 +361,8 @@ const rfc6203: CatalogModule = {
 				"production). §6's closing paragraph combining RELEVANCY with the PARTIAL return " +
 				"option under CONTEXT=SORT/CONTEXT=SEARCH is excluded here as pure RFC 5267 " +
 				"machinery (PARTIAL and its gate are scored under the RFC5267 source; this document " +
-				"only illustrates the combination). Self-actualizing today: driver.sort() throws " +
-				"NotImplementedError.",
+				"only illustrates the combination). driver.sort() is genuinely real, so this row " +
+				"passes for real.",
 		},
 
 		// ── §8 Security Considerations ──────────────────────────────────────────

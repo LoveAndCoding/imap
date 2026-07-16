@@ -23,19 +23,21 @@
  *   RFC7162-3.1.3-3   Accept [MODIFIED set] on tagged OK and tagged NO.
  *                                                    *** REAL — ModifiedTextCode ***
  *   RFC7162-3.1.3-5   On MODIFIED without explanatory FETCH, SHOULD probe via
- *                     FETCH or NOOP (driven scenario; self-act.) -- STILL
- *                     unimplemented after M4.5, deliberately: this is a
- *                     client-internal conflict-resolution POLICY (spec §13
- *                     non-goals: "Auto-reconnect/retry (consumers own it)"),
- *                     not a wire form -- there is no single spec-mandated
- *                     algorithm for deciding "did the watched item really
- *                     change", and the two scripted probe payloads here don't
- *                     admit one general-purpose heuristic that answers both
- *                     "don't retry" (-5) and "do retry" (-6) correctly without
- *                     guessing at hidden intent. See M4.5's own handoff notes.
+ *                     FETCH or NOOP (driven scenario; self-act.) -- ADJUDICATED
+ *                     DEVIATION (permanent, docs/compliance-adjudications.md):
+ *                     this is a client-internal conflict-resolution POLICY
+ *                     (spec §13 non-goals: "Auto-reconnect/retry (consumers
+ *                     own it)"), not a wire form -- there is no single
+ *                     spec-mandated algorithm for deciding "did the watched
+ *                     item really change", and the two scripted probe
+ *                     payloads here don't admit one general-purpose heuristic
+ *                     that answers both "don't retry" (-5) and "do retry"
+ *                     (-6) correctly without guessing at hidden intent. STORE
+ *                     itself is real (M4.5); the client just never auto-probes,
+ *                     so this fails honestly as `expectFailure: "violation"`.
  *   RFC7162-3.1.3-6   SHOULD retry with the NEW mod-sequence (driven; self-act.)
- *                     -- still unimplemented after M4.5, same reasoning as
- *                     RFC7162-3.1.3-5 immediately above.
+ *                     -- same adjudicated deviation as RFC7162-3.1.3-5
+ *                     immediately above; also `expectFailure: "violation"`.
  *   RFC7162-3.1.4.1-1 FETCH (CHANGEDSINCE n) modifier form (self-act.)
  *                                                    *** REAL as of M4.5 ***
  *   RFC7162-3.1.4.2-1 MODSEQ message data item in the FETCH item list (self-act.)
@@ -52,9 +54,9 @@
  *                     acceptance incl. 0.            *** REAL — mailbox/status.ts ***
  *   RFC7162-3.1.8-1   SELECT/EXAMINE (CONDSTORE) select parameter form (self-act.)
  *                                                    *** REAL as of M4.5 ***
- *   RFC7162-3.1.9-1   Accept '* SORT ... (MODSEQ n)'. *** REAL VIOLATION — probed:
- *                     sort.ts drops the line AND the parse stream dies (the
- *                     trailing responses never surface) ***
+ *   RFC7162-3.1.9-1   Accept '* SORT ... (MODSEQ n)'. *** REAL — sort.ts now
+ *                     tolerates/captures the trailing MODSEQ group and the
+ *                     stream survives it; this row genuinely passes ***
  *
  * Untestable ids NOT cited (per catalog testability tags):
  *   RFC7162-3.1.2.1-1 (cross-session: delete cached HIGHESTMODSEQ on UIDVALIDITY
@@ -87,17 +89,18 @@
  *    events (Connection routes StatusResponse content there); tagged lines as
  *    taggedResponse events; everything else as untaggedResponse events.
  *  - PROBED CLIENT FINDINGS encoded here: '* SEARCH 2 5 6 (MODSEQ 917162500)'
- *    parses AND exposes content.modseq === 917162500 (genuine pass);
- *    '* SORT 2 8 10 (MODSEQ 917162500)' is silently DROPPED and the parsing
- *    stream DIES — no SORT event, and a trailing '* 7 EXISTS' never surfaces
- *    (the client goes deaf for the rest of the connection). RFC7162-3.1.9-1 is
- *    therefore an honest violation, annotated expectFailure: "violation".
+ *    parses AND exposes content.modseq === 917162500 (genuine pass); sort.ts
+ *    was later fixed to tolerate/capture the trailing '(MODSEQ n)' group on
+ *    '* SORT 2 8 10 (MODSEQ 917162500)' too, and the parse stream survives it
+ *    (trailing '* 7 EXISTS' now surfaces normally) — RFC7162-3.1.9-1 is a
+ *    genuine pass, no expectFailure needed.
  *  - M4.5 update: the command-emission duties (SELECT/FETCH/STORE/SEARCH
  *    CONDSTORE option payloads, plus the RFC7162-3.1.2.2-1 NOMODSEQ guard)
  *    are REAL as of M4.5 -- `expectFailure: "unimplemented"` was removed from
  *    each row's test above once it genuinely passed (stale-annotation
- *    sweep). RFC7162-3.1.3-5/-6 remain the one still-unimplemented pair
- *    (see their own catalog-id entries above for why).
+ *    sweep). RFC7162-3.1.3-5/-6 remain the one adjudicated-permanent-violation
+ *    pair (see their own catalog-id entries above for why, and
+ *    docs/compliance-adjudications.md for the adjudication record).
  */
 import { expect } from "vitest";
 
@@ -520,16 +523,15 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC7162-3.1.9-1 — accept '* SORT ... (MODSEQ n)' (REAL — HONEST VIOLATION)
+// RFC7162-3.1.9-1 — accept '* SORT ... (MODSEQ n)' (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // §7 sort-data (defined by THIS document): "SORT" [SP nz-number ... SP "("
-// "MODSEQ" SP mod-sequence-value ")"]. PROBED BEFORE WRITING: the client's
-// SortResponse maps every space-separated block to a number, throws
-// ParsingError on the '(MODSEQ n)' group, and the parse-stream error is
-// swallowed silently — NO SORT event surfaces AND the pipeline dies (a trailing
-// '* 7 EXISTS' never surfaces either: the client goes deaf for the rest of the
-// connection). The assertions below encode the SPEC (accept + survive), so this
-// test fails today as an honest violation.
+// "MODSEQ" SP mod-sequence-value ")"]. Originally probed before writing as a
+// genuine violation (SortResponse threw ParsingError on the '(MODSEQ n)'
+// group and the parse-stream error was swallowed silently, taking the
+// trailing '* 7 EXISTS' down with it); sort.ts was since fixed to
+// tolerate/capture the trailing group, so the assertions below (accept +
+// survive) now genuinely pass.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.9-1"],
@@ -562,13 +564,11 @@ complianceTest(
 		);
 		expect(
 			sortEvent,
-			"a '* SORT 2 8 10 (MODSEQ 917162500)' response must be accepted (RFC 7162 §3.1.9) — " +
-				"the client currently throws ParsingError on the (MODSEQ n) group and drops the line",
+			"a '* SORT 2 8 10 (MODSEQ 917162500)' response must be accepted (RFC 7162 §3.1.9)",
 		).toBeDefined();
 		const parsed = contentOf<ParsedSort>(sortEvent!);
 		expect(parsed.ids).toEqual([2, 8, 10]);
-		// SPEC: the response stream must survive the line (the client must not go
-		// deaf) — probed: the trailing EXISTS is currently lost too.
+		// SPEC: the response stream must survive the line (the client must not go deaf).
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
 			() => undefined,
 		);
@@ -926,13 +926,15 @@ complianceTest(
 // 'OK [MODIFIED 9]' with NO unsolicited FETCH explaining the conflict. A
 // conformant client's next command is a FETCH (or NOOP) probing whether the
 // watched items really changed — not a blind re-STORE, not silence. The script
-// pins that next step; store() throws today → unimplemented.
+// pins that next step; store() itself is real (M4.5) and succeeds, but the
+// library deliberately does not auto-probe (adjudicated deviation, see
+// docs/compliance-adjudications.md), so this fails honestly as a violation.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.3-5"],
 		profiles: ["rev1", "rev2"],
 		title: "after OK [MODIFIED n] without explanatory FETCH, client probes via FETCH or NOOP",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -963,8 +965,8 @@ complianceTest(
 		await driver.select("INBOX", { condstore: true });
 		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
 		await server.assertCompleted();
-		// When implemented: the probe command reached the script's FETCH/NOOP step
-		// (assertCompleted above already proves it); document the observable.
+		// The library does not auto-probe (adjudicated deviation), so no FETCH/NOOP
+		// reaches the wire here; this assertion documents the observable and fails.
 		// (A UID FETCH probe records verb "UID" under the single-token matcher.)
 		const probe = server.commandLines.find((l) => /^(FETCH|NOOP|UID)$/.test(l.verb));
 		expect(probe, "a FETCH or NOOP probe must follow the MODIFIED conflict").toBeDefined();
@@ -978,13 +980,15 @@ complianceTest(
 // unchanged but a new mod-sequence (320172342). The conformant retry re-issues
 // the STORE with UNCHANGEDSINCE 320172342 — the newly learned value. The
 // matcher pins the NEW value, so a stale-value retry (320172338) or an
-// immediate give-up fails. store() throws today → unimplemented.
+// immediate give-up fails. store() itself is real (M4.5) and succeeds, but the
+// library deliberately does not auto-retry (adjudicated deviation, see
+// docs/compliance-adjudications.md), so this fails honestly as a violation.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.3-6"],
 		profiles: ["rev1", "rev2"],
 		title: "after a spurious MODIFIED, client retries the STORE with the updated UNCHANGEDSINCE value",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -1016,7 +1020,8 @@ complianceTest(
 		await driver.select("INBOX", { condstore: true });
 		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
 		await server.assertCompleted();
-		// When implemented: two STORE lines, the second carrying the updated value.
+		// The library does not auto-retry (adjudicated deviation), so only the
+		// first STORE reaches the wire here; this assertion documents that gap.
 		const stores = server.commandLines.filter((l) => l.verb === "STORE");
 		expect(stores.length, "the STORE must be retried after the probe").toBeGreaterThanOrEqual(2);
 		expect(
@@ -1032,9 +1037,10 @@ complianceTest(
 // The server advertises NEITHER CONDSTORE nor QRESYNC (§3.2.3's implication
 // gate). A conformant client asked to select with the CONDSTORE parameter must
 // refuse locally or omit every CONDSTORE protocol change — the transcript may
-// never contain CONDSTORE/CHANGEDSINCE/UNCHANGEDSINCE/MODSEQ. select() still
-// throws NotImplementedError today (caught below), so the negative transcript
-// guard is the real (if currently vacuous) matcher.
+// never contain CONDSTORE/CHANGEDSINCE/UNCHANGEDSINCE/MODSEQ. select() genuinely
+// refuses client-side (`CapabilityError`, since M4.5 — see `SelectOrExamineCommand`'s
+// constructor guard in src/commands/select.ts), so the negative transcript guard
+// below is real, not vacuous.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.1-1"],

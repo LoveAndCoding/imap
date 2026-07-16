@@ -127,9 +127,9 @@ const rfc4469: CatalogModule = {
 				"list of cat-parts. The §5 ABNF fixes the exact form: 'append-data =/ \"CATENATE\" " +
 				"SP \"(\" cat-part *(SP cat-part) \")\"'. A matcher for this entry must require the " +
 				"literal atom CATENATE followed by SP and a '('-delimited list, and reject a bare " +
-				"single-literal APPEND masquerading as CATENATE. Currently self-actualizing FAIL: " +
-				"driver.append()'s catenate option throws NotImplementedError, so the client cannot " +
-				"emit the extended form at all. CATENATE is standalone in rev2 (no RFC 9051 " +
+				"single-literal APPEND masquerading as CATENATE. " +
+				"driver.append()'s catenate option is genuinely real (M3.10), so this row passes " +
+				"for real. CATENATE is standalone in rev2 (no RFC 9051 " +
 				"restatement) — profiles rev1+rev2.",
 		},
 		{
@@ -316,9 +316,9 @@ const rfc4469: CatalogModule = {
 				"be used in the tagged NO response if the APPEND command fails'). The §5 ABNF fixes " +
 				"the shape: 'badurl-response-code = \"BADURL\" SP url-resp-text'. A client issuing " +
 				"CATENATE must parse and surface a NO [BADURL ...] without choking on the resp-code. " +
-				"Currently self-actualizing FAIL: driver.append() catenate throws " +
-				"NotImplementedError, so no CATENATE exchange (and thus no BADURL acceptance path) " +
-				"can be driven. Standalone in rev2 — profiles rev1+rev2.",
+				"driver.append() catenate is genuinely real (M3.10), so this CATENATE exchange (and " +
+				"thus the BADURL acceptance path) can be driven for real. Standalone in rev2 — " +
+				"profiles rev1+rev2.",
 		},
 		{
 			id: "RFC4469-4.2-1",

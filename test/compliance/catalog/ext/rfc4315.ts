@@ -120,10 +120,8 @@ const rfc4315: CatalogModule = {
 				"the dual-profile tag stands in for a GAP in the rfc9051 catalog (RFC 9051 has the " +
 				"command in its text but the catalog omits a scored client entry). IF rfc9051 later " +
 				"gains a scored UID EXPUNGE client entry, this should be re-tagged rev1-only with a " +
-				"cross-ref to that id. Currently self-actualizing fail: " +
-				"driver.uidExpunge() throws NotImplementedError unconditionally, so the client has " +
-				"no UID EXPUNGE surface — it cannot exercise the command the RFC anticipates, which " +
-				"the compliance suite records as a failure for this entry. Testable by scripting a " +
+				"cross-ref to that id. driver.uidExpunge() is genuinely real, so this row passes " +
+				"for real. Testable by scripting a " +
 				"UID EXPUNGE exchange and asserting the exact command atoms and sequence-set " +
 				"argument; a plausible wrong implementation that emits plain EXPUNGE or an " +
 				"ill-formed argument must be rejected.",

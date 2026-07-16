@@ -38,17 +38,11 @@
  * `CREATE mailbox (USE (...))` wire form is pinned by a tight matcher
  * (3-2), and the tagged `NO [USEATTR]` refusal surfaces as a ServerNoError
  * carrying the typed USEATTR code (3-3). driver.list() (widened with
- * selectOptions/returnOptions) still throws NotImplementedError until M2.7:
- * the LIST-side tests (RFC6154-2-1/-2-2/-6-1/-6-2) drive the verb, catch
- * the rejection, and assert on it and the transcript — genuine (if
- * currently vacuous for the wire-shape assertions) passes whose scripts
- * pin the exact RFC-conformant wire form for when list() lands.
- * REAL SIGNAL for the LIST half (M2.7): driver.list() delegates to
- * ImapClient.list() — the 2-1/2-2 emit-form tests and the 6-1/6-2 acceptance
- * tests drive the real wire exchange end-to-end and assert on the typed
- * MailboxInfo[] results. driver.create() (widened with useAttributes) still
- * throws NotImplementedError: the CREATE-USE surface is M2.3's; the 3-x tests
- * keep the catch-the-rejection shape until it lands.
+ * selectOptions/returnOptions) is wired as of M2.7: it delegates to
+ * ImapClient.list(), so the LIST-side tests (RFC6154-2-1/-2-2/-6-1/-6-2)
+ * are also REAL SIGNAL — the 2-1/2-2 emit-form tests and the 6-1/6-2
+ * acceptance tests drive the real wire exchange end-to-end and assert on
+ * the typed MailboxInfo[] results. All seven rows are genuine passes.
  */
 import { expect } from "vitest";
 

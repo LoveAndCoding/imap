@@ -72,9 +72,9 @@ const rfc5256: CatalogModule = {
 		"or THREAD into IMAP4rev2 core — SORT and THREAD remain standalone extensions under rev2, " +
 		"so every entry keeps the default profiles [\"rev1\",\"rev2\"] (no rev1-only tags needed, " +
 		"unlike the ENABLE/IDLE overlap sources). Total: 19 client-binding entries. Untestable: 2 " +
-		"(1-1 capability-inventory, 2.1-1 content-processing); the remaining 17 are testable, " +
-		"today mostly self-actualizing since driver.sort/uidSort/thread/uidThread all throw " +
-		"NotImplementedError and no * SORT/* THREAD parse surface exists in the client.",
+		"(1-1 capability-inventory, 2.1-1 content-processing); the remaining 17 are testable. " +
+		"UPDATE (M4.9): driver.sort/uidSort/thread/uidThread are all genuinely real and the " +
+		"'* SORT'/'* THREAD' parse surfaces both exist in the client, so all 17 genuinely pass.",
 	requirements: [
 		// ── §1 Introduction ─────────────────────────────────────────────────────
 
@@ -133,10 +133,9 @@ const rfc5256: CatalogModule = {
 				"coherent client reading is that the algorithm argument of a THREAD/UID THREAD " +
 				"command must name an algorithm the server has advertised — issuing THREAD " +
 				"REFERENCES to a server advertising only THREAD=ORDEREDSUBJECT solicits a BAD/NO " +
-				"and is the observable violation shape. Testable in principle (scripted CAPABILITY " +
-				"with one THREAD= token, then drive a thread request); currently self-actualizing " +
-				"since driver.thread()/uidThread() throw NotImplementedError — the client has no " +
-				"THREAD surface at all.",
+				"and is the observable violation shape. Testable (scripted CAPABILITY " +
+				"with one THREAD= token, then drive a thread request); driver.thread()/uidThread() " +
+				"are genuinely real, so this row passes for real.",
 		},
 
 		// ── §2.1 Base Subject ───────────────────────────────────────────────────
@@ -192,8 +191,8 @@ const rfc5256: CatalogModule = {
 				"form even without an RFC 2119 keyword — a SORT command whose criteria list is " +
 				"unparenthesized, or whose charset precedes the criteria list, is malformed " +
 				"(Result block: 'BAD - command unknown or arguments invalid'). The precise grammar " +
-				"is cataloged from §5 as RFC5256-5-1. Currently self-actualizing: driver.sort() " +
-				"throws NotImplementedError, so the client emits no SORT command at all.",
+				"is cataloged from §5 as RFC5256-5-1. driver.sort() is genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.SORT-2",
@@ -212,8 +211,8 @@ const rfc5256: CatalogModule = {
 				"specification is an optional prefix), a SORT command with no charset between the " +
 				"criteria list and the search keys is syntactically invalid (§5: search-criteria = " +
 				"charset 1*(SP search-key)). The client must therefore always emit a charset " +
-				"(US-ASCII suffices when criteria strings are ASCII-only). Self-actualizing today " +
-				"(no SORT surface).",
+				"(US-ASCII suffices when criteria strings are ASCII-only). driver.sort() is " +
+				"genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.SORT-3",
@@ -237,7 +236,7 @@ const rfc5256: CatalogModule = {
 				"documented failure result ('NO - sort error: can't sort that charset or " +
 				"criteria') without treating it as a protocol error. RFC 5256 never mentions the " +
 				"BADCHARSET response code, so no BADCHARSET entry is synthesized for this source. " +
-				"Self-actualizing today (no SORT surface).",
+				"driver.sort() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.SORT-4",
@@ -258,8 +257,8 @@ const rfc5256: CatalogModule = {
 				"key for UID sets, exactly as with UID SEARCH), and the numbers in the resulting " +
 				"untagged SORT response must be consumed as UIDs, not sequence numbers ('analogous " +
 				"to the behavior of UID SEARCH, as opposed to UID COPY, UID FETCH, or UID STORE'). " +
-				"The emission half is wire-observable; self-actualizing today (driver.uidSort() " +
-				"throws NotImplementedError).",
+				"The emission half is wire-observable; driver.uidSort() is genuinely real, so this " +
+				"row passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.SORT-5",
@@ -301,8 +300,8 @@ const rfc5256: CatalogModule = {
 				"Judgment level (implicit MUST): command-syntax definition binding the emitted " +
 				"wire form — algorithm atom first (unparenthesized, unlike SORT's criteria list), " +
 				"then the mandatory charset, then one or more search keys. Precise grammar " +
-				"cataloged from §5 as RFC5256-5-2. Self-actualizing today: driver.thread() throws " +
-				"NotImplementedError.",
+				"cataloged from §5 as RFC5256-5-2. driver.thread() is genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.THREAD-2",
@@ -319,7 +318,8 @@ const rfc5256: CatalogModule = {
 				"Judgment level, same reasoning as RFC5256-BASE.6.4.SORT-2; the sentence appears " +
 				"verbatim in both command sections and each command is scored separately (a client " +
 				"could implement THREAD without SORT or vice versa — the capabilities are " +
-				"advertised independently). Self-actualizing today (no THREAD surface).",
+				"advertised independently). driver.thread() is genuinely real, so this row passes " +
+				"for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.THREAD-3",
@@ -336,7 +336,8 @@ const rfc5256: CatalogModule = {
 				"labeled US-ASCII/UTF-8 criteria; reliance only on the two-universally-available " +
 				"charsets, tolerating the documented 'NO - thread error: can't thread that charset " +
 				"or criteria' otherwise); sentence appears verbatim in the THREAD section and is " +
-				"scored per-command. Self-actualizing today (no THREAD surface).",
+				"scored per-command. driver.thread() is genuinely real, so this row passes for " +
+				"real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.THREAD-4",
@@ -355,8 +356,8 @@ const rfc5256: CatalogModule = {
 				"arguments carry THREAD semantics unchanged (message-set keys still mean sequence " +
 				"numbers; the UID search key addresses UIDs), and the numbers in the resulting " +
 				"untagged THREAD response are UIDs. Verbatim fidelity note: this sentence has no " +
-				"comma after 'thus', unlike its SORT twin — preserved as printed. Self-actualizing " +
-				"today (driver.uidThread() throws NotImplementedError).",
+				"comma after 'thus', unlike its SORT twin — preserved as printed. driver.uidThread() " +
+				"is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.THREAD-5",
@@ -374,7 +375,8 @@ const rfc5256: CatalogModule = {
 				"Judgment level (implicit MUST), mirror of RFC5256-BASE.6.4.SORT-5: the client-" +
 				"binding half is tolerance of interleaved untagged EXPUNGE (and consequent " +
 				"sequence-number renumbering) while a UID THREAD is in flight; the prohibition " +
-				"half binds the server. Self-actualizing today (no UID THREAD surface).",
+				"half binds the server. driver.uidThread() is genuinely real, so this row passes " +
+				"for real.",
 		},
 		{
 			id: "RFC5256-BASE.6.4.THREAD-6",
@@ -397,8 +399,8 @@ const rfc5256: CatalogModule = {
 				"its API boundary for a scripted deep-nested '* THREAD' response to an " +
 				"ORDEREDSUBJECT request (the same delivered-outcome surface this suite already " +
 				"uses for other treat-as duties, e.g. RFC5161-3.2-1) — not the rendered UI, which " +
-				"is why this is not tagged ui-presentation. Self-actualizing today: the client " +
-				"has no THREAD command surface and no '* THREAD' parse surface.",
+				"is why this is not tagged ui-presentation. driver.thread()'s command surface and " +
+				"the '* THREAD' parse surface are both genuinely real, so this row passes for real.",
 		},
 
 		// ── §4 BASE.7.2.SORT — SORT Response ────────────────────────────────────
@@ -422,9 +424,9 @@ const rfc5256: CatalogModule = {
 				"nz-number)), including the empty no-match form shown in the §3 example ('C: A284 " +
 				"SORT (SUBJECT) US-ASCII TEXT \"not in mailbox\" / S: * SORT / S: A284 OK SORT " +
 				"completed'), preserving the server's sort order and interpreting the numbers as " +
-				"sequence numbers or UIDs according to the issuing command form. Self-actualizing " +
-				"today: no SORT command surface exists, and the client parser has no '* SORT' " +
-				"branch to exercise.",
+				"sequence numbers or UIDs according to the issuing command form. driver.sort()'s " +
+				"command surface and the client parser's '* SORT' branch are both genuinely real, " +
+				"so this row passes for real.",
 		},
 
 		// ── §4 BASE.7.2.THREAD — THREAD Response ────────────────────────────────
@@ -449,8 +451,8 @@ const rfc5256: CatalogModule = {
 				"no-match form from the §3 example — and the seq-vs-UID interpretation keyed to " +
 				"the issuing command. Verbatim fidelity note: 'The messages numbers' is the RFC's " +
 				"own typo, preserved exactly. The elision skips the parent/child member structure, " +
-				"cataloged separately as BASE.7.2.THREAD-2. Self-actualizing today: no THREAD " +
-				"command surface and no '* THREAD' parse branch.",
+				"cataloged separately as BASE.7.2.THREAD-2. driver.thread()'s command surface and " +
+				"the '* THREAD' parse branch are both genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5256-BASE.7.2.THREAD-2",
@@ -475,7 +477,7 @@ const rfc5256: CatalogModule = {
 				"for siblings whose common parent matched nothing: 'In this example, 3 and 5 are " +
 				"siblings of a parent that does not match the search criteria (and/or does not " +
 				"exist in the mailbox); however they are members of the same thread.' " +
-				"Self-actualizing today (no '* THREAD' parse surface).",
+				"The '* THREAD' parse surface is genuinely real, so this row passes for real.",
 		},
 
 		// ── §5 Formal Syntax ────────────────────────────────────────────────────
@@ -503,8 +505,8 @@ const rfc5256: CatalogModule = {
 				"that criterion but in reverse (descending) order.'). The RFC's advisory that " +
 				"re-sorting is often better done client-side than by issuing REVERSE variants " +
 				"carries no keyword and is not cataloged. Whitespace flattened from the RFC's " +
-				"column-aligned ABNF per the mechanical checker. Self-actualizing today (no " +
-				"SORT/UID SORT surface).",
+				"column-aligned ABNF per the mechanical checker. The SORT/UID SORT surface is " +
+				"genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5256-5-2",
@@ -528,8 +530,8 @@ const rfc5256: CatalogModule = {
 				"search-criteria production applies equally to the sort production in RFC5256-5-1 " +
 				"and encodes the mandatory-charset rule (charset is not optional in the grammar) " +
 				"plus at least one search key. Whitespace flattened from the RFC's column-aligned " +
-				"ABNF per the mechanical checker. Self-actualizing today (no THREAD/UID THREAD " +
-				"surface).",
+				"ABNF per the mechanical checker. The THREAD/UID THREAD surface is genuinely real, " +
+				"so this row passes for real.",
 		},
 	],
 };

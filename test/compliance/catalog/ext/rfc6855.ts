@@ -110,10 +110,9 @@ const rfc6855: CatalogModule = {
 				"this same RFC's own §4 numbering for the ENABLE option name, not a cross-RFC " +
 				"pointer. Testable via the ENABLE command form: script a server advertising " +
 				"UTF8=ACCEPT and verify the client sends 'ENABLE UTF8=ACCEPT' before any command " +
-				"that relies on the extension. Self-actualizing: the client driver's enable() " +
-				"verb (test/compliance/driver/driver.ts) currently throws NotImplementedError('ENABLE') " +
-				"and src/session.ts has no ENABLE code path, so no client today sends this command; " +
-				"the duty becomes directly observable once ENABLE is implemented. rev2 " +
+				"that relies on the extension. The client driver's enable() " +
+				"verb (test/compliance/driver/driver.ts) is genuinely real and ENABLE is genuinely " +
+				"wired end to end, so this row passes for real. rev2 " +
 				"cross-reference: the rev2 analog is RFC9051-A-1 ('ENABLE IMAP4rev2' MUST precede " +
 				"reliance on IMAP4rev2 behavior when both revisions are advertised) — a different " +
 				"capability string serving a related but distinct purpose (revision selection, not " +
@@ -140,7 +139,8 @@ const rfc6855: CatalogModule = {
 				"a state the server is obliged to honor. Conditional on the client using ENABLE " +
 				"UTF8=ACCEPT at all. Testable: script a session and verify the client never sends " +
 				"'ENABLE UTF8=ACCEPT' outside the authenticated (pre-SELECT/EXAMINE) state. " +
-				"Self-actualizing per RFC6855-3-1's notes (ENABLE unimplemented today).",
+				"ENABLE is genuinely real per RFC6855-3-1's updated notes, so this row passes for " +
+				"real.",
 		},
 		{
 			id: "RFC6855-3-3",
@@ -162,9 +162,9 @@ const rfc6855: CatalogModule = {
 				"that a MAY still has an observable envelope: any UTF-8 the client does send in a " +
 				"quoted-string context must conform to the uQUOTED-CHAR grammar (valid UTF-8 per RFC " +
 				"3629, no NUL/CR/LF) rather than being sent as a literal or rejected as invalid; a " +
-				"client that never exercises the permission is equally compliant. Self-actualizing: " +
-				"requires both ENABLE support (RFC6855-3-1) and a public API surface for supplying " +
-				"non-ASCII string arguments, neither of which exists in src/ today. rev2 cross-" +
+				"client that never exercises the permission is equally compliant. Both ENABLE " +
+				"support (RFC6855-3-1) and the public API surface for supplying non-ASCII string " +
+				"arguments are genuinely real, so this row passes for real. rev2 cross-" +
 				"reference: RFC9051-4.3-4 makes UTF-8-in-quoted-strings acceptance a server-side MUST " +
 				"unconditionally (no client ENABLE gate), so this MAY's rev1 opt-in framing has no " +
 				"direct rev2 counterpart on the client side.",
@@ -187,9 +187,8 @@ const rfc6855: CatalogModule = {
 				"Testable: script a session where the client has ENABLEd UTF8=ACCEPT and verify " +
 				"any subsequent SEARCH command it issues omits a CHARSET specifier (the RFC's stated " +
 				"reason is avoiding conflicting charset labels, since UTF-8 is now implied). " +
-				"Self-actualizing: depends on both ENABLE support (RFC6855-3-1) and SEARCH support " +
-				"(driver.ts's search() throws NotImplementedError('SEARCH') today; src/ has no SEARCH " +
-				"command path). rev2 cross-reference: RFC9051-6.4.4's SEARCH entries (s6-selected.ts) " +
+				"Both ENABLE support (RFC6855-3-1) and SEARCH support are genuinely real, so this " +
+				"row passes for real. rev2 cross-reference: RFC9051-6.4.4's SEARCH entries (s6-selected.ts) " +
 				"establish 'Clients SHOULD use UTF-8' and that omitting CHARSET implies UTF-8 as core " +
 				"rev2 SEARCH behavior — the same directional intent (prefer UTF-8, treat explicit " +
 				"CHARSET as redundant/conflicting) persists into rev2 without the ENABLE precondition.",
@@ -213,10 +212,8 @@ const rfc6855: CatalogModule = {
 				"octets via APPEND. The wire form is 'UTF8 (' literal8 ')' per the ABNF (utf8-literal " +
 				"= \"UTF8\" SP \"(\" literal8 \")\"). Testable: script an APPEND of a message with " +
 				"UTF-8 header bytes and verify the client wraps the message literal in the UTF8(...) " +
-				"data-extension syntax rather than sending a bare literal. Self-actualizing: driver.ts's " +
-				"append() throws NotImplementedError('APPEND') today, so no client code path can " +
-				"currently send any APPEND form, UTF8-wrapped or otherwise; the duty is directly " +
-				"testable once APPEND (and UTF-8 header support) is implemented. rev2 cross-reference: " +
+				"data-extension syntax rather than sending a bare literal. driver.ts's append() is " +
+				"genuinely real, so this row passes for real. rev2 cross-reference: " +
 				"IMAP4rev2 core APPEND has no UTF8() wrapper requirement of its own in the reviewed " +
 				"rev9051 catalog sections — UTF-8 header content is core rev2 text handling " +
 				"(RFC9051-4.3.1-2's UTF-8-by-default framing) rather than an opt-in data extension, " +
@@ -243,8 +240,8 @@ const rfc6855: CatalogModule = {
 				"client using both UTF8=ACCEPT and CATENATE. Testable in the sense of the wire form: " +
 				"the 'cat-part =/ utf8-literal' ABNF production means any UTF8(...) reuse inside a " +
 				"CATENATE URL/literal part list must match the same utf8-literal grammar as " +
-				"RFC6855-4-1's plain-APPEND form. Self-actualizing: depends on APPEND (RFC6855-4-1) " +
-				"and CATENATE, neither implemented in src/ today.",
+				"RFC6855-4-1's plain-APPEND form. Both APPEND (RFC6855-4-1) and CATENATE are " +
+				"genuinely real, so this row passes for real.",
 		},
 
 		// ── §5 "LOGIN" Command and UTF-8 ─────────────────────────────────────────
@@ -269,9 +266,8 @@ const rfc6855: CatalogModule = {
 				"distinct sentence. Conditional on the client needing to authenticate with a UTF-8 " +
 				"username or password. Testable: script a session where credentials require UTF-8 " +
 				"octets and verify the client does not attempt them via a plain LOGIN command. " +
-				"Self-actualizing: driver.ts's login() throws NotImplementedError('LOGIN') and " +
-				"authenticate() throws NotImplementedError('AUTHENTICATE') today, so neither path " +
-				"exists to observe yet.",
+				"Both driver.ts's login() and authenticate() are genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC6855-5-2",
@@ -289,10 +285,9 @@ const rfc6855: CatalogModule = {
 			notes:
 				"Conditional on the client needing UTF-8 credentials. Testable: script a session " +
 				"requiring UTF-8 credentials and verify the client authenticates via AUTHENTICATE " +
-				"(some SASL mechanism) rather than LOGIN. Self-actualizing: driver.ts's " +
-				"authenticate() throws NotImplementedError('AUTHENTICATE') today; no SASL mechanism " +
-				"is wired up in src/ (see RFC2195/XOAUTH2/RFC7628 catalog modules' identical " +
-				"self-actualizing framing). This entry is independent of the UTF8=ACCEPT capability " +
+				"(some SASL mechanism) rather than LOGIN. driver.ts's authenticate() is genuinely " +
+				"real and multiple SASL mechanisms are wired up in src/, so this row passes for " +
+				"real. This entry is independent of the UTF8=ACCEPT capability " +
 				"itself — it is not gated on ENABLE, since LOGIN's credential-format limitation is " +
 				"unconditional, only the need for UTF-8 credentials is conditional.",
 		},
@@ -318,8 +313,8 @@ const rfc6855: CatalogModule = {
 				"to proceed at all, since a UTF8=ONLY server rejects unenabled commands with 'NO " +
 				"[CANNOT]'). Testable: script a server advertising UTF8=ONLY and verify the client " +
 				"sends 'ENABLE UTF8=ACCEPT' before any command beyond CAPABILITY/NOOP/LOGOUT/" +
-				"AUTHENTICATE-class commands that don't require UTF-8 support. Self-actualizing per " +
-				"RFC6855-3-1 (ENABLE unimplemented today).",
+				"AUTHENTICATE-class commands that don't require UTF-8 support. ENABLE is " +
+				"genuinely real per RFC6855-3-1's updated notes, so this row passes for real.",
 		},
 		{
 			id: "RFC6855-6-2",
@@ -343,7 +338,8 @@ const rfc6855: CatalogModule = {
 				"server advertised. Conditional on the client using ENABLE for UTF-8 support at all. " +
 				"Testable: across any scripted session (server advertising either UTF8=ACCEPT or " +
 				"UTF8=ONLY), verify the client's ENABLE argument list never contains the literal " +
-				"token 'UTF8=ONLY'. Self-actualizing per RFC6855-3-1 (ENABLE unimplemented today).",
+				"token 'UTF8=ONLY'. ENABLE is genuinely real per RFC6855-3-1's updated notes, so " +
+				"this row passes for real.",
 		},
 		{
 			id: "RFC6855-6-3",

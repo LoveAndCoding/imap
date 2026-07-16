@@ -206,10 +206,9 @@ const rfc2193: CatalogModule = {
 				"this specific named set of seven commands as distinct from CREATE/RENAME/COPY which " +
 				"get their own §4.2-4.4 treatment and their own entries below). Same REAL-signal " +
 				"parse surface as RFC2193-3-2 (this entry names the concrete command set the general " +
-				"duty applies to); currently exercisable only via SELECT/EXAMINE/DELETE etc., all of " +
-				"which throw NotImplementedError, so a test must use the unsolicited/pre-scripted-" +
-				"response harness pattern (as RFC5466-3.1-2 does) rather than driver command-emission " +
-				"to reach the REAL parse surface.",
+				"duty applies to); exercised via the unsolicited/pre-scripted-response harness " +
+				"pattern (as RFC5466-3.1-2 does) rather than driver command-emission, since the " +
+				"REAL parse surface being probed here is response acceptance, not command emission.",
 		},
 
 		// ── §4.2 CREATE Referrals ────────────────────────────────────────────────
@@ -230,8 +229,8 @@ const rfc2193: CatalogModule = {
 			notes:
 				"Judgment level (implicit MUST from the server-permission MAY sentence and the " +
 				"worked CREATE example). Same REAL-signal parse surface as the other REFERRAL-" +
-				"acceptance entries in this catalog; CREATE throws NotImplementedError in the " +
-				"driver today.",
+				"acceptance entries in this catalog, exercised via the unsolicited/pre-scripted-" +
+				"response harness pattern rather than driver command-emission.",
 		},
 
 		// ── §4.3 RENAME Referrals ────────────────────────────────────────────────
@@ -315,7 +314,8 @@ const rfc2193: CatalogModule = {
 			notes:
 				"Judgment level (implicit MUST from the server-permission MAY sentence and the " +
 				"worked COPY example). Same REAL-signal parse surface as the other REFERRAL-" +
-				"acceptance entries; COPY throws NotImplementedError in the driver today.",
+				"acceptance entries, exercised via the unsolicited/pre-scripted-response harness " +
+				"pattern rather than driver command-emission.",
 		},
 
 		// ── §5.1 RLIST command ───────────────────────────────────────────────────
@@ -340,11 +340,10 @@ const rfc2193: CatalogModule = {
 				"client that keeps issuing plain LIST cannot discover its remote mailboxes at all). " +
 				"Command-form wire shape pinned by §5.1's RLIST syntax (Arguments: reference name, " +
 				"mailbox name with possible wildcards; Responses: untagged LIST; Result: OK/NO/BAD) " +
-				"and §6's ABNF 'rlist = \"RLIST\" SPACE mailbox SPACE list_mailbox'. A driver.rlist() " +
-				"verb exists in test/compliance/driver/driver.ts in this worktree (added by commit " +
-				"74a9620, Phase 6 Task 1) and throws NotImplementedError — self-actualizing " +
-				"unimplemented (the verb exists and honestly reports its own absence of a real " +
-				"implementation), not yet a REAL probe surface.",
+				"and §6's ABNF 'rlist = \"RLIST\" SPACE mailbox SPACE list_mailbox'. driver.rlist() " +
+				"is genuinely real as of M5.13 — wired through `list(ref, pattern, { referrals: " +
+				"true })` (test/compliance/driver/driver.ts) — so this row is a REAL probe surface " +
+				"and genuinely passes.",
 		},
 
 		// ── §5.2 RLSUB Command ───────────────────────────────────────────────────
@@ -368,10 +367,9 @@ const rfc2193: CatalogModule = {
 				"distinct entry because RLSUB is its own command with its own §5.2 syntax block " +
 				"(Arguments: reference name, mailbox name with possible wildcards; Responses: " +
 				"untagged LSUB; Result: OK/NO/BAD) and its own ABNF production ('rlsub = \"RLSUB\" " +
-				"SPACE mailbox SPACE list_mailbox'), distinct from RLIST's. A driver.rlsub() verb " +
-				"exists in driver.ts in this worktree (added by commit 74a9620, Phase 6 Task 1) and " +
-				"throws NotImplementedError; same self-actualizing-unimplemented status as " +
-				"RFC2193-5.1-1.",
+				"SPACE mailbox SPACE list_mailbox'), distinct from RLIST's. driver.rlsub() is " +
+				"genuinely real as of M5.13 — wired through `lsub(ref, pattern, { referrals: " +
+				"true })` — same now-genuinely-passing status as RFC2193-5.1-1.",
 		},
 
 		// ── §3 Introduction and Overview (connection-following duty) ────────────

@@ -98,8 +98,8 @@ const rfc8438: CatalogModule = {
 				"client choosing to use it. DUAL profiles [\"rev1\",\"rev2\"] per the extractionNote's " +
 				"REV2-CORE ADJUDICATION (a): RFC 9051 folds SIZE into core STATUS but does not " +
 				"re-define its wire vocabulary independently of this document, so RFC 8438 remains " +
-				"source-of-truth for both profiles. Self-actualizing fail: driver.status() throws " +
-				"NotImplementedError, so no SIZE STATUS item can be driven.",
+				"source-of-truth for both profiles. driver.status() is genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC8438-3-2",
@@ -131,9 +131,8 @@ const rfc8438: CatalogModule = {
 				"truncation, overflow, or a parse error. Conditional on the client using STATUS=SIZE. " +
 				"DUAL profiles [\"rev1\",\"rev2\"] — same adjudication as RFC8438-3-1: RFC 9051's " +
 				"inherited core number64 grammar does not redefine the width, so RFC 8438 remains the " +
-				"binding definition for both profiles. Self-actualizing fail: driver.status() throws " +
-				"NotImplementedError, so no SIZE value of any width can be driven to the client for " +
-				"parsing.",
+				"binding definition for both profiles. driver.status() is genuinely real, so this " +
+				"row passes for real.",
 		},
 		{
 			id: "RFC8438-3-3",
@@ -162,9 +161,8 @@ const rfc8438: CatalogModule = {
 				"further improve efficiency') is optional-efficiency prose, not a sole-available-form " +
 				"statement — a client may legitimately prefer per-mailbox STATUS (SIZE) even when " +
 				"LIST-STATUS is available. DUAL profiles [\"rev1\",\"rev2\"], same rev2-core " +
-				"adjudication basis as RFC8438-3-1/-2. Self-actualizing fail: driver.list()'s " +
-				"returnOptions surface exists but the verb throws NotImplementedError, so no " +
-				"STATUS(SIZE) return option can be driven to completion.",
+				"adjudication basis as RFC8438-3-1/-2. driver.list()'s returnOptions surface and " +
+				"the verb itself are both genuinely real, so this row passes for real.",
 		},
 	],
 };

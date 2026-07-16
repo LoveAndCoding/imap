@@ -104,8 +104,8 @@ const rfc6851: CatalogModule = {
 				"rev2 base command set, so for a rev2 client the MOVE command-form obligation is a " +
 				"core duty; tagged profiles:['rev1'] here to avoid double-scoring — this extension is " +
 				"the binding source only for a rev1 client that adds MOVE. Applicability 'conditional' " +
-				"— binds only when the client uses MOVE. Currently self-actualizing fail: " +
-				"driver.move() throws NotImplementedError, so the client cannot emit this form at all.",
+				"— binds only when the client uses MOVE. driver.move() is genuinely real, so this " +
+				"row passes for real.",
 		},
 		{
 			id: "RFC6851-3.3-2",
@@ -127,8 +127,7 @@ const rfc6851: CatalogModule = {
 				"uses the command). REV2-CORE ADJUDICATION: same as 3.3-1 — RFC 9051 §6.4.8 folds UID " +
 				"MOVE into rev2 core, so tagged profiles:['rev1'] to avoid double-scoring the command " +
 				"form for a rev2 client. Applicability 'conditional' — binds only when the client uses " +
-				"UID MOVE. Currently self-actualizing fail: driver.uidMove() throws " +
-				"NotImplementedError.",
+				"UID MOVE. driver.uidMove() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC6851-3.3-3",

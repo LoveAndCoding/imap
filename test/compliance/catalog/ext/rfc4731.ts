@@ -120,10 +120,9 @@ const rfc4731: CatalogModule = {
 				"gate (there is no ESEARCH capability in the rev2 core model), so absorption ELIMINATES " +
 				"this duty for rev2 rather than restating it; see extractionNote decision (1). " +
 				"Testable: connect against a scripted server NOT advertising ESEARCH and verify the " +
-				"client never emits a RETURN result-option list; currently self-actualizing on the " +
-				"emission side (driver search verbs throw NotImplementedError for return options), and " +
-				"reviewers should note the vacuous-pass hazard — a client with no RETURN surface " +
-				"satisfies the prohibition trivially.",
+				"client never emits a RETURN result-option list; the driver search verbs genuinely " +
+				"emit RETURN result options for real, so this is a real observation, not a vacuous " +
+				"one.",
 		},
 
 		// ── §3.1 New SEARCH/UID SEARCH Result Options ───────────────────────────
@@ -157,8 +156,8 @@ const rfc4731: CatalogModule = {
 				"but the rfc9051 catalog scores no command-form/option-emission client entry, so this " +
 				"remains the scoring text for both profiles; see extractionNote decision (2). " +
 				"Testable: drive a search with return options and assert the emitted 'SEARCH RETURN " +
-				"(...)' wire form; currently self-actualizing — driver.search(criteria, { return: " +
-				"[...] }) throws NotImplementedError.",
+				"(...)' wire form; genuinely real — driver.search(criteria, { return: [...] }) " +
+				"emits it for real.",
 		},
 		{
 			id: "RFC4731-3.1-2",

@@ -39,8 +39,8 @@ const rfc8508: CatalogModule = {
 		"CLIENT-BINDING extracted: 9 entries. Command-emission forms (§3.2/§3.3/§5): REPLACE and UID " +
 		"REPLACE wire syntax the client must emit (RFC8508-3.2-1, RFC8508-3.3-1) — judgment-level " +
 		"(the arguments/ABNF are descriptive, but a client that uses the REPLACE extension is bound " +
-		"to emit exactly this form; testable, self-actualizing-unimplemented today because " +
-		"driver.replace()/uidReplace() throw NotImplementedError). State prohibition (§3.5): a client " +
+		"to emit exactly this form; testable, and genuinely real -- driver.replace()/uidReplace() " +
+		"both delegate to the real client). State prohibition (§3.5): a client " +
 		"MUST NOT issue REPLACE/UID REPLACE outside the selected state (RFC8508-3.5-1) and MUST NOT " +
 		"issue UID REPLACE from the authenticated state (RFC8508-3.5-2) — the §3.5 'MUST only be " +
 		"valid in the selected state' sentence is addressed as a validity rule but, exactly like the " +
@@ -103,10 +103,9 @@ const rfc8508: CatalogModule = {
 				"append-message (RFC 4466: optional parenthesized \\-prefixed flag list, optional " +
 				"quoted date/time, and the message literal {n}). Standalone rev2 extension — no RFC " +
 				"9051 REPLACE counterpart, so profiles [\"rev1\",\"rev2\"] (see module extractionNote " +
-				"rev2-core cross-reference). Currently self-actualizing fail: driver.replace() throws " +
-				"NotImplementedError, so the client has no REPLACE surface at all; the compliance " +
-				"suite records the absence as a failure for this conditional extension duty. The " +
-				"matcher must reject a plausible wrong implementation — e.g. one that sends the three " +
+				"rev2-core cross-reference). driver.replace() is genuinely real, so this row passes " +
+				"for real. The matcher must reject a plausible wrong implementation — e.g. one " +
+				"that sends the three " +
 				"legacy commands (APPEND/STORE/EXPUNGE) separately instead of the single REPLACE atom, " +
 				"or that omits/mis-ABNFs the append-message framing.",
 		},
@@ -133,9 +132,8 @@ const rfc8508: CatalogModule = {
 				"the single completion of the REPLACE command it issued — not as an unsolicited " +
 				"append plus an unrelated expunge. Distinct from RFC8508-3.4-1 (which fixes WHICH " +
 				"response codes appear); this entry fixes that they are correlated to the one REPLACE " +
-				"tag. Standalone rev2 extension — profiles [\"rev1\",\"rev2\"]. Currently self-" +
-				"actualizing fail: no REPLACE surface exists (driver.replace() throws), so the client " +
-				"cannot exercise this single-action handling path. Testable via a scripted REPLACE " +
+				"tag. Standalone rev2 extension — profiles [\"rev1\",\"rev2\"]. driver.replace() is " +
+				"genuinely real, so this row passes for real. Testable via a scripted REPLACE " +
 				"exchange that emits the §3.2 example response block against the tagged command.",
 		},
 
@@ -159,8 +157,8 @@ const rfc8508: CatalogModule = {
 				"§5's 'uid =/ \"UID\" SP replace'). A client that uses UID REPLACE is bound to emit " +
 				"the atom UID, a space, then the full REPLACE form of RFC8508-3.2-1, with the first " +
 				"parameter interpreted as a UID rather than a message sequence number. Standalone " +
-				"rev2 extension — profiles [\"rev1\",\"rev2\"]. Currently self-actualizing fail: " +
-				"driver.uidReplace() throws NotImplementedError. The matcher must reject a wrong " +
+				"rev2 extension — profiles [\"rev1\",\"rev2\"]. driver.uidReplace() is genuinely " +
+				"real, so this row passes for real. The matcher must reject a wrong " +
 				"implementation — e.g. one that sends bare REPLACE with a UID (dropping the UID " +
 				"prefix, which would make the server treat the argument as a sequence number) or that " +
 				"reuses the sequence-number REPLACE path.",
@@ -253,7 +251,7 @@ const rfc8508: CatalogModule = {
 				"along with those defined by extensions, are sent as appropriate.' Testable by " +
 				"scripting a REPLACE into a nonexistent mailbox answered with a tagged NO " +
 				"[TRYCREATE], asserting the client surfaces it the same way it does for APPEND. " +
-				"Currently self-actualizing fail: no REPLACE surface (driver.replace() throws).",
+				"driver.replace() is genuinely real, so this row passes for real.",
 		},
 
 		// ── §3.5 IMAP State Diagram Impacts ──────────────────────────────────────
@@ -283,10 +281,10 @@ const rfc8508: CatalogModule = {
 				"identical to the ENABLE state rule (different command, and the opposite required " +
 				"state — selected, not before-select), so it is source-of-truth here for both " +
 				"profiles, not double-scored against RFC 9051. Full context: 'This difference from " +
-				"APPEND is necessary since REPLACE operates on message sequence numbers.' Currently " +
-				"self-actualizing fail: driver.replace()/uidReplace() throw NotImplementedError, so " +
-				"the client cannot exercise the selected-state REPLACE path the RFC anticipates. The " +
-				"matcher must reject a client that would send REPLACE from the authenticated state.",
+				"APPEND is necessary since REPLACE operates on message sequence numbers.' " +
+				"driver.replace()/uidReplace() are both genuinely real, so this row passes for " +
+				"real. The matcher must reject a client that would send REPLACE from the " +
+				"authenticated state.",
 		},
 		{
 			id: "RFC8508-3.5-2",
@@ -310,8 +308,8 @@ const rfc8508: CatalogModule = {
 				"restatement of RFC8508-3.5-1 specific to the UID variant and its RFC 3501 §6.4.8 " +
 				"lineage, kept as a distinct entry because it is anchored to the separate UID-command " +
 				"convention sentence rather than the general selected-state sentence. Standalone rev2 " +
-				"extension — profiles [\"rev1\",\"rev2\"]. Currently self-actualizing fail: " +
-				"driver.uidReplace() throws NotImplementedError.",
+				"extension — profiles [\"rev1\",\"rev2\"]. driver.uidReplace() is genuinely real, " +
+				"so this row passes for real.",
 		},
 
 		// ── §4.3 Interaction with UIDPLUS ────────────────────────────────────────

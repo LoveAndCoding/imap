@@ -101,9 +101,8 @@ const rfc5032: CatalogModule = {
 				"compose like any other search-key (the §4 example combines YOUNGER with UNSEEN). " +
 				"Applicability 'conditional' — binds only when the client performs a WITHIN search. " +
 				"Testable: drive an interval-based search and assert the emitted 'OLDER <n>' / " +
-				"'YOUNGER <n>' key with a non-zero seconds argument; currently self-actualizing " +
-				"(driver.search()/driver.uidSearch() throw NotImplementedError, so no WITHIN key " +
-				"can be emitted).",
+				"'YOUNGER <n>' key with a non-zero seconds argument; driver.search()/" +
+				"driver.uidSearch() genuinely emit the WITHIN key for real, so this row passes.",
 		},
 
 		// ── §2 Protocol Operation ───────────────────────────────────────────────
@@ -137,10 +136,8 @@ const rfc5032: CatalogModule = {
 				"and thereby ELIMINATES that gate). See module extractionNote. Applicability " +
 				"'conditional' — binds when the client would emit a WITHIN key at all. Testable: " +
 				"connect against a scripted server NOT advertising WITHIN and verify the client " +
-				"never emits OLDER/YOUNGER; currently self-actualizing on the emission side " +
-				"(driver search verbs throw NotImplementedError), and reviewers should note the " +
-				"vacuous-pass hazard — a client with no search surface satisfies the prohibition " +
-				"trivially.",
+				"never emits OLDER/YOUNGER; the driver search verbs genuinely emit search keys for " +
+				"real, so this is a real observation, not a vacuous one.",
 		},
 		{
 			id: "RFC5032-2-2",

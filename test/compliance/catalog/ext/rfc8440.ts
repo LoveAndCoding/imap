@@ -95,9 +95,8 @@ const rfc8440: CatalogModule = {
 				"'d'/'c') is cross-referenced to RFC4314-2.1.1-3 rather than re-scored here — see " +
 				"extractionNote. Conditional on the server advertising LIST-MYRIGHTS and the client " +
 				"choosing to use it. Standalone in rev2 (no RFC 9051 counterpart), so profiles " +
-				"[\"rev1\",\"rev2\"]. Self-actualizing fail: driver.list()'s returnOptions surface " +
-				"exists but the verb throws NotImplementedError, so no RETURN (MYRIGHTS) option can be " +
-				"driven to completion.",
+				"[\"rev1\",\"rev2\"]. driver.list()'s returnOptions surface and the verb itself are " +
+				"both genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC8440-3-2",
@@ -126,8 +125,7 @@ const rfc8440: CatalogModule = {
 				"across multiple mailboxes and assert the client correlates each MYRIGHTS response to " +
 				"its preceding same-name LIST response rather than misattributing it. Conditional on " +
 				"the client using LIST-MYRIGHTS. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. " +
-				"Self-actualizing fail: driver.list() throws NotImplementedError, so no ordered " +
-				"LIST/MYRIGHTS response pair can be driven to the client for correlation.",
+				"driver.list() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC8440-3-3",
@@ -157,8 +155,7 @@ const rfc8440: CatalogModule = {
 				"line has no following MYRIGHTS line and assert the client does not error/hang/retry, " +
 				"treating that mailbox as simply lacking rights information. Conditional on the client " +
 				"using LIST-MYRIGHTS. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. " +
-				"Self-actualizing fail: driver.list() throws NotImplementedError, so no MYRIGHTS-omission " +
-				"case can be driven to the client.",
+				"driver.list() is genuinely real, so this row passes for real.",
 		},
 
 		// ── §6 Security Considerations (client-directed SHOULD) ──────────────────
@@ -186,9 +183,8 @@ const rfc8440: CatalogModule = {
 				"pattern/selection options are scoped (e.g. a specific subtree or subscribed-only " +
 				"selection) rather than an unqualified wildcard sweep, when the client is only " +
 				"interested in a subset of mailboxes' rights. Conditional on the client using " +
-				"LIST-MYRIGHTS. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. Self-actualizing " +
-				"fail: driver.list() throws NotImplementedError, so no pattern/selection-option choice " +
-				"can be observed.",
+				"LIST-MYRIGHTS. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. driver.list() is " +
+				"genuinely real, so this row passes for real.",
 		},
 	],
 };

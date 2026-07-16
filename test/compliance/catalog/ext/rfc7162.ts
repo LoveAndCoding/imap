@@ -89,17 +89,15 @@ const rfc7162: CatalogModule = {
 		"response — src/parser/structure/mailbox/search.ts SearchResponse explicitly slices a " +
 		"trailing '(MODSEQ n)' group off the result list (number|bigint) per this document's " +
 		"grammar. Entries whose observable core is one of these are marked testable with a REAL " +
-		"parse path. NEGATIVE PROBES: VANISHED has ZERO hits anywhere in src/ (expunge.ts " +
-		"matches only 'nz-number SP EXPUNGE'), so '* VANISHED [(EARLIER)] uids' has NO parse " +
-		"path — the acceptance duties (3.2.5.1-1, 3.2.7-2, 3.2.10.1-1, 3.2.10.2-1) stay " +
-		"testable and the spec batch measures the honest outcome (violation/unimplemented); " +
-		"'* SORT' IS parsed (src/parser/structure/sort.ts) but SortResponse maps every " +
-		"space-separated block to a number and would throw ParsingError on this document's " +
-		"trailing '(MODSEQ n)' group — 3.1.9-1 is a genuine violation surface; the untagged " +
-		"ENABLED response is not modeled in src/. Command-emission duties (CONDSTORE/QRESYNC " +
-		"select params, CHANGEDSINCE/VANISHED fetch modifiers, UNCHANGEDSINCE store modifier, " +
-		"SEARCH MODSEQ, ENABLE QRESYNC) are testable but currently self-actualizing — the " +
-		"Phase 5 driver verbs/option payloads throw NotImplementedError.\n\n" +
+		"parse path. UPDATE (post-M4.6): '* VANISHED [(EARLIER)] uids' now has a REAL parse path " +
+		"too — src/parser/structure/vanished.ts — so the acceptance duties (3.2.5.1-1, 3.2.7-2, " +
+		"3.2.10.1-1, 3.2.10.2-1) genuinely pass; '* SORT ... (MODSEQ n)' is also REAL — " +
+		"src/parser/structure/sort.ts now tolerates/captures the trailing MODSEQ group instead of " +
+		"throwing ParsingError, so 3.1.9-1 genuinely passes as well; the untagged ENABLED response " +
+		"is modeled too — src/parser/structure/enabled.ts. Command-emission duties (CONDSTORE/" +
+		"QRESYNC select params, CHANGEDSINCE/VANISHED fetch modifiers, UNCHANGEDSINCE store " +
+		"modifier, SEARCH MODSEQ, ENABLE QRESYNC) are all genuinely real too, as of M4.5 " +
+		"(CONDSTORE half) / M4.6 (QRESYNC half) -- see each row's own notes above.\n\n" +
 		"RFC 8174 discipline: RFC 7162 cites RFC 2119 only (§2), so lowercase keywords are " +
 		"non-normative; every entry rests on an UPPERCASE keyword in its quoted sentence except " +
 		"the judgment-call entries flagged in notes (reciprocal-parse duties derived from " +
@@ -195,9 +193,10 @@ const rfc7162: CatalogModule = {
 				"capability implies support for the CONDSTORE IMAP extension even if the " +
 				"\"CONDSTORE\" capability isn't advertised', so the gate is CONDSTORE-or-QRESYNC. " +
 				"Testable black-box: a capability-less scripted session must never see CONDSTORE " +
-				"parameters from a compliant client (self-actualizing today — the Phase 5 option " +
-				"payloads throw NotImplementedError). Conditional; standalone in rev2, so " +
-				"[\"rev1\",\"rev2\"].",
+				"parameters from a compliant client (self-actualizing, and genuinely so as of " +
+				"M4.5 — SelectOrExamineCommand's constructor throws CapabilityError client-side " +
+				"when `condstore` is requested without the capability). Conditional; standalone " +
+				"in rev2, so [\"rev1\",\"rev2\"].",
 		},
 
 		// ── §3.1.2 New OK Untagged Responses for SELECT and EXAMINE ─────────────
@@ -312,9 +311,10 @@ const rfc7162: CatalogModule = {
 				"selected (each is guaranteed to draw a BAD) — is implicit but load-bearing for " +
 				"interoperation (disclosed per the reciprocal-duty precedent). Testable black-box: " +
 				"select a mailbox whose scripted SELECT stream carries NOMODSEQ, then drive metadata " +
-				"synchronization and assert no CONDSTORE modifier is emitted (self-actualizing today " +
-				"— the option payloads throw NotImplementedError). Conditional; standalone in rev2, " +
-				"so [\"rev1\",\"rev2\"].",
+				"synchronization and assert no CONDSTORE modifier is emitted (self-actualizing, and " +
+				"genuinely so as of M4.5 — MailboxSession.assertModSeqUsable() throws " +
+				"CapabilityError client-side on a NOMODSEQ mailbox). Conditional; standalone in " +
+				"rev2, so [\"rev1\",\"rev2\"].",
 		},
 
 		// ── §3.1.3 STORE and UID STORE Commands ──────────────────────────────────
@@ -341,8 +341,8 @@ const rfc7162: CatalogModule = {
 				"store-modifier ABNF, whose comment adds the emission constraint 'Only a single " +
 				"\"UNCHANGEDSINCE\" may be specified in a STORE operation.' The elision skips the " +
 				"blank line between the definition header and the semantics paragraph. Testable " +
-				"black-box (emission form; self-actualizing today — driver.store()/uidStore() with " +
-				"unchangedSince throws NotImplementedError). Conditional; standalone in rev2, so " +
+				"black-box (emission form; genuinely real as of M4.5 — driver.store()/uidStore() " +
+				"emit the UNCHANGEDSINCE modifier for real). Conditional; standalone in rev2, so " +
 				"[\"rev1\",\"rev2\"].",
 		},
 		{
@@ -501,10 +501,10 @@ const rfc7162: CatalogModule = {
 				"the client MAY invoke; when used, the form is 'FETCH <set> <items> (CHANGEDSINCE " +
 				"<mod-sequence>)' per §7 chgsince-fetch-mod, and the client must expect MODSEQ data " +
 				"items in the responses even though it didn't list MODSEQ (the implicit-add " +
-				"sentence). Testable: emission form self-actualizing today (driver fetch options " +
-				"throw NotImplementedError); the implied-MODSEQ acceptance side is REAL (fetch/" +
-				"modseq.ts). Example 12 shows the canonical exchange. Conditional; standalone in " +
-				"rev2, so [\"rev1\",\"rev2\"].",
+				"sentence). Testable: emission form genuinely real as of M4.5 (driver fetch " +
+				"options emit CHANGEDSINCE for real); the implied-MODSEQ acceptance side is also " +
+				"REAL (fetch/modseq.ts). Example 12 shows the canonical exchange. Conditional; " +
+				"standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
 			id: "RFC7162-3.1.4.2-1",
@@ -671,8 +671,8 @@ const rfc7162: CatalogModule = {
 				"(CONDSTORE)' per §7 condstore-param under the RFC 4466 select-param grammar " +
 				"(Example 18). The section's race-condition rationale (enabling at selection time " +
 				"avoids missing updates between HIGHESTMODSEQ and a later enabling command) is " +
-				"descriptive. Testable (emission form; self-actualizing today — driver.select() with " +
-				"condstore throws NotImplementedError). Conditional; standalone in rev2, so " +
+				"descriptive. Testable (emission form; genuinely real as of M4.5 — driver.select() " +
+				"with condstore emits the parameter for real). Conditional; standalone in rev2, so " +
 				"[\"rev1\",\"rev2\"].",
 		},
 
@@ -701,11 +701,11 @@ const rfc7162: CatalogModule = {
 				"('THREAD responses are unchanged by the CONDSTORE extension') — no THREAD entry. " +
 				"The ESORT variant (§3.1.10) is out of scope here (see extractionNote). Doubly " +
 				"conditional: binds only a client using both SORT and MODSEQ. PROBE RESULT: " +
-				"src/parser/structure/sort.ts parses '* SORT' but maps every space-separated block " +
-				"to a number and would throw ParsingError on the trailing '(MODSEQ n)' group — a " +
-				"genuine violation surface for the spec batch. Profiles [\"rev1\",\"rev2\"]: SORT " +
-				"remains a standalone extension in rev2 and its legacy '* SORT' response (unlike the " +
-				"rev2-removed '* SEARCH') still exists, so the duty binds in both profiles.",
+				"src/parser/structure/sort.ts now tolerates/captures the trailing '(MODSEQ n)' " +
+				"group (fixed after this note's original probe found it threw ParsingError there); " +
+				"this row genuinely passes. Profiles [\"rev1\",\"rev2\"]: SORT remains a standalone " +
+				"extension in rev2 and its legacy '* SORT' response (unlike the rev2-removed " +
+				"'* SEARCH') still exists, so the duty binds in both profiles.",
 		},
 
 		// ── §3.1.11 Additional Quality-of-Implementation Issues ──────────────────
@@ -802,9 +802,10 @@ const rfc7162: CatalogModule = {
 				"requirement for a compliant server to support \"ENABLE CONDSTORE\" by itself'). " +
 				"Testable black-box: a client driven to use any QRESYNC feature must emit ENABLE " +
 				"with QRESYNC among its arguments after authentication and before the feature use " +
-				"(self-actualizing today: no driver verb reaches ENABLE QRESYNC; the qresync select " +
-				"option throws NotImplementedError). Conditional on using QRESYNC; standalone in " +
-				"rev2 (rev2 servers still require ENABLE QRESYNC for QRESYNC), so " +
+				"(self-actualizing, and genuinely so as of M4.6 — driver.select() with qresync " +
+				"emits the parameter for real, gated on a positive ENABLE QRESYNC). Conditional on " +
+				"using QRESYNC; standalone in rev2 (rev2 servers still require ENABLE QRESYNC for " +
+				"QRESYNC), so " +
 				"[\"rev1\",\"rev2\"].",
 		},
 		{
@@ -861,8 +862,8 @@ const rfc7162: CatalogModule = {
 				"(e.g. 'A03 SELECT INBOX (QRESYNC (67890007 90060115194045000 41:211,214:541))'). " +
 				"The section's server-side argument-verification/UIDVALIDITY-mismatch rules are " +
 				"server duties (excluded; the client's mismatch reaction is scored at RFC7162-6-4). " +
-				"Testable (emission form; self-actualizing today — driver.select() with qresync " +
-				"throws NotImplementedError). Conditional on QRESYNC use (and gated by " +
+				"Testable (emission form; genuinely real as of M4.6 — driver.select() with qresync " +
+				"emits the parameter for real). Conditional on QRESYNC use (and gated by " +
 				"RFC7162-3.2.3-2); standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
@@ -916,9 +917,9 @@ const rfc7162: CatalogModule = {
 				"client's construction of it — the entry is leveled at the binding MUST since the " +
 				"permission half alone would be vacuous. Testable black-box: whenever the client " +
 				"emits seq-match-data, assert both member sets ascend and align pairwise " +
-				"(self-actualizing today — the qresync select option throws NotImplementedError). " +
-				"Conditional (binds only when the client uses the optional argument); standalone in " +
-				"rev2, so [\"rev1\",\"rev2\"].",
+				"(self-actualizing, and genuinely so as of M4.6 — driver.select() with qresync " +
+				"emits seq-match-data for real). Conditional (binds only when the client uses the " +
+				"optional argument); standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 
 		// ── §3.2.6 VANISHED UID FETCH Modifier ───────────────────────────────────
@@ -943,8 +944,9 @@ const rfc7162: CatalogModule = {
 				"the reciprocal-duty precedent; §7 rexpunges-fetch-mod comment: 'It is only allowed " +
 				"in the UID FETCH command.'). Testable black-box: a compliant client driven to " +
 				"resynchronize by message number must not emit 'FETCH ... (... VANISHED)' " +
-				"(self-actualizing today — the fetch vanished option throws NotImplementedError). " +
-				"Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
+				"(self-actualizing, and genuinely so as of M4.6 — MailboxSession.runFetch()'s own " +
+				"RangeError gate refuses a bare-FETCH `vanished` caller client-side). Conditional; " +
+				"standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
 			id: "RFC7162-3.2.6-2",

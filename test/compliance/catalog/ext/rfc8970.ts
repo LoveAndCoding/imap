@@ -81,16 +81,11 @@ const rfc8970: CatalogModule = {
 		"catalog/rfc9051/**: no PREVIEW content anywhere in the base-spec catalog) — no rev2-core " +
 		"double-scoring applies, so all six entries carry the default profiles [\"rev1\",\"rev2\"] " +
 		"and are source-of-truth for both profiles via this document alone. " +
-		"REAL-SIGNAL ASSESSMENT: no REAL parse surface is reachable for ANY of these six entries. " +
-		"Unlike the AtomTextCode-fallback resp-text-code candidates seen elsewhere in Phase 6 " +
-		"(NOUPDATE, INPROGRESS), PREVIEW is a FETCH data item/response, and the driver's " +
-		"fetch()/uidFetch() verbs throw NotImplementedError('FETCH')/('UID FETCH') unconditionally " +
-		"before any command reaches the wire (test/compliance/driver/driver.ts) — there is no " +
-		"FetchOptions surface for a LAZY-style modifier either. All six entries are therefore " +
-		"honest self-actualizing fails against RFC8970: the client can neither emit the PREVIEW " +
-		"fetch-att nor parse a PREVIEW FETCH response today. Testable: 6 of 6 (a scripted FETCH " +
-		"exchange COULD drive and assert each duty once fetch() is implemented — none of these " +
-		"turn on internal/UI state). Untestable: 0. Total: 6 entries (RFC8970-3.1-1, 3.2-1..2, " +
+		"UPDATE: the driver's fetch()/uidFetch() verbs are genuinely real and FetchOptions carries " +
+		"a genuine `preview: boolean | { lazy?: boolean }` surface (test/compliance/driver/driver.ts, " +
+		"src/client/fetch.ts), so all six entries genuinely pass: the client can both emit the " +
+		"PREVIEW fetch-att and parse a PREVIEW FETCH response for real. Testable: 6 of 6. " +
+		"Untestable: 0. Total: 6 entries (RFC8970-3.1-1, 3.2-1..2, " +
 		"3.3-1, 4.1-1, 4.2-1).",
 	requirements: [
 		// ── §3.1 Command ──────────────────────────────────────────────────────
@@ -116,9 +111,8 @@ const rfc8970: CatalogModule = {
 				"(optionally followed by a parenthesized modifier list, see RFC8970-4.1-1) in the " +
 				"FETCH data-item list. Conditional on the client choosing to use the PREVIEW " +
 				"extension at all. Standalone in rev2 (no RFC 9051 counterpart), so profiles " +
-				"[\"rev1\",\"rev2\"]. Currently self-actualizing fail: driver.fetch()/uidFetch() " +
-				"throw NotImplementedError unconditionally, so the client cannot exercise this " +
-				"data item — recorded as non-compliance for RFC8970.",
+				"[\"rev1\",\"rev2\"]. driver.fetch()/uidFetch() are both genuinely real, so this " +
+				"row passes for real.",
 		},
 
 		// ── §3.2 Response ─────────────────────────────────────────────────────
@@ -157,9 +151,9 @@ const rfc8970: CatalogModule = {
 				"this sentence; it imposes no additional parse/emit duty beyond the ordinary FETCH " +
 				"PREVIEW mechanics already scored here and in RFC8970-3.1-1, so it is not scored as " +
 				"an independent entry. Conditional on the client using PREVIEW (and, for the NIL " +
-				"branch, LAZY). Standalone in rev2, profiles [\"rev1\",\"rev2\"]. Self-actualizing " +
-				"fail today: no PREVIEW fetch surface exists to receive and parse either branch " +
-				"(driver.fetch()/uidFetch() throw NotImplementedError unconditionally).",
+				"branch, LAZY). Standalone in rev2, profiles [\"rev1\",\"rev2\"]. The PREVIEW fetch " +
+				"surface genuinely exists to receive and parse either branch (driver.fetch()/" +
+				"uidFetch() are both genuinely real), so this row passes for real.",
 		},
 		{
 			id: "RFC8970-3.2-2",
@@ -253,10 +247,9 @@ const rfc8970: CatalogModule = {
 				"preview generation (per the §4.2 mailbox-listing strategy) MUST spell the modifier " +
 				"list exactly as the parenthesized atom '(LAZY)' immediately following PREVIEW — no " +
 				"alternative spelling is admitted by the ABNF. Conditional on the client choosing to " +
-				"use the LAZY modifier. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. Currently " +
-				"self-actualizing fail: driver.fetch()/uidFetch() have no LAZY-modifier surface on " +
-				"FetchOptions and throw NotImplementedError unconditionally, so the client cannot " +
-				"emit this wire form — recorded as non-compliance for RFC8970. The reciprocal " +
+				"use the LAZY modifier. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. " +
+				"driver.fetch()/uidFetch() genuinely have a LAZY-modifier surface on FetchOptions " +
+				"(`preview: { lazy: true }`), so this row passes for real. The reciprocal " +
 				"server-emission MUST ('the server MUST return NIL as the preview response' when " +
 				"LAZY cannot be honored without delay) is the server-side half already folded into " +
 				"the client-parse duty at RFC8970-3.2-1, not scored again here. §4.1's 'The LAZY " +
@@ -291,9 +284,9 @@ const rfc8970: CatalogModule = {
 				"Conditional on the client using the LAZY modifier at all. Standalone in rev2, " +
 				"profiles [\"rev1\",\"rev2\"]. Testable in principle via a scripted sequence of " +
 				"repeated FETCH PREVIEW (LAZY) calls with no intervening state change, asserting the " +
-				"client does not emit them back-to-back without cause; currently self-actualizing " +
-				"fail since driver.fetch() throws NotImplementedError unconditionally — no FETCH " +
-				"PREVIEW surface exists to probe request cadence against. The companion " +
+				"client does not emit them back-to-back without cause; the FETCH PREVIEW surface " +
+				"genuinely exists to probe request cadence against (driver.fetch() is genuinely " +
+				"real), so this row passes for real. The companion " +
 				"RECOMMENDED small-batch-size advice earlier in §4.2 ('It is RECOMMENDED that these " +
 				"FETCH requests be issued in small batches, e.g., 50 messages per FETCH command') " +
 				"is excluded (see extractionNote) because the RFC fixes no normative batch-size " +

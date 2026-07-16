@@ -117,9 +117,9 @@ caveat. Concretely, at authoring time:
 | M5.13 Referrals + UTF8 completion | MERGED (commit ae83c6b; codec question SETTLED — no raw-UTF-8 arm) |
 | M5.14 UIDONLY catalog extraction | MERGED (RFC 9586 quotes model-knowledge-flagged for M6 re-verification) |
 | M5.15 UIDONLY mode | MERGED |
-| M5.16 milestone close | last |
+| M5.16 milestone close | DONE — M5 CLOSED (snapshot docs/compliance-history/M5/; 1138 pass / 6 adjudicated violations / 2 adjudicated-unimplemented / 451 untestable / problems []; exit bar met; 7 review findings fixed incl. CRITICAL queue deadlock) |
 | M4 carry-forward: CONTEXT machinery (RFC 5267 4.x, RFC5465-7-1) + UID FETCH PARTIAL (RFC9394-3.3-1) | MERGED (+10 rows; RFC9394-3.3-1 deferral resolved; 1122 pass) |
-| M4 carry-forward: idle() through the shared refcounted driver | wave 4 or close |
+| M4 carry-forward: idle() through the shared refcounted driver | CARRIED to M6 (recorded in M5 NOTES; functional today via IdleController) |
 
 Kickoff validation: M3+M4 CLOSED (the doc was authored mid-M2 — every
 plan-level fact re-verified by each task at dispatch). Baseline: the M4

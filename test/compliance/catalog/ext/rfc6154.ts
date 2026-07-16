@@ -84,10 +84,9 @@ const rfc6154: CatalogModule = {
 				"option is optional client behavior, but when emitted it MUST take the exact atom form " +
 				"'SPECIAL-USE' inside the parenthesized selection-option list. rev2 keeps this standalone " +
 				"(see extractionNote rev2-core adjudication). Conditional: binds only when the client " +
-				"chooses to use the SPECIAL-USE extension. Testable self-actualizing: driver.list widened " +
-				"to carry selectOptions but the verb throws NotImplementedError, so the client cannot yet " +
-				"emit 'LIST (SPECIAL-USE) \"\" \"*\"'; a spec scripts the exact wire form and records the " +
-				"gap. The matcher must reject a plausible-wrong emission (e.g. a bare 'LIST \"\" \"*\"' " +
+				"chooses to use the SPECIAL-USE extension. driver.list() genuinely carries " +
+				"selectOptions and emits 'LIST (SPECIAL-USE) \"\" \"*\"' for real, so this row " +
+				"passes for real. The matcher must reject a plausible-wrong emission (e.g. a bare 'LIST \"\" \"*\"' " +
 				"with no selection option, or the option outside the parenthesized list).",
 		},
 		{
@@ -117,8 +116,8 @@ const rfc6154: CatalogModule = {
 				"ignore-unknown entry RFC6154-6-2; here the entry scores the client's ability to emit the " +
 				"RETURN (SPECIAL-USE) request form. Level MAY (optional to emit; when emitted the atom " +
 				"'SPECIAL-USE' MUST appear inside the RETURN parenthesized list). rev2 standalone. " +
-				"Conditional on using the extension. Testable self-actualizing (driver.list carries " +
-				"returnOptions but throws NotImplementedError). The matcher must reject a wrong emission " +
+				"Conditional on using the extension. driver.list() genuinely carries " +
+				"returnOptions and emits this for real, so this row passes for real. The matcher must reject a wrong emission " +
 				"(missing RETURN keyword, or SPECIAL-USE outside the parentheses).",
 		},
 
@@ -151,9 +150,8 @@ const rfc6154: CatalogModule = {
 				"this entry is NOT a restatement of RFC9051-6.3.9-5 and keeps [\"rev1\",\"rev2\"] rather " +
 				"than being tagged rev1-only. Conditional on the client using CREATE-SPECIAL-USE. " +
 				"Testable: arm a server whose CAPABILITY omits CREATE-SPECIAL-USE and assert the client " +
-				"never emits a CREATE carrying a '(USE (...))' parameter (currently self-actualizing — " +
-				"driver.create with useAttributes throws NotImplementedError, so the client has no USE " +
-				"surface to misuse).",
+				"never emits a CREATE carrying a '(USE (...))' parameter. driver.create() with " +
+				"useAttributes is genuinely real, so this is a real observation, not a vacuous one.",
 		},
 		{
 			id: "RFC6154-3-2",
@@ -177,9 +175,10 @@ const rfc6154: CatalogModule = {
 				"the literal atom 'USE', a space, then a parenthesized space-separated list of use-attr " +
 				"tokens (possibly empty). rev2 standalone (RFC 9051 §6.3.4 CREATE defines no USE " +
 				"parameter). Conditional on the client using CREATE-SPECIAL-USE (and, per RFC6154-3-1, " +
-				"only when the capability is advertised). Testable self-actualizing: driver.create is " +
-				"widened to accept useAttributes but throws NotImplementedError; a spec scripts the exact " +
-				"'CREATE MySpecial (USE (\\Drafts \\Sent))' wire form. The matcher must reject a " +
+				"only when the capability is advertised). driver.create() is genuinely widened to " +
+				"accept useAttributes and emits the exact " +
+				"'CREATE MySpecial (USE (\\Drafts \\Sent))' wire form for real, so this row passes " +
+				"for real. The matcher must reject a " +
 				"plausible-wrong emission (attributes not parenthesized, 'USE' omitted, or attributes " +
 				"passed as a flag list rather than inside the USE parameter).",
 		},
@@ -208,9 +207,9 @@ const rfc6154: CatalogModule = {
 				"pattern as RFC5161-3.2-1 (empty ENABLED is not an error). ABNF (§6): 'resp-text-code =/ " +
 				"\"USEATTR\"'. rev2 standalone (RFC 9051 defines no USEATTR code). Conditional on the " +
 				"client using CREATE-SPECIAL-USE. Testable: script a CREATE (USE (...)) followed by 'NO " +
-				"[USEATTR] ...' and assert the client reports a failed create (not a crash or hang) — " +
-				"currently self-actualizing, as driver.create with useAttributes throws " +
-				"NotImplementedError and never emits the CREATE that would elicit the [USEATTR] NO.",
+				"[USEATTR] ...' and assert the client reports a failed create (not a crash or hang). " +
+				"driver.create() with useAttributes is genuinely real and emits the CREATE that " +
+				"elicits the [USEATTR] NO, so this row passes for real.",
 		},
 
 		// ── §6 Formal Syntax — special-use attributes the client must accept ──────

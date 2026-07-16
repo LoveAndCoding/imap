@@ -425,14 +425,15 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC7162-3.2.10.1-1 / RFC7162-3.2.5.1-1 — VANISHED (EARLIER) acceptance
-// (REAL — HONEST VIOLATION, probed)
+// (REAL — M4.6)
 // ═════════════════════════════════════════════════════════════════════════════
 // §7: expunged-resp = "VANISHED" [SP "(EARLIER)"] SP known-uids. The expunge
 // report of the same §3.2.5.1 resync stream (hence the dual citation: the
 // stream-acceptance duty 3.2.5.1-1 explicitly includes "...expunges those that
-// have occurred..."). PROBED: no VANISHED parse path exists — the client
-// silently drops the line AND the parser dies (the trailing EXISTS is lost;
-// the client goes deaf for the rest of the connection). Honest violation.
+// have occurred..."). Originally probed as a violation (no VANISHED parse
+// path existed, so the client silently dropped the line and the parser died,
+// losing the trailing EXISTS too); src/parser/structure/vanished.ts landed in
+// M4.6, so this now genuinely passes.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.2.10.1-1", "RFC7162-3.2.5.1-1"],
@@ -466,11 +467,9 @@ complianceTest(
 		);
 		expect(
 			vanished,
-			"a '* VANISHED (EARLIER) <uids>' response must be accepted (RFC 7162 §3.2.10.1) — " +
-				"the client has no VANISHED parse path and silently drops the line",
+			"a '* VANISHED (EARLIER) <uids>' response must be accepted (RFC 7162 §3.2.10.1)",
 		).toBeDefined();
-		// SPEC: the response stream must survive the line — probed: it currently
-		// does NOT (the parser dies and the trailing EXISTS never surfaces).
+		// SPEC: the response stream must survive the line.
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
 			() => undefined,
 		);
@@ -483,15 +482,16 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC7162-3.2.7-2 / RFC7162-3.2.10.2-1 — bare VANISHED in lieu of EXPUNGE
-// (REAL — HONEST VIOLATION, probed)
+// (REAL — M4.6)
 // ═════════════════════════════════════════════════════════════════════════════
 // After ENABLED QRESYNC the server MUST report expunges — for the client's own
 // (UID) EXPUNGE and for other-session expunges — as '* VANISHED <uids>' (no
 // EARLIER tag) instead of '* n EXPUNGE', for the rest of the connection
 // (upgraded SHOULD→MUST vs RFC 5162, Appendix B). §3.2.7's example shape.
-// PROBED: identical failure mode to the EARLIER form — dropped line + dead
-// parser. This is the headline QRESYNC finding: a QRESYNC-enabling client
-// would lose every response after the first expunge event.
+// Originally probed with the identical failure mode as the EARLIER form
+// (dropped line + dead parser — the headline pre-M4.6 QRESYNC finding: a
+// QRESYNC-enabling client would lose every response after the first expunge
+// event); vanished.ts landed in M4.6, so this now genuinely passes.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.2.7-2", "RFC7162-3.2.10.2-1"],
@@ -525,7 +525,7 @@ complianceTest(
 		expect(
 			vanished,
 			"a '* VANISHED 405,407,410,425' response must be accepted in lieu of EXPUNGE " +
-				"(RFC 7162 §3.2.10.2) — the client has no VANISHED parse path",
+				"(RFC 7162 §3.2.10.2)",
 		).toBeDefined();
 		// SPEC: the response stream must survive the line.
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
