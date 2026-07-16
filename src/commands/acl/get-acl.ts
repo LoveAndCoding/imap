@@ -15,7 +15,10 @@ import type { CommandWriter } from "../writer";
  * header comment for the full rights-string design constraint).
  */
 export interface AclEntry {
+	/** The identifier (user or group) this entry grants rights to. */
 	identifier: string;
+	/** The rights string granted to `identifier`, exactly as the server sent
+	 *  it (I-6), including any virtual "d"/"c" letters. */
 	rights: string;
 }
 
@@ -24,7 +27,11 @@ export interface AclEntry {
  *  empty for a mailbox with no ACL entries at all — a legal, non-error
  *  outcome, never synthesized data (I-6). */
 export interface AclResult {
+	/** The mailbox name the caller asked about (already decoded/
+	 *  canonicalized, never the server's own echo). */
 	mailbox: string;
+	/** One entry per identifier the server reports; empty for a mailbox with
+	 *  no ACL entries at all. */
 	entries: AclEntry[];
 }
 

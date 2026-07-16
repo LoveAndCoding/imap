@@ -67,6 +67,9 @@ export class XOAuth2Mechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link XOAuth2Mechanism} instance (Google/Microsoft
+ *  XOAUTH2). Registered under the "XOAUTH2" name by the mechanism registry
+ *  (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createXOAuth2Mechanism(): SaslMechanism {
 	return new XOAuth2Mechanism();
 }

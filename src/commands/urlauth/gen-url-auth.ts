@@ -22,7 +22,11 @@ import type { CommandWriter } from "../writer";
  * only defined mechanism).
  */
 export interface UrlauthRump {
+	/** The url-rump: an IMAP URL already carrying its own `;URLAUTH=<access>`
+	 *  component, addressing a specific message (or message part). */
 	url: string;
+	/** URLAUTH mechanism to authorize with. Defaults to `"INTERNAL"` (RFC
+	 *  4467 §2.4.1 — the base spec's only defined mechanism). */
 	mechanism?: string;
 }
 

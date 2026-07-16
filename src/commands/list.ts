@@ -66,6 +66,7 @@ export interface ListOptions {
  * so option-bearing commands built without a probe throw `CapabilityError`.
  */
 export interface ListCapabilityProbe {
+	/** Case-insensitive membership test: is `cap` currently advertised? */
 	has(cap: string): boolean;
 	/** All known capabilities, canonical upper-case. Optional: only needed
 	 *  for RETURN (STATUS ...) per-item gates that inspect valued

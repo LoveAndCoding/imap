@@ -119,6 +119,9 @@ export class OAuthBearerMechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link OAuthBearerMechanism} instance (RFC 7628
+ *  OAUTHBEARER). Registered under the "OAUTHBEARER" name by the mechanism
+ *  registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createOAuthBearerMechanism(): SaslMechanism {
 	return new OAuthBearerMechanism();
 }

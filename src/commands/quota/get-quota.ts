@@ -26,8 +26,12 @@ import type { CommandWriter } from "../writer";
  * impose one.
  */
 export interface QuotaResourceUsage {
+	/** Resource name, exactly as the server sent it (RFC 9208 §7), e.g.
+	 *  `STORAGE`, `MESSAGE`. */
 	resource: string;
+	/** Current usage of this resource (RFC 9208 §3.1.2 number64). */
 	usage: number | bigint;
+	/** The resource's configured limit (RFC 9208 §3.1.2 number64). */
 	limit: number | bigint;
 }
 
@@ -39,7 +43,9 @@ export interface QuotaResourceUsage {
  * (`get-quota-root.ts`'s `QuotaRootResult`).
  */
 export interface QuotaResult {
+	/** The quota root's name (an opaque astring, not a mailbox name). */
 	root: string;
+	/** Each resource governed by this root, with its usage and limit. */
 	resources: QuotaResourceUsage[];
 }
 

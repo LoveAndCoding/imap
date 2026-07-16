@@ -25,11 +25,16 @@ import {
  * module (registered in `untagged.ts`'s checklist) is the fix.
  */
 export class GenUrlAuthResponse {
+	/** Discriminant identifying this response's untagged keyword, for
+	 *  narrowing a generic untagged response to this class. */
 	public static readonly commandType = "GENURLAUTH";
 	/** One or more freshly-authorized URLs, in the same order as the
 	 *  GENURLAUTH command's own url-rump/mechanism pairs. */
 	public readonly urls: string[];
 
+	/** Matches an untagged `"GENURLAUTH" 1*(SP url-full)"` line and, on
+	 *  success, parses and returns a {@link GenUrlAuthResponse}; `null` if
+	 *  `tokens` doesn't start with the `GENURLAUTH` keyword. */
 	public static match(tokens: LexerTokenList): GenUrlAuthResponse | null {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "GENURLAUTH" },
@@ -69,7 +74,15 @@ export class GenUrlAuthResponse {
  *     reason.
  */
 export interface UrlFetchMetadataItem {
+	/** The canonicalized (uppercased) parameter name, e.g.
+	 *  `"BODYPARTSTRUCTURE"`, `"BINARY"`, `"BODY"`, or a future extension
+	 *  atom (RFC5524 §5 `url-fetch-param =/ ... / atom`). */
 	param: string;
+	/** The parameter's value: a parsed `MessageBodyStructure`/
+	 *  `MessageBodyMultipartStructure` for `BODYPARTSTRUCTURE`, or a plain
+	 *  nstring value (`string | null`) for `BINARY`/`BODY`/any other
+	 *  extension atom — see this interface's doc comment above for when
+	 *  `null` applies. */
 	value: string | null | MessageBodyStructure | MessageBodyMultipartStructure;
 }
 
@@ -81,8 +94,16 @@ export interface UrlFetchMetadataItem {
  *  order). */
 export class UrlFetchResult {
 	constructor(
+		/** The `url-full` this result is for, exactly as requested/echoed by
+		 *  the server. */
 		public readonly url: string,
+		/** The fetched content for the unextended `nstring` form, or `null`
+		 *  if `url` was invalid/expired. `undefined` when `metadata` is
+		 *  populated instead (the RFC 5524 extended form). */
 		public readonly data?: string | null,
+		/** The RFC 5524 extended per-URL metadata items, one per requested
+		 *  parameter, in server-return order. `undefined` when `data` is
+		 *  populated instead (the unextended form). */
 		public readonly metadata?: UrlFetchMetadataItem[],
 	) {}
 }
@@ -109,9 +130,16 @@ export class UrlFetchResult {
  * parsed independently off whatever actually follows its own url-full.
  */
 export class UrlFetchResponse {
+	/** Discriminant identifying this response's untagged keyword, for
+	 *  narrowing a generic untagged response to this class. */
 	public static readonly commandType = "URLFETCH";
+	/** One result per `<url-full>` in the response, in server order. */
 	public readonly results: UrlFetchResult[];
 
+	/** Matches an untagged `"URLFETCH" 1*(SP url-full SP nstring)"` (or RFC
+	 *  5524 extended) line and, on success, parses and returns a
+	 *  {@link UrlFetchResponse}; `null` if `tokens` doesn't start with the
+	 *  `URLFETCH` keyword. */
 	public static match(tokens: LexerTokenList): UrlFetchResponse | null {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "URLFETCH" },

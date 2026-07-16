@@ -16,7 +16,14 @@
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getAStringValue, matchesFormat, splitSpaceSeparatedList } from "../utility";
 
+/**
+ * `LANGUAGE` response (RFC 5255 §3.3) -- either an announcement that the
+ * server is now using a single language, or an enumeration of the
+ * languages available (distinguished by how many tags are present; see
+ * {@link LanguageResponse.languages}).
+ */
 export class LanguageResponse {
+	/** The untagged-response keyword this class matches ("LANGUAGE"). */
 	public static readonly commandType = "LANGUAGE";
 
 	/**
@@ -30,6 +37,14 @@ export class LanguageResponse {
 	 */
 	public readonly languages: readonly string[];
 
+	/**
+	 * Tests whether `tokens` is an untagged LANGUAGE response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link LanguageResponse}, or `null` if `tokens` is not
+	 * a LANGUAGE response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "LANGUAGE" },
@@ -51,7 +66,13 @@ export class LanguageResponse {
 	}
 }
 
+/**
+ * `COMPARATOR` response (RFC 5255 §4.8) -- reports the collation now
+ * active, and optionally which registered comparators matched a client's
+ * COMPARATOR command arguments.
+ */
 export class ComparatorResponse {
+	/** The untagged-response keyword this class matches ("COMPARATOR"). */
 	public static readonly commandType = "COMPARATOR";
 
 	/** First field (comp-sel-quoted): the name of the now-active comparator
@@ -68,6 +89,14 @@ export class ComparatorResponse {
 	 */
 	public readonly matched: readonly string[];
 
+	/**
+	 * Tests whether `tokens` is an untagged COMPARATOR response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link ComparatorResponse}, or `null` if `tokens` is not
+	 * a COMPARATOR response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "COMPARATOR" },

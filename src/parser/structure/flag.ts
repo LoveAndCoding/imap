@@ -37,10 +37,25 @@ export class Flag {
 	}
 }
 
+/**
+ * A parsed IMAP flag-list (RFC 3501/9051 §2.3.2), e.g. the parenthesized
+ * flag set carried by an untagged `FLAGS` response or a FETCH `FLAGS`
+ * message attribute -- a case-insensitive collection of system and
+ * keyword flags, plus whether the `\*` wildcard (permanent-flags-may-be-
+ * created marker) was present.
+ */
 export class FlagList {
 	protected flagMap: Map<string, Flag>;
 	protected hasWildcard: boolean;
 
+	/**
+	 * Tests whether `tokens` is an untagged FLAGS response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link FlagList}, or `null` if `tokens` is not a FLAGS
+	 * response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
 		if (
@@ -80,10 +95,12 @@ export class FlagList {
 		});
 	}
 
+	/** All flags in this list, in insertion order. */
 	public get flags(): Flag[] {
 		return Array.from(this.flagMap.values());
 	}
 
+	/** Whether the `\*` wildcard flag was present in this list. */
 	public get includesWildcard(): boolean {
 		return this.hasWildcard;
 	}
@@ -96,6 +113,12 @@ export class FlagList {
 		this.hasWildcard = this.hasWildcard || flag.isWildcard;
 	}
 
+	/**
+	 * Tests whether this list contains `flag`, compared case-insensitively
+	 * per RFC 3501/9051 §11.1.
+	 *
+	 * @param flag - The flag name to look up (e.g. `"\\Seen"`).
+	 */
 	public has(flag: string) {
 		return this.flagMap.has(ciCanonicalize(flag));
 	}

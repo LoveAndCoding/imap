@@ -19,8 +19,15 @@ import type { QuotaResult } from "./get-quota";
  * `roots` entry lacking one (I-6: absent data stays absent, never invented).
  */
 export interface QuotaRootResult {
+	/** The mailbox name the caller asked about (already decoded/
+	 *  canonicalized, never the server's own echo). */
 	mailbox: string;
+	/** The mailbox's governing quota root names, in server order — possibly
+	 *  empty if the mailbox is governed by no quota root at all. */
 	roots: string[];
+	/** QUOTA data for each root the server also reported inline, in arrival
+	 *  order — only the roots the server actually sent a matching QUOTA line
+	 *  for (never synthesized for a `roots` entry lacking one). */
 	quotas: QuotaResult[];
 }
 

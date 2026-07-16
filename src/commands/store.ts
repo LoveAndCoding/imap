@@ -35,7 +35,13 @@ export type StoreOperation = "add" | "remove" | "replace";
  * CONDSTORE isn't available at all.
  */
 export interface StoreModifiers {
+	/** Emit the `.SILENT` suffix, suppressing the server's own-change FETCH
+	 *  FLAGS echo. Defaults to `false` — see this interface's own doc
+	 *  comment for the design decision behind that default. */
 	silent?: boolean;
+	/** RFC 7162 CONDSTORE `UNCHANGEDSINCE` store-modifier: only touch
+	 *  messages whose mod-sequence hasn't changed since this value. Requires
+	 *  the CONDSTORE capability to be advertised. */
 	unchangedSince?: bigint;
 }
 
@@ -60,6 +66,9 @@ const NO_STORE_CAPS: StoreCapabilityProbe = { has: () => false };
  * thrown error for a plain, fully-applied STORE.
  */
 export interface StoreResult {
+	/** Sequence/UID numbers this STORE could NOT update because
+	 *  `unchangedSince` excluded them (RFC 7162 §3.2.5.1 `MODIFIED`
+	 *  resp-code) — present only on a CONDSTORE partial failure. */
 	modified?: number[];
 }
 

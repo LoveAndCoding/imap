@@ -22,8 +22,13 @@ export type { UrlFetchMetadataItem };
  * (zero bytes written, I-9).
  */
 export interface UrlFetchOptions {
+	/** Request the BODYPARTSTRUCTURE extended parameter (RFC 5524 §3.1). */
 	bodyPartStructure?: boolean;
+	/** Request the BINARY extended parameter (RFC 5524 §3.1) — decoded
+	 *  binary content-transfer-encoding. Mutually exclusive with `body`. */
 	binary?: boolean;
+	/** Request the BODY extended parameter (RFC 5524 §3.1) — raw MIME body
+	 *  part content. Mutually exclusive with `binary`. */
 	body?: boolean;
 }
 
@@ -32,8 +37,13 @@ export interface UrlFetchOptions {
  *  re-exported as the command's own public result type per this codebase's
  *  "command owns the public type it produces" convention). */
 export interface UrlFetchResultItem {
+	/** The url this result corresponds to, exactly as requested. */
 	url: string;
+	/** The fetched content, `null` if the URL failed to resolve, or absent
+	 *  when only extended metadata (no content) was requested/returned. */
 	data?: string | null;
+	/** Extended-parameter metadata (BODYPARTSTRUCTURE/BINARY/BODY), present
+	 *  only when the extended URLFETCH form was used. */
 	metadata?: UrlFetchMetadataItem[];
 }
 

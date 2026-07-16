@@ -20,39 +20,147 @@ import type { CommandWriter } from "./writer";
  * than a generic `NOT (KEYWORD ...)` wrap.
  */
 export interface SearchCriteria {
+	/** RFC 3501/9051 §6.4.4/§9.4.4 `ALL` search-key: matches every message in
+	 *  the mailbox. Only `true` is meaningful (there is no negated wire
+	 *  form). */
 	all?: true;
+	/** `ANSWERED`/`UNANSWERED` search-key — matches on whether the `\Answered`
+	 *  flag is set. */
 	answered?: boolean;
+	/** `DELETED`/`UNDELETED` search-key — matches on whether the `\Deleted`
+	 *  flag is set. */
 	deleted?: boolean;
+	/** `DRAFT`/`UNDRAFT` search-key — matches on whether the `\Draft` flag is
+	 *  set. */
 	draft?: boolean;
+	/** `FLAGGED`/`UNFLAGGED` search-key — matches on whether the `\Flagged`
+	 *  flag is set. */
 	flagged?: boolean;
+	/** `SEEN`/`UNSEEN` search-key — matches on whether the `\Seen` flag is
+	 *  set. */
 	seen?: boolean;
+	/** `recent: false` compiles to the dedicated `OLD` search-key rather than
+	 *  a nonexistent `UNRECENT` (see this interface's own doc comment) —
+	 *  `recent: true` compiles to plain `RECENT`. Matches on the `\Recent`
+	 *  flag. */
 	recent?: boolean;
+	/** `KEYWORD <flag>` search-key — one per value when an array is given
+	 *  (repeatable, all ANDed together). Matches on whether the named
+	 *  user-defined keyword flag is set. Negation (`not: { keyword }`)
+	 *  compiles to `UNKEYWORD` instead — see this interface's own doc
+	 *  comment. */
 	keyword?: string | string[];
+	/** `UID <sequence-set>` search-key (RFC 3501/9051 §9) — matches messages
+	 *  whose UID is in the given set. */
 	uid?: SequenceInput;
+	/** Bare `sequence-set` search-key (RFC 3501/9051 §9 search-key's final
+	 *  alternative) — matches messages whose MESSAGE SEQUENCE NUMBER is in
+	 *  the given set, distinct from the UID-keyed form above. */
 	seq?: SequenceInput;
+	/** `FROM <string>` search-key — substring match against the envelope
+	 *  `From:` header field. */
 	from?: string;
+	/** `TO <string>` search-key — substring match against the envelope `To:`
+	 *  header field. */
 	to?: string;
+	/** `CC <string>` search-key — substring match against the envelope `Cc:`
+	 *  header field. */
 	cc?: string;
+	/** `BCC <string>` search-key — substring match against the envelope
+	 *  `Bcc:` header field. */
 	bcc?: string;
+	/** `SUBJECT <string>` search-key — substring match against the envelope
+	 *  `Subject:` header field. */
 	subject?: string;
+	/** `BODY <string>` search-key — substring match against the message
+	 *  body's text. */
 	body?: string;
+	/** `TEXT <string>` search-key — substring match against the entire
+	 *  message (headers and body). */
 	text?: string;
-	header?: Array<{ field: string; value: string }>;
+	/** `HEADER <field> <string>` search-key, one per entry (repeatable, all
+	 *  ANDed together) — matches messages carrying a header field named
+	 *  `field` whose value contains `value` as a substring. An empty
+	 *  `value` matches any message that has the named header field at
+	 *  all. */
+	header?: Array<{
+		/** The header field name to match against (e.g. `"X-Mailer"`). */
+		field: string;
+		/** The substring to look for within that header field's value. */
+		value: string;
+	}>;
+	/** `BEFORE <date>` search-key — matches messages whose INTERNALDATE is
+	 *  earlier than the given date (date only, time discarded). */
 	before?: Date;
+	/** `ON <date>` search-key — matches messages whose INTERNALDATE falls on
+	 *  the given date. */
 	on?: Date;
+	/** `SINCE <date>` search-key — matches messages whose INTERNALDATE is
+	 *  on or after the given date. */
 	since?: Date;
+	/** `SENTBEFORE <date>` search-key — matches messages whose `Date:`
+	 *  header is earlier than the given date. */
 	sentBefore?: Date;
+	/** `SENTON <date>` search-key — matches messages whose `Date:` header
+	 *  falls on the given date. */
 	sentOn?: Date;
+	/** `SENTSINCE <date>` search-key — matches messages whose `Date:` header
+	 *  is on or after the given date. */
 	sentSince?: Date;
+	/** `LARGER <n>` search-key — matches messages whose RFC822.SIZE is
+	 *  strictly larger than `n` octets. A `bigint` is written via the
+	 *  bignumber form for a size beyond safe-integer range; a `number` uses
+	 *  the ordinary numeric form. */
 	larger?: number | bigint;
+	/** `SMALLER <n>` search-key — matches messages whose RFC822.SIZE is
+	 *  strictly smaller than `n` octets. Same `number`/`bigint` handling as
+	 *  `larger` above. */
 	smaller?: number | bigint;
+	/** `OLDER <n>` search-key (RFC 5032 WITHIN extension, gated on the
+	 *  `WITHIN` capability): matches messages whose INTERNALDATE is at
+	 *  least `n` seconds ago — `n` must be a positive non-zero integer. */
 	older?: number;
+	/** `YOUNGER <n>` search-key (RFC 5032 WITHIN extension, gated on the
+	 *  `WITHIN` capability): matches messages whose INTERNALDATE is less
+	 *  than `n` seconds ago — `n` must be a positive non-zero integer. */
 	younger?: number;
-	modSeq?: { since: bigint; entry?: string; type?: "priv" | "shared" | "all" };
+	/** `MODSEQ [entry-name entry-type-req] <n>` search-key (RFC 7162 §9,
+	 *  gated on the `CONDSTORE` capability): matches messages whose
+	 *  mod-sequence value is greater than or equal to `since`. `entry` and
+	 *  `type` (`"priv"`/`"shared"`/`"all"`, uppercased on the wire) form the
+	 *  optional metadata-item qualifier and must be supplied together, or
+	 *  omitted together. */
+	modSeq?: {
+		/** The mod-sequence threshold: matches messages at or above this
+		 *  value. */
+		since: bigint;
+		/** Optional metadata-item entry name qualifying the comparison (must
+		 *  be supplied together with `type`, or omitted together). */
+		entry?: string;
+		/** Optional metadata-item entry-type qualifier (must be supplied
+		 *  together with `entry`, or omitted together); uppercased on the
+		 *  wire (`PRIV`/`SHARED`/`ALL`). */
+		type?: "priv" | "shared" | "all";
+	};
+	/** `EMAILID <string>` search-key (RFC 8474 OBJECTID, gated on the
+	 *  `OBJECTID` capability): matches the single message whose stable
+	 *  email identifier equals the given value. */
 	emailId?: string;
+	/** `THREADID <string>` search-key (RFC 8474 OBJECTID, gated on the
+	 *  `OBJECTID` capability): matches every message sharing the given
+	 *  stable thread identifier. */
 	threadId?: string;
+	/** `SAVEDON <date>` search-key (RFC 8514, gated on the `SAVEDATE`
+	 *  capability): matches messages whose save-date falls on the given
+	 *  date. */
 	savedateOn?: Date;
+	/** `SAVEDSINCE <date>` search-key (RFC 8514, gated on the `SAVEDATE`
+	 *  capability): matches messages whose save-date is on or after the
+	 *  given date. */
 	savedateSince?: Date;
+	/** `SAVEDBEFORE <date>` search-key (RFC 8514, gated on the `SAVEDATE`
+	 *  capability): matches messages whose save-date is earlier than the
+	 *  given date. */
 	savedBefore?: Date;
 	/** RFC 8514 §5 ABNF `search-key =/ ... / "SAVEDATESUPPORTED"` — an
 	 *  argument-less probe distinct from the three date-taking `savedate*`
@@ -61,9 +169,21 @@ export interface SearchCriteria {
 	 *  Only `true` is meaningful (there is no negated wire form); compiles
 	 *  to the bare `SAVEDATESUPPORTED` atom. */
 	savedateSupported?: true;
+	/** `X-GM-RAW <string>` search-key (Gmail extension, gated on the
+	 *  `X-GM-EXT-1` capability): matches messages using Gmail's own search
+	 *  syntax, passed through verbatim as the query string. */
 	gmailRaw?: string;
+	/** `X-GM-THRID <string>` search-key (Gmail extension, gated on the
+	 *  `X-GM-EXT-1` capability): matches every message belonging to the
+	 *  given Gmail thread ID. */
 	gmailThreadId?: string;
+	/** `X-GM-MSGID <string>` search-key (Gmail extension, gated on the
+	 *  `X-GM-EXT-1` capability): matches the message with the given Gmail
+	 *  message ID. */
 	gmailMessageId?: string;
+	/** `X-GM-LABELS <string>` search-key (Gmail extension, gated on the
+	 *  `X-GM-EXT-1` capability): matches messages carrying the given Gmail
+	 *  label. */
 	gmailLabels?: string;
 	/** RFC 5466 §3.1/§4 (FILTERS), M5.4 carry-forward from M4.14: references
 	 *  a named filter stored under `/private|/shared/filters/values/<name>`
@@ -73,9 +193,27 @@ export interface SearchCriteria {
 	 *  `FILTER <filter_name>` search-key (RFC5466-3.1-1), gated on the
 	 *  `FILTERS` capability. */
 	filter?: string;
+	/** `FUZZY <search-key>` (RFC 6203 §4, gated on the `SEARCH=FUZZY`
+	 *  capability): wraps a single nested criterion, requesting an
+	 *  approximate/fuzzy match instead of the wrapped key's ordinary exact
+	 *  semantics — pairs with `SearchOptions.return`'s `"RELEVANCY"` option
+	 *  (`search.ts`) to retrieve a relevancy score per match. */
 	fuzzy?: SearchCriteria;
+	/** `NOT <search-key>` — matches every message that does NOT satisfy the
+	 *  nested criteria. The one exception is a bare `{ keyword }` payload,
+	 *  which compiles to the dedicated `UNKEYWORD` key instead of a generic
+	 *  `NOT (KEYWORD ...)` wrap — see this interface's own doc comment. */
 	not?: SearchCriteria;
+	/** n-ary `OR <search-key> <search-key>` (RFC 3501/9051 §9's wire grammar
+	 *  only ever takes two operands; `compileOr` left-folds a longer array
+	 *  into nested `OR` pairs) — matches every message satisfying at least
+	 *  one of the given criteria objects. */
 	or?: SearchCriteria[];
+	/** Multiple criteria objects, each compiled and emitted back-to-back as
+	 *  their own independent search-keys — every key in a `SEARCH` command's
+	 *  argument list is implicitly ANDed (RFC 3501/9051 §9), so this is a
+	 *  convenience grouping rather than a dedicated wire construct of its
+	 *  own. */
 	and?: SearchCriteria[];
 }
 
@@ -84,6 +222,8 @@ export interface SearchCriteria {
  *  by `MailboxSessionDriver.hasCapability` alike, so this module has no
  *  dependency on either the client or the mailbox-session layer. */
 export interface SearchCapabilityProbe {
+	/** `true` when the server has advertised (or, for an `_enabled`-aware
+	 *  probe, positively ENABLEd) the named capability. */
 	has(cap: string): boolean;
 }
 

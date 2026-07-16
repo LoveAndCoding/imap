@@ -59,10 +59,34 @@ import { CommandWriter } from "./writer";
  * API); cancel a registration with `MailboxSession.cancelUpdate()`.
  */
 export interface SearchOptions {
+	/** The `CHARSET` clause's argument. Omitted means "UTF-8 when the
+	 *  criteria contains a non-ASCII string, no CHARSET clause at all
+	 *  otherwise" -- see `criteriaHasNonAscii()`. */
 	charset?: string;
+	/** The ESEARCH `RETURN (...)` option list (RFC 4731/9051 §6.4.4). An
+	 *  explicitly empty array is its own legal form (RFC4731 §3.1),
+	 *  requesting an ESEARCH response equivalent to `ALL`. */
 	return?: Array<"MIN" | "MAX" | "ALL" | "COUNT" | "SAVE" | "RELEVANCY">;
-	partial?: { from: number; to: number };
-	update?: boolean | { fetchAtts: readonly string[] };
+	/** The RFC 9394 `PARTIAL m:n` return option's range -- see
+	 *  `validatePartialRange()` for the from/to sign-matching rule. */
+	partial?: {
+		/** The range's start (an nz-number, or a minus-prefixed one for
+		 *  newest-first paging -- must share `to`'s sign). */
+		from: number;
+		/** The range's end -- must share `from`'s sign. */
+		to: number;
+	};
+	/** The RFC 5267 §4.3 `UPDATE` return option -- `true` for the bare form,
+	 *  or the object form carrying RFC 5465 §7's optional fetch-att list.
+	 *  See `normalizeUpdateOption()` for the capability gates. */
+	update?:
+		| boolean
+		| {
+				/** Raw, pre-formed fetch-att wire tokens (RFC 5465 §7's
+				 *  optional parenthesized fetch-att list), passed through
+				 *  verbatim. */
+				fetchAtts: readonly string[];
+		  };
 }
 
 /**
@@ -88,13 +112,38 @@ export interface SearchOptions {
  * this correlator stays unambiguous for the connection's lifetime.
  */
 export interface SearchResult {
+	/** The full matching UID/sequence-number list -- from either the classic
+	 *  untagged `SEARCH` line or an ESEARCH `ALL` return-data item. */
 	uids?: number[];
+	/** The ESEARCH `MIN` return-data item: the lowest matching UID/sequence
+	 *  number. */
 	min?: number;
+	/** The ESEARCH `MAX` return-data item: the highest matching UID/sequence
+	 *  number. */
 	max?: number;
+	/** The ESEARCH `COUNT` return-data item: the number of matching
+	 *  messages. */
 	count?: number;
+	/** The ESEARCH `MODSEQ` return-data item (RFC 7162 CONDSTORE): the
+	 *  highest mod-sequence value among the matching messages. */
 	modSeq?: bigint;
+	/** `true` when `RETURN (SAVE)` was requested and this command completed
+	 *  -- a refused SAVE rejects the command's promise before this field is
+	 *  ever produced. */
 	saved?: boolean;
-	partial?: { range: string; uids: number[] };
+	/** The RFC 9394 `PARTIAL` return-data item: one page of the result set. */
+	partial?: {
+		/** The requested range, echoed back verbatim (possibly negative for
+		 *  newest-first paging). */
+		range: string;
+		/** The expanded UID list for that range -- empty when the server
+		 *  returned `NIL` (nothing in this range). */
+		uids: number[];
+	};
+	/** The RFC 5267 §4.3 update correlator -- set only when
+	 *  `SearchOptions.update` was requested; the tag this command's later
+	 *  unsolicited ADDTO/REMOVEFROM notifications carry, and the argument
+	 *  `MailboxSession.cancelUpdate()` takes to end the registration. */
 	updateTag?: string;
 }
 
@@ -102,7 +151,14 @@ const RETURN_VOCAB: ReadonlySet<string> = new Set(["MIN", "MAX", "ALL", "COUNT",
 
 /** `SearchOptions.update` after validation: `false` (absent/explicitly off),
  *  `true` (bare `UPDATE`), or the fetch-att-carrying object form. */
-export type NormalizedUpdateOption = false | true | { fetchAtts: readonly string[] };
+export type NormalizedUpdateOption =
+	| false
+	| true
+	| {
+			/** Raw, pre-formed fetch-att wire tokens, carried through
+			 *  unchanged from `SearchOptions.update`'s object form. */
+			fetchAtts: readonly string[];
+	  };
 
 /**
  * Validates and capability-gates `SearchOptions.update` for BOTH commands
@@ -178,9 +234,20 @@ export function normalizeUpdateOption(
  * option"). Throws `RangeError` before any bytes are written (I-9).
  */
 export function validatePartialRange(
-	partial: { from: number; to: number },
+	partial: {
+		/** The range's start (an nz-number, or a minus-prefixed one for
+		 *  newest-first paging -- must share `to`'s sign). */
+		from: number;
+		/** The range's end -- must share `from`'s sign. */
+		to: number;
+	},
 	label: string,
-): { from: number; to: number } {
+): {
+	/** The validated range start, unchanged from the input `partial.from`. */
+	from: number;
+	/** The validated range end, unchanged from the input `partial.to`. */
+	to: number;
+} {
 	const { from, to } = partial;
 	if (
 		typeof from !== "number" ||

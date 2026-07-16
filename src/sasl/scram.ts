@@ -64,6 +64,8 @@ export type ScramHashAlgo = "sha1" | "sha256";
 /** PBKDF2/HMAC/H() output length in bytes for each supported digest. */
 const HASH_LEN: Record<ScramHashAlgo, number> = { sha1: 20, sha256: 32 };
 
+/** Construction options for {@link createScramSha1Mechanism}/
+ *  {@link createScramSha256Mechanism}. */
 export interface ScramMechanismOptions {
 	/** Test-only nonce override. Production code omits this and gets a
 	 *  fresh, cryptographically random nonce per attempt (RFC5802-5.1-7:
@@ -358,10 +360,16 @@ export class ScramMechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link ScramMechanism} instance keyed to SHA-1 (RFC
+ *  5802 SCRAM-SHA-1). Registered under the "SCRAM-SHA-1" name by the
+ *  mechanism registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createScramSha1Mechanism(opts?: ScramMechanismOptions): SaslMechanism {
 	return new ScramMechanism("sha1", opts);
 }
 
+/** Factory for a fresh {@link ScramMechanism} instance keyed to SHA-256
+ *  (RFC 7677 SCRAM-SHA-256). Registered under the "SCRAM-SHA-256" name by
+ *  the mechanism registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createScramSha256Mechanism(opts?: ScramMechanismOptions): SaslMechanism {
 	return new ScramMechanism("sha256", opts);
 }

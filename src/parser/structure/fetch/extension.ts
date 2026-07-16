@@ -6,19 +6,35 @@ import type { StreamedBodyContents } from "./body.section";
 
 // No spec for Gmail extensions.
 // Defined at https://developers.google.com/gmail/imap/imap-extensions
+/** X-GM-EXT-1 `X-GM-MSGID` FETCH data item: Gmail's own immutable message ID. */
 export class GmailMessageId {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "X-GM-MSGID";
 
-	constructor(public readonly id: number | bigint) {}
+	constructor(
+		/** Gmail's immutable per-message identifier. */
+		public readonly id: number | bigint,
+	) {}
 }
 
+/** X-GM-EXT-1 `X-GM-THRID` FETCH data item: Gmail's own thread ID (shared by
+ *  every message Gmail considers part of the same conversation). */
 export class GmailThreadId {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "X-GM-THRID";
-	constructor(public readonly id: number | bigint) {}
+	constructor(
+		/** Gmail's thread identifier, shared by every message in the
+		 *  conversation. */
+		public readonly id: number | bigint,
+	) {}
 }
 
+/** X-GM-EXT-1 `X-GM-LABELS` FETCH data item: the Gmail labels applied to this
+ *  message (parsed with the same flag-list grammar as IMAP flags). */
 export class GmailLabels {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "X-GM-LABELS";
+	/** The message's Gmail labels. */
 	public readonly labels: FlagList;
 
 	constructor(tokens: LexerTokenList) {
@@ -31,16 +47,25 @@ export class GmailLabels {
  *  wire (never quoted -- its own charset excludes everything that would
  *  require quoting). */
 export class EmailId {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "EMAILID";
-	constructor(public readonly id: string) {}
+	constructor(
+		/** The RFC 8474 `objectid` the server assigned this message. */
+		public readonly id: string,
+	) {}
 }
 
 /** RFC 8474 §5.2/§5.3: `"THREADID" SP ("(" objectid ")" / nil)` -- `nil`
  *  (RFC8474-5.2-1) whenever the server has no threading info for this
  *  message (a real, tolerated outcome, not an error). */
 export class ThreadId {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "THREADID";
-	constructor(public readonly id: string | null) {}
+	constructor(
+		/** The RFC 8474 `objectid` for this message's thread, or `null`
+		 *  (RFC8474-5.2-1) when the server has no threading info for it. */
+		public readonly id: string | null,
+	) {}
 }
 
 /** RFC 8514 §4.2 (SAVEDATE, M3.5): `"SAVEDATE" SP (date-time / nil)`. `nil`
@@ -48,7 +73,9 @@ export class ThreadId {
  *  server can't determine it) -- kept as `null`, not coerced to a sentinel
  *  Date, matching `FetchedMessage.saveDate: Date | null` (spec §5.4). */
 export class SaveDate {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "SAVEDATE";
+	/** The message's save-date, or `null` for the RFC8514-4.2-2 nil case. */
 	public readonly datetime: Date | null;
 
 	constructor(dateTimeStr: string | null) {
@@ -61,8 +88,15 @@ export class SaveDate {
  *  intentionally empty preview, RFC8970-3.2-1) are both real, distinct,
  *  tolerated values -- never coerced together. */
 export class Preview {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "PREVIEW";
-	constructor(public readonly text: string | null) {}
+	constructor(
+		/** The generated preview text; `null` for nil (no preview generated /
+		 *  LAZY requested and none cached yet), `""` for an intentionally
+		 *  empty preview (RFC8970-3.2-1) -- both real, distinct, tolerated
+		 *  values. */
+		public readonly text: string | null,
+	) {}
 }
 
 /**
@@ -77,11 +111,21 @@ export class Preview {
  * needed here (contrast `MessageBodySection`'s richer `BODY[...]` grammar).
  */
 export class BinarySection {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "BINARY";
 	constructor(
+		/** The raw leaf part-path the server echoed (e.g. `"1"`, `"1.2"`). */
 		public readonly section: string,
+		/** The partial-fetch byte offset the server echoed (the `<N>` in
+		 *  `BINARY[section]<N>`), or `undefined` when no partial range was
+		 *  requested/echoed. */
 		public readonly offset: number | undefined,
+		/** The decoded content when it arrived inline (short enough not to
+		 *  stream); `undefined` when `stream` carries it instead. */
 		public readonly contents: string | undefined,
+		/** The decoded content as a lazy stream, for a literal8 large enough
+		 *  to stream rather than buffer inline; `undefined` when `contents`
+		 *  carries it instead. */
 		public readonly stream: StreamedBodyContents | undefined,
 	) {}
 }
@@ -90,13 +134,20 @@ export class BinarySection {
  *  octet count for the same leaf part `BinarySection` addresses. Rendered
  *  as `number | bigint` (spec §11.3: octet counts are number64-class). */
 export class BinarySize {
+	/** Discriminant for narrowing {@link ExtensionsSupported}. */
 	public readonly type = "BINARY.SIZE";
 	constructor(
+		/** The raw leaf part-path the server echoed (e.g. `"1"`, `"1.2"`). */
 		public readonly section: string,
+		/** The decoded octet count for that leaf part. */
 		public readonly size: number | bigint,
 	) {}
 }
 
+/** The closed set of FETCH data-item extension classes this module parses
+ *  (Gmail's X-GM-EXT-1 trio plus RFC 8474 OBJECTID, RFC 8514 SAVEDATE,
+ *  RFC 8970 PREVIEW, and RFC 3516 BINARY/BINARY.SIZE) -- the union `match()`
+ *  below returns one instance of. */
 export type ExtensionsSupported =
 	| BinarySection
 	| BinarySize

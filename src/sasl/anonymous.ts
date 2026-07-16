@@ -148,6 +148,9 @@ function isProhibitedTraceCodePoint(cp: number): boolean {
 	return false;
 }
 
+/** Factory for a fresh {@link AnonymousMechanism} instance (RFC 4505
+ *  ANONYMOUS). Registered under the "ANONYMOUS" name by the mechanism
+ *  registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createAnonymousMechanism(): SaslMechanism {
 	return new AnonymousMechanism();
 }

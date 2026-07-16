@@ -33,8 +33,15 @@ import { CommandWriter } from "../writer";
  * all, only a grouping of its `children`.
  */
 export interface ThreadNode {
+	/** The message's UID, populated when this node was produced by a
+	 *  UID-grain call (`thread()`). Absent for the RFC's own "missing-parent"
+	 *  orphan form, and never populated together with `seq`. */
 	uid?: number;
+	/** The message's sequence number, populated when this node was produced
+	 *  by a sequence-grain call (`seq.thread()`). Absent for the RFC's own
+	 *  "missing-parent" orphan form, and never populated together with `uid`. */
 	seq?: number;
+	/** This node's child threads, recursively — empty for a leaf message. */
 	children: ThreadNode[];
 }
 

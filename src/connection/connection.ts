@@ -58,7 +58,21 @@ import { openTls } from "./tls";
 
 const DEFAULT_TIMEOUT = 10000;
 
+/**
+ * Layer-1 IMAP transport connection (spec §3.2): owns the raw socket, the
+ * newline/lexer/parser processing pipeline, TLS/STARTTLS negotiation,
+ * COMPRESS (RFC 4978) and UNAUTHENTICATE (RFC 8437), and the command queue
+ * that serializes writes to the wire. Deliberately protocol-state-agnostic
+ * beyond what's needed for connection bookkeeping itself (no LOGIN/SELECT
+ * state machine here, see the M1 scope note above) — that lives one layer up
+ * in `ImapClient`/`Session`. Intended as an escape hatch for callers who want
+ * direct control over the transport without the higher-level client.
+ */
 export default class Connection extends TypedEmitter<IConnectionEvents> {
+	/** The live transport socket for the current connection: a plain
+	 *  `net.Socket` until/unless TLS is active (implicit TLS from
+	 *  `connect()`, or a post-STARTTLS upgrade), in which case it is the
+	 *  `tls.TLSSocket` that replaced it. `undefined` when not connected. */
 	public socket: undefined | net.Socket | tls.TLSSocket;
 
 	protected lexer!: Lexer;
@@ -67,7 +81,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 	/** Response routing (spec §8): tag/claimant/continuation-owner
 	 *  attribution used by `runCommand()`'s queue-driven execution. Public
-	 *  so `connection/queue.ts`'s command execution helper can reach it. */
+	 *  so `connection/queue.ts`'s command execution helper can reach it --
+	 *  not an intended consumer-facing surface of the `Connection` escape
+	 *  hatch (spec §3.2), which is why this is `@internal` (M6.4): `public`
+	 *  here is a TypeScript module-boundary workaround, not an invitation to
+	 *  reach into response-routing internals from outside this package.
+	 *  @internal */
 	public router!: Router;
 
 	private options: IMAPConnectionConfiguration;
@@ -103,6 +122,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * the post-TLS CAPABILITY round trip; `Session` consults it after
 	 * `connect()` resolves so it doesn't re-issue CAPABILITY a second time
 	 * when the registry is already valid.
+	 *
+	 * `public` only so `ImapClient`/`getCapabilityProbe()` (this class,
+	 * below) can read it across the module boundary -- not part of the
+	 * `Connection` escape hatch's intended consumer surface, hence
+	 * `@internal` (M6.4). Layer 2 (`ImapClient`) keeps its own separate,
+	 * authoritative `CapabilityView` (src/client/capabilities.ts); this
+	 * connection-local registry exists purely for Layer-1-only callers'
+	 * literal-form decisions immediately around STARTTLS.
+	 * @internal
 	 */
 	public readonly capabilityRegistry = new CapabilityRegistry();
 
@@ -291,10 +319,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.init();
 	}
 
+	/** `true` once `connect()` has fully succeeded and the connection has not
+	 *  since been torn down. */
 	get isActive(): boolean {
 		return this.connected;
 	}
 
+	/** `true` once this connection is both active (`isActive`) and its
+	 *  transport is TLS-protected, whether via implicit TLS or a successful
+	 *  STARTTLS upgrade. */
 	get isSecure(): boolean {
 		return !!(this.connected && this.secure);
 	}
@@ -325,6 +358,21 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.options.logger?.(info);
 	}
 
+	/**
+	 * Establishes the transport connection: opens the TCP socket (or the
+	 * implicit-TLS socket, per `IMAPConnectionConfiguration.tls`), waits for
+	 * the server's greeting and applies spec §10.5's PREAUTH policy, then
+	 * performs a STARTTLS upgrade when configured as mandatory or
+	 * opportunistic. Resolves `true` once the connection is fully
+	 * established and ready for commands; resolves `false` (rather than
+	 * rejecting) for the specific "server closed the socket without any
+	 * error" outcome. Rejects on any other failure (timeout, TLS handshake
+	 * failure, mandatory-STARTTLS policy violation, a BYE greeting).
+	 *
+	 * Throws if this instance is already connected or already mid-attempt —
+	 * `disconnect()` (and letting the resulting teardown settle) must
+	 * complete before calling this again on the same instance.
+	 */
 	public async connect(): Promise<boolean> {
 		if (this.connected) {
 			throw new IMAPError(
@@ -618,6 +666,15 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.socket!.end();
 	};
 
+	/**
+	 * Tears down the current transport connection by destroying the socket.
+	 * A no-op if there is no live socket. Cleanup itself (clearing
+	 * `connected`/`secure`, resetting the router/command queue, emitting
+	 * `disconnected`) happens via the socket's own `close` handler
+	 * (`onSocketClose`), not synchronously here. `error`, if provided, is
+	 * forwarded to the socket's `destroy()` and surfaces via the usual
+	 * socket-error handling.
+	 */
 	public async disconnect(error?: Error) {
 		if (!this.socket) {
 			return;
@@ -656,6 +713,13 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		return () => this.commandQueue.off("contextQueuedBehindIsolated", cb);
 	}
 
+	/**
+	 * Appends a CRLF to `toSend`, encodes it as UTF-8, and writes it to the
+	 * wire via `writeBytes()` (routing through the compression layer when
+	 * active). A convenience wrapper for callers sending a complete line of
+	 * text; `CommandWriter`-produced byte-exact segments instead go through
+	 * `writeBytes()` directly (see that method's doc comment).
+	 */
 	public send(toSend: string) {
 		this.writeBytes(Buffer.from(toSend + CRLF, "utf8"));
 	}

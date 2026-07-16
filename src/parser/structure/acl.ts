@@ -59,9 +59,17 @@ function splitAstrings(tokens: LexerTokenList): string[] {
  *  `"ACL" SP mailbox *(SP identifier SP rights)`. `entries` is empty for a
  *  mailbox with no ACL entries at all (a legal, non-error outcome). */
 export class AclResponse {
+	/** The mailbox this ACL applies to (raw wire string, not mUTF-7/UTF-8
+	 *  decoded at this layer — see the module doc comment above). */
 	public readonly mailbox: string;
+	/** One entry per identifier/rights pair the server reported, in wire
+	 *  order. Empty when the mailbox has no ACL entries at all (a legal,
+	 *  non-error outcome). */
 	public readonly entries: AclEntry[];
 
+	/** Matches an untagged `"ACL" SP mailbox *(SP identifier SP rights)"`
+	 *  line and, on success, parses and returns an {@link AclResponse}; `null`
+	 *  if `tokens` doesn't start with the `ACL` keyword. */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "ACL" },
@@ -104,11 +112,24 @@ export class AclResponse {
  * additional grantable groups at all).
  */
 export class ListRightsResponse {
+	/** The mailbox these rights apply to (raw wire string; see the module
+	 *  doc comment above for the mUTF-7/UTF-8 decoding convention). */
 	public readonly mailbox: string;
+	/** The identifier (user or group) LISTRIGHTS was queried for. */
 	public readonly identifier: string;
+	/** The rights that are always granted to `identifier` and can never be
+	 *  removed (§3.7: the first `<rights>` string in the response). */
 	public readonly required: string;
+	/** Zero or more additional tied-rights groups, in server order; each
+	 *  string is a set of rights that MAY be granted to `identifier` together
+	 *  (§3.7: the `<rights>` strings following `required`). May be empty if
+	 *  the server reports no additional grantable groups. */
 	public readonly optional: string[];
 
+	/** Matches an untagged `"LISTRIGHTS" SP mailbox SP identifier SP rights
+	 *  *(SP rights)"` line and, on success, parses and returns a
+	 *  {@link ListRightsResponse}; `null` if `tokens` doesn't start with the
+	 *  `LISTRIGHTS` keyword. */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "LISTRIGHTS" },
@@ -142,9 +163,16 @@ export class ListRightsResponse {
  *  exchange) — `"MYRIGHTS" SP mailbox SP rights`: the full set of rights the
  *  logged-in user holds in `mailbox`. */
 export class MyRightsResponse {
+	/** The mailbox these rights apply to (raw wire string; see the module
+	 *  doc comment above for the mUTF-7/UTF-8 decoding convention). */
 	public readonly mailbox: string;
+	/** The full set of rights the logged-in user currently holds in
+	 *  `mailbox`. */
 	public readonly rights: string;
 
+	/** Matches an untagged `"MYRIGHTS" SP mailbox SP rights"` line and, on
+	 *  success, parses and returns a {@link MyRightsResponse}; `null` if
+	 *  `tokens` doesn't start with the `MYRIGHTS` keyword. */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "MYRIGHTS" },

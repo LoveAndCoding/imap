@@ -63,8 +63,24 @@ export type AppendSource = Buffer | string;
  * `CATENATE` capability is even probed.
  */
 export type CatenatePart =
-	| { type: "TEXT"; message: AppendSource }
-	| { type: "URL"; url: string };
+	| {
+			/** `"TEXT" SP literal` cat-part: a literal chunk of message
+			 *  content, contributed byte-for-byte. */
+			type: "TEXT";
+			/** The literal chunk's content -- same `AppendSource`
+			 *  Buffer-verbatim/string-UTF-8 rule and NUL-byte refusal as the
+			 *  base APPEND message. */
+			message: AppendSource;
+	  }
+	| {
+			/** `"URL" SP astring` cat-part: splices in an existing message or
+			 *  body part referenced by URL, server-side. */
+			type: "URL";
+			/** The RFC 5092 IMAP URL identifying the message/part to splice
+			 *  in -- never fetched or validated client-side; a bad URL
+			 *  surfaces as the server's own `BADURL` resp-code. */
+			url: string;
+	  };
 
 /**
  * One message entry in a MULTIAPPEND batch (RFC 3502 §6.3.11 `append-message
@@ -81,9 +97,20 @@ export type CatenatePart =
  * through `appendMany()`.
  */
 export interface AppendMessageEntry {
+	/** The message content for this batch entry -- same `AppendSource`
+	 *  Buffer-verbatim/string-UTF-8 rule and NUL-byte refusal as the base
+	 *  APPEND message. */
 	message: AppendSource;
+	/** This message's own `(flags)` prefix -- see `AppendOptions.flags`'s
+	 *  doc comment for the `\Recent` refusal that applies identically here,
+	 *  per-message. */
 	flags?: Flag[];
+	/** This message's own INTERNALDATE prefix -- omitted entirely means the
+	 *  server assigns the current date/time for this message. */
 	internalDate?: Date;
+	/** RFC 3516 `literal8` (`~{n}`) framing for this message's literal,
+	 *  independent of every other entry's own `binary` flag in the same
+	 *  batch. */
 	binary?: boolean;
 }
 
@@ -153,7 +180,11 @@ export interface AppendOptions {
  * separate multi-uid shape to this interface.
  */
 export interface AppendResult {
+	/** The mailbox's UIDVALIDITY at the time of append (RFC 4315 UIDPLUS
+	 *  `APPENDUID` resp-code). `undefined` when the server lacks UIDPLUS. */
 	uidValidity?: number;
+	/** The newly appended message's UID (RFC 4315 UIDPLUS `APPENDUID`
+	 *  resp-code). `undefined` when the server lacks UIDPLUS. */
 	uid?: number;
 }
 
@@ -171,6 +202,7 @@ export interface AppendResult {
  *    per RFC7889-4-2 (`knownAppendLimit()`).
  */
 export interface AppendCapabilityProbe {
+	/** `true` when the server has advertised the named capability. */
 	has(cap: string): boolean;
 	/**
 	 * RFC 7889 §4 (RFC7889-4-2): "A client SHOULD avoid use of
@@ -256,7 +288,22 @@ export function assertNoUnencodedNul(data: Buffer, binary: boolean, context: str
  *  the server does, surfacing `BADURL` on failure). Exported (M5.6) so
  *  `ReplaceCommand` can share the same validated-part shape -- see
  *  `NO_CAPS`'s doc comment. */
-export type ValidatedCatenatePart = { type: "TEXT"; data: Buffer } | { type: "URL"; url: string };
+export type ValidatedCatenatePart =
+	| {
+			/** A TEXT cat-part whose content has already passed
+			 *  `toMessageBuffer()`/`assertNoUnencodedNul()`. */
+			type: "TEXT";
+			/** The validated literal content, ready to write as a plain
+			 *  literal. */
+			data: Buffer;
+	  }
+	| {
+			/** A URL cat-part, carried through unchanged from `CatenatePart`. */
+			type: "URL";
+			/** The RFC 5092 IMAP URL, verbatim -- never validated/resolved
+			 *  client-side. */
+			url: string;
+	  };
 
 /**
  * Shared CATENATE (RFC 4469 §3/§5) part-list validation -- factored out of

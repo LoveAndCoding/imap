@@ -19,11 +19,21 @@ export type MessageBodyPiece =
 	| MessageBodyStructure
 	| MessageBodyMultipartStructure;
 
+/** This library's aggregated view of a fetched message body: the parsed
+ *  header block, the raw section(s) returned (e.g. `BODY[TEXT]`,
+ *  `BODY[1.2]`), and the BODYSTRUCTURE, accumulated across however many
+ *  individual FETCH data items a single response actually carried. */
 export class MessageBody {
+	/** The message's parsed header fields, merged in from any HEADER-related
+	 *  data item seen so far. */
 	public header: MessageHeader;
+	/** The raw body sections (e.g. `BODY[TEXT]`, `BODY[1]`) seen so far. */
 	public sections: MessageBodySection[];
+	/** The message's BODYSTRUCTURE/BODY data item, if one was returned. */
 	public structure?: MessageBodyStructure | MessageBodyMultipartStructure;
 
+	/** Builds a {@link MessageBody} from an entire raw message (header block
+	 *  plus text), as used for the whole-message `BODY[]`/`RFC822` forms. */
 	public static createFromFullBody(fullBody: string, offset?: number) {
 		const msgBody = new MessageBody();
 		const headerLength = msgBody.header.parseHeaderBlock(fullBody);
@@ -37,6 +47,8 @@ export class MessageBody {
 		return msgBody;
 	}
 
+	/** Type guard: is `toCheck` one of the individual data items that can be
+	 *  merged into a {@link MessageBody} via {@link addMessageBodyPiece}? */
 	public static isMessageBodyPiece(
 		toCheck: unknown,
 	): toCheck is MessageBodyPiece {
@@ -53,6 +65,9 @@ export class MessageBody {
 		this.sections = [];
 	}
 
+	/** Merges a single parsed FETCH data item (header, section, or structure)
+	 *  into this body, routing it to `header`, `sections`, or `structure` as
+	 *  appropriate. */
 	public addMessageBodyPiece(piece: MessageBodyPiece) {
 		if (piece instanceof MessageHeader) {
 			this.header.mergeIn(piece);
@@ -91,6 +106,12 @@ export class MessageBody {
 		}
 	}
 
+	/** Folds another `MessageBody` (parsed from a later FETCH response for
+	 *  the SAME message) into this one -- merges the two headers (see
+	 *  `MessageHeader.mergeIn()`), appends the other's sections, and adopts
+	 *  its `structure` if this one doesn't already have one. Used when a
+	 *  message's FETCH data items arrive split across more than one
+	 *  response line. */
 	public mergeIn(otherBody: MessageBody) {
 		this.header.mergeIn(otherBody.header);
 		this.sections.push(...otherBody.sections);

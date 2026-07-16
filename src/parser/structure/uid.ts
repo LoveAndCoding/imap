@@ -1,9 +1,16 @@
 import { ParsingError } from "../../errors";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 
-// From spec: "UID" SP uniqueid
+/**
+ * A single parsed `uniqueid` token (`"UID" SP uniqueid`, RFC 3501/9051 §9
+ * sequence-set-like grammar, applied to UIDs).
+ */
 export class UID {
-	constructor(public readonly id: number | "*") {}
+	constructor(
+		/** The UID value, or `"*"` for the largest UID in use (the wire
+		 *  placeholder meaning "the last message in the mailbox"). */
+		public readonly id: number | "*",
+	) {}
 }
 
 // From spec: uid-range       = (uniqueid ":" uniqueid)

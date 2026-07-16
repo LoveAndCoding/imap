@@ -53,9 +53,24 @@ class ThreadMessage {
 	}
 }
 
+/**
+ * `THREAD` response (RFC 5256 §3) -- the messages matching the THREAD
+ * command's search criteria, organized into one or more nested reply
+ * trees.
+ */
 export class ThreadResponse {
+	/** The top-level threads, in the order the server returned them. Each
+	 *  entry is the root of a (possibly nested) reply tree. */
 	public readonly threads: ThreadMessage[];
 
+	/**
+	 * Tests whether `tokens` is an untagged THREAD response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link ThreadResponse}, or `null` if `tokens` is not a
+	 * THREAD response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "THREAD" },

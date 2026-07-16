@@ -1,0 +1,101 @@
+{
+	// M6.4 (docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md):
+	// generate API docs from TSDoc, entry points following the package
+	// `exports` map (package.json), not the whole `src/` tree.
+	//
+	// Entry points == exactly the three subpaths consumers can actually
+	// `import`/`require`: ".", "./commands", "./sasl". TypeDoc's default
+	// entryPointStrategy ("resolve") only documents symbols reachable via
+	// exports from these files, so internal modules never re-exported from
+	// them -- the parser/lexer/router machinery (src/parser/**, src/lexer/**,
+	// src/protocol/router.ts and friends) -- are excluded automatically,
+	// without needing a separate `exclude` glob. This is a deliberate 1.0
+	// surface statement: those modules are implementation, not public API
+	// (src/index.ts's own header comment makes the same call for the lexer
+	// and the Parser transform stream class).
+	"entryPoints": ["src/index.ts", "src/commands/index.ts", "src/sasl/index.ts"],
+	"entryPointStrategy": "resolve",
+
+	// Output is generated-on-demand, NOT committed. Committed HTML is noisy
+	// in diffs (every regeneration touches hundreds of files for whitespace/
+	// hash changes) and goes stale between releases; `docs/api/` is
+	// gitignored (see .gitignore) and README.md links to `npm run docs`
+	// instead of a checked-in tree.
+	"out": "docs/api",
+
+	// Zero-warnings gate (M6.4): every exported symbol reachable from the
+	// three entry points above must have real documentation, and every
+	// `@link` must resolve.
+	"validation": {
+		"notExported": true,
+		"invalidLink": true,
+		"notDocumented": true,
+		"unusedMergeModuleWith": true
+	},
+	"treatWarningsAsErrors": true,
+
+	"name": "@lovely-inbox/imap",
+	"readme": "README.md",
+	"excludePrivate": true,
+	// `protected` members (e.g. `Connection.lexer`/`.parser`/
+	// `.processingPipeline`) are reachable only from a subclass, never from
+	// package consumers -- not part of the documented surface either.
+	"excludeProtected": true,
+	// `Connection.router`/`.capabilityRegistry` are `@internal`-tagged
+	// (M6.4, see their doc comments in src/connection/connection.ts):
+	// `public` only as a TypeScript module-boundary workaround for same-
+	// package callers, not an intended part of the `Connection` escape
+	// hatch's consumer surface.
+	"excludeInternal": true,
+	"excludeExternals": true,
+	"skipErrorChecking": false,
+
+	// `intentionallyNotExported` (M6.4): module-private shape/element types
+	// that back a field or method on an otherwise-public class, but were
+	// never meant to be named/imported directly by consumers -- e.g.
+	// `AclEntry` (src/parser/structure/acl.ts) is the unexported element
+	// type of the public `AclResponse.entries` array; `UIDSet`/`UIDRange`
+	// back `AppendUIDTextCode`/`ExtendedSearchResponse`'s data shapes the
+	// same way. Each is a deliberate exclusion (not a gap): the CONTAINER
+	// class stays public and documented, its private innards don't need
+	// their own importable name. `LexerTokenList`/`ILexerToken` are lexer
+	// internals (src/lexer/**) leaking through parser-structure fields the
+	// same way the lexer itself is excluded from the entry points entirely
+	// (see this file's header comment).
+	//
+	// Two names on this list are genuine gaps rather than deliberate design
+	// (found during M6.4, not fixed here per that task's own constraint --
+	// fixing them means adding to src/index.ts's export list, an export-
+	// surface change, not a doc change): `MailboxUpdate`/
+	// `MailboxUpdatesOptions` are `MailboxSession.updates()`'s own return/
+	// options types (spec §5b flagship API) and arguably belong in the root
+	// barrel next to `MailboxFlagsUpdate`; see the M6.4 report for the
+	// recommendation.
+	"intentionallyNotExported": [
+		"AclEntry",
+		"UIDSet",
+		"StreamedBodyContents",
+		"ESearchComplexValue",
+		"Flag",
+		"ListingExtendedItem",
+		"MessageBodySection",
+		"AdditionalExtensionData",
+		"Disposition",
+		"Namespace",
+		"Quota",
+		"ThreadMessage",
+		"LexerTokenList",
+		"ILexerToken",
+		"ContentType",
+		"MailboxNameCodecOptions",
+		"SpecialUse",
+		"MessageBodyPiece",
+		"GmailLabelsOperation",
+		// Genuine gaps (see comment above), listed here only to unblock the
+		// zero-warnings gate:
+		"MailboxUpdate",
+		"MailboxUpdatesOptions",
+		"MailboxSessionDriver",
+		"LiveUpdatesMode"
+	]
+}

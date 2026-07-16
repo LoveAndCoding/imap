@@ -103,19 +103,40 @@ function* fetchMatchIterator(tokens: LexerTokenList): Generator<FetchMatch> {
 // duplicating the matcher list; only the number's MEANING differs, so the
 // field here is named `uid` and there is deliberately NO `sequenceNumber`
 // field a consumer could misread as an MSN.
+/** The untagged UIDFETCH response (RFC 9586 §3, the UIDONLY replacement for
+ *  untagged FETCH): identical msg-att data items to `Fetch`, but the leading
+ *  number is always the message's UID, never a sequence number. */
 export class UidFetch {
+	/** Discriminates this untagged-response content from `Fetch` and every
+	 *  other parsed response type. */
 	public static readonly commandType = "UIDFETCH";
 
+	/** The message's parsed BODY/BODY.PEEK data, if any msg-att item
+	 *  requested it (merged across multiple body-shaped data items). */
 	public readonly body?: MessageBody;
+	/** The message's INTERNALDATE, unwrapped to a plain `Date`. */
 	public readonly date?: Date;
+	/** The message's parsed ENVELOPE, if requested. */
 	public readonly envelope?: Envelope;
+	/** Extension data items (Gmail X-GM-* / OBJECTID / SAVEDATE / PREVIEW),
+	 *  keyed by their own `.type` discriminant. */
 	public readonly extensions?: Map<string, ExtensionsSupported>;
+	/** The message's current flags, if FLAGS was requested. */
 	public readonly flags?: FlagList;
+	/** The CONDSTORE/QRESYNC MODSEQ data item's mod-sequence value. */
 	public readonly modseq?: number | bigint;
+	/** The message's RFC822.SIZE octet count. */
 	public readonly size?: number | bigint;
+	/** RFC 3516 BINARY leaf-part data items -- an array (not a
+	 *  type-keyed map) because a single response can carry more than one. */
 	public readonly binarySections?: BinarySection[];
+	/** RFC 3516 BINARY.SIZE leaf-part data items -- an array (not a
+	 *  type-keyed map) for the same reason as `binarySections`. */
 	public readonly binarySizes?: BinarySize[];
 
+	/** Matches the RFC 9586 UIDFETCH untagged-response prefix
+	 *  (`uniqueid SP "UIDFETCH" SP "(" ...`) and, on success, parses the rest
+	 *  via the constructor below. */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
@@ -136,6 +157,8 @@ export class UidFetch {
 	}
 
 	constructor(
+		/** The message's UNIQUE IDENTIFIER (never a sequence number -- the
+		 *  entire point of RFC 9586 UIDFETCH). */
 		public readonly uid: number,
 		innerTokens: LexerTokenList,
 	) {
@@ -159,16 +182,32 @@ export class UidFetch {
 }
 
 // From spec: nz-number SP "FETCH" SP msg-att
+/** The untagged FETCH response (RFC 3501/9051 §7.4.2): the parsed msg-att
+ *  data items for one message, keyed onto typed fields as they're
+ *  encountered (see the constructor's accumulation loop). */
 export class Fetch {
+	/** Discriminates this untagged-response content from `UidFetch` and
+	 *  every other parsed response type. */
 	public static readonly commandType = "FETCH";
 
+	/** The message's parsed BODY/BODY.PEEK data, if any msg-att item
+	 *  requested it (merged across multiple body-shaped data items). */
 	public readonly body?: MessageBody;
+	/** The message's INTERNALDATE, unwrapped to a plain `Date`. */
 	public readonly date?: Date;
+	/** The message's parsed ENVELOPE, if requested. */
 	public readonly envelope?: Envelope;
+	/** Extension data items (Gmail X-GM-* / OBJECTID / SAVEDATE / PREVIEW),
+	 *  keyed by their own `.type` discriminant. */
 	public readonly extensions?: Map<string, ExtensionsSupported>;
+	/** The message's current flags, if FLAGS was requested. */
 	public readonly flags?: FlagList;
+	/** The CONDSTORE/QRESYNC MODSEQ data item's mod-sequence value. */
 	public readonly modseq?: number | bigint;
+	/** The message's RFC822.SIZE octet count. */
 	public readonly size?: number | bigint;
+	/** The message's UID, if the UID data item was present (always true for
+	 *  a `UID FETCH`, optional on a plain `FETCH`). */
 	public readonly uid?: UID;
 	/** RFC 3516 BINARY/BINARY.SIZE (M3.5): kept as arrays, NOT folded into
 	 *  `extensions` (keyed by a single `.type` string) -- a single FETCH
@@ -177,8 +216,13 @@ export class Fetch {
 	 *  same response), and a type-keyed map would silently drop all but the
 	 *  last one. */
 	public readonly binarySections?: BinarySection[];
+	/** RFC 3516 BINARY.SIZE leaf-part data items -- an array (not a
+	 *  type-keyed map) for the same reason as `binarySections`. */
 	public readonly binarySizes?: BinarySize[];
 
+	/** Matches the FETCH untagged-response prefix (`nz-number SP "FETCH" SP
+	 *  "(" ...`) and, on success, parses the rest via the constructor
+	 *  below. */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.number },
@@ -199,6 +243,8 @@ export class Fetch {
 	}
 
 	constructor(
+		/** The message's sequence number (the leading number on the wire) --
+		 *  an MSN, never a UID (contrast `UidFetch.uid`). */
 		public readonly sequenceNumber: number,
 		innerTokens: LexerTokenList,
 	) {

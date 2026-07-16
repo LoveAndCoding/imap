@@ -19,12 +19,53 @@ enum IdCommandKeys {
 	"vendor" = "vendor",
 	"version" = "version",
 }
-export type IdCommandValues = Partial<
-	{
-		[key in IdCommandKeys]: string | null;
-	}
->;
+/**
+ * Field/value pairs sent (or received) via the ID command (RFC 2971 §3.3).
+ * All fields are optional (`Partial`) and a `null` value stands for "field
+ * name known but value not provided" (RFC 2971's own `nstring` semantics).
+ *
+ * M6.4 note: this used to be `Partial<{ [key in IdCommandKeys]: string |
+ * null }>` -- identical resulting type, but TypeDoc can't attach a doc
+ * comment to a mapped-type-over-enum's synthesized properties (there is no
+ * syntax position for one), so every field showed up as an undocumented
+ * `__type.<key>` warning with no TSDoc-only fix available. Spelling the
+ * same field set out as a literal type (still wrapped in `Partial<>`, so
+ * every field stays optional exactly as before) is a type-only change --
+ * `IdCommandKeys` above is unaffected and still drives the runtime
+ * `key in IdCommandKeys` / field-count validation in `IdCommand` below --
+ * solely undertaken so RFC 2971 §3.3's field semantics can be documented
+ * per-field.
+ */
+export type IdCommandValues = Partial<{
+	/** RFC 2971 §3.3: postal address of contact/vendor. */
+	address: string | null;
+	/** RFC 2971 §3.3: arguments supplied on the command line, if any. */
+	arguments: string | null;
+	/** RFC 2971 §3.3: command used to start the program. */
+	command: string | null;
+	/** RFC 2971 §3.3: description of environment, e.g., OS, client, gateway,
+	 *  or other execution context. */
+	environment: string | null;
+	/** RFC 2971 §3.3: date and/or time of program release, specified by the
+	 *  ISO 8601 basic/extended date format, with a "T" as a separator. */
+	date: string | null;
+	/** RFC 2971 §3.3: name of the program. */
+	name: string | null;
+	/** RFC 2971 §3.3: name of the operating system. */
+	os: string | null;
+	/** RFC 2971 §3.3: version of the operating system. */
+	"os-version": string | null;
+	/** RFC 2971 §3.3: URL to contact for support. */
+	"support-url": string | null;
+	/** RFC 2971 §3.3: vendor of the client/server. */
+	vendor: string | null;
+	/** RFC 2971 §3.3: version number of the program. */
+	version: string | null;
+}>;
 
+/** The server's ID response (RFC 2971 §3.4): a map of field name to value
+ *  (`null` value means the field was sent with no value), or `null` if the
+ *  server sent no ID response at all / responded with a NIL parameter list. */
 export type IdResponseMap = null | ReadonlyMap<string, null | string>;
 
 const DEFAULT_ID_OPTS: IdCommandValues = {

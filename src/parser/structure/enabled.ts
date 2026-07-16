@@ -15,13 +15,27 @@ import { ciCanonicalize } from "../../lexer/case-insensitive";
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { getOriginalInput, matchesFormat, splitSpaceSeparatedList } from "../utility";
 
+/**
+ * `* ENABLED` response (RFC 5161 §3.2) -- the server's reply to an ENABLE
+ * command, naming the subset of the client's requested capabilities that
+ * actually got enabled.
+ */
 export class EnabledResponse {
+	/** The untagged-response keyword this class matches ("ENABLED"). */
 	public static readonly commandType = "ENABLED";
 
 	/** Canonical (upper-case) capability names, in wire order. Empty array is
 	 *  a valid, successful response (RFC 5161 §3.2 no-op ENABLE). */
 	public readonly capabilities: readonly string[];
 
+	/**
+	 * Tests whether `tokens` is an untagged ENABLED response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link EnabledResponse}, or `null` if `tokens` is not an
+	 * ENABLED response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "ENABLED" },

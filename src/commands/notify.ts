@@ -95,7 +95,11 @@ const NON_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
 const ALL_EVENTS: ReadonlySet<string> = new Set([...MESSAGE_EVENTS, ...NON_MESSAGE_EVENTS]);
 const SELECTED_FAMILY: ReadonlySet<string> = new Set(["SELECTED", "SELECTED-DELAYED"]);
 
+/** The minimal capability read surface `NotifyCommand`'s NOTIFY gate needs —
+ *  structurally satisfied by `CapabilityView` without this module importing
+ *  anything from the client layer. */
 export interface NotifyCapabilityProbe {
+	/** Case-insensitive membership test: is `cap` currently advertised? */
 	has(cap: string): boolean;
 }
 
@@ -325,6 +329,8 @@ function compileNotifyWire(w: CommandWriter, spec: NotifySpec | false): void {
 	}
 }
 
+/** NOTIFY SET/NONE (RFC 5465 §3.1/§8) — see this module's own header comment
+ *  for the full queueing, capability-gating, and claims-nothing rationale. */
 export class NotifyCommand extends Command<void> {
 	readonly verb = "NOTIFY";
 	readonly queueMode = "serial" as const;

@@ -85,7 +85,11 @@ import type { CommandWriter } from "./writer";
  * caller's own casing, verbatim (RFC5259-7-1).
  */
 export interface ConvertSpec {
+	/** Destination MIME type (e.g. `"text/plain"`), or `null` for the NIL
+	 *  "default conversion" marker (RFC5259-6-2). */
 	destination: string | null;
+	/** Optional transcoding parameters. `true` emits the bare (valueless)
+	 *  param-name form; a string value emits `Name "value"` quoted. */
 	params?: Record<string, string | true>;
 }
 
@@ -108,6 +112,8 @@ export type ConvertTransformation = string | null | ConvertSpec;
  * never an invented entry.
  */
 export interface ConvertResult {
+	/** Raw text of each untagged CONVERTED response this command claimed, in
+	 *  wire arrival order. Empty when the server sent no CONVERTED line. */
 	converted: string[];
 }
 

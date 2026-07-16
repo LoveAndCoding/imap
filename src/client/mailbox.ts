@@ -188,10 +188,19 @@ export type MailboxClosedReason =
 	| "disconnected"
 	| "unauthenticated";
 
+/** Payload of `MailboxSessionEvents.flags` (an untagged FETCH reporting a
+ *  live flag change, spec §5b) — also reused verbatim as the `flags` branch
+ *  of `MailboxUpdate` below. */
 export interface MailboxFlagsUpdate {
+	/** The message's sequence number, as reported by the untagged FETCH. */
 	seq: number;
+	/** The message's UID, present only when the server's response (or an
+	 *  active QRESYNC/CONDSTORE session) actually carried one. */
 	uid?: number;
+	/** The message's full flag set AFTER this update (not a delta). */
 	flags: ReadonlySet<string>;
+	/** The message's new MODSEQ (RFC 7162 CONDSTORE), present only when the
+	 *  server included one. */
 	modSeq?: bigint;
 }
 
@@ -237,8 +246,17 @@ export interface MailboxUpdatesOptions {
  * its `MailboxSession` UID-grain counterpart's shape.
  */
 export interface SequenceFacet {
+	/** Bare `FETCH` -- sequence-number-grain mirror of `MailboxSession.fetch()`;
+	 *  see that method's doc comment. Delivered `FetchedMessage`s carry `seq`
+	 *  addressing, never a `UID FETCH`. */
 	fetch(seqs: SequenceInput, items: FetchRequest, opts?: FetchModifiers): AsyncIterable<FetchedMessage>;
+	/** Single-message convenience wrapper over `fetch()`, mirroring
+	 *  `MailboxSession.fetchOne()`; resolves `null` if the sequence number
+	 *  matched no message. */
 	fetchOne(seq: number, items: FetchRequest, opts?: FetchModifiers): Promise<FetchedMessage | null>;
+	/** Bare `SEARCH` -- sequence-number-grain mirror of
+	 *  `MailboxSession.search()`; results are reported as sequence numbers,
+	 *  never UIDs. */
 	search(criteria: SearchCriteria, opts?: SearchOptions): Promise<SearchResult>;
 	/** Bare `SORT` (RFC 5256, spec §5b, M4.9) -- sequence-number-grain mirror
 	 *  of `MailboxSession.sort()`; see that method's doc comment. */
@@ -247,10 +265,20 @@ export interface SequenceFacet {
 	 *  mirror of `MailboxSession.thread()`; delivered `ThreadNode`s carry
 	 *  `seq`, never `uid`. */
 	thread(algorithm: ThreadAlgorithm, criteria: SearchCriteria, opts?: SearchOptions): Promise<ThreadNode[]>;
+	/** Bare `STORE +FLAGS` -- sequence-number-grain mirror of
+	 *  `MailboxSession.addFlags()`; see that method's doc comment. */
 	addFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	/** Bare `STORE -FLAGS` -- sequence-number-grain mirror of
+	 *  `MailboxSession.removeFlags()`; see that method's doc comment. */
 	removeFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	/** Bare `STORE FLAGS` (replaces the full flag set) -- sequence-number-grain
+	 *  mirror of `MailboxSession.setFlags()`; see that method's doc comment. */
 	setFlags(seqs: SequenceInput, flags: Flag[], opts?: StoreModifiers): Promise<StoreResult>;
+	/** Bare `COPY` -- sequence-number-grain mirror of `MailboxSession.copy()`;
+	 *  see that method's doc comment. */
 	copy(seqs: SequenceInput, dest: string): Promise<CopyResult>;
+	/** Bare `MOVE` (RFC 6851) -- sequence-number-grain mirror of
+	 *  `MailboxSession.move()`; see that method's doc comment. */
 	move(seqs: SequenceInput, dest: string): Promise<CopyResult>;
 	/**
 	 * Bare EXPUNGE only (spec §5b, M3.9) -- deliberately NOT a mechanical
@@ -479,8 +507,18 @@ function assertSearchCriteriaSeqSafeUnderNotify(
 	}
 }
 
+/** Events emitted by `MailboxSession` (it extends
+ *  `TypedEmitter<MailboxSessionEvents>`) — the live-update surface `updates()`
+ *  (spec §5b) is itself built on top of. */
 export interface MailboxSessionEvents {
+	/** An untagged EXISTS (spec §5b) — the mailbox's message count changed.
+	 *  `count` is the new total, `prev` the count immediately before it. */
 	exists: (count: number, prev: number) => void;
+	/** An untagged EXPUNGE (spec §5b) — the message at sequence number `seq`
+	 *  was removed; every LATER message's sequence number shifts down by one
+	 *  as a result (RFC 3501/9051 §7.4.1). Not fired for a QRESYNC session,
+	 *  which reports removals via `vanished` instead — see
+	 *  `MailboxSession.applyExpunge()`'s doc comment. */
 	expunge: (seq: number) => void;
 	/**
 	 * QRESYNC (RFC 7162 §3.2.10, M4.6). `earlier: true` — a `VANISHED
@@ -500,8 +538,18 @@ export interface MailboxSessionEvents {
 	 * reconciliation approach and its honest limits.
 	 */
 	vanished: (uids: number[], earlier: boolean) => void;
+	/** An untagged FETCH reporting a live flag change (spec §5b) for the
+	 *  message described by `update`. */
 	flags: (update: MailboxFlagsUpdate) => void;
+	/** The mailbox's UIDVALIDITY changed while selected (spec §8.3) — `next`
+	 *  the new value, `prev` the one this session was tracking before it.
+	 *  Per RFC 3501/9051, every cached UID is now invalid; see
+	 *  `MailboxSession.applyUidValidity()`. */
 	uidValidityChanged: (next: number, prev: number) => void;
+	/** This session has stopped tracking the mailbox — see
+	 *  `MailboxClosedReason` for what each `reason` means, and
+	 *  `MailboxSession.markClosed()` for the state teardown that precedes
+	 *  this emission. */
 	closed: (reason: MailboxClosedReason) => void;
 }
 
@@ -539,6 +587,19 @@ interface LiveUpdatesDriverState {
 	stop: () => void;
 }
 
+/**
+ * The live, selected-mailbox surface (spec §3.2/§5b) returned by
+ * `ImapClient.select()`/`.examine()` — one instance per SELECT/EXAMINE,
+ * tracking the mailbox's EXISTS/RECENT/flags/UIDVALIDITY/UIDNEXT/
+ * MODSEQ/MAILBOXID state live via untagged server responses, exposing the
+ * UID-grain message operations (spec §5b: SEARCH/SORT/THREAD/FETCH/STORE/
+ * COPY/MOVE/EXPUNGE/REPLACE and vendor/extension verbs), their bare
+ * sequence-number-grain mirrors via `seq`, and the `updates()` live-update
+ * iterator. Becomes permanently inert (`closed === true`) once deselected —
+ * see `MailboxClosedReason` for every way that can happen, and the static
+ * `apply*`/`markClosed` methods below for how `ImapClient` drives this
+ * session's state from the wire.
+ */
 export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	/** Decoded (caller-facing UTF-8) mailbox name, INBOX-canonicalized --
 	 *  see `ImapClient.selectOrExamine()`'s use of `decodeMailboxName(name,
@@ -546,6 +607,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 *  (the caller already supplied a plain Unicode string, never mUTF-7 wire
 	 *  bytes, so no mUTF-7 decode step applies here). */
 	public readonly name: string;
+	/** `true` for EXAMINE (read-only), `false` for SELECT — spec §3.2/§5b;
+	 *  fixed for the lifetime of this session (a mode change requires a
+	 *  fresh SELECT/EXAMINE, i.e. a new `MailboxSession`). */
 	public readonly readOnly: boolean;
 
 	private _closed = false;
@@ -716,18 +780,26 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	// reaches for one of those two specifically to observe resync data would
 	// not get the buffering guarantee, a documented, narrow limitation (see
 	// this milestone's report).
+	/** Same contract as `EventEmitter.on()` — overridden purely to hook
+	 *  `maybeTriggerResyncFlush()` so attaching a `vanished`/`flags` listener
+	 *  after a QRESYNC resync replays any buffered events (spec §5b's
+	 *  resync-buffering guarantee); see that method's own doc comment. */
 	on<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
 		super.on(event, listener);
 		this.maybeTriggerResyncFlush(event);
 		return this;
 	}
 
+	/** Same contract as `EventEmitter.once()`, with the same resync-flush
+	 *  hook as `on()` above — see that override's doc comment. */
 	once<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
 		super.once(event, listener);
 		this.maybeTriggerResyncFlush(event);
 		return this;
 	}
 
+	/** Same contract as `EventEmitter.addListener()` (an alias of `on()`),
+	 *  with the same resync-flush hook — see `on()`'s doc comment. */
 	addListener<E extends keyof MailboxSessionEvents>(event: E, listener: MailboxSessionEvents[E]): this {
 		super.addListener(event, listener);
 		this.maybeTriggerResyncFlush(event);
@@ -745,6 +817,9 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return this._closed;
 	}
 
+	/** The mailbox's current message count (spec §5b), live-updated by every
+	 *  untagged EXISTS (see `applyExists()`) for as long as this session
+	 *  stays open. */
 	public get exists(): number {
 		return this._exists;
 	}
@@ -755,6 +830,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return this._recent;
 	}
 
+	/** The mailbox's defined FLAGS (spec §5b) — the set of flags the server
+	 *  supports on messages in this mailbox; distinct from `permanentFlags`
+	 *  (the subset a client may actually SET permanently). Snapshotted at
+	 *  SELECT/EXAMINE time; this session does not currently live-update it
+	 *  from a later untagged FLAGS response. */
 	public get flags(): ReadonlySet<string> {
 		return this._flags;
 	}
@@ -786,10 +866,22 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return this._permanentFlags !== null && this._permanentFlags.has("\\*");
 	}
 
+	/** The mailbox's UIDVALIDITY (spec §5b, RFC 3501/9051 §2.3.1.1) — live-
+	 *  updated by `applyUidValidity()` if it ever changes while selected
+	 *  (see `MailboxSessionEvents.uidValidityChanged`). A caller that cached
+	 *  UIDs from a PRIOR value of this must discard them: RFC 3501/9051
+	 *  guarantee UID stability only within one UIDVALIDITY epoch. */
 	public get uidValidity(): number {
 		return this._uidValidity;
 	}
 
+	/** The mailbox's UIDNEXT (spec §5b, RFC 3501/9051 §2.3.1.1) — the
+	 *  predicted UID of the next message to arrive, as of SELECT/EXAMINE
+	 *  time. `null` when the server didn't announce UIDNEXT at all (a
+	 *  legal, if unusual, omission). This session does not live-update the
+	 *  value afterward (RFC 3501/9051 don't require the server to announce
+	 *  it again); note `ImapClient.status()` explicitly refuses to report
+	 *  on the currently-selected mailbox (see that method's doc comment). */
 	public get uidNext(): number | null {
 		return this._uidNext;
 	}
@@ -806,6 +898,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return this._highestModSeq;
 	}
 
+	/** The mailbox's stable MAILBOXID (RFC 8474 §4, spec §5b) — `null` when
+	 *  the server didn't advertise/announce OBJECTID support. Unlike a
+	 *  mailbox NAME (renameable) or UIDVALIDITY (can change), MAILBOXID is
+	 *  meant to identify the same mailbox durably across both. */
 	public get mailboxId(): string | null {
 		return this._mailboxId;
 	}
@@ -2137,6 +2233,12 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	// so a stray late event after deselection can never resurrect/mutate a
 	// dead session's fields.
 
+	/** Deselects `session` for good (idempotent — a no-op if already closed):
+	 *  flips `closed` to `true`, discards any still-unflushed resync buffer
+	 *  (see the field's own doc comment), and emits `closed` with `reason`.
+	 *  Called by `ImapClient` from every path that ends this session's life
+	 *  — a client-driven close/unselect/reselect, UNAUTHENTICATE while
+	 *  selected, or the connection dropping — see `MailboxClosedReason`. */
 	static markClosed(session: MailboxSession, reason: MailboxClosedReason): void {
 		if (session._closed) {
 			return;
@@ -2152,6 +2254,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		session.emit("closed", reason);
 	}
 
+	/** Applies an untagged EXISTS to `session` (a no-op once closed): updates
+	 *  `exists` and emits `MailboxSessionEvents.exists` with the new count
+	 *  and the count it replaces. Called by `ImapClient`'s §8.3 state-tracker
+	 *  lane on every EXISTS response for the currently selected mailbox. */
 	static applyExists(session: MailboxSession, count: number): void {
 		if (session._closed || count === session._exists) {
 			return;
@@ -2170,6 +2276,11 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		session._recent = count;
 	}
 
+	/** Applies a classic (non-QRESYNC) untagged EXPUNGE to `session` (a no-op
+	 *  once closed): decrements `exists` by one (floored at 0, defense-in-
+	 *  depth) and emits `MailboxSessionEvents.expunge` with the vacated
+	 *  sequence number. Superseded by `applyVanished()` for a QRESYNC-
+	 *  ENABLEd connection, which reports removals via VANISHED instead. */
 	static applyExpunge(session: MailboxSession, seq: number): void {
 		if (session._closed) {
 			return;
@@ -2226,6 +2337,10 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		session.emit("vanished", uids, earlier);
 	}
 
+	/** Applies an untagged FETCH flag change to `session` (a no-op once
+	 *  closed): emits `MailboxSessionEvents.flags` with `update` unchanged.
+	 *  Carries no local state to mutate (this session doesn't keep a
+	 *  per-message flag cache) — purely a pass-through notification. */
 	static applyFlagsUpdate(session: MailboxSession, update: MailboxFlagsUpdate): void {
 		if (session._closed) {
 			return;
@@ -2272,6 +2387,13 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		}
 	}
 
+	/** Applies a live UIDVALIDITY change to `session` (a no-op once closed,
+	 *  or if `next` is unchanged from the current value): updates
+	 *  `uidValidity` and emits `MailboxSessionEvents.uidValidityChanged`
+	 *  with the new and previous values. Called by `ImapClient`'s §8.3
+	 *  state-tracker lane (`applyMailboxStatusCode()`) whenever a later,
+	 *  unsolicited `* OK [UIDVALIDITY ...]` status line arrives against an
+	 *  already-established session. */
 	static applyUidValidity(session: MailboxSession, next: number): void {
 		if (session._closed || next === session._uidValidity) {
 			return;

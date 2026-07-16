@@ -18,7 +18,9 @@ import type { QuotaResult } from "./get-quota";
  * the WIRE write, never silently truncated.
  */
 export interface QuotaLimitEntry {
+	/** Resource name to set a limit for, e.g. `STORAGE`, `MESSAGE`. */
 	resource: string;
+	/** The requested limit for this resource (RFC 9208 §3.1.2 number64). */
 	limit: number | bigint;
 }
 

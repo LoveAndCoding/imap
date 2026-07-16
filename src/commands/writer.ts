@@ -33,7 +33,11 @@ export interface WriterCapabilityProbe {
  * continuation response (or a tagged NO/BAD abort) has been observed.
  */
 export interface WireSegment {
+	/** The raw serialized bytes of this segment. */
 	bytes: Buffer;
+	/** `true` if this segment ends with a synchronizing literal announcement
+	 *  and the sender must wait for the server's `+` continuation (or a
+	 *  tagged NO/BAD abort) before writing any further segment. */
 	awaitContinuation: boolean;
 }
 
@@ -420,6 +424,8 @@ export class CommandWriter {
 
 	// -- public API (spec §7.2) -------------------------------------------------
 
+	/** Emits `s` as a bare ATOM (spec §7.2): throws `RangeError` if `s` is
+	 *  empty or contains any character outside ATOM-CHAR. */
 	atom(s: string): this {
 		return this.atomic(() => {
 			if (typeof s !== "string") {
@@ -437,6 +443,8 @@ export class CommandWriter {
 		});
 	}
 
+	/** Emits `n` as a bare non-negative integer ≤ 4294967295 (RFC 3501/9051
+	 *  §9 `number`): throws `RangeError` if `n` is not such an integer. */
 	number(n: number): this {
 		return this.atomic(() => {
 			if (
@@ -454,6 +462,8 @@ export class CommandWriter {
 		});
 	}
 
+	/** Emits `n` as a bare non-negative integer in `[0, 2^63)` (RFC 3501/9051
+	 *  §9 `number64`): throws `RangeError` if `n` is not a bigint in range. */
 	bignumber(n: bigint): this {
 		return this.atomic(() => {
 			if (typeof n !== "bigint" || n < 0n || n >= 1n << 63n) {

@@ -40,40 +40,66 @@ type Disposition = {
 //   body-type-text  = media-text SP body-fields SP body-fld-lines
 //   body-fields     = body-fld-param SP body-fld-id SP body-fld-desc SP
 //                     body-fld-enc SP body-fld-octets
+/** RFC 3501/9051 §7.5 `body-type-1part`: a single (non-multipart) BODYSTRUCTURE
+ *  part -- covers `body-type-basic`, `body-type-msg`, and `body-type-text`. */
 export class MessageBodyStructure {
+	/** `media-type` -- the top-level MIME type (e.g. `"TEXT"`, `"MESSAGE"`). */
 	public readonly mediaType: null | string;
+	/** `media-subtype` -- the MIME subtype (e.g. `"PLAIN"`, `"RFC822"`). */
 	public readonly mediaSubType: null | string;
+	/** `body-fld-param` -- the body's MIME parameters (e.g. `charset`). */
 	public readonly parameters: null | Map<string, string>;
+	/** `body-fld-id` -- the body part's MIME `Content-Id`. */
 	public readonly id: null | string;
+	/** `body-fld-desc` -- the body part's MIME `Content-Description`. */
 	public readonly description: null | string;
+	/** `body-fld-enc` -- the body part's `Content-Transfer-Encoding`. */
 	public readonly encoding: null | string;
+	/** `body-fld-octets` -- the body part's size in octets. */
 	public readonly octets: number;
 	// Message type structures
+	/** The embedded message's ENVELOPE, present only for `message/rfc822`. */
 	public readonly envelope?: Envelope;
+	/** The embedded message's own body structure, present only for
+	 *  `message/rfc822`. */
 	public readonly body?: MessageBodyMultipartStructure | MessageBodyStructure;
 	// Message/Text shared structures
+	/** `body-fld-lines` -- the size in text lines, present for `TEXT` and
+	 *  `message/rfc822` bodies. */
 	public readonly lines?: number;
 	// Extension data
+	/** `body-fld-md5` -- the body part's MD5 checksum, if extension data was
+	 *  returned. */
 	public readonly md5?: null | string;
+	/** `body-fld-dsp` -- the body part's `Content-Disposition`, if extension
+	 *  data was returned. */
 	public readonly disposition?: null | Disposition;
+	/** `body-fld-lang` -- the body part's `Content-Language`, if extension
+	 *  data was returned. */
 	public readonly language?: null | string[];
+	/** `body-fld-loc` -- the body part's `Content-Location`, if extension
+	 *  data was returned. */
 	public readonly location?: null | string;
+	/** `body-extension` -- any further, currently-undefined extension data
+	 *  the server returned beyond location. */
 	public readonly additionalExtensionData?: AdditionalExtensionData;
 
-	// From spec: body-fld-dsp    = "(" string SP body-fld-param ")" / nil
-	//
-	// `disposition` here is the raw token group for this field AS RETURNED
-	// by the outer split (i.e. it still carries its own wrapping parens,
-	// e.g. `("ATTACHMENT" ("FILENAME" "foo.txt"))`), the same shape
-	// `parseParamList` below is handed for the plain param-list field. The
-	// previous `disposition.length !== 2` guard compared the RAW token
-	// count (always > 2 for any real, non-NIL disposition, since even the
-	// simplest case is at least 5 tokens: "(", string, SP, NIL/list, ")")
-	// against the number of SPLIT fields, so it threw on every real
-	// disposition value -- splitSpaceSeparatedList (which already strips
-	// the wrapping parens and respects nested groups, just as it does for
-	// parseParamList) is what actually produces the 2-field [type, params]
-	// shape we want to validate.
+	/**
+	 * Parses `body-fld-dsp = "(" string SP body-fld-param ")" / nil`.
+	 *
+	 * `disposition` here is the raw token group for this field AS RETURNED
+	 * by the outer split (i.e. it still carries its own wrapping parens,
+	 * e.g. `("ATTACHMENT" ("FILENAME" "foo.txt"))`), the same shape
+	 * `parseParamList` below is handed for the plain param-list field. The
+	 * previous `disposition.length !== 2` guard compared the RAW token
+	 * count (always > 2 for any real, non-NIL disposition, since even the
+	 * simplest case is at least 5 tokens: "(", string, SP, NIL/list, ")")
+	 * against the number of SPLIT fields, so it threw on every real
+	 * disposition value -- splitSpaceSeparatedList (which already strips
+	 * the wrapping parens and respects nested groups, just as it does for
+	 * parseParamList) is what actually produces the 2-field [type, params]
+	 * shape we want to validate.
+	 */
 	public static parseDisposition(
 		disposition: LexerTokenList,
 	): Disposition | null | undefined {
@@ -103,7 +129,7 @@ export class MessageBodyStructure {
 		}
 	}
 
-	// From spec: body-fld-lang   = nstring / "(" string *(SP string) ")"
+	/** Parses `body-fld-lang = nstring / "(" string *(SP string) ")"`. */
 	public static parseLanguage(
 		lang: LexerTokenList,
 	): string[] | null | undefined {
@@ -118,18 +144,20 @@ export class MessageBodyStructure {
 		}
 	}
 
-	// From spec: body-fld-loc    = nstring
+	/** Parses `body-fld-loc = nstring`. */
 	public static parseLocation(location: LexerTokenList) {
 		if (location && location.length) {
 			return getNStringValue(location);
 		}
 	}
 
-	// From spec: body-extension can be "zero or more NILs, strings, numbers,
-	// or potentially nested parenthesized lists" of future extension data
-	// (§7.4.2) -- so a bare NIL token (distinct from a NIL/empty PARAM
-	// list, which is handled elsewhere) is valid here and must be tolerated
-	// rather than treated as a parse error.
+	/**
+	 * Parses `body-extension`, which can be "zero or more NILs, strings,
+	 * numbers, or potentially nested parenthesized lists" of future
+	 * extension data (§7.4.2) -- so a bare NIL token (distinct from a
+	 * NIL/empty PARAM list, which is handled elsewhere) is valid here and
+	 * must be tolerated rather than treated as a parse error.
+	 */
 	public static parseAdditionalExtensionData(
 		tokens: LexerTokenList[],
 	): AdditionalExtensionData {
@@ -162,8 +190,10 @@ export class MessageBodyStructure {
 		return data;
 	}
 
-	// From spec:
-	// body-fld-param  = "(" string SP string *(SP string SP string) ")" / nil
+	/**
+	 * Parses `body-fld-param = "(" string SP string *(SP string SP string)
+	 * ")" / nil`.
+	 */
 	public static parseParamList(tokens: LexerTokenList) {
 		if (tokens.length === 1 && tokens[0].isType(TokenTypes.nil)) {
 			return null;
@@ -276,19 +306,26 @@ export class MessageBodyStructure {
 	}
 }
 
-// From spec:
-//   body-type-mpart = 1*body SP media-subtype
-//                     [SP body-ext-mpart]
+/** RFC 3501/9051 §7.5 `body-type-mpart`: a `multipart/*` BODYSTRUCTURE part,
+ *  i.e. `1*body SP media-subtype [SP body-ext-mpart]`. */
 export class MessageBodyMultipartStructure {
+	/** `body-extension` -- any further, currently-undefined extension data
+	 *  the server returned beyond location. */
 	public readonly additionalExtensionData?: AdditionalExtensionData;
+	/** `body-fld-param` -- the multipart body's MIME parameters. */
 	public readonly parameters?: null | Map<string, string>;
+	/** `body-fld-dsp` -- the multipart body's `Content-Disposition`. */
 	public readonly disposition?: null | Disposition;
+	/** `body-fld-lang` -- the multipart body's `Content-Language`. */
 	public readonly language?: null | string[];
+	/** `body-fld-loc` -- the multipart body's `Content-Location`. */
 	public readonly location?: null | string;
+	/** The parsed structures of each child body part. */
 	public readonly structures: MessageBodyStructure[] = [];
 
 	constructor(
 		partTokens: LexerTokenList,
+		/** `media-subtype` -- the multipart subtype (e.g. `"MIXED"`, `"ALTERNATIVE"`). */
 		public readonly subtype: string,
 		extensionData: LexerTokenList[],
 	) {

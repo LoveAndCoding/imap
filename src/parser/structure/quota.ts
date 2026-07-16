@@ -16,10 +16,24 @@ class Quota {
 	) {}
 }
 
+/**
+ * `QUOTA` response (RFC 9208 §5) -- reports the resource usage/limit
+ * pairs for a single quota root.
+ */
 export class QuotaResponse {
+	/** The quota root name this response describes. */
 	public readonly rootName: string;
+	/** The resource usage/limit triplets carried on this quota root. */
 	public readonly quotas: Quota[];
 
+	/**
+	 * Tests whether `tokens` is an untagged QUOTA response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link QuotaResponse}, or `null` if `tokens` is not a
+	 * QUOTA response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "QUOTA" },
@@ -86,9 +100,23 @@ export class QuotaResponse {
 	}
 }
 
+/**
+ * `QUOTAROOT` response (RFC 9208 §5) -- names the quota root(s) that
+ * apply to a mailbox given in a preceding GETQUOTAROOT command.
+ */
 export class QuotaRootResponse {
+	/** The quota root names that apply to the requested mailbox, in wire
+	 *  order. */
 	public readonly rootNames: string[];
 
+	/**
+	 * Tests whether `tokens` is an untagged QUOTAROOT response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link QuotaRootResponse}, or `null` if `tokens` is not
+	 * a QUOTAROOT response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "QUOTAROOT" },

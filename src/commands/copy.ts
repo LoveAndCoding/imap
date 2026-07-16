@@ -12,8 +12,13 @@ import type { CommandWriter } from "./writer";
  * failure, same posture as `AppendResult`'s APPENDUID fields, M2.11).
  */
 export interface CopyResult {
+	/** The destination mailbox's UIDVALIDITY, from the COPYUID resp-code. */
 	uidValidity?: number;
+	/** Source-mailbox UIDs of the copied messages, position-paired with
+	 *  `destUids` (`sourceUids[i]` landed at `destUids[i]`). */
 	sourceUids?: number[];
+	/** Destination-mailbox UIDs assigned to the copied messages, position-
+	 *  paired with `sourceUids`. */
 	destUids?: number[];
 }
 
@@ -23,6 +28,7 @@ export interface CopyResult {
  *  `CommandWriter.sequenceSet()` itself stays structural (see that method's
  *  doc comment). */
 export interface SequenceSetLike {
+	/** Renders the sequence/UID set as its RFC 3501/9051 §9 wire form. */
 	toString(): string;
 }
 

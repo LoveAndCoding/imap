@@ -10,7 +10,10 @@ import { validateMetadataEntryName } from "./get-metadata";
  *  type keeps distinguishable at the API boundary rather than collapsing
  *  both to the same JS value). */
 export interface MetadataSetEntry {
+	/** The entry's full path name (e.g. `/private/comment`). */
 	entry: string;
+	/** The value to set, or `null` to remove the entry (encoded as the bare
+	 *  atom `NIL` on the wire — see this interface's own doc comment). */
 	value: string | null;
 }
 

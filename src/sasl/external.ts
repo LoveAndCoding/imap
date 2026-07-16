@@ -66,6 +66,9 @@ export class ExternalMechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link ExternalMechanism} instance (RFC 4422
+ *  Appendix A EXTERNAL). Registered under the "EXTERNAL" name by the
+ *  mechanism registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createExternalMechanism(): SaslMechanism {
 	return new ExternalMechanism();
 }

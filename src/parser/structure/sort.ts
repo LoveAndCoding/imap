@@ -9,10 +9,26 @@ import { matchesFormat, splitSpaceSeparatedList } from "../utility";
 // "SORT 2 8 10 (MODSEQ 917162500)". That group is tolerated/captured here
 // (not just tolerated-away) rather than left to trip up the plain
 // nz-number list parsing below.
+/**
+ * `SORT` response (RFC 5256 §3) -- the mailbox sequence numbers (or UIDs,
+ * for a UID SORT) matching the SORT command's search criteria, in sorted
+ * order.
+ */
 export class SortResponse {
+	/** The matching message sequence numbers (or UIDs), in sorted order. */
 	public readonly ids: number[];
+	/** The trailing CONDSTORE `(MODSEQ n)` value (RFC 7162 §3.1.9/§7), if
+	 *  the server included one; `undefined` otherwise. */
 	public readonly modSequenceValue?: number | bigint;
 
+	/**
+	 * Tests whether `tokens` is an untagged SORT response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link SortResponse}, or `null` if `tokens` is not a
+	 * SORT response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "SORT" },

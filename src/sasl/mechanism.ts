@@ -27,11 +27,27 @@ import { AuthError } from "../errors";
  *  attempts. `host`/`port` are the configured connection target (used by
  *  mechanisms such as OAUTHBEARER whose wire format binds to them). */
 export interface SaslContext {
+	/** The authentication identity (authcid) — e.g. the username a PLAIN/
+	 *  CRAM-MD5/SCRAM exchange authenticates as. */
 	user: string;
+	/** The shared secret (password) used by password-based mechanisms
+	 *  (PLAIN, CRAM-MD5, SCRAM-*). Absent for token-based mechanisms
+	 *  (OAUTHBEARER, XOAUTH2) and for mechanisms with no secret at all
+	 *  (EXTERNAL, ANONYMOUS). */
 	pass?: string;
+	/** The OAuth2 bearer token used by OAUTHBEARER/XOAUTH2. Absent for every
+	 *  other mechanism. */
 	accessToken?: string;
+	/** The configured connection target's hostname, required by mechanisms
+	 *  (OAUTHBEARER) whose wire format binds the exchange to it. */
 	host: string;
+	/** The configured connection target's port, required by mechanisms
+	 *  (OAUTHBEARER) whose wire format binds the exchange to it. */
 	port: number;
+	/** The authorization identity (authzid) a mechanism may request to act
+	 *  as, distinct from the authentication identity (`user`). Also doubles
+	 *  as ANONYMOUS's trace-information input (see `anonymous.ts`'s doc
+	 *  comment) since that mechanism has no dedicated field of its own. */
 	authzid?: string;
 }
 

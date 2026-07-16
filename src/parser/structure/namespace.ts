@@ -39,9 +39,14 @@ function splitNamespaceResponseLists(tokens: LexerTokenList) {
 	return blocks;
 }
 
+/** Which of the three NAMESPACE categories (RFC 2342 §5) a `Namespace`
+ *  (package-internal, not part of the documented surface) describes. */
 export enum NamespaceKind {
+	/** Mailboxes belonging to, and accessible by, the logged-in user. */
 	"Personal",
+	/** Other users' mailboxes that the logged-in user has access to. */
 	"Others",
+	/** Mailboxes shared between multiple users. */
 	"Shared",
 }
 
@@ -138,11 +143,27 @@ class Namespace {
 	}
 }
 
+/**
+ * `NAMESPACE` response (RFC 2342 §5) -- describes the personal,
+ * other-users', and shared mailbox namespaces the server exposes, each of
+ * which may be absent (wire `NIL`, surfaced here as `null`).
+ */
 export class NamespaceResponse {
+	/** The personal namespace(s), or `null` if the server has none. */
 	public readonly personal: null | Namespace;
+	/** The other-users' namespace(s), or `null` if the server has none. */
 	public readonly others: null | Namespace;
+	/** The shared namespace(s), or `null` if the server has none. */
 	public readonly shared: null | Namespace;
 
+	/**
+	 * Tests whether `tokens` is an untagged NAMESPACE response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link NamespaceResponse}, or `null` if `tokens` is not
+	 * a NAMESPACE response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "NAMESPACE" },

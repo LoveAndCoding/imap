@@ -17,6 +17,8 @@ import type { CommandWriter } from "./writer";
  * so no §3.2 caller is broken by the widening.
  */
 export interface CreateMailboxOptions {
+	/** RFC 6154 `USE` parameter attribute(s) to create the mailbox with (e.g.
+	 *  `\Drafts`, `\Sent`) — requires the CREATE-SPECIAL-USE capability. */
 	specialUse?: SpecialUse | SpecialUse[];
 }
 

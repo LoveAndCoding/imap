@@ -66,6 +66,9 @@ export type SystemFlag =
 	| "\\Flagged"
 	| "\\Deleted"
 	| "\\Draft";
+/** The open grade (§5.6) every flag-taking parameter actually takes: one of
+ *  the five `SystemFlag`s, or any server-defined keyword (open by design --
+ *  `\*` in `PERMANENTFLAGS` licenses client-invented keywords). */
 export type Flag = SystemFlag | (string & {}); // keywords are open by design
 
 /**
@@ -131,6 +134,10 @@ export type SortBase =
 	| "DISPLAYFROM"
 	| "DISPLAYTO" // RFC 5957 §5, gated on SORT=DISPLAY
 	| "RELEVANCY"; // RFC 6203 §7, gated on SEARCH=FUZZY + a FUZZY search key
+/** RFC 5256 §5's `sort-criterion = ["REVERSE" SP] sort-key` production: a
+ *  bare `SortBase` atom, or the same atom prefixed with `"REVERSE "` to sort
+ *  that key in descending order. `MailboxSession.sort()`'s ordered
+ *  sort-criteria list element type (spec §5b, M4.9). */
 export type SortKey = SortBase | `REVERSE ${SortBase}`;
 
 /**
@@ -166,11 +173,17 @@ export type NotifyMessageEvent =
 	| "MessageExpunge"
 	| "FlagChange"
 	| "AnnotationChange";
+/** The four `event` names (RFC 5465 §8) that may NOT appear in a
+ *  SELECTED/SELECTED-DELAYED event-group (RFC5465-6.1-2/-8-1) -- they only
+ *  make sense against non-selected mailboxes. */
 export type NotifyNonMessageEvent =
 	| "MailboxName"
 	| "SubscriptionChange"
 	| "MailboxMetadataChange"
 	| "ServerMetadataChange";
+/** RFC 5465 §8's full, closed eight-name `event` production: the four
+ *  message events (`NotifyMessageEvent`) plus the four non-message events
+ *  (`NotifyNonMessageEvent`). */
 export type NotifyEventName = NotifyMessageEvent | NotifyNonMessageEvent;
 
 /**
@@ -195,7 +208,17 @@ export type NotifyEventName = NotifyMessageEvent | NotifyNonMessageEvent;
  */
 export type NotifyEventEntry =
 	| NotifyEventName
-	| { event: "MessageNew"; fetchAtts?: readonly string[] };
+	| {
+			/** Discriminant: only `MessageNew` may carry the optional
+			 *  fetch-att list, and only inside a SELECTED/SELECTED-DELAYED
+			 *  event-group (RFC5465-8-1). */
+			event: "MessageNew";
+			/** Raw, pre-formed wire fetch-att tokens (e.g.
+			 *  `"BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]"`), written verbatim
+			 *  via `CommandWriter.raw()` -- not routed through the typed FETCH
+			 *  att compiler (see this type's doc comment for why). */
+			fetchAtts?: readonly string[];
+	  };
 
 /**
  * `filter-mailboxes` (§8): the SELECTED-family pair (`SELECTED`/
@@ -213,15 +236,30 @@ export type NotifyMailboxFilter =
 	| "inboxes"
 	| "personal"
 	| "subscribed"
-	| { subtree: string | readonly string[] }
-	| { mailboxes: string | readonly string[] };
+	| {
+			/** One mailbox name, or several, whose subtree (the mailbox and all
+			 *  of its inferior/child mailboxes) this filter watches (§8
+			 *  `mailboxes` production). */
+			subtree: string | readonly string[];
+	  }
+	| {
+			/** One mailbox name, or several, that this filter watches
+			 *  non-recursively (§8 `mailboxes` production). */
+			mailboxes: string | readonly string[];
+	  };
 
 /** One `event-group` (§8: `"(" filter-mailboxes SP events ")"`). `events`
  *  is either the bare `NONE` suppression sentinel (RFC5465-5-3's
  *  `(<filter-mailboxes> NONE)` snapshot form) or a non-empty parenthesized
  *  event list. */
 export interface NotifyEventGroup {
+	/** Which mailbox(es) this event-group applies to -- the SELECTED-family
+	 *  specifier or one of the five non-selected-family filters (§8
+	 *  `filter-mailboxes`). */
 	mailboxes: NotifyMailboxFilter;
+	/** The events to watch for on the filtered mailbox(es): either the bare
+	 *  `NONE` suppression sentinel (RFC5465-5-3's snapshot form) or a
+	 *  non-empty list of event entries. */
 	events: "NONE" | readonly NotifyEventEntry[];
 }
 
@@ -236,5 +274,7 @@ export interface NotifySpec {
 	/** RFC5465-3.1-4's STATUS indicator: asks the server to send one STATUS
 	 *  response per watched non-selected mailbox before NOTIFY's tagged OK. */
 	status?: boolean;
+	/** The `event-groups` list (§8): one entry per watched mailbox filter,
+	 *  each paired with the events to watch for on it. */
 	set: readonly NotifyEventGroup[];
 }

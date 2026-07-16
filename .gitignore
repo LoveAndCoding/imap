@@ -3,3 +3,6 @@ dist/
 coverage/
 test/compliance/reports/
 .claude/worktrees/
+# M6.4: typedoc output is generated-on-demand ("npm run docs"), not
+# committed -- see typedoc.jsonc's header comment for the rationale.
+docs/api/

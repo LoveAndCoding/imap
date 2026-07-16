@@ -16,11 +16,33 @@ import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import { ciCanonicalize, ciEquals } from "../../lexer/case-insensitive";
 import { getOriginalInput, splitSpaceSeparatedList } from "../utility";
 
+/**
+ * A single parsed `capability` atom from a CAPABILITY response
+ * (RFC 3501/9051 §7.2.1: `capability = ("AUTH=" auth-type) / atom`). Every
+ * concrete capability class below (`StandardCapability`, `KindValueCapability`,
+ * `ExtensionCapability`, `UnknownCapability`) implements this shape; which one
+ * is produced for a given wire string is decided by `CapabilityList#add`.
+ */
 export interface ICapability {
+	/** The capability's name (for a `kind=value` pair such as `AUTH=PLAIN`,
+	 *  just the `kind` part, e.g. `"AUTH"`; for a bare atom, the same as
+	 *  `fullValue`). */
 	readonly kind: string;
+	/** The capability's value (for a `kind=value` pair such as `AUTH=PLAIN`,
+	 *  just the `value` part, e.g. `"PLAIN"`; for a bare atom, the same as
+	 *  `fullValue`). */
 	readonly value: string;
+	/** The complete, unsplit capability string exactly as reported by the
+	 *  server (e.g. `"AUTH=PLAIN"` or `"IDLE"`). */
 	readonly fullValue: string;
+	/** `true` if this capability's name begins with `"X"`, marking it as a
+	 *  non-standard/experimental extension per RFC3501/9051 §7.2.1 ("New
+	 *  capabilities MUST begin with 'X' or be registered with IANA"). */
 	readonly isExtension: boolean;
+	/** `true` if this capability name is not one this library recognizes
+	 *  (neither a standard IANA-registered name nor an `X`-prefixed
+	 *  extension). Omitted/`undefined` on capability kinds that are always
+	 *  known by construction (e.g. `StandardCapability`). */
 	readonly isUnknown?: boolean;
 }
 
@@ -125,25 +147,62 @@ function isStandardCapability(
 	);
 }
 
+/**
+ * A capability atom that carries no `kind=value` structure and is a
+ * recognized IANA-registered/standard name (one of `standardCapabilityNames`
+ * below, e.g. `"IDLE"`, `"STARTTLS"`, `"UIDPLUS"`). `kind`, `value`, and
+ * `fullValue` are all identical here since there's nothing to split.
+ */
 export class StandardCapability implements ICapability {
+	/** Same as {@link fullValue} — a bare standard capability has no
+	 *  separate kind/value split. */
 	public readonly kind: string;
+	/** Same as {@link fullValue} — a bare standard capability has no
+	 *  separate kind/value split. */
 	public readonly value: string;
+	/** Always `false`: a recognized standard capability is never treated as
+	 *  an `X`-prefixed extension. */
 	public readonly isExtension: boolean = false;
 
-	constructor(public readonly fullValue: StandardCapabilityNames) {
+	constructor(
+		/** The complete capability string exactly as reported by the
+		 *  server. */
+		public readonly fullValue: StandardCapabilityNames,
+	) {
 		// Kind === Value === Full Value here
 		this.kind = fullValue;
 		this.value = fullValue;
 	}
 }
 
+/**
+ * A capability atom of the recognized `"KIND=VALUE"` shape whose `KIND` is
+ * one of `kindValueStandardCapabilityNames` (e.g. `AUTH=PLAIN`,
+ * `SORT=DISPLAY`) — as opposed to `KindValueCapability` instances whose kind
+ * isn't recognized, which are still represented by this same class but with
+ * `isUnknown` set to `true` (unlike `StandardCapability`/`UnknownCapability`,
+ * there's no separate "unknown kind/value" class).
+ */
 export class KindValueCapability implements ICapability {
+	/** The part of the capability name before the `"="`, in the server's
+	 *  original casing (e.g. `"AUTH"` for `AUTH=PLAIN`). */
 	public readonly kind: string;
+	/** The part of the capability name after the `"="` (e.g. `"PLAIN"` for
+	 *  `AUTH=PLAIN`). */
 	public readonly value: string;
+	/** `true` if {@link kind}, case-insensitively, begins with `"X"`. */
 	public readonly isExtension: boolean;
+	/** `true` if {@link kind}, case-insensitively, is not one of the
+	 *  recognized `kind=value` capability names (`kindValueStandardCapabilityNames`). */
 	public readonly isUnknown: boolean;
 
-	constructor(public readonly fullValue: string) {
+	constructor(
+		/** The complete `"KIND=VALUE"` capability string exactly as reported
+		 *  by the server; split into {@link kind}/{@link value} below.
+		 *  Throws a `ParsingError` if the string doesn't actually contain a
+		 *  `"="` with a non-empty value on both sides. */
+		public readonly fullValue: string,
+	) {
 		const [kind, ...rest] = fullValue.split("=");
 		const value = rest.join("=");
 
@@ -171,12 +230,28 @@ export class KindValueCapability implements ICapability {
 	}
 }
 
+/**
+ * A capability atom with no `kind=value` structure whose name begins with
+ * `"X"` (case-insensitively) — a non-standard/experimental extension per
+ * RFC3501/9051 §7.2.1. `kind`, `value`, and `fullValue` are all identical
+ * here since there's nothing to split.
+ */
 export class ExtensionCapability implements ICapability {
+	/** Same as {@link fullValue} — an extension atom has no separate
+	 *  kind/value split. */
 	public readonly kind: string;
+	/** Same as {@link fullValue} — an extension atom has no separate
+	 *  kind/value split. */
 	public readonly value: string;
+	/** Always `true`: this class only ever represents `X`-prefixed
+	 *  extension capabilities. */
 	public readonly isExtension: boolean = true;
 
-	constructor(public readonly fullValue: string) {
+	constructor(
+		/** The complete capability string exactly as reported by the
+		 *  server. */
+		public readonly fullValue: string,
+	) {
 		this.kind = fullValue;
 		this.value = fullValue;
 	}
@@ -193,21 +268,57 @@ export class ExtensionCapability implements ICapability {
 //
 // This will likely be mostly for debugging or understanding servers
 // that are not IMAP4rev1 compliant. So we are kind-of ignoring them.
+/**
+ * A capability atom with no `kind=value` structure that is neither a
+ * recognized standard name nor `X`-prefixed — a capability this library
+ * doesn't understand, tolerated per RFC3501/9051 §7.2.1's "MUST ignore any
+ * unknown capability names" but still surfaced here (mainly useful for
+ * debugging/inspecting non-compliant servers; see the comment above this
+ * class). `kind`, `value`, and `fullValue` are all identical since there's
+ * nothing to split.
+ */
 export class UnknownCapability implements ICapability {
+	/** Same as {@link fullValue} — an unrecognized bare atom has no separate
+	 *  kind/value split. */
 	public readonly kind: string;
+	/** Same as {@link fullValue} — an unrecognized bare atom has no separate
+	 *  kind/value split. */
 	public readonly value: string;
+	/** Always `false`: an unrecognized bare atom is never treated as an
+	 *  `X`-prefixed extension. */
 	public readonly isExtension: boolean = false;
+	/** Always `true`: this class only ever represents capability names this
+	 *  library doesn't recognize. */
 	public readonly isUnknown: boolean = true;
 
-	constructor(public readonly fullValue: string) {
+	constructor(
+		/** The complete capability string exactly as reported by the
+		 *  server. */
+		public readonly fullValue: string,
+	) {
 		this.kind = fullValue;
 		this.value = fullValue;
 	}
 }
 
+/**
+ * The CAPABILITY response (RFC3501/9051 §7.2.1: the untagged
+ * `"* CAPABILITY" *(SP capability)` reply to the CAPABILITY command, also
+ * reused — via the `false`/unparenthesized constructor form — for the
+ * bracketed `[CAPABILITY ...]` resp-text-code payload, see
+ * `CapabilityTextCode` in `text.code.ts`). Deduplicates capability atoms
+ * (case-insensitively) and classifies each one into a `StandardCapability`,
+ * `KindValueCapability`, `ExtensionCapability`, or `UnknownCapability`.
+ */
 export class CapabilityList {
+	/** Deduplicated capabilities, keyed by their case-insensitively
+	 *  canonicalized string form; insertion order follows the order the
+	 *  server reported them in. */
 	protected capabilityMap: Map<string, ICapability>;
 
+	/** Matches an untagged `"CAPABILITY" *(SP capability)"` line and, on
+	 *  success, parses and returns a {@link CapabilityList}; `null` if
+	 *  `tokens` doesn't start with the `CAPABILITY` keyword. */
 	public static match(tokens: LexerTokenList) {
 		const firstToken = tokens[0];
 		if (
@@ -234,10 +345,15 @@ export class CapabilityList {
 		});
 	}
 
+	/** All capabilities the server reported, deduplicated (case-insensitively)
+	 *  and in the order the server sent them. */
 	public get capabilities(): ICapability[] {
 		return Array.from(this.capabilityMap.values());
 	}
 
+	/** The `AUTH=` mechanism names the server advertised (e.g. `["PLAIN",
+	 *  "XOAUTH2"]`), derived from every `KindValueCapability` whose `kind` is
+	 *  `AUTH` (case-insensitively). */
 	public get supportedAuthSchemes(): string[] {
 		const authCaps: KindValueCapability[] = this.capabilities.filter(
 			(cap): cap is KindValueCapability =>
@@ -273,11 +389,15 @@ export class CapabilityList {
 		return this.capabilityMap.get(normalCapStr);
 	}
 
+	/** Whether the server reported `capability` (matched case-insensitively
+	 *  against the full capability string, e.g. `"IDLE"` or `"AUTH=PLAIN"`). */
 	public has(capability: string) {
 		return this.capabilityMap.has(ciCanonicalize(capability));
 	}
 
 	// Some sugar
+	/** The negation of {@link has} — whether the server did NOT report
+	 *  `capability`. */
 	public doesntHave(capability: string) {
 		return !this.has(capability);
 	}

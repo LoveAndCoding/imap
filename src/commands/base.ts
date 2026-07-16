@@ -28,9 +28,14 @@ import { CommandWriter } from "./writer";
  *  as an object (rather than a bare string parameter) so additional
  *  correlation data can be added without breaking `claims()` overrides. */
 export interface ClaimContext {
+	/** The tag assigned to the command being claimed against (see
+	 *  `Command.tag`), passed through so `claims()` overrides can implement
+	 *  TAG-correlated claim rules. */
 	readonly tag: string;
 }
 
+/** A command's pipelining class (spec §6.1) — see `Command.queueMode` for
+ *  the meaning of each value. */
 export type QueueMode = "pipeline" | "serial" | "isolated";
 
 const ALL_STATES: readonly ClientState[] = [
@@ -42,6 +47,21 @@ const ALL_STATES: readonly ClientState[] = [
 	"logout",
 ];
 
+/**
+ * Base class for every IMAP command (spec §7.1). A command instance is a
+ * plain, reusable VALUE until it is actually submitted to a queue: the
+ * queue assigns the tag at write time (see `assignTag`), builds the wire
+ * bytes by calling `write()` with a fresh `CommandWriter`, attributes
+ * untagged responses to the command via `claims()`, and builds the final
+ * result via `accept()` once the tagged response arrives.
+ *
+ * Re-submission semantics are deliberately simple: a command instance may
+ * be submitted (i.e. handed to a queue and written) at most once —
+ * `assignTag` throws if called a second time. Callers that want to send
+ * the "same" command twice (e.g. two NOOPs) must construct two instances —
+ * command classes are cheap, stateless-until-submitted values, so this is
+ * never a hardship in practice.
+ */
 export abstract class Command<TResult> {
 	/** Wire verb, e.g. "CAPABILITY", "UID FETCH". */
 	abstract readonly verb: string;
@@ -223,10 +243,14 @@ export abstract class Command<TResult> {
 		cmd._tag = tag;
 	}
 
+	/** Invokes `cmd`'s protected `write()` hook so the queue can serialize its
+	 *  arguments onto `w` without widening `write()`'s own access modifier. */
 	static writeArgs(cmd: Command<unknown>, w: CommandWriter): void {
 		cmd.write(w);
 	}
 
+	/** Invokes `cmd`'s protected `claims()` hook so the router can test
+	 *  whether an untagged response `resp` should be attributed to `cmd`. */
 	static claimsResponse(
 		cmd: Command<unknown>,
 		resp: UntaggedResponse,
@@ -235,6 +259,8 @@ export abstract class Command<TResult> {
 		return cmd.claims(resp, ctx);
 	}
 
+	/** Invokes `cmd`'s protected `accept()` hook to build its result from the
+	 *  responses collected in `c` once the tagged response has arrived. */
 	static acceptResult<T>(cmd: Command<T>, c: ResponseCollector): T | Promise<T> {
 		return cmd.accept(c);
 	}
@@ -245,10 +271,17 @@ export abstract class Command<TResult> {
 		cmd.onCollectorReady?.(c);
 	}
 
+	/** Reports whether `cmd` defines an `onContinuation` handler, i.e.
+	 *  whether it is prepared to respond to a server continuation request
+	 *  (spec §7) while in flight. */
 	static hasContinuationHook(cmd: Command<unknown>): boolean {
 		return typeof cmd.onContinuation === "function";
 	}
 
+	/** Invokes `cmd`'s `onContinuation` handler with a continuation response
+	 *  `resp`, returning the bytes (or `"abort"`) it produces. Throws if
+	 *  `cmd` defines no such handler — callers should check
+	 *  `hasContinuationHook` first. */
 	static handleContinuation(
 		cmd: Command<unknown>,
 		resp: ContinueResponse,
@@ -261,6 +294,9 @@ export abstract class Command<TResult> {
 		return cmd.onContinuation(resp);
 	}
 
+	/** Maps a tagged NO/BAD response to the `ImapError` `cmd`'s promise
+	 *  should reject with — `cmd`'s own `onError` override if it has one,
+	 *  otherwise the default `ServerNoError`/`ServerBadError` mapping. */
 	static mapError(cmd: Command<unknown>, resp: TaggedResponse): ImapError {
 		return cmd.onError ? cmd.onError(resp) : cmd.defaultOnError(resp);
 	}

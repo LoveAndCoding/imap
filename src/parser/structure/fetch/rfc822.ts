@@ -8,8 +8,12 @@ import { matchesFormat } from "../../utility";
 // MAX_ALLOWED_NUMBER (2^32) to a BigIntToken, so the size here is a plain
 // `number` for values that fit and a `bigint` for larger ones — matching the
 // same number-or-bigint pattern used for MODSEQ (./modseq.ts).
+/** RFC 3501/9051 §7.5 RFC822.SIZE data item: the message's size in octets. */
 export class RFC822Size {
-	constructor(public readonly size: number | bigint) {}
+	constructor(
+		/** The message size in octets (`bigint` for values above 2^32). */
+		public readonly size: number | bigint,
+	) {}
 }
 
 export function match(

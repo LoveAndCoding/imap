@@ -5,7 +5,10 @@ import { matchesFormat } from "../../utility";
 // internal-date   = "INTERNALDATE" SP date-time
 // date-time       = DQUOTE date-day-fixed "-" date-month "-" date-year
 //                   SP time SP zone DQUOTE
+/** RFC 3501/9051 §7.5 INTERNALDATE data item: the server's record of when
+ *  the message was received. */
 export class InternalDate {
+	/** The parsed internal date/time. */
 	public readonly datetime: Date;
 
 	constructor(dateTimeStr: string) {

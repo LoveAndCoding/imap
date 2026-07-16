@@ -70,6 +70,9 @@ export class PlainMechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link PlainMechanism} instance (RFC 4616 PLAIN).
+ *  Registered under the "PLAIN" name by the mechanism registry
+ *  (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createPlainMechanism(): SaslMechanism {
 	return new PlainMechanism();
 }

@@ -58,16 +58,33 @@ export type StatusItem =
  *   (number / nil)`), whereas `undefined` means the item wasn't returned.
  */
 export interface MailboxStatusResult {
+	/** The mailbox name this STATUS result describes. */
 	mailbox: string;
+	/** MESSAGES: the number of messages in the mailbox. */
 	messages?: number;
+	/** UIDNEXT: the predicted next UID value. */
 	uidNext?: number;
+	/** UIDVALIDITY: the mailbox's UID validity value. */
 	uidValidity?: number;
+	/** UNSEEN: the number of messages without the `\Seen` flag set. */
 	unseen?: number;
+	/** DELETED: the number of messages with the `\Deleted` flag set
+	 *  (RFC 9051 §6.3.11 / RFC 9208 §4.1.4). */
 	deleted?: number;
+	/** SIZE: total mailbox size in octets, up to 63 bits (RFC 8438 §3). */
 	size?: bigint;
+	/** HIGHESTMODSEQ: mod-sequence value (RFC 7162); `0n` means the mailbox
+	 *  keeps no persistent mod-sequences. */
 	highestModSeq?: bigint;
+	/** APPENDLIMIT: the advertised upload size limit; `null` is a meaningful
+	 *  value distinct from `undefined` -- the server answered with NIL, i.e.
+	 *  it advertises NO upload limit for this mailbox (RFC 7889 §3/§5),
+	 *  whereas `undefined` means the item wasn't returned. */
 	appendLimit?: bigint | null;
+	/** MAILBOXID: the mailbox's stable object identifier (RFC 8474 §4.3). */
 	mailboxId?: string;
+	/** RECENT: the number of messages with the `\Recent` flag set (rev1-only;
+	 *  dropped from the rev2 response set, but always a legal ask). */
 	recent?: number;
 }
 
@@ -77,7 +94,11 @@ export interface MailboxStatusResult {
  * is data, never an error (spec tolerance invariant I-6).
  */
 export interface NamespaceExtension {
+	/** The extension name (RFC 2342 §6's `Namespace_Response_Extension`
+	 *  extension-name atom), verbatim. */
 	name: string;
+	/** The extension's value list, preserved verbatim (order and duplicates
+	 *  included). */
 	values: string[];
 }
 
@@ -88,7 +109,11 @@ export interface NamespaceExtension {
  * the server sent NIL — a flat namespace with no hierarchy).
  */
 export interface NamespaceDescriptor {
+	/** The mailbox-name prefix for this namespace, decoded to a caller-facing
+	 *  UTF-8 string (mUTF-7 wire encoding already undone). */
 	prefix: string;
+	/** The hierarchy delimiter for this namespace; `null` when the server
+	 *  sent NIL -- a flat namespace with no hierarchy. */
 	delimiter: string | null;
 	/** Present only when the server attached extension data (RFC 2342 §6). */
 	extensions?: NamespaceExtension[];
@@ -105,8 +130,14 @@ export interface NamespaceDescriptor {
  * `other`/`shared` — `other` is RFC 2342's "Other Users' Namespace").
  */
 export interface NamespaceSet {
+	/** RFC 2342 §5's Personal Namespace(s) class; `[]` when the server sent
+	 *  NIL for this class. */
 	personal: NamespaceDescriptor[];
+	/** RFC 2342 §5's Other Users' Namespace(s) class; `[]` when the server
+	 *  sent NIL for this class. */
 	other: NamespaceDescriptor[];
+	/** RFC 2342 §5's Shared Namespace(s) class; `[]` when the server sent NIL
+	 *  for this class. */
 	shared: NamespaceDescriptor[];
 }
 
@@ -141,12 +172,29 @@ export interface NamespaceSet {
  *   `status` above.
  */
 export interface MailboxInfo {
+	/** The decoded, caller-facing UTF-8 mailbox name (mUTF-7 reversed; bare
+	 *  INBOX canonicalized to exactly "INBOX"). */
 	name: string;
+	/** The hierarchy delimiter reported for this mailbox; `null` when the
+	 *  server sent NIL. */
 	delimiter: string | null;
+	/** Every attribute the server sent, ci-normalized: known attribute names
+	 *  collapsed to their canonical RFC spelling, unknown ones preserved
+	 *  verbatim (I-6). */
 	attributes: ReadonlySet<string>;
+	/** The server-sent, open grade of the §5.6 special-use vocabulary (RFC
+	 *  6154/8457 known values autocomplete; an unrecognized value still
+	 *  type-checks as data). */
 	specialUse?: SpecialUse | (string & {});
+	/** Present only when the LIST carried `RETURN (STATUS (...))` (RFC 5819)
+	 *  and the server sent the paired `* STATUS` for this mailbox. */
 	status?: Partial<MailboxStatusResult>;
+	/** The RFC 5258/9051 OLDNAME extended data item, decoded like `name`. */
 	oldName?: string;
+	/** The RFC 5258 CHILDINFO extended item's strings (selection-option
+	 *  names for which this entry has matching children). */
 	childInfo?: string[];
+	/** Present only when the LIST carried `RETURN (MYRIGHTS)` (RFC 8440) and
+	 *  the server sent the paired untagged `* MYRIGHTS` for this mailbox. */
 	myRights?: string;
 }

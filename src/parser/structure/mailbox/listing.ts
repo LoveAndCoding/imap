@@ -89,12 +89,26 @@ export enum SpecialUse {
 	"Trash" = "Trash",
 }
 
-// From spec:
-// mailbox-list    = "(" [mbx-list-flags] ")" SP
-//                   (DQUOTE QUOTED-CHAR DQUOTE / nil) SP mailbox
+/**
+ * A LIST/LSUB/XLIST response (RFC 3501 §7.2.2, RFC 5258 extended LIST),
+ * describing one mailbox: its name, hierarchy separator, mailbox-list flags
+ * (e.g. `\Noselect`, `\HasChildren`, RFC 6154 special-use attributes), and
+ * any RFC 5258 extended list data trailing the name.
+ *
+ * From spec:
+ * ```
+ * mailbox-list    = "(" [mbx-list-flags] ")" SP
+ *                   (DQUOTE QUOTED-CHAR DQUOTE / nil) SP mailbox
+ * ```
+ */
 export class MailboxListing {
+	/** The mailbox name, UTF-7 decoded for display/comparison. */
 	public readonly name: string;
 
+	/**
+	 * Parses an untagged LIST/LSUB/XLIST response from the given tokens,
+	 * returning a {@link MailboxListing} on a match or `null` otherwise.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch =
 			tokens[0] &&
@@ -107,6 +121,16 @@ export class MailboxListing {
 		return null;
 	}
 
+	/**
+	 * Parses the mailbox-list body of a LIST/LSUB/XLIST response -- the
+	 * mbx-list-flags, hierarchy separator, mailbox name, and any trailing
+	 * RFC 5258 extended list data -- from the tokens following the
+	 * command atom, returning the resulting {@link MailboxListing}.
+	 *
+	 * @throws `ParsingError` (package-internal, src/errors.ts -- not part of
+	 * the documented surface) if the flags, separator, or mailbox name are
+	 * malformed or missing.
+	 */
 	public static fromListing(tokens: LexerTokenList) {
 		const flagListEndIndex = tokens.findIndex(
 			(token) =>
@@ -176,24 +200,39 @@ export class MailboxListing {
 		return new MailboxListing(name, flags, separator, extendedData, extendedItems);
 	}
 
+	/**
+	 * @param name - The mailbox name, as sent by the server (UTF-7 decoded
+	 *   in the constructor body before being assigned to the `name` field).
+	 * @param flags - The mbx-list-flags for this mailbox (e.g. `\Noselect`,
+	 *   `\HasChildren`, RFC 6154 special-use attributes).
+	 * @param separator - The hierarchy separator character for this
+	 *   mailbox, or `null` if the server sent NIL (no separator).
+	 * @param extendedData - Raw, uninterpreted RFC 5258 extended list data
+	 *   (e.g. OLDNAME, CHILDINFO) trailing the mailbox name. Captured per
+	 *   §11.5 and kept verbatim even now that `extendedItems` parses the
+	 *   common shape -- the raw string is the tolerance-preserving fallback
+	 *   for anything the typed parse can't represent.
+	 * @param extendedItems - Typed view of the same data (M2.7): the RFC
+	 *   5258 §4 tag/data item pairs, when the extended data parses as that
+	 *   shape; `undefined` otherwise (never an error -- see
+	 *   `parseExtendedItems`).
+	 */
 	constructor(
 		name: string,
 		public readonly flags: FlagList,
 		public readonly separator: null | string,
-		// Raw, uninterpreted RFC 5258 extended list data (e.g. OLDNAME,
-		// CHILDINFO) trailing the mailbox name. Captured per §11.5 and kept
-		// verbatim even now that `extendedItems` parses the common shape —
-		// the raw string is the tolerance-preserving fallback for anything
-		// the typed parse can't represent.
 		public readonly extendedData?: string,
-		// Typed view of the same data (M2.7): the RFC 5258 §4 tag/data item
-		// pairs, when the extended data parses as that shape; `undefined`
-		// otherwise (never an error — see `parseExtendedItems`).
 		public readonly extendedItems?: readonly ListingExtendedItem[],
 	) {
 		this.name = utf7.decode(name);
 	}
 
+	/**
+	 * Determines which RFC 6154 special-use category (if any) applies to
+	 * this mailbox, based on its mbx-list-flags (or, for `SpecialUse.Inbox`,
+	 * its name). Returns `undefined` if none of the special-use predicates
+	 * match.
+	 */
 	public getSpecialUse(): SpecialUse | undefined {
 		if (this.isAll()) return SpecialUse.All;
 		if (this.isArchive()) return SpecialUse.Archive;
@@ -206,38 +245,47 @@ export class MailboxListing {
 		if (this.isTrash()) return SpecialUse.Trash;
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\All` special-use attribute. */
 	public isAll(): boolean {
 		return this.flags.has("\\All");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Archive` special-use attribute. */
 	public isArchive(): boolean {
 		return this.flags.has("\\Archive");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Drafts` special-use attribute. */
 	public isDrafts(): boolean {
 		return this.flags.has("\\Drafts");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Flagged` special-use attribute. */
 	public isFlagged(): boolean {
 		return this.flags.has("\\Flagged");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Important` special-use attribute. */
 	public isImportant(): boolean {
 		return this.flags.has("\\Important");
 	}
 
+	/** Whether this mailbox's name is `INBOX` (case-insensitively). */
 	public isInbox(): boolean {
 		return this.name.toUpperCase() === "INBOX";
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Junk` special-use attribute. */
 	public isJunk(): boolean {
 		return this.flags.has("\\Junk");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Sent` special-use attribute. */
 	public isSent(): boolean {
 		return this.flags.has("\\Sent");
 	}
 
+	/** Whether this mailbox carries the RFC 6154 `\Trash` special-use attribute. */
 	public isTrash(): boolean {
 		return this.flags.has("\\Trash");
 	}

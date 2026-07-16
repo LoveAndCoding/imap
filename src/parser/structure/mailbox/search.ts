@@ -60,13 +60,23 @@ export function* esearchKeyValuePairGenerator(tokens: LexerTokenList) {
 	}
 }
 
+/**
+ * The classic untagged SEARCH response (RFC 3501 §7.2.5, with the optional
+ * MODSEQ suffix from RFC 7162 §3.1.9/§7):
+ * ```
+ * "SEARCH" *(SP nz-number) [SP "(" "MODSEQ" SP mod-sequence-value ")"]
+ * ```
+ */
 export class SearchResponse {
+	/** The matched message sequence numbers (or UIDs, for a UID SEARCH), in the order the server returned them. */
 	public readonly results: number[];
+	/** The mod-sequence value from a trailing `(MODSEQ ...)` group (RFC 7162), if present. */
 	public readonly modseq?: number | bigint;
 
-	// From spec:
-	//   "SEARCH" *(SP nz-number) [SP "(" "MODSEQ" SP mod-sequence-value ")"]
-	//
+	/**
+	 * Parses an untagged SEARCH response from the given tokens, returning a
+	 * {@link SearchResponse} on a match or `undefined` otherwise.
+	 */
 	public static match(tokens: LexerTokenList) {
 		if (ciEquals(tokens[0]?.value, "SEARCH")) {
 			return new SearchResponse(tokens.slice(2));
@@ -132,9 +142,19 @@ type ESearchComplexValue = string | string[] | ESearchComplexValue[];
 // ever hold one entry per key, so a second same-named item would silently
 // clobber the first. This keeps every pair, in wire order, while retaining
 // a Map-like read surface (`entries()`/`get()`/`has()`/`size`) for consumers.
+/**
+ * A Map-like, insertion-ordered store of ESEARCH `search-return-data`
+ * key/value pairs (RFC 4731/9051 §7.3.4). Unlike a plain `Map`, this
+ * preserves every occurrence of a repeated modifier name -- RFC 5267 §4.3.2
+ * requires ADDTO/REMOVEFROM update items to be processed in wire order,
+ * including when the same modifier name appears more than once in a single
+ * ESEARCH response (e.g. `ADDTO (1 2733) ADDTO (1 2731:2732)`), which a
+ * plain `Map<string, V>` cannot represent.
+ */
 export class ESearchReturnData<V> {
 	private readonly pairs: Array<[string, V]> = [];
 
+	/** Appends a key/value pair, preserving any earlier pair with the same key. */
 	public set(key: string, value: V): void {
 		this.pairs.push([key, value]);
 	}
@@ -142,6 +162,12 @@ export class ESearchReturnData<V> {
 	// Most-recently-set value wins for single-valued lookups. Callers that
 	// need every occurrence of a repeatable modifier (e.g. ADDTO) must use
 	// `entries()` instead, which preserves all of them in order.
+	/**
+	 * Returns the most recently {@link set} value for `key`, or `undefined`
+	 * if no pair with that key exists. Callers that need every occurrence
+	 * of a repeatable modifier (e.g. ADDTO) should use {@link entries}
+	 * instead, which preserves all of them in order.
+	 */
 	public get(key: string): V | undefined {
 		for (let i = this.pairs.length - 1; i >= 0; i--) {
 			if (this.pairs[i][0] === key) {
@@ -151,55 +177,80 @@ export class ESearchReturnData<V> {
 		return undefined;
 	}
 
+	/** Whether at least one pair with the given key has been {@link set}. */
 	public has(key: string): boolean {
 		return this.pairs.some(([k]) => k === key);
 	}
 
+	/** The total number of key/value pairs stored, including duplicate keys. */
 	public get size(): number {
 		return this.pairs.length;
 	}
 
+	/** Iterates all key/value pairs in the order they were {@link set}, including duplicate keys. */
 	public entries(): IterableIterator<[string, V]> {
 		return this.pairs.slice()[Symbol.iterator]();
 	}
 
+	/** Equivalent to {@link entries}; makes this class directly iterable with `for...of`. */
 	public [Symbol.iterator](): IterableIterator<[string, V]> {
 		return this.entries();
 	}
 }
 
+/**
+ * The extended ESEARCH response (RFC 4731, folded into RFC 9051 §7.3.4),
+ * used for both extended SEARCH and the UID form when a search-return-opts
+ * `RETURN` list was requested. Carries an optional search-correlator tag,
+ * a UID flag, the well-known MIN/MAX/COUNT/ALL/MODSEQ return values, and
+ * any other search-return-data pairs in {@link data}.
+ *
+ * From Spec (4466):
+ * ```
+ * esearch-response     = "ESEARCH" [search-correlator] [SP "UID"]
+ *                        *(SP search-return-data)
+ * search-correlator    = SP "(" "TAG" SP tag-string ")"
+ * search-return-data   = search-modifier-name SP search-return-value
+ * search-modifier-name = tagged-ext-label
+ * search-return-value  = tagged-ext-val
+ * tagged-ext-label     = tagged-label-fchar *tagged-label-char
+ * tagged-label-fchar   = ALPHA / "-" / "_" / "."
+ * tagged-label-char    = tagged-label-fchar / DIGIT / ":"
+ * tagged-ext-val       = tagged-ext-simple /
+ *                        "(" [tagged-ext-comp] ")"
+ * tagged-ext-simple    = sequence-set / number
+ * tagged-ext-comp      = astring /
+ *                        tagged-ext-comp *(SP tagged-ext-comp) /
+ *                        "(" tagged-ext-comp ")"
+ * ```
+ *
+ * In summary, it should look something like this:
+ * `ESEARCH (Tag string)? UID? [atom astring|number|sequence ...]`
+ */
 export class ExtendedSearchResponse {
-	// Min/Max/Count/All/ModSeq defined in RFC 4731
+	/** The `COUNT` return value (RFC 4731): the number of matching messages. */
 	public readonly count?: number;
+	/** The `MAX` return value (RFC 4731): the highest matching message number/UID. */
 	public readonly max?: number;
+	/** The `MIN` return value (RFC 4731): the lowest matching message number/UID. */
 	public readonly min?: number;
+	/** The `MODSEQ` return value (RFC 7162): the highest mod-sequence among the matching messages. */
 	public readonly modSequenceValue?: number | bigint;
+	/** The `ALL` return value (RFC 4731): the full set of matching message numbers/UIDs. */
 	public readonly results?: UIDSet;
 
+	/** Any other search-return-data pairs (e.g. RFC 5267 ADDTO/REMOVEFROM, PARTIAL) not captured by the named fields above, in wire order. */
 	public readonly data: ESearchReturnData<UIDSet | number | ESearchComplexValue>;
 
+	/** Whether the search-correlator indicated this response reports UIDs (`SP "UID"` present) rather than message sequence numbers. */
 	public readonly isUID: boolean;
+	/** The tag from the search-correlator (`"(" "TAG" SP tag-string ")"`), correlating this response to the command that requested it, if present. */
 	public readonly tag?: Tag;
 
-	// From Spec (4466):
-	//   esearch-response     = "ESEARCH" [search-correlator] [SP "UID"]
-	//                          *(SP search-return-data)
-	//   search-correlator    = SP "(" "TAG" SP tag-string ")"
-	//   search-return-data   = search-modifier-name SP search-return-value
-	//   search-modifier-name = tagged-ext-label
-	//   search-return-value  = tagged-ext-val
-	//   tagged-ext-label     = tagged-label-fchar *tagged-label-char
-	//   tagged-label-fchar   = ALPHA / "-" / "_" / "."
-	//   tagged-label-char    = tagged-label-fchar / DIGIT / ":"
-	//   tagged-ext-val       = tagged-ext-simple /
-	//                          "(" [tagged-ext-comp] ")"
-	//   tagged-ext-simple    = sequence-set / number
-	//   tagged-ext-comp      = astring /
-	//                          tagged-ext-comp *(SP tagged-ext-comp) /
-	//                          "(" tagged-ext-comp ")"
-	//
-	// In summary, it should look something like this
-	//    ESEARCH (Tag string)? UID? [atom astring|number|sequence ...]
+	/**
+	 * Parses an untagged ESEARCH response from the given tokens, returning
+	 * an {@link ExtendedSearchResponse} on a match or `undefined` otherwise.
+	 */
 	public static match(tokens: LexerTokenList) {
 		if (ciEquals(tokens[0]?.value, "ESEARCH")) {
 			return new ExtendedSearchResponse(tokens.slice(2));

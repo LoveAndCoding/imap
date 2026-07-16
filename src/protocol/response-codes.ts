@@ -44,18 +44,65 @@
 // M5.4 (METADATA, RFC 5464) adds the "METADATA" variant below -- LONGENTRIES/
 // MAXSIZE/TOOMANY/NOPRIVATE, the four sub-forms one wire keyword fronts.
 export type TypedResponseCode =
-	| { name: "CLOSED" }
-	| { name: "PERMANENTFLAGS"; flags: string[] }
-	| { name: "UIDVALIDITY"; value: number }
-	| { name: "UIDNEXT"; value: number }
-	| { name: "HIGHESTMODSEQ"; value: bigint }
-	| { name: "NOMODSEQ" }
-	| { name: "UIDNOTSTICKY" }
-	| { name: "MAILBOXID"; value: string | null }
-	| { name: "USEATTR" }
+	| {
+			/** Discriminant. CLOSED carries no arguments (RFC 3501/9051 §7.1). */
+			name: "CLOSED";
+	  }
+	| {
+			/** Discriminant. */
+			name: "PERMANENTFLAGS";
+			/** The permanent flags the client may set for this mailbox (`\*`
+			 *  included when new keywords may be created, RFC 3501/9051 §7.1). */
+			flags: string[];
+	  }
+	| {
+			/** Discriminant. */
+			name: "UIDVALIDITY";
+			/** The mailbox's current UIDVALIDITY value (RFC 3501/9051 §7.1). */
+			value: number;
+	  }
+	| {
+			/** Discriminant. */
+			name: "UIDNEXT";
+			/** The predicted next UID for this mailbox (RFC 3501/9051 §7.1). */
+			value: number;
+	  }
+	| {
+			/** Discriminant. */
+			name: "HIGHESTMODSEQ";
+			/** The mailbox's highest mod-sequence value (RFC 7162 §3.1.1/§3.1.2). */
+			value: bigint;
+	  }
+	| {
+			/** Discriminant. Signals the mailbox does not support persistent
+			 *  mod-sequences (RFC 7162 §3.1.2) -- carries no argument. */
+			name: "NOMODSEQ";
+	  }
+	| {
+			/** Discriminant. Signals UIDs assigned in this mailbox session are
+			 *  not permanent (RFC 3501/9051 §7.1) -- carries no argument. */
+			name: "UIDNOTSTICKY";
+	  }
+	| {
+			/** Discriminant. */
+			name: "MAILBOXID";
+			/** The mailbox's stable OBJECTID (RFC 8474 §4.3); `null` when the
+			 *  server sent no value. */
+			value: string | null;
+	  }
+	| {
+			/** Discriminant. USEATTR carries no arguments (RFC 6154 §3). */
+			name: "USEATTR";
+	  }
 	/** RFC 7889: `value` is the advertised limit; `null` when the code
 	 *  carried no (or a non-numeric) argument. */
-	| { name: "APPENDLIMIT"; value: bigint | null }
+	| {
+			/** Discriminant. */
+			name: "APPENDLIMIT";
+			/** The advertised append size limit in octets; `null` when the code
+			 *  carried no (or a non-numeric) argument. */
+			value: bigint | null;
+	  }
 	/** RFC 4315 (UIDPLUS): tagged OK on a successful APPEND. `uid` is the
 	 *  FIRST assigned UID (correct, on its own, for the single-message APPEND
 	 *  case, M2.11). `uids` (M3.10) is the FULL, ascending expansion of the
@@ -65,21 +112,54 @@ export type TypedResponseCode =
 	 *  `uid-set` widened to cover every message in the batch,
 	 *  RFC3502-uidplus-1) -- `commands/append.ts`'s `MultiAppendCommand`
 	 *  pairs this positionally onto its message array. */
-	| { name: "APPENDUID"; uidValidity: number; uid: number; uids: number[] }
+	| {
+			/** Discriminant. */
+			name: "APPENDUID";
+			/** UIDVALIDITY of the mailbox the message(s) were appended to
+			 *  (RFC 4315 §3). */
+			uidValidity: number;
+			/** The first assigned UID -- correct on its own for the
+			 *  single-message APPEND case (M2.11). */
+			uid: number;
+			/** Full ascending expansion of the appended UIDs, one per message,
+			 *  in append order (M3.10; RFC 3502 MULTIAPPEND). */
+			uids: number[];
+	  }
 	/** RFC 4469 (CATENATE) / RFC 7889 (APPENDLIMIT): tagged NO when an
 	 *  APPEND's resulting message would exceed a size limit. Carries no
 	 *  argument. */
-	| { name: "TOOBIG" }
+	| {
+			/** Discriminant. TOOBIG carries no argument. */
+			name: "TOOBIG";
+	  }
 	/** RFC 4469 (CATENATE): tagged NO when a CATENATE URL part could not be
 	 *  fetched/resolved. `url` is the offending IMAP URL, verbatim (quotes
 	 *  stripped if the server quoted it). */
-	| { name: "BADURL"; url: string }
+	| {
+			/** Discriminant. */
+			name: "BADURL";
+			/** The offending IMAP URL, verbatim (quotes stripped if the server
+			 *  quoted it). */
+			url: string;
+	  }
 	/** RFC 4315 (UIDPLUS): COPY's tagged OK, or MOVE's untagged OK arriving
 	 *  BEFORE the EXPUNGE responses (RFC9051-6.4.8-1) -- M3.8. `sourceUids`/
 	 *  `destUids` are position-paired (the i-th source UID landed at the
 	 *  i-th destination UID), expanded from the wire's `uid-set` ranges into
 	 *  individual numbers in ascending order. */
-	| { name: "COPYUID"; uidValidity: number; sourceUids: number[]; destUids: number[] }
+	| {
+			/** Discriminant. */
+			name: "COPYUID";
+			/** UIDVALIDITY of the destination mailbox (RFC 4315 §3). */
+			uidValidity: number;
+			/** Ascending expansion of the source message UIDs, position-paired
+			 *  with `destUids` (the i-th source UID landed at the i-th dest
+			 *  UID). */
+			sourceUids: number[];
+			/** Ascending expansion of the destination UIDs assigned to each
+			 *  source message, position-paired with `sourceUids`. */
+			destUids: number[];
+	  }
 	/** RFC 7162 §3.2.5.1 (CONDSTORE): rides a STORE/UID STORE's TAGGED
 	 *  response when `UNCHANGEDSINCE` prevented the command from touching
 	 *  every requested message -- `uids` is the ascending expansion of the
@@ -93,7 +173,14 @@ export type TypedResponseCode =
 	 *  `ServerNoError`/`ServerBadError.code`, matching every other
 	 *  structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) rather than
 	 *  silently falling back to the open `{name, args}` shape. */
-	| { name: "MODIFIED"; uids: number[] }
+	| {
+			/** Discriminant. */
+			name: "MODIFIED";
+			/** Ascending expansion of the UIDs/sequence numbers that were NOT
+			 *  modified because UNCHANGEDSINCE excluded them (RFC 7162
+			 *  §3.2.5.1). */
+			uids: number[];
+	  }
 	/** RFC 5466 §3.1/§4 (FILTERS), M4.14: `"UNDEFINED-FILTER" SP filter-name`
 	 *  rides a tagged NO refusing a `SEARCH FILTER <name>` that names a
 	 *  nonexistent or inaccessible stored filter. `filterName` is the bare
@@ -105,7 +192,13 @@ export type TypedResponseCode =
 	 *  `docs/compliance-adjudications.md`'s RFC5466 entry for the M4.14/M5.4
 	 *  scope history); this resp-code variant predates and never depended on
 	 *  that carry-forward landing. */
-	| { name: "UNDEFINED-FILTER"; filterName: string | null }
+	| {
+			/** Discriminant. */
+			name: "UNDEFINED-FILTER";
+			/** The bare (unparenthesized) filter-name atom the server rejected;
+			 *  `null` when a non-conformant server omitted it. */
+			filterName: string | null;
+	  }
 	/** RFC 5464 §4.2.1/§4.3 (M5.4): a SINGLE wire keyword ("METADATA") fronts
 	 *  four distinct resp-text-code sub-forms -- `"METADATA" SP "LONGENTRIES"
 	 *  SP number` (tagged OK, GETMETADATA's MAXSIZE-truncation signal: the
@@ -118,8 +211,16 @@ export type TypedResponseCode =
 	 *  numeric argument for LONGENTRIES/MAXSIZE and stays `null` for the
 	 *  argument-less TOOMANY/NOPRIVATE forms -- never fabricated (I-6). */
 	| {
+			/** Discriminant. A single wire keyword fronting four distinct
+			 *  resp-text-code sub-forms (RFC 5464 §4.2.1/§4.3) -- see
+			 *  `subKind`. */
 			name: "METADATA";
+			/** Which of the four METADATA sub-forms this is: LONGENTRIES
+			 *  (GETMETADATA truncation signal) or MAXSIZE/TOOMANY/NOPRIVATE
+			 *  (SETMETADATA failure reasons). */
 			subKind: "LONGENTRIES" | "MAXSIZE" | "TOOMANY" | "NOPRIVATE";
+			/** Numeric argument for LONGENTRIES/MAXSIZE; stays `null` for the
+			 *  argument-less TOOMANY/NOPRIVATE forms. */
 			value: number | null;
 	  }
 	/** RFC 5255 §4.9 (I18NLEVEL=2), M5.11: `"BADCOMPARATOR" [SP charset]`
@@ -133,7 +234,14 @@ export type TypedResponseCode =
 	 *  UNDEFINED-FILTER above: `AtomTextCode`'s bare-argument path already
 	 *  preserved the data, this variant just gives callers a structured
 	 *  field instead of the open `args` string. */
-	| { name: "BADCOMPARATOR"; charset: string | null }
+	| {
+			/** Discriminant. */
+			name: "BADCOMPARATOR";
+			/** Optional bare trailing argument naming the rejected comparator's
+			 *  charset (RFC 5255 §4.9); `null` when absent, the common
+			 *  argument-less form. */
+			charset: string | null;
+	  }
 	/** RFC 2193 (mailbox referrals) / RFC 2221 (login referrals), M5.13:
 	 *  `"REFERRAL" 1*(SP <url>)` rides a tagged NO (a referred SELECT/CREATE/
 	 *  RENAME/COPY/LOGIN/..., RFC 2193 §4 / RFC 2221 §4.1), a tagged OK (RFC
@@ -150,7 +258,14 @@ export type TypedResponseCode =
 	 *  one -- following a referral means opening a new connection to another
 	 *  host (RFC 2193 §4.1/RFC 2221 §4), which is the consumer's decision,
 	 *  same "no auto-XYZ magic" posture as MOVE emulation and TRYCREATE. */
-	| { name: "REFERRAL"; urls: string[] }
+	| {
+			/** Discriminant. */
+			name: "REFERRAL";
+			/** Every space-separated URL in the server's stated preference
+			 *  order (RFC 2193 §3: first = most preferred); `[]` when a
+			 *  non-conformant server sent no argument. */
+			urls: string[];
+	  }
 	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTMESSAGES" SP nz-number`
 	 *  rides a tagged NO refusing a CONVERT/UID CONVERT whose sequence set
 	 *  names more messages than the server will convert per request -- `value`
@@ -165,9 +280,31 @@ export type TypedResponseCode =
 	 *  never an error, never an invented number). Surfaces as a typed error
 	 *  through the ordinary tagged-NO path (`Command.defaultOnError` ->
 	 *  `ServerNoError.code`), never a silently-swallowed failure. */
-	| { name: "MAXCONVERTMESSAGES"; value: number | null }
+	| {
+			/** Discriminant. */
+			name: "MAXCONVERTMESSAGES";
+			/** Per-request ceiling on the number of messages CONVERT will
+			 *  process (RFC 5259 §9); `null` when a non-conformant server
+			 *  omits or garbles the argument. */
+			value: number | null;
+	  }
 	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTPARTS" SP nz-number` --
 	 *  the body-parts-per-message counterpart of MAXCONVERTMESSAGES above
 	 *  (RFC5259-9-3); identical shape/tolerance rationale. */
-	| { name: "MAXCONVERTPARTS"; value: number | null }
-	| { name: string; args: string | null };
+	| {
+			/** Discriminant. */
+			name: "MAXCONVERTPARTS";
+			/** Per-request ceiling on the number of body parts CONVERT will
+			 *  process per message (RFC 5259 §9); `null` when a non-conformant
+			 *  server omits or garbles the argument. */
+			value: number | null;
+	  }
+	| {
+			/** The response code's wire name, verbatim -- this open fallback
+			 *  shape carries every known-but-not-yet-typed or genuinely unknown
+			 *  code (spec tolerance invariant I-6: never an error). */
+			name: string;
+			/** The code's raw argument text, verbatim; `null` when the code
+			 *  carried no argument. */
+			args: string | null;
+	  };

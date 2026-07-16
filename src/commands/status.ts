@@ -158,6 +158,9 @@ export function stripQuotes(name: string): string {
  *  view gets `CapabilityError`, not a silent pass. */
 const NO_STATUS_CAPS: StatusCapabilityProbe = { has: () => false, all: () => new Set() };
 
+/** STATUS (RFC 3501 §6.3.10 / RFC 9051 §6.3.11) — see this module's own
+ *  header comment for the full item/capability-gating and attribution
+ *  rationale. */
 export class StatusCommand extends Command<MailboxStatusResult> {
 	readonly verb = "STATUS";
 	// Ordinary data flow, no state change and no ambiguous untagged

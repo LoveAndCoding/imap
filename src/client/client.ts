@@ -153,12 +153,42 @@ const TLS_MODE_TO_CONNECTION: Record<TlsMode, TLSSetting> = {
 	off: TLSSetting.FORCE_OFF,
 };
 
+/** Events emitted by `ImapClient` (it extends `TypedEmitter<ImapClientEvents>`)
+ *  — see each member below for exactly when it fires. */
 export interface ImapClientEvents {
+	/** Fires synchronously on every `ClientStateMachine` transition (spec
+	 *  §3.1), strictly BEFORE whatever promise caused the transition settles
+	 *  — see `ClientStateMachine.transition()`'s doc comment for the ordering
+	 *  guarantee this depends on. */
 	stateChange: (state: ClientState, prev: ClientState) => void;
+	/** Fires whenever the live capability set changes: greeting/CAPABILITY
+	 *  response, post-STARTTLS re-fetch, or a tagged-OK response code — see
+	 *  `CapabilityRegistry.onChange()`. */
 	capabilitiesChanged: (caps: CapabilityView) => void;
+	/** An untagged ALERT response code (RFC 3501/9051 §7.1, spec I-7)
+	 *  bridged straight from `Connection`'s own `alert` event — fires
+	 *  regardless of confidentiality, unlike `serverStatus`/this client's own
+	 *  state-tracking (which stays suppressed pre-TLS). `meta.trusted`
+	 *  reflects whether TLS was already active when the ALERT arrived
+	 *  (`false` pre-STARTTLS/pre-TLS text should be treated with more
+	 *  caution than post-TLS text, RFC9051-11.3-2). */
 	alert: (text: string, meta: { trusted: boolean }) => void;
+	/** A response the router (spec §8) could attribute to neither an
+	 *  in-flight command's claim function nor the state-tracker lane — a
+	 *  catch-all so callers can observe (and log) server data outside this
+	 *  library's currently-understood surface. */
 	unhandled: (response: UntaggedResponse | UnknownResponse) => void;
+	/** Fires once the connection has fully torn down, from ANY cause
+	 *  (`logout()`/`close()`, a server BYE, or an unexpected socket drop).
+	 *  `info.graceful` is `true` only when the socket closed cleanly AND no
+	 *  connection-level error was pending; `info.error` carries that pending
+	 *  `ImapError` when there was one; `info.bye` carries the server's BYE
+	 *  text (see `extractByeText()`) when the close was preceded by one. */
 	close: (info: { graceful: boolean; error?: ImapError; bye?: string }) => void;
+	/** Fires for a connection-level error that isn't tied to a specific
+	 *  in-flight command's own promise rejection (e.g. an async socket
+	 *  error) — see `wireConnectionEvents()`'s `connectionError` bridge and
+	 *  `_lastConnectionError`. */
 	error: (err: ImapError) => void;
 }
 
@@ -226,6 +256,19 @@ function extractByeText(err: unknown): string | undefined {
 	return undefined;
 }
 
+/**
+ * The public Layer-3 IMAP client (spec §3.2/§3.3) — the library's primary
+ * entry point. Wraps a single `Connection` (Layer 1) together with the
+ * `ClientStateMachine`, `CapabilityRegistry`, and command layer to implement
+ * the full connection lifecycle: `connect()`'s spec §3.3 ritual (greeting →
+ * capability check → optional AUTHENTICATE → ID → ENABLE → optional
+ * COMPRESS), mailbox management (CREATE/DELETE/RENAME/SUBSCRIBE/
+ * UNSUBSCRIBE/LIST/LSUB/STATUS/NAMESPACE/APPEND), the `mailbox`
+ * (`MailboxSession`) surface once a mailbox is selected, the lazy §3.6
+ * extension facets (`quota`/`acl`/`metadata`/`urlauth`), and `logout()`/
+ * `close()` teardown. Emits `ImapClientEvents` for state changes, capability
+ * changes, ALERTs, unhandled server data, and connection close/error.
+ */
 export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	private readonly config: ResolvedConfig;
 	private readonly stateMachine = new ClientStateMachine();
@@ -357,6 +400,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	// -- lifecycle -----------------------------------------------------------
 
+	/** The client's current connection state (spec §3.1) — mirrors
+	 *  `ClientStateMachine.current` one-for-one. See `ClientState` for the
+	 *  six legal values and `ImapClientEvents.stateChange` for the event
+	 *  fired on every transition. */
 	public get state(): ClientState {
 		return this.stateMachine.current;
 	}
@@ -630,26 +677,51 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	// -- capabilities & server info -------------------------------------------
 
+	/** The server's currently known capability set (spec §3.2), backed by
+	 *  the live `CapabilityRegistry` — reflects the greeting/CAPABILITY
+	 *  response, any post-STARTTLS re-fetch, and tagged-OK response codes,
+	 *  and updates in place as those arrive (see
+	 *  `ImapClientEvents.capabilitiesChanged`). */
 	public get capabilities(): CapabilityView {
 		return this.capabilityRegistry.view;
 	}
 
+	/** Whether the server has advertised capability `cap`, per the live
+	 *  `capabilities` view. A pure advertisement check — some capabilities'
+	 *  actual wire effects are additionally gated on having been ENABLEd
+	 *  first; see `effectiveCapability()` for that distinction. */
 	public supports(cap: string): boolean {
 		return this.capabilityRegistry.view.has(cap);
 	}
 
+	/** The server's ID response fields (RFC 2971), as returned by the ID
+	 *  exchange `connect()` performs via `maybeSendId()` — `null` until that
+	 *  exchange has completed (including when the server responded with no
+	 *  fields, or `config.id` is `false` so ID was never sent). */
 	public get serverId(): ReadonlyMap<string, string | null> | null {
 		return this._serverId;
 	}
 
+	/** The set of capabilities this client has successfully ENABLEd so far
+	 *  (spec §3.4, RFC 5161 §3.2) — accumulative for the life of the client,
+	 *  never cleared by a later `enableExtensions()` call. See that method
+	 *  and the backing `_enabled` field's own doc comment. */
 	public get enabled(): ReadonlySet<string> {
 		return this._enabled;
 	}
 
+	/** Whether the underlying connection is currently protected by TLS —
+	 *  either connected with `tls: "on"` or having completed STARTTLS (spec
+	 *  §10.2/§10.3). Mirrors `Connection.isSecure`. */
 	public get secure(): boolean {
 		return this.connection.isSecure;
 	}
 
+	/** NOOP (spec §3.2, RFC 3501 §6.1.2/RFC 9051 §6.1.2) — a no-op round
+	 *  trip whose only real purpose is giving the server a chance to send
+	 *  any pending untagged status updates (EXISTS/EXPUNGE/FETCH/etc.); the
+	 *  same mechanism `updates({idle:true})`'s NOOP-polling fallback relies
+	 *  on when IDLE isn't available. */
 	public async noop(): Promise<void> {
 		await this.run(new NoopCommand());
 	}

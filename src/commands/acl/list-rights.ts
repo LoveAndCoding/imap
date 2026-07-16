@@ -15,9 +15,15 @@ import type { CommandWriter } from "../writer";
  * a server may report no additional grantable groups at all).
  */
 export interface ListRightsResult {
+	/** The mailbox name the caller asked about (already decoded/
+	 *  canonicalized, never the server's own echo). */
 	mailbox: string;
+	/** The identifier whose potential rights were queried. */
 	identifier: string;
+	/** Rights `identifier` is ALWAYS granted in this mailbox. */
 	required: string;
+	/** Further groups of rights that MAY additionally be granted together,
+	 *  in server order — rights within one group are tied. */
 	optional: string[];
 }
 

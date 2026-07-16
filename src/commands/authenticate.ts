@@ -18,8 +18,15 @@ import type { CommandWriter } from "./writer";
  * wants to send zero bytes as its opening move).
  */
 export interface AuthenticateCommandOptions {
+	/** The SASL mechanism driving this exchange (e.g. PLAIN, XOAUTH2, SCRAM). */
 	mechanism: SaslMechanism;
+	/** Context passed through to `mechanism.start()`/`.step()`/`.finish()` —
+	 *  typically carries credentials and any mechanism-specific state. */
 	ctx: SaslContext;
+	/** The mechanism's precomputed initial response, or `null` if this
+	 *  mechanism sends nothing until the server's first real challenge. See
+	 *  this interface's own doc comment for why this can never be computed
+	 *  lazily inside the command itself. */
 	initialResponse: Buffer | null;
 	/** Whether the server advertised SASL-IR (RFC 4959) — gates whether a
 	 *  non-null `initialResponse` is sent inline on the `AUTHENTICATE` line

@@ -19,7 +19,11 @@ import {
  *  RFC 5464 draws no distinction either, since `value = nstring / literal8`
  *  already treats NIL as "no value" wherever it appears. */
 export interface MetadataEntry {
+	/** The annotation entry name (e.g. `/private/comment`). */
 	entry: string;
+	/** The entry's value, or `null` when this entry came from the
+	 *  value-less unsolicited form (no value was ever on the wire) or an
+	 *  explicit wire `NIL` in the with-values form. */
 	value: string | null;
 }
 
@@ -52,10 +56,23 @@ export interface MetadataEntry {
  * indicator, not a "no mailbox" placeholder — decodes to `""` unchanged.
  */
 export class MetadataResponse {
+	/** The mailbox this METADATA response is for (mUTF-7 decoded; the empty
+	 *  string is RFC 5464's SERVER annotation indicator, not "no mailbox"). */
 	public readonly mailbox: string;
+	/** The entry/value pairs (or bare entry names) carried by this response. */
 	public readonly entries: MetadataEntry[];
+	/** Whether this instance was parsed from the with-values wire shape
+	 *  (`true`) or the value-less unsolicited-notification shape (`false`). */
 	public readonly hasValues: boolean;
 
+	/**
+	 * Tests whether `tokens` is an untagged METADATA response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link MetadataResponse}, or `null` if `tokens` is not
+	 * a METADATA response.
+	 */
 	public static match(tokens: LexerTokenList): MetadataResponse | null {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "METADATA" },

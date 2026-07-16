@@ -13,7 +13,11 @@ import type { CommandWriter } from "./writer";
  * means the one-field response form was sent.
  */
 export interface ComparatorResult {
+	/** The now-active comparator's name (RFC5255-4.8-2). */
 	comparator: string;
+	/** Comparators that matched any of the command's arguments — empty
+	 *  unless the server's one-field response indicated more than one match
+	 *  (RFC5255-4.8-3). */
 	matched: string[];
 }
 

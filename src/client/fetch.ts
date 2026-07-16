@@ -79,11 +79,15 @@ export interface FetchItems {
 	 *  value (RFC9051-6.4.9-3) -- only meaningful on the `seq` facet, where an
 	 *  explicit ask is required to see `UID` in the response at all. */
 	uid?: boolean;
+	/** FLAGS -> `FetchedMessage.flags`. */
 	flags?: boolean;
+	/** ENVELOPE -> `FetchedMessage.envelope`. */
 	envelope?: boolean;
+	/** INTERNALDATE -> `FetchedMessage.internalDate`. */
 	internalDate?: boolean;
 	/** RFC822.SIZE -> `FetchedMessage.size: bigint`. */
 	size?: boolean;
+	/** BODYSTRUCTURE -> `FetchedMessage.bodyStructure`. */
 	bodyStructure?: boolean;
 	/** Non-extensible `BODY` (legacy synonym for `BODYSTRUCTURE` sans
 	 *  extension data, RFC 3501/9051 §9). */
@@ -93,19 +97,41 @@ export interface FetchItems {
 	modSeq?: boolean;
 	/** RFC 8474 OBJECTID, gated. */
 	emailId?: boolean;
+	/** RFC 8474 OBJECTID THREADID -> `FetchedMessage.threadId`, gated. */
 	threadId?: boolean;
 	/** RFC 8514, gated. */
 	saveDate?: boolean;
 	/** RFC 8970, gated. `{lazy:true}` appends the `(LAZY)` modifier. */
-	preview?: boolean | { lazy?: boolean };
+	preview?:
+		| boolean
+		| {
+				/** Appends the `(LAZY)` modifier (RFC 8970 §3.2) -- requests the
+				 *  preview only if the server can produce it without an expensive
+				 *  synchronous computation, omitting it otherwise rather than
+				 *  blocking the response. */
+				lazy?: boolean;
+		  };
 	/** RFC 3516 BINARY.SIZE[section], gated, leaf parts only -- one entry per
 	 *  section requested. */
 	binarySize?: string[];
 	/** Gmail extension (X-GM-EXT-1), gated. */
-	gmail?: { msgId?: boolean; threadId?: boolean; labels?: boolean };
+	gmail?: {
+		/** X-GM-MSGID -> `FetchedMessage.gmail.msgId`. */
+		msgId?: boolean;
+		/** X-GM-THRID -> `FetchedMessage.gmail.threadId`. */
+		threadId?: boolean;
+		/** X-GM-LABELS -> `FetchedMessage.gmail.labels`. */
+		labels?: boolean;
+	};
+	/** Individual `BODY[section]`/`BINARY[section]` requests -- see
+	 *  `BodyPartRequest`; results are delivered as `FetchedPart`s, looked up
+	 *  via `FetchedMessage.part(section)`/`.parts()`. */
 	bodyParts?: BodyPartRequest[];
 }
 
+/** One requested `BODY[section]`/`BINARY[section]` FETCH data item (spec
+ *  §5.4) — an element of `FetchItems.bodyParts`. Delivered back as a
+ *  `FetchedPart`, looked up via `FetchedMessage.part(section)`. */
 export interface BodyPartRequest {
 	/** `"", "1.2", "HEADER", "1.MIME", "HEADER.FIELDS", "TEXT"`, etc. -- the
 	 *  section-spec content between `BODY[` / `BINARY[` and `]`, WITHOUT the
@@ -121,7 +147,12 @@ export interface BodyPartRequest {
 	/** `BINARY[...]`/`BINARY.PEEK[...]` (RFC 3516), leaf-only, gated. */
 	binary?: boolean;
 	/** `<start.length>` octet window. */
-	partial?: { start: number; length: number };
+	partial?: {
+		/** Zero-based octet offset into the section content to start from. */
+		start: number;
+		/** Number of octets to return, starting at `start`. */
+		length: number;
+	};
 	/** Force a live stream regardless of `maxInlineSize` (spec §5.4). */
 	stream?: boolean;
 }
@@ -167,8 +198,46 @@ export type FetchRequest = string | FetchItems;
  * refuses it with `RangeError` exactly like `vanished`.
  */
 export type FetchModifiers =
-	| { changedSince?: bigint; vanished?: false; partial?: { from: number; to: number } }
-	| { changedSince: bigint; vanished: true; partial?: { from: number; to: number } };
+	| {
+			/** RFC 7162 CONDSTORE `CHANGEDSINCE modseq` -- only messages whose
+			 *  MODSEQ has changed since `changedSince` are returned. */
+			changedSince?: bigint;
+			/** Must be omitted or `false` in this branch -- `true` requires a
+			 *  REQUIRED (not optional) `changedSince`; see the sibling union
+			 *  branch below and this type's own class doc comment. */
+			vanished?: false;
+			/** RFC 9394 `(PARTIAL m:n)` FETCH modifier -- pages the RESULT SET of
+			 *  the FETCH itself (which messages are reported), distinct from
+			 *  `BodyPartRequest.partial`'s per-message octet window. */
+			partial?: {
+				/** Non-zero integer start of the result-set window (RFC 9394 §3.3;
+				 *  negative addresses from the end, newest-first). */
+				from: number;
+				/** Non-zero integer end of the result-set window, same sign
+				 *  convention as `from`. */
+				to: number;
+			};
+	  }
+	| {
+			/** REQUIRED alongside `vanished: true` -- RFC 7162 §3.2.6 mandates
+			 *  QRESYNC VANISHED reporting always be paired with CHANGEDSINCE. */
+			changedSince: bigint;
+			/** RFC 7162 §3.2.6 QRESYNC VANISHED modifier -- removed messages are
+			 *  reported via the `vanished` event/`MailboxSessionEvents.vanished`
+			 *  instead of classic EXPUNGE. Requires `changedSince` (this branch)
+			 *  and the QRESYNC capability to have been ENABLEd. */
+			vanished: true;
+			/** Same RFC 9394 `(PARTIAL m:n)` result-set-paging modifier as the
+			 *  sibling union branch above. */
+			partial?: {
+				/** Non-zero integer start of the result-set window (RFC 9394 §3.3;
+				 *  negative addresses from the end, newest-first). */
+				from: number;
+				/** Non-zero integer end of the result-set window, same sign
+				 *  convention as `from`. */
+				to: number;
+			};
+	  };
 
 /** One address (spec §5.4, RFC 9051 §7.5.2). Group markers (`AddressGroup`
  *  boundaries in the underlying parser, e.g. "undisclosed-recipients") are
@@ -177,24 +246,48 @@ export type FetchModifiers =
  *  deliberate simplification (documented, not a spec requirement) since no
  *  compliance coverage exercises RFC 2822 group-syntax round-tripping. */
 export interface FetchEnvelopeAddress {
+	/** Display/personal name (RFC 5322 phrase), or `null` when absent. */
 	name: string | null;
+	/** Source-route (RFC 822 obsolete "at-domain-list"), or `null` -- almost
+	 *  never populated by a modern message; kept for RFC 3501/9051 §7.5.2
+	 *  fidelity. */
 	route: string | null;
+	/** Local-part of the address (left of the `@`), or `null` for a group
+	 *  start/end marker in the underlying wire form (already flattened away
+	 *  by `toEnvelopeAddresses()` before reaching this type -- see
+	 *  `FetchEnvelopeAddress`'s own class doc comment). */
 	mailbox: string | null;
+	/** Domain part of the address (right of the `@`), or `null`. */
 	host: string | null;
 }
 
+/** Parsed FETCH ENVELOPE (spec §5.4, RFC 3501/9051 §7.5.2) -- one field per
+ *  envelope structure member, in the RFC's own order. Every address field is
+ *  flattened via `FetchEnvelopeAddress` (see that interface's doc comment). */
 export interface FetchEnvelope {
 	/** Raw wire date-text, exactly as sent -- never re-parsed into a `Date`
 	 *  (RFC 9051 §7.5.2 does not require it to be a valid/parseable date). */
 	date: string | null;
+	/** Raw wire subject text, unparsed/undecoded. */
 	subject: string | null;
+	/** The message's `From:` address(es). */
 	from: FetchEnvelopeAddress[];
+	/** The message's `Sender:` address(es) -- per RFC 9051 §7.5.2, defaults
+	 *  to the same value as `from` when the message itself has no `Sender:`
+	 *  header. */
 	sender: FetchEnvelopeAddress[];
+	/** The message's `Reply-To:` address(es) -- defaults to `from` when
+	 *  absent, same rule as `sender`. */
 	replyTo: FetchEnvelopeAddress[];
+	/** The message's `To:` address(es). */
 	to: FetchEnvelopeAddress[];
+	/** The message's `Cc:` address(es). */
 	cc: FetchEnvelopeAddress[];
+	/** The message's `Bcc:` address(es). */
 	bcc: FetchEnvelopeAddress[];
+	/** Raw `In-Reply-To:` header text, verbatim. */
 	inReplyTo: string | null;
+	/** Raw `Message-ID:` header text, verbatim. */
 	messageId: string | null;
 }
 
@@ -227,6 +320,9 @@ export type BodyStructure = MessageBodyMultipartStructure | MessageBodyStructure
  *  3. Finished (drained to `end`, or destroyed) the ordinary way.
  */
 export interface FetchedPart {
+	/** The section-spec string this part answers, normalized to canonical
+	 *  uppercase (`normalizeSectionSpec()`) -- the same key
+	 *  `FetchedMessage.part()` looks entries up by. */
 	section: string;
 	/** Literal size as sent (bigint, spec §11.3 number64 class). */
 	size: bigint;
@@ -241,9 +337,20 @@ export interface FetchedPart {
 	 *  as). Replays from the cached buffer for an already-buffered part.
 	 *  Counts as "engaging" this part for the backpressure contract above. */
 	stream(): Readable;
+	/** `true` once this part's content is fully available as an in-memory
+	 *  `Buffer` -- either because it was eagerly drained at construction
+	 *  time (size within `maxInlineSize`), or because a live `stream()` was
+	 *  fully consumed via a prior `buffer()` call. `false` for a live,
+	 *  not-yet-drained part. */
 	readonly buffered: boolean;
 }
 
+/** One message's FETCH response, decoded from the wire into typed fields
+ *  (spec §5.4) — every field here is populated iff the corresponding
+ *  `FetchItems` request flag was set (and, for extension fields, the
+ *  server actually returned data for it). Produced by `buildFetchedMessage()`,
+ *  yielded by `MailboxSession.fetch()`/`.seq.fetch()`'s async iterator or
+ *  returned singly by `fetchOne()`/`.seq.fetchOne()`. */
 export interface FetchedMessage {
 	/** Message sequence number -- with one documented exception: a message
 	 *  delivered via an RFC 9586 `UIDFETCH` response (a UIDONLY-enabled
@@ -254,18 +361,43 @@ export interface FetchedMessage {
 	 *  to `number | undefined`, which would break every existing consumer's
 	 *  arithmetic for a case only UIDONLY sessions ever see. */
 	seq: number;
+	/** The message's UID, present whenever the server included one (always,
+	 *  on a UID FETCH; only if requested via `FetchItems.uid` on a bare
+	 *  FETCH). */
 	uid?: number;
+	/** The message's current flag set, from FLAGS. */
 	flags?: ReadonlySet<string>;
+	/** Parsed ENVELOPE structure -- see `FetchEnvelope`. */
 	envelope?: FetchEnvelope;
+	/** INTERNALDATE, as reported by the server. */
 	internalDate?: Date;
+	/** RFC822.SIZE, in octets. */
 	size?: bigint;
+	/** Parsed BODYSTRUCTURE (or non-extensible BODY) tree -- see
+	 *  `BodyStructure`. */
 	bodyStructure?: BodyStructure;
+	/** RFC 7162 CONDSTORE MODSEQ, present only when requested/reported. */
 	modSeq?: bigint;
+	/** RFC 8474 OBJECTID EMAILID, present only when requested/reported. */
 	emailId?: string;
+	/** RFC 8474 OBJECTID THREADID, present only when requested/reported. */
 	threadId?: string;
+	/** RFC 8514 SAVEDATE -- `null` if the server explicitly reported no
+	 *  save date for this message, `undefined` if it wasn't requested/
+	 *  returned at all. */
 	saveDate?: Date | null;
+	/** RFC 8970 PREVIEW text, present only when requested/reported. */
 	preview?: string;
-	gmail?: { msgId?: string; threadId?: string; labels?: string[] };
+	/** Gmail extension (X-GM-EXT-1) fields, present only for whichever of
+	 *  `msgId`/`threadId`/`labels` were both requested and returned. */
+	gmail?: {
+		/** X-GM-MSGID, Gmail's own per-message identifier. */
+		msgId?: string;
+		/** X-GM-THRID, Gmail's own thread identifier. */
+		threadId?: string;
+		/** X-GM-LABELS, the message's current Gmail label set. */
+		labels?: string[];
+	};
 	/** RFC 3516 BINARY.SIZE[section] results, keyed by the same section
 	 *  string `part()` would use for that leaf's `BINARY[section]` content.
 	 *  Not in the spec's own §5.4 sketch of `FetchedMessage` (which lists no
@@ -282,6 +414,9 @@ export interface FetchedMessage {
 	 *  `part("text")` and `part("TEXT")` always resolve the same entry --
 	 *  matching the parser's own case-insensitive section-atom handling. */
 	part(section: string): FetchedPart | undefined;
+	/** Every requested body/BINARY part actually returned for this message,
+	 *  in no particular guaranteed order -- use `part(section)` instead when
+	 *  looking for one specific section. */
 	parts(): FetchedPart[];
 }
 

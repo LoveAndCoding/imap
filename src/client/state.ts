@@ -9,6 +9,12 @@
 // `connect()` promise resolves only after the synchronous `stateChange`
 // listener call above has already run).
 
+/**
+ * The six legal `ImapClient` connection states (spec §3.1) and the only
+ * values `ClientStateMachine.current` (and therefore `ImapClient.state`) can
+ * ever hold. See the `TRANSITIONS` table below for which edges between them
+ * are legal.
+ */
 export type ClientState =
 	| "disconnected"
 	| "connecting"

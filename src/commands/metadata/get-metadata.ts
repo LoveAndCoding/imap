@@ -47,7 +47,12 @@ export function validateMetadataEntryName(entry: string): void {
  *  this class only sends a DEPTH option when the caller supplies one, it
  *  never defaults one onto the wire on the caller's behalf. */
 export interface GetMetadataOptions {
+	/** MAXSIZE option (RFC 5464 §4.2.1): skip entries whose value exceeds
+	 *  this many octets. */
 	maxsize?: number;
+	/** DEPTH option (RFC 5464 §4.2.2): `"0"` (just the named entries, the
+	 *  implicit default when omitted), `"1"` (one level of children), or
+	 *  `"infinity"` (the entire subtree). */
 	depth?: "0" | "1" | "infinity";
 }
 
@@ -56,7 +61,9 @@ export interface GetMetadataOptions {
  *  this command's public result shape (same "first to land owns the type"
  *  convention `get-quota.ts`'s `QuotaResourceUsage` documents). */
 export interface MetadataEntryResult {
+	/** The entry's full path name (e.g. `/private/comment`). */
 	entry: string;
+	/** The entry's value, or `null` if the entry exists with no value set. */
 	value: string | null;
 }
 
@@ -65,8 +72,15 @@ export interface MetadataEntryResult {
  *  4.2.1-1 — a MAXSIZE option truncated at least one requested value); never
  *  fabricated when the code wasn't actually sent (I-6). */
 export interface MetadataResult {
+	/** The mailbox the entries were queried against (`""` for a server
+	 *  annotation). */
 	mailbox: string;
+	/** Every entry/value pair the server reported, concatenated across all
+	 *  claimed `* METADATA` lines in arrival order. */
 	entries: MetadataEntryResult[];
+	/** Count of values truncated by a MAXSIZE option (RFC5464-4.2.1-1's
+	 *  `[METADATA LONGENTRIES n]` resp-code) — present only when the server
+	 *  actually sent that code. */
 	longEntries?: number;
 }
 

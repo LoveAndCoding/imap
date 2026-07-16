@@ -55,11 +55,24 @@ type ContentType =
 //   MailboxData.*      === mailbox-data
 //   CapabilityResponse === capability-data
 //   Expunge            === message-data.Expunge
+/**
+ * Generic untagged-response wrapper (`response-data = "*" SP
+ * (resp-cond-state / resp-cond-bye / mailbox-data / message-data /
+ * capability-data) CRLF`, RFC 3501/9051 §7) -- dispatches the content
+ * after the `"* "` prefix to whichever specific response type recognizes
+ * it, falling back to {@link UnknownContent} (invariant I-6: an
+ * unrecognized-but-well-framed line is tolerated, never thrown away).
+ */
 export default class UntaggedResponse {
 	// Both of these are guaranteed to be set by the end of the
 	// constructor -- if a match is never found, we throw before
 	// the constructor completes (see the `!this.content` check below).
+	/** The parsed content, typed as whichever specific response class
+	 *  recognized it (or {@link UnknownContent} if none did). */
 	public readonly content!: ContentType;
+	/** The canonicalized (upper-case) response keyword (e.g. `"FLAGS"`,
+	 *  `"EXPUNGE"`), or `"UNKNOWN"` when the content's shape didn't yield
+	 *  one. */
 	public readonly type!: string;
 
 	constructor(tokens: LexerTokenList) {

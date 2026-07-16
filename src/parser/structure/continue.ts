@@ -4,7 +4,18 @@ import { ResponseText } from "./text";
 
 const CONTENT_TOKENS_START_INDEX = 2;
 
+/**
+ * A continuation-request response (`"+" SP (resp-text / base64) CRLF`,
+ * RFC 3501/9051 §7.5) -- the server's mid-command prompt for more data
+ * (e.g. literal bytes, or a SASL challenge during AUTHENTICATE).
+ *
+ * `text.content` always exposes the raw wire text verbatim; this class
+ * deliberately does not attempt to detect/decode a base64 SASL challenge
+ * itself (see the constructor comment below for why).
+ */
 export default class ContinueResponse {
+	/** The free-text portion following the "+ " prompt, verbatim (empty for
+	 *  a bare "+ " prompt, the raw base64 characters for a SASL challenge). */
 	public readonly text: ResponseText;
 
 	// continue-req    = "+" SP (resp-text / base64) CRLF

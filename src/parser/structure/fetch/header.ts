@@ -8,11 +8,21 @@ import {
 } from "../../utility";
 import { MessageBodySection } from "./body.section";
 
+/** A parsed RFC822/BODY[HEADER...] header block: field name -> value (or,
+ *  for a field repeated more than once, the array of its values in
+ *  encounter order). Populated eagerly from raw header text by
+ *  `parseHeaderBlock()` (called from the constructor when `header` is
+ *  given), and can be grown further via `mergeIn()` when a message's header
+ *  data arrives split across more than one FETCH response. */
 export class MessageHeader {
+	/** Parsed header fields, keyed by field name (case as the server sent
+	 *  it). */
 	public fields: Map<string, string | string[]>;
 
 	constructor(
 		header?: string,
+		/** The partial-fetch byte offset the server echoed for this header
+		 *  section (the `<N>` in `BODY[HEADER]<N>`), if any. */
 		public readonly offset?: number,
 		decode = true,
 		/**
@@ -51,6 +61,14 @@ export class MessageHeader {
 		}
 	}
 
+	/**
+	 * Splits raw header text (everything before the header/body-separating
+	 * blank line) into `fields`, undoing RFC 2047 encoded-word line-folding
+	 * artifacts and (when `decode` is true) MIME-decoding encoded-word
+	 * values. Returns the header block's length in characters (used by
+	 * callers that need to know how much of the original text this
+	 * consumed).
+	 */
 	public parseHeaderBlock(header: string, decode = true) {
 		// The header and body are separated by two CRLF, so grab
 		// just the header and throw away the body
@@ -107,6 +125,9 @@ export class MessageHeader {
 		return headerLength;
 	}
 
+	/** Folds another `MessageHeader`'s fields into this one (last value for
+	 *  a given field name wins) -- used when a message's header data arrives
+	 *  split across more than one FETCH response. */
 	public mergeIn(withHeader: MessageHeader) {
 		withHeader.fields.forEach(([key, val]) => this.fields.set(key, val));
 	}

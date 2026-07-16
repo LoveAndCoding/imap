@@ -24,7 +24,11 @@ export type TlsMode = "on" | "starttls" | "opportunistic" | "off";
 
 const TLS_MODES: readonly TlsMode[] = ["on", "starttls", "opportunistic", "off"];
 
+/** Credentials + mechanism preferences for AUTHENTICATE/LOGIN (spec §9.3) —
+ *  passed either via `ImapClientConfig.auth` (consumed automatically during
+ *  `connect()`) or directly to `ImapClient.authenticate()`. */
 export interface ImapAuthConfig {
+	/** Authentication identity (the SASL "authcid"/LOGIN userid). */
 	user: string;
 	/** Password-bearing mechanisms (LOGIN, PLAIN, CRAM-MD5, SCRAM-*). */
 	pass?: string;
@@ -36,6 +40,9 @@ export interface ImapAuthConfig {
 	mechanisms?: Array<string | SaslMechanism>;
 }
 
+/** Per-operation timeout overrides (all in milliseconds), each independently
+ *  optional — omitted fields keep their own documented default via
+ *  `validateTimeouts()`. */
 export interface ImapClientTimeouts {
 	/** Socket + TLS handshake, default 10_000. */
 	connect?: number;
@@ -50,7 +57,11 @@ export interface ImapClientTimeouts {
 	noopFallbackInterval?: number;
 }
 
+/** Caller-supplied configuration for `ImapClient` (spec §2) — validated and
+ *  defaulted into a `ResolvedConfig` by `validateConfig()`, which the
+ *  `ImapClient` constructor runs every instance through synchronously. */
 export interface ImapClientConfig {
+	/** Server hostname or IP to connect to. */
 	host: string;
 	/** Default 993 when `tls:"on"`, else 143. */
 	port?: number;
@@ -74,7 +85,11 @@ export interface ImapClientConfig {
 	compress?: "auto" | false;
 	/** Fetch part buffering cutoff, default 1 MiB (§5.4). Inert until M3. */
 	maxInlineSize?: number;
+	/** Per-operation timeout overrides; unset fields fall back to
+	 *  `ImapClientTimeouts`'s own per-field defaults (see that interface). */
 	timeouts?: ImapClientTimeouts;
+	/** Sink for this library's internal diagnostic/warning log lines (e.g.
+	 *  a detected UIDVALIDITY change); omitted means logging is a no-op. */
 	logger?: (info: IMAPLogMessage) => void;
 }
 

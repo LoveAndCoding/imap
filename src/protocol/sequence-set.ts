@@ -38,7 +38,14 @@
  *  `{ from: "*", to: 5 }` are equivalent wire forms (RFC 3501 §9: "the two
  *  numbers of a range can be in either order") and canonicalize identically
  *  — see `normalizeRangeEndpoints()`. */
-export type SequenceRange = { from: number | "*"; to: number | "*" };
+export type SequenceRange = {
+	/** The range's lower bound, or the RFC 3501 §9 `"*"` sentinel ("always
+	 *  the largest number in use"). */
+	from: number | "*";
+	/** The range's upper bound, or the RFC 3501 §9 `"*"` sentinel; either
+	 *  side may be `"*"` and the two numbers may appear in either order. */
+	to: number | "*";
+};
 
 /** §5.1: every shape a caller may hand a message-operation method. String
  *  input is PARSED and re-serialized — the writer never emits caller bytes
@@ -254,6 +261,10 @@ function canonicalize(elements: RawElement[]): {
  * mutating `kind` in place, consistent with the field being `readonly`.
  */
 export class SequenceSet {
+	/** Which numbering this set's values are stamped as: unique, ever-
+	 *  increasing UIDs, or transient per-selection sequence numbers. Stamped
+	 *  by the calling facet via `withKind()`, not inferred from the numbers
+	 *  themselves (see this module's "kind ambiguity" doc-comment note). */
 	readonly kind: "uid" | "seq";
 	private readonly sentinel: boolean;
 	private readonly finite: readonly FiniteElement[];

@@ -11,9 +11,23 @@ import {
 //   id_response     ::= "ID" SPACE id_params_list
 //   id_params_list  ::= "(" #(string SPACE nstring) ")" / nil
 //                       ;; list of field value pairs
+/**
+ * Server's ID response (RFC 2971 §3.4) -- the field/value map identifying
+ * the server, sent in reply to a client ID command.
+ */
 export class IDResponse {
+	/** Field-name to value map, or `null` for the wire `NIL` form (the
+	 *  server declined to identify itself). */
 	public readonly details: null | Map<string, string | null>;
 
+	/**
+	 * Tests whether `tokens` is an untagged ID response and, if so, parses
+	 * it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link IDResponse}, or `null` if `tokens` is not an ID
+	 * response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "ID" },

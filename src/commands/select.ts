@@ -41,9 +41,26 @@ import { CommandWriter } from "./writer";
  * `SelectOptions`, not a new one this milestone introduces).
  */
 export interface SelectOptions {
+	/** RFC 7162 §3.1.8 `condstore-param`: requests CONDSTORE tracking for this
+	 *  mailbox via `SELECT mailbox (CONDSTORE)` / `EXAMINE mailbox
+	 *  (CONDSTORE)`. Gated on plain advertisement of the `CONDSTORE`
+	 *  capability (not ENABLEd-ness) -- see `SelectOrExamineCommand`'s own
+	 *  doc comment. Mutually exclusive with `qresync` (QRESYNC already
+	 *  implies CONDSTORE support). */
 	condstore?: boolean;
+	/** RFC 7162 §3.2.5/§7 `qresync-param`: requests a QRESYNC-parameterized
+	 *  SELECT/EXAMINE, resyncing the client's cached mailbox state against
+	 *  the server's. Gated on a positive `ENABLE QRESYNC` +
+	 *  `* ENABLED QRESYNC` exchange (not merely advertisement) -- see
+	 *  `SelectOrExamineCommand`'s own doc comment. */
 	qresync?: {
+		/** RFC 7162 §7 `uidvalidity` (the first QRESYNC argument, an
+		 *  nz-number): the UIDVALIDITY the client last saw for this mailbox,
+		 *  to resync against. */
 		uidValidity: number;
+		/** RFC 7162 §7 `mod-sequence-value` (the second QRESYNC argument):
+		 *  the highest mod-sequence value the client last saw for this
+		 *  mailbox. */
 		highestModSeq: bigint;
 		/** RFC 7162 §3.2.5/§7 `known-uids` (the third QRESYNC argument): a set
 		 *  of UIDs the client already knows about, stamped `kind: "uid"`. */
@@ -55,7 +72,14 @@ export interface SelectOptions {
 		 *  corresponded to as of the last sync, `kind: "uid"`). Both MUST be
 		 *  in ascending order (RFC7162-3.2.5.2-1) -- `SequenceSet.toString()`'s
 		 *  own canonical (sorted, coalesced) form satisfies that automatically. */
-		seqMatch?: { knownSeqSet: SequenceInput; knownUidSet: SequenceInput };
+		seqMatch?: {
+			/** The known message sequence numbers, `kind: "seq"`, ascending. */
+			knownSeqSet: SequenceInput;
+			/** The UIDs those sequence numbers corresponded to as of the
+			 *  last sync, `kind: "uid"`, ascending and positionally paired
+			 *  with `knownSeqSet`. */
+			knownUidSet: SequenceInput;
+		};
 	};
 }
 
@@ -71,12 +95,29 @@ export interface SelectOptions {
  * cycle -- TS structural typing is all either side needs.
  */
 export type SelectResyncEvent =
-	| { kind: "vanished"; uids: number[]; earlier: boolean }
 	| {
+			/** A `VANISHED (EARLIER)` expunge report (RFC 7162 §3.2.5.1). */
+			kind: "vanished";
+			/** The expunged UIDs, expanded from the `VANISHED` response's
+			 *  UID set. */
+			uids: number[];
+			/** `true` when the server tagged this as `VANISHED (EARLIER)`
+			 *  (the QRESYNC resync-time form) rather than a bare `VANISHED`. */
+			earlier: boolean;
+	  }
+	| {
+			/** A UID-bearing, flag-carrying FETCH line reporting a pending
+			 *  flag change (RFC 7162 §3.2.5.1). */
 			kind: "flags";
+			/** The message's sequence number as reported on this FETCH
+			 *  line. */
 			seq: number;
+			/** The message's UID, when the FETCH line carried one. */
 			uid?: number;
+			/** The message's current flag set as of this FETCH line. */
 			flags: ReadonlySet<string>;
+			/** The message's mod-sequence value, when the FETCH line carried
+			 *  one (CONDSTORE). */
 			modSeq?: bigint;
 	  };
 
@@ -92,6 +133,9 @@ export type SelectResyncEvent =
  * doc comment (`client.ts`) for the two-name special case.
  */
 export interface SelectCapabilityProbe {
+	/** `true` when the named capability reads as advertised (or, for an
+	 *  `_enabled`-aware probe such as `effectiveCapability()`, positively
+	 *  ENABLEd where that distinction matters -- currently QRESYNC only). */
 	has(cap: string): boolean;
 }
 
@@ -111,16 +155,43 @@ const NO_SELECT_CAPS: SelectCapabilityProbe = { has: () => false };
  * own public field's doc comment (spec §5b: "null = NOMODSEQ or no CONDSTORE").
  */
 export interface SelectResult {
+	/** The mailbox's defined flags, from the untagged `FLAGS` response. */
 	flags: ReadonlySet<string>;
+	/** The flags a client may permanently set/clear (untagged `* OK
+	 *  [PERMANENTFLAGS (...)]`), or `null` when the server sent none --
+	 *  distinct from an empty set. */
 	permanentFlags: ReadonlySet<string> | null;
+	/** The number of messages in the mailbox, from the untagged `EXISTS`
+	 *  response. */
 	exists: number;
+	/** The number of messages with the `\Recent` flag set, from the
+	 *  untagged `RECENT` response, or `null` when the server didn't send
+	 *  one -- RECENT is rev1-only (dropped from the rev2 response set). */
 	recent: number | null;
+	/** The mailbox's UIDVALIDITY (`* OK [UIDVALIDITY n]`); `0` is this
+	 *  module's own "the server didn't tell us" sentinel, since a real
+	 *  UIDVALIDITY is never 0. */
 	uidValidity: number;
+	/** The next UID the server expects to assign (`* OK [UIDNEXT n]`), or
+	 *  `null` when the server didn't send one. */
 	uidNext: number | null;
+	/** `true` when the mailbox was opened read-only -- always `true` for
+	 *  EXAMINE, or when the tagged OK carried a `READ-ONLY` resp-code for
+	 *  SELECT. */
 	readOnly: boolean;
+	/** The mailbox's highest mod-sequence value (`* OK [HIGHESTMODSEQ n]`,
+	 *  RFC 7162 CONDSTORE), or `null` when the server said `NOMODSEQ` or
+	 *  sent nothing about mod-sequences at all -- see `noModSeq`. */
 	highestModSeq: bigint | null;
+	/** `true` when the server explicitly sent `* OK [NOMODSEQ]`, meaning the
+	 *  mailbox does not support persistent mod-sequences at all (RFC 7162
+	 *  §3.1.2). */
 	noModSeq: boolean;
+	/** `true` when the server sent `* OK [UIDNOTSTICKY]`: UIDs assigned in
+	 *  this mailbox may not persist across sessions. */
 	uidNotSticky: boolean;
+	/** The mailbox's stable object identifier (`* OK [MAILBOXID (...)]`,
+	 *  RFC 8474 OBJECTID), or `null` when the server didn't send one. */
 	mailboxId: string | null;
 	/** M4.6: the QRESYNC resync stream (RFC 7162 §3.2.5.1) observed during
 	 *  THIS SELECT/EXAMINE exchange, in wire arrival order -- always present,

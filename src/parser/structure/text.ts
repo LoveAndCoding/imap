@@ -2,8 +2,18 @@ import { LexerTokenList } from "../../lexer/types";
 import { getOriginalInput } from "../utility";
 import { match as textCodeMatch, TextCode } from "./text.code";
 
+/**
+ * The `resp-text` portion of a response line (RFC 3501/9051 §7's
+ * `resp-text = ["[" resp-text-code "]" SP] text`) -- an optional
+ * bracketed resp-text-code followed by free-form human-readable text.
+ */
 export class ResponseText {
+	/** The optional bracketed resp-text-code (e.g. `ALERT`, `CAPABILITY`),
+	 *  if one was present on the wire. */
 	public readonly code?: TextCode;
+	/** The free-form human-readable text, decoded as UTF-8 (empty string
+	 *  when no text followed the code, or when there was no code and no
+	 *  text at all). */
 	public readonly content: string;
 
 	constructor(tokens: LexerTokenList | string) {

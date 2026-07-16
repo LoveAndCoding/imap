@@ -94,19 +94,26 @@ function requireParenObjectId(
 	return getOriginalInput([tokens[1]]);
 }
 
-// From spec: "STATUS" SP mailbox SP "(" [status-att-list] ")"
-//
-// status-att accretions beyond the RFC 3501 base five:
-//   DELETED       rev2 core (RFC 9051 §6.3.11) -- messages with \Deleted set
-//   SIZE          RFC 8438 (STATUS=SIZE) -- 63-bit octet total
-//   HIGHESTMODSEQ RFC 7162 (CONDSTORE) -- 63-bit mod-sequence (0 = none)
-//   APPENDLIMIT   RFC 7889 -- number / NIL (NIL = no limit advertised)
-//   MAILBOXID     RFC 8474 (OBJECTID) -- "(" objectid ")"
-// Unknown items are tolerated as data (spec §11.2/I-6), never a fatal
-// parse error -- the known fields around them still populate.
+/**
+ * The untagged STATUS response (RFC 3501/9051 §7.2.4): the mailbox name
+ * followed by a parenthesized list of status-att item/value pairs.
+ *
+ * From spec: `"STATUS" SP mailbox SP "(" [status-att-list] ")"`
+ *
+ * status-att accretions beyond the RFC 3501 base five:
+ *   DELETED       rev2 core (RFC 9051 §6.3.11) -- messages with \Deleted set
+ *   SIZE          RFC 8438 (STATUS=SIZE) -- 63-bit octet total
+ *   HIGHESTMODSEQ RFC 7162 (CONDSTORE) -- 63-bit mod-sequence (0 = none)
+ *   APPENDLIMIT   RFC 7889 -- number / NIL (NIL = no limit advertised)
+ *   MAILBOXID     RFC 8474 (OBJECTID) -- "(" objectid ")"
+ * Unknown items are tolerated as data (spec §11.2/I-6), never a fatal
+ * parse error -- the known fields around them still populate.
+ */
 export class MailboxStatus {
+	/** Discriminator identifying this response as a mailbox STATUS result. */
 	public static readonly commandType = "MAILBOX-STATUS";
 
+	/** The mailbox name this STATUS response describes, UTF-7 decoded. */
 	public readonly name: string;
 
 	/** RFC 7889: `null` = a well-formed NIL (no limit advertised for this
@@ -114,17 +121,27 @@ export class MailboxStatus {
 	public readonly appendlimit?: number | bigint | null;
 	/** RFC 9051 §6.3.11 (rev2 core): count of messages with \Deleted set. */
 	public readonly deleted?: number;
+	/** RFC 7162 (CONDSTORE): the highest mod-sequence value of all messages in the mailbox, or 0 if none is assigned. */
 	public readonly highestmodseq?: number | bigint;
 	/** RFC 8474 §4.3: the mailbox's opaque, case-sensitive ObjectID. */
 	public readonly mailboxid?: string;
+	/** RFC 3501/9051: the number of messages in the mailbox. */
 	public readonly messages?: number;
+	/** RFC 3501/9051: the number of messages with the `\Recent` flag set. */
 	public readonly recent?: number;
 	/** RFC 8438 (STATUS=SIZE): total mailbox size in octets (63-bit). */
 	public readonly size?: number | bigint;
+	/** RFC 3501/9051: the next unique identifier value that will be assigned to a new message in the mailbox. */
 	public readonly uidnext?: number;
+	/** RFC 3501/9051: the unique identifier validity value for the mailbox. */
 	public readonly uidvalidity?: number;
+	/** RFC 3501/9051: the number of messages without the `\Seen` flag set. */
 	public readonly unseen?: number;
 
+	/**
+	 * Parses an untagged STATUS response from the given tokens, returning a
+	 * {@link MailboxStatus} on a match or `null` otherwise.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "STATUS" },

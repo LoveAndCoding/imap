@@ -73,6 +73,9 @@ export class CramMd5Mechanism implements SaslMechanism {
 	}
 }
 
+/** Factory for a fresh {@link CramMd5Mechanism} instance (RFC 2195
+ *  CRAM-MD5). Registered under the "CRAM-MD5" name by the mechanism
+ *  registry (`registerMechanism()`, `sasl/mechanism.ts`). */
 export function createCramMd5Mechanism(): SaslMechanism {
 	return new CramMd5Mechanism();
 }
