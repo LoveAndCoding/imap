@@ -113,7 +113,7 @@ caveat. Concretely, at authoring time:
 | M5.9 COMPRESS=DEFLATE | IN FLIGHT (worktree, wave 1 — riskiest) |
 | M5.10 UNAUTHENTICATE | wave 3 |
 | M5.11 LANGUAGE/COMPARATOR | wave 3 |
-| M5.12 CONVERT | wave 4 |
+| M5.12 CONVERT | DONE (worktree) |
 | M5.13 Referrals + UTF8 completion | wave 4 (pure-rev2 codec revisit adjudication) |
 | M5.14 UIDONLY catalog extraction | IN FLIGHT (worktree, wave 1) |
 | M5.15 UIDONLY mode | wave 4 (needs M5.14) |

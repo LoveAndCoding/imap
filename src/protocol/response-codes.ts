@@ -151,4 +151,23 @@ export type TypedResponseCode =
 	 *  host (RFC 2193 §4.1/RFC 2221 §4), which is the consumer's decision,
 	 *  same "no auto-XYZ magic" posture as MOVE emulation and TRYCREATE. */
 	| { name: "REFERRAL"; urls: string[] }
+	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTMESSAGES" SP nz-number`
+	 *  rides a tagged NO refusing a CONVERT/UID CONVERT whose sequence set
+	 *  names more messages than the server will convert per request -- `value`
+	 *  is that per-request ceiling, which a caller uses to size a retry with
+	 *  fewer messages (RFC5259-9-2). The parser's `AtomTextCode` already
+	 *  preserves the BARE (unparenthesized) numeric argument (same
+	 *  bare-vs-parenthesized split UNDEFINED-FILTER above rides), so -- like
+	 *  UNDEFINED-FILTER -- this variant is a dedicated-shape upgrade over the
+	 *  open `{name, args}` fallback, giving `ServerNoError.code` consumers a
+	 *  structured number instead of a string to re-parse; `null` when a
+	 *  non-conformant server omits or garbles the argument (I-6 tolerance --
+	 *  never an error, never an invented number). Surfaces as a typed error
+	 *  through the ordinary tagged-NO path (`Command.defaultOnError` ->
+	 *  `ServerNoError.code`), never a silently-swallowed failure. */
+	| { name: "MAXCONVERTMESSAGES"; value: number | null }
+	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTPARTS" SP nz-number` --
+	 *  the body-parts-per-message counterpart of MAXCONVERTMESSAGES above
+	 *  (RFC5259-9-3); identical shape/tolerance rationale. */
+	| { name: "MAXCONVERTPARTS"; value: number | null }
 	| { name: string; args: string | null };

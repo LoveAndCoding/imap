@@ -194,6 +194,27 @@ export function toTypedResponseCode(
 				// never-auto-follow posture.
 				return { name: "REFERRAL", urls: code.contents ? [...code.contents] : [] };
 			}
+			case "MAXCONVERTMESSAGES": {
+				// RFC 5259 §9/§8.5 (CONVERT, M5.12): a bare nz-number argument --
+				// `AtomTextCode`'s bare-vs-parenthesized split preserves it in
+				// `contents[0]`; a missing/non-numeric argument from a
+				// non-conformant server surfaces as `null` rather than an error
+				// (I-6), same posture as APPENDLIMIT above.
+				const raw = code.contents?.[0];
+				return {
+					name: "MAXCONVERTMESSAGES",
+					value: raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null,
+				};
+			}
+			case "MAXCONVERTPARTS": {
+				// RFC 5259 §9/§8.5: MAXCONVERTMESSAGES's body-parts counterpart --
+				// identical shape/tolerance rationale (see above).
+				const raw = code.contents?.[0];
+				return {
+					name: "MAXCONVERTPARTS",
+					value: raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null,
+				};
+			}
 			case "METADATA": {
 				// RFC 5464 §4.2.1/§4.3 (M5.4): one wire keyword ("METADATA")
 				// fronts four sub-forms -- "LONGENTRIES"/"MAXSIZE"/"TOOMANY"/

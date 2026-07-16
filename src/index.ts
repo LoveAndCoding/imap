@@ -116,6 +116,17 @@ export type {
 // COPY/MOVE + UIDPLUS results (spec §5b, M3.8). `CopyResult` is shared by
 // both `MailboxSession.copy()`/`.move()` (and their `seq` mirrors).
 export type { CopyResult } from "./commands/copy";
+// CONVERT / UID CONVERT (RFC 5259, M5.12): `MailboxSession.convert()`/
+// `.seq.convert()`'s transformation argument (`ConvertTransformation` --
+// destination MIME type, `null` for the NIL default-conversion marker, or
+// the full `ConvertSpec` with transcoding params) and their raw-CONVERTED
+// result shape. See `commands/convert.ts`'s header comment for this task's
+// deliberately minimal surface scope.
+export type {
+	ConvertResult,
+	ConvertSpec,
+	ConvertTransformation,
+} from "./commands/convert";
 // Mailbox-management shared types (spec §3.2/§5.2 — M2.7/M2.8 LIST/LSUB,
 // M2.9 STATUS, M2.10 NAMESPACE; `StatusItem` is also LIST's
 // RETURN (STATUS ...) vocabulary).

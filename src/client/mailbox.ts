@@ -3,6 +3,8 @@ import { TypedEmitter } from "tiny-typed-emitter";
 import type { AppendCapabilityProbe, AppendOptions, AppendResult, AppendSource } from "../commands/append";
 import type { Command } from "../commands/base";
 import { CloseCommand } from "../commands/close";
+import { ConvertCommand } from "../commands/convert";
+import type { ConvertResult, ConvertTransformation } from "../commands/convert";
 import { CopyCommand } from "../commands/copy";
 import type { CopyResult } from "../commands/copy";
 import { ExpungeCommand } from "../commands/expunge";
@@ -292,6 +294,14 @@ export interface SequenceFacet {
 	 *  number-grain mirror of `MailboxSession.removeGmailLabels()`; see
 	 *  `addGmailLabels()`'s own doc comment above for the shared rationale. */
 	removeGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void>;
+	/**
+	 * Bare CONVERT (RFC 5259 §6, M5.12) -- sequence-number-grain mirror of
+	 * `MailboxSession.convert()`, `seqs` interpreted as message sequence
+	 * numbers rather than UIDs (bare `CONVERT`, not `UID CONVERT`). See
+	 * `MailboxSession.convert()`'s own doc comment for the shared capability
+	 * gate and the minimal-surface scope note.
+	 */
+	convert(seqs: SequenceInput, item: string, transformation: ConvertTransformation): Promise<ConvertResult>;
 }
 
 /**
@@ -1493,6 +1503,84 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		return session.driver.run(command);
 	}
 
+	// -- message ops: CONVERT / UID CONVERT (RFC 5259, M5.12) -----------------
+
+	/**
+	 * UID CONVERT (RFC 5259 §6) -- M5.12. Requests a server-side conversion
+	 * of the named data item (`"TEXT"`, `"HEADER"`, `"BODYPARTSTRUCTURE"`,
+	 * section-part-qualified `BODY[...]` forms, ...) for the messages in
+	 * `uids`, to the destination MIME type named by `transformation` (or the
+	 * server's own default conversion when `transformation` is `null`/has a
+	 * `null` destination -- the NIL marker, RFC5259-6-2). See
+	 * `ConvertCommand`'s own doc comment (`commands/convert.ts`) for the wire
+	 * form, the caller-owned construction rules (CHARSET-REQUIRED for header
+	 * conversions, NIL-only with header/MIME items), and this task's
+	 * deliberately minimal result shape (`ConvertResult.converted` carries
+	 * the raw CONVERTED response text, tolerance-level, I-6).
+	 *
+	 * Note (RFC5259-6-4): unlike FETCH, CONVERT never sets `\Seen` -- a
+	 * caller wanting the converted message marked seen must follow up with
+	 * its own `addFlags(uids, ["\\Seen"])`.
+	 *
+	 * Gated on the `CONVERT` capability (RFC 5259 §3.1, RFC5259-3.1-1, I-9):
+	 * `CapabilityError`, zero bytes written, when absent -- `ConvertCommand`'s
+	 * own `capability = "CONVERT"` declaration is the defense-in-depth
+	 * backstop for a caller reaching the command directly via the
+	 * `client.run()` escape hatch, same two-layer pattern `move()`/`replace()`
+	 * above use.
+	 *
+	 * Rejects `StateError` (zero bytes written) if this session is already
+	 * closed, same precondition every other method here enforces.
+	 */
+	public async convert(
+		uids: SequenceInput,
+		item: string,
+		transformation: ConvertTransformation,
+	): Promise<ConvertResult> {
+		return MailboxSession.runConvert(this, uids, item, transformation, "uid");
+	}
+
+	/**
+	 * Shared CONVERT/UID CONVERT dispatch for both `convert()` above (UID
+	 * grain) and `SeqFacet.convert()` below (sequence-number grain) -- same
+	 * static-widening reason as `runCopyOrMove`/`runReplace`. `label` only
+	 * affects the `StateError`/`CapabilityError` message text.
+	 */
+	static async runConvert(
+		session: MailboxSession,
+		input: SequenceInput,
+		item: string,
+		transformation: ConvertTransformation,
+		kind: "uid" | "seq",
+	): Promise<ConvertResult> {
+		const label = kind === "uid" ? "convert" : "seq.convert";
+		session.assertOpen(label);
+		// RFC 5259 §3.1 (I-9): CapabilityError, zero bytes written, before
+		// `ConvertCommand` is even constructed -- same explicit-precheck-plus-
+		// command's-own-declared-capability two-layer pattern `move()`/
+		// `replace()` above established.
+		if (!session.driver.hasCapability("CONVERT")) {
+			throw new CapabilityError(
+				`${label}() requires the CONVERT capability (RFC 5259 §3.1) -- the ` +
+					"server has not advertised support for the CONVERT extension",
+				{ capability: "CONVERT", rfc: "RFC5259" },
+			);
+		}
+		const set = SequenceSet.from(input).withKind(kind);
+		// Same sequence-set argument gates every other message-op applies:
+		// the "$" SEARCHRES sentinel needs its capability (RFC 5182), and the
+		// seq grain is subject to NOTIFY's '*'-suppression/MSN prohibitions
+		// (RFC 5465 §5.2/§5.3) exactly as FETCH/STORE/COPY are -- CONVERT's
+		// sequence-set argument has the identical MSN-instability hazard.
+		assertSearchResSentinelAllowed(
+			set,
+			{ has: (cap) => session.driver.hasCapability(cap) },
+			`${label}()`,
+		);
+		assertSequenceGrainSafeUnderNotify(session.driver, set, kind, label);
+		return session.driver.run(new ConvertCommand(kind === "uid", set, item, transformation));
+	}
+
 	// -- message ops: EXPUNGE (spec §5b, M3.9) --------------------------------
 
 	/**
@@ -2383,6 +2471,14 @@ class SeqFacet implements SequenceFacet {
 	 *  sequence numbers rather than UIDs. */
 	removeGmailLabels(seqs: SequenceInput, labels: string[]): Promise<void> {
 		return MailboxSession.runGmailLabelsStore(this.session, "seq", seqs, "remove", labels);
+	}
+
+	/** Sequence-number-grain CONVERT -- see `MailboxSession.convert()`'s doc
+	 *  comment; identical behavior (including the CONVERT capability gate),
+	 *  `seqs` interpreted as sequence numbers (bare `CONVERT`, not
+	 *  `UID CONVERT`) rather than UIDs. */
+	convert(seqs: SequenceInput, item: string, transformation: ConvertTransformation): Promise<ConvertResult> {
+		return MailboxSession.runConvert(this.session, seqs, item, transformation, "seq");
 	}
 }
 

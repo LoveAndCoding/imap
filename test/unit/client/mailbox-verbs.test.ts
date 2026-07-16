@@ -987,3 +987,142 @@ describe("MailboxSession.replace() + seq facet (spec §5b, M5.6, RFC 8508)", () 
 		await server.assertCompleted();
 	});
 });
+
+// -- M5.12: CONVERT / UID CONVERT (RFC 5259) ----------------------------------
+
+describe("MailboxSession.convert() + seq facet (RFC 5259 §6, M5.12)", () => {
+	let server: ScriptedServer | undefined;
+	let client: ImapClient | undefined;
+
+	afterEach(async () => {
+		await client?.close({ force: true }).catch(() => undefined);
+		await server?.close();
+		server = undefined;
+		client = undefined;
+	});
+
+	test("convert(): UID CONVERT with UID-grain sequence set; result carries the raw CONVERTED text", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
+			...selectInboxSteps(8),
+			expectLine(command("UID CONVERT", { args: /^4,8 TEXT \(text\/html\)$/i })),
+			reply("OK UID CONVERT completed", [
+				'* CONVERTED (TAG "a1") UID 4 TEXT ("<html/>")',
+				'* CONVERTED (TAG "a1") UID 8 TEXT ("<html/>")',
+			]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.convert("4,8", "TEXT", "text/html");
+		await server.assertCompleted();
+
+		expect(result.converted).toHaveLength(2);
+		expect(result.converted[0]).toContain("UID 4");
+		expect(result.converted[1]).toContain("UID 8");
+	});
+
+	test("seq.convert(): the bare (non-UID-prefixed) 'CONVERT' verb over sequence numbers", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
+			...selectInboxSteps(3),
+			expectLine(command("CONVERT", { args: /^1:3 TEXT \(text\/plain\)$/i })),
+			reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.seq.convert("1:3", "TEXT", "text/plain");
+		await server.assertCompleted();
+
+		expect(result.converted).toHaveLength(1);
+	});
+
+	test("convert(): CapabilityError, zero bytes written, when CONVERT is not advertised (RFC 5259 §3.1, RFC5259-3.1-1)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// Deliberately NO CONVERT in the script: any CONVERT/UID CONVERT on
+		// the wire would be an unscripted-command failure below.
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.convert("1", "TEXT", "text/plain");
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(CapabilityError);
+		expect((caught as CapabilityError).capability).toBe("CONVERT");
+		expect((caught as CapabilityError).rfc).toBe("RFC5259");
+		// Connection still healthy and NOTHING was written for the gated call.
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("seq.convert(): same CapabilityError gate as the UID-grain form", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1"], [
+			...selectInboxSteps(),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		await expect(mailbox.seq.convert("1", "TEXT", "text/plain")).rejects.toBeInstanceOf(
+			CapabilityError,
+		);
+		await client.noop();
+		await server.assertCompleted();
+	});
+
+	test("convert(): tagged NO [MAXCONVERTMESSAGES 5] rejects ServerNoError with the typed code (RFC5259-9-2)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
+			...selectInboxSteps(100),
+			expectLine(command("UID CONVERT", { args: /^1:100 TEXT \(text\/plain\)$/i })),
+			reply("NO [MAXCONVERTMESSAGES 5] Too many messages"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+
+		let caught: unknown;
+		try {
+			await mailbox.convert("1:100", "TEXT", "text/plain");
+		} catch (err) {
+			caught = err;
+		}
+		await server.assertCompleted();
+
+		expect(caught).toBeInstanceOf(ServerNoError);
+		expect((caught as ServerNoError).code).toEqual({
+			name: "MAXCONVERTMESSAGES",
+			value: 5,
+		});
+	});
+
+	test("closed session: convert() rejects StateError (zero bytes), same precondition as every message op", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		await connectAuthenticated(server, client, ["IMAP4rev1", "CONVERT", "BINARY"], [
+			...selectInboxSteps(),
+			expectLine(command("CLOSE", { args: null })),
+			reply("OK CLOSE completed"),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		await mailbox.close();
+
+		await expect(mailbox.convert("1", "TEXT", "text/plain")).rejects.toBeInstanceOf(StateError);
+		await server.assertCompleted();
+	});
+});

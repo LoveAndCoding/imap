@@ -9,6 +9,8 @@ import type {
 	AppendMessageEntry,
 	AppendResult as ClientAppendResult,
 	ComparatorResult,
+	ConvertResult,
+	ConvertTransformation,
 	CopyResult,
 	FetchItems,
 	FetchModifiers as RealFetchModifiers,
@@ -552,6 +554,41 @@ function translateAdHocNotify(spec: unknown): NotifySpec | false {
 		};
 	});
 	return s.status !== undefined ? { status: s.status, set } : { set };
+}
+
+/**
+ * Translates one `driver.convert()` call's ad hoc transformation shape
+ * (`convert-5259.test.ts`'s own scripted shape: a bare destination MIME type
+ * string, `null` for the NIL default-conversion marker, or `{ destination,
+ * params }`) into the real, spec-typed `ConvertTransformation`
+ * `MailboxSession.convert()`/`.seq.convert()` take (M5.12). Like
+ * `translateAdHocNotify` above, this is a THIN translation -- the ad hoc
+ * shape was scripted directly against the eventual typed shape, so this
+ * function's job is validating the rough shape and asserting it into the
+ * real type, not reshaping it (I-4: zero protocol logic here).
+ */
+function translateAdHocConvert(raw: unknown): ConvertTransformation {
+	if (raw === null || typeof raw === "string") {
+		return raw;
+	}
+	if (typeof raw === "object") {
+		const t = raw as { destination?: unknown; params?: unknown };
+		if (
+			(t.destination === null || typeof t.destination === "string") &&
+			(t.params === undefined || (typeof t.params === "object" && t.params !== null))
+		) {
+			return {
+				destination: t.destination as string | null,
+				...(t.params !== undefined
+					? { params: t.params as Record<string, string | true> }
+					: {}),
+			};
+		}
+	}
+	throw new NotImplementedError(
+		`CONVERT transformation ${JSON.stringify(raw)} (expected a MIME type string, ` +
+			"null, or { destination, params })",
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -1824,12 +1861,29 @@ export class ComplianceDriver {
 	public async comparator(preferences?: string[]): Promise<ComparatorResult> {
 		return this.requireClient().comparator(preferences);
 	}
+	/**
+	 * CONVERT / UID CONVERT (RFC 5259 §6) -- M5.12. One driver stub covers
+	 * both grains (the pre-existing compliance scripts pin this shape): a
+	 * `seq` argument with a `"UID "` prefix (`"UID 4,8"`) routes to the
+	 * UID-grain `MailboxSession.convert()`, a bare sequence-set string
+	 * (`"1:3"`) to `MailboxSession.seq.convert()` -- mirroring the bare-verb
+	 * -> `.seq` facet convention every other message-op stub follows, just
+	 * expressed through one method. `translateAdHocConvert()` above only
+	 * asserts the scripted transformation shape onto the real typed one;
+	 * zero protocol logic here (I-4).
+	 */
 	public async convert(
-		_seq: string,
-		_part: string,
-		_transformation: unknown,
-	): Promise<never> {
-		throw new NotImplementedError("CONVERT");
+		seq: string,
+		part: string,
+		transformation: unknown,
+	): Promise<ConvertResult> {
+		const session = this.requireMailboxSession();
+		const t = translateAdHocConvert(transformation);
+		const uidMatch = /^UID (.+)$/i.exec(seq);
+		if (uidMatch) {
+			return session.convert(uidMatch[1], part, t);
+		}
+		return session.seq.convert(seq, part, t);
 	}
 	/**
 	 * GENURLAUTH (RFC 4467 §7/§9) -- M5.5. Wired to `client.urlauth.
