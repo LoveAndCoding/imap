@@ -678,3 +678,323 @@ tls-server-end-point types) is a legitimate potential post-1.0 feature. If
 it lands, all five rows must be reclassified `testable` again and
 re-scripted against the real channel-binding surface — written into each
 row's own `untestableRationale` so the catalog is self-policing.
+
+
+---
+
+# M6.1 — Satisfied-by-mechanism grouped entries (spec §12 invariants)
+
+The M6 close-out plan (`docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md`
+§M6.1) requires that requirement rows whose PASSING status is discharged
+*structurally* — by one of spec §12's cross-cutting invariants (I-1…I-13)
+rather than by row-specific code — be documented once, here, grouped by
+mechanism, instead of leaving each row's passing status looking like an
+independent, bespoke implementation decision. Every row listed below is
+currently `pass` in `test/compliance/reports/compliance.json` (verified
+directly, not inferred); these are NOT deviations, NOT violations, and NOT
+untestable reclassifications — they are an architectural explanation of
+*why* a whole family of rows passes through one code path. Nothing in this
+section changes catalog testability, matchers, or scores; it is
+documentation of already-passing rows, added because the M6.1 process
+requires the satisfied-by-mechanism list to "land here" (per the parent
+plan's own wording) so the ledger explains the architecture once instead of
+N times.
+
+Method: each group below was found by (a) starting from spec §12's own
+named exemplars for that invariant, (b) locating the single source file the
+invariant's own doc comment or the exemplar's compliance-test commentary
+names as the chokepoint, and (c) confirming every listed row's current
+`pass` status directly against the compliance report before including it.
+Rows whose passing was only *coincidentally* adjacent to an invariant (e.g.
+a capability-gated command that in a given test is actually intercepted by
+a state-machine guard first, so the capability gate itself is never
+exercised) were deliberately excluded rather than counted — see the I-9 and
+I-11 entries' own notes for two concrete cases (`RFC5267-3.1-1`/
+`RFC5267-4.1-2`) that were checked and excluded for exactly this reason.
+
+## I-1 / I-2 — STARTTLS transition boundary: no bytes until complete, capabilities invalidated after
+
+**Mechanism:** Every connect path (plain, implicit TLS, STARTTLS) funnels
+through one greeting/upgrade sequencer in `src/connection/connection.ts`
+that blocks all outgoing command traffic until the TLS handshake genuinely
+completes (I-1), and `CapabilityRegistry.invalidate()`
+(`src/client/capabilities.ts`, module doc: "spec §3.5, invariant I-2/I-5/
+I-9") is the single place that drops the client's cached capability
+understanding to "unknown" on STARTTLS success, on authentication, and on
+UNAUTHENTICATE — so every row asserting "no command before TLS is done" or
+"capabilities are discarded/reissued after STARTTLS or a security-layer
+AUTHENTICATE" is satisfied by the same two chokepoints rather than by
+per-row bookkeeping.
+
+**Discharged rows:**
+- I-1 (no further commands until STARTTLS negotiation is complete):
+  `RFC3501-6.2.1-3` (rev1), `RFC9051-6.2.1-1` (rev2), `RFC2595-3.1-1`
+  (rev1, rev2).
+- I-2 (discard/reissue cached capabilities after STARTTLS):
+  `RFC3501-6.2.1-1` (rev1, MUST), `RFC3501-6.2.1-2` (rev1, SHOULD),
+  `RFC9051-6.2.1-2` (rev2, MUST), `RFC9051-6.2.1-3` (rev2, SHOULD),
+  `RFC2595-3.1-2` (rev1, rev2, MUST), `RFC2595-3.1-3` (rev1, rev2, SHOULD),
+  `RFC2595-9-3` (rev1, rev2, MUST).
+- I-2 (reissue cached capabilities after a security-layer-negotiating
+  AUTHENTICATE — the same registry, a different trigger): `RFC3501-6.2.2-4`
+  (rev1), `RFC9051-6.2.2-5` (rev2).
+
+18 requirement rows in total (12 distinct ids; several score both a MUST
+and its paired SHOULD half from the same RFC sentence). The registry's own
+doc comment additionally invalidates on UNAUTHENTICATE, per §3.5, but no
+catalog row independently measures that trigger, so it is not claimed as a
+"discharged row" here — noted for completeness, not padding.
+
+## I-3 — TLS identity verification, one chokepoint
+
+**Mechanism:** `src/connection/tls.ts`'s `openTls()` is documented as "ONE
+TLS policy module (spec §10.1/§10.2): every TLS socket the library
+creates — implicit connect AND the STARTTLS upgrade — MUST be created
+through `openTls()` below. No other module may call `tls.connect`
+directly." It hard-forbids callers from overriding
+`rejectUnauthorized`/`checkServerIdentity`/`servername`, so certificate
+identity verification (RFC 9525-shaped: DNS-ID/SRV-ID/URI-ID matching, IDN
+handling) always runs, and a verification failure always rejects the
+connection rather than silently downgrading.
+
+**Discharged rows:** `RFC9525-6.6-1` (rev1, rev2), `RFC7817-3-1` (rev1,
+rev2), `RFC7817-3-7` (rev1, rev2), `RFC8314-3.2-1` (rev1, rev2),
+`RFC8314-5.3-1` (rev1, rev2), `RFC3501-11.1-3` (rev1), `RFC3501-11.1-8`
+(rev1) — 7 ids, 12 row-profile instances.
+
+## I-4 — CommandWriter: one wire-assembly chokepoint (literal framing)
+
+**Mechanism:** `src/commands/writer.ts`'s module doc: "Every command class
+builds its argument list by calling methods on a `CommandWriter` instance;
+nothing else in the codebase is permitted to hand-assemble wire bytes
+(compliance invariant I-4)." The RFC 7888 non-synchronizing-literal family
+(size thresholds, LITERAL+/LITERAL- gating, the synchronizing-vs-
+non-synchronizing decision) is entirely implemented inside this one writer,
+so every row in that family is discharged by the same literal-emission
+logic rather than by per-call-site duplication.
+
+**Discharged rows:** `RFC7888-3-1` (rev1, rev2), `RFC7888-3-2` (rev1, rev2),
+`RFC7888-5-1` (rev1, rev2), `RFC7888-5-2` (rev1, rev2), `RFC7888-5-3` (rev1,
+rev2) — 5 ids, 10 row-profile instances.
+
+## I-5 — Case-insensitive keyword/atom comparison, one normalization chokepoint
+
+**Mechanism:** `src/lexer/case-insensitive.ts` ("Case-insensitivity helper
+(spec §11.1, invariant I-5)... This module is the single place that
+implements that comparison so every lexer rule, parser matcher, and
+structure constructor shares one definition of 'case-insensitive match'
+instead of re-deriving it ad hoc") exports `ciEquals`/`ciIncludes`/
+`ciCanonicalize`/`ciCanonicalFrom`. Every catalog row asserting that the
+client accepts a server-sent protocol keyword regardless of case is
+satisfied by one of these four functions being called at the relevant
+parse site (response-type keywords in `untagged.ts`, capability tokens in
+`capability.ts`, flag names in `flag.ts`, resp-text-code kinds in
+`text.code.ts`, and so on) — never by a bespoke `toUpperCase()`/`toLowerCase()`
+comparison written again for that one extension.
+
+This group deliberately excludes two superficially similar families that
+are NOT this mechanism: INBOX's own case-folding (RFC3501-9-6/RFC9051-9-x,
+handled in mailbox-name codec logic, explicitly out of `ciEquals`' scope
+per its own doc comment: "mailbox names (case-sensitive, except INBOX...)"),
+and TLS certificate identity case-insensitive matching (RFC9525/RFC7817/
+RFC2595 rows, which are I-3's mechanism, not I-5's).
+
+**Discharged rows:** `RFC3501-9-2` (rev1), `RFC9051-9-2` (rev2),
+`RFC9208-7-1` (rev1, rev2), `RFC3691-4-1` (rev1, rev2), `RFC6851-5-1` (rev1,
+rev2), `RFC5259-7-1` (rev1, rev2), `RFC9585-5-1` (rev1, rev2), `RFC4978-5-1`
+(rev1, rev2) — 8 ids, 14 row-profile instances.
+
+## I-6 — Unknown/extension response data is data, never a parse error
+
+**Mechanism:** Two generic fallback branches share this duty: (1)
+`src/parser/structure/unknown.ts`'s tolerance backstop ("Tolerance backstop
+for UntaggedResponse (spec §11.2, invariant I-6): the content of an
+untagged response that doesn't match... any known... structure is still
+valid IMAP framing -- surfaced as raw data on `.content`, never thrown as a
+ParsingError"), and (2) `src/parser/structure/text.code.ts`'s `AtomTextCode`
+generic `default:` branch for any resp-text-code kind with no dedicated
+parser. A response-code or response-type this client has no bespoke typed
+support for still parses successfully and is exposed as generic/opaque
+data, rather than killing the response stream — several extension rows
+pass specifically because of this shared fallback, not because each
+extension has its own dedicated parser for the item in question.
+
+**Discharged rows:** `RFC3501-7.4.2-3` (rev1) and its rev2 counterpart
+`RFC9051-7.5.2-3` (rev2) — unknown BODYSTRUCTURE extension data tolerated;
+`RFC9051-7.2.2-4` (rev2) — unknown/extra CAPABILITY tokens tolerated
+(`CapabilityRegistry.set()` records whatever strings it is given, with no
+whitelist); `RFC5259-9-1` (rev1, rev2), `RFC5259-9-2` (rev1, rev2),
+`RFC5259-9-3` (rev1, rev2) — the CONVERT extension's TEMPFAIL/
+MAXCONVERTMESSAGES/MAXCONVERTPARTS tagged-NO response codes, none of which
+have a dedicated `text.code.ts` branch, all falling to the generic
+`AtomTextCode` default (confirmed directly in
+`test/compliance/specs/ext/convert-5259.test.ts`'s own commentary);
+`RFC5255-4.9-1` (rev1, rev2) — the LANGUAGE extension's `[BADCOMPARATOR]`
+response code, same generic-branch fallback (confirmed in
+`test/compliance/specs/ext/language-5255.test.ts`); `RFC4467-8-1` (rev1,
+rev2) — URLAUTH's `[URLMECH ...]` status response code, same fallback
+(confirmed in `test/compliance/specs/ext/urlauth-4467.test.ts`, explicitly
+marked "REAL — clean pass" via the generic branch).
+
+8 ids, 13 row-profile instances. Explicitly excluded: `RFC4467-8-2`/`-8-3`/
+`-8-4` (untagged GENURLAUTH/URLFETCH acceptance) — these are also currently
+`pass`, but their own compliance-test commentary documents that they now
+pass via *dedicated* typed parsing wired to `client.urlauth`'s facet (as of
+M5.5), not via the generic unknown-response fallback; an older comment in
+that same test file, describing a since-fixed violation, was checked
+against the live `compliance.json` status before being excluded to avoid
+citing a stale finding as a live mechanism.
+
+## I-7 — ALERT text always reaches the `alert` event + logger, with a `trusted` marker
+
+**Mechanism:** `src/connection/router.ts`'s `handleStatusResponse()` always
+calls `this.host.emitAlert(alertText, { trusted: confidential })` for every
+ALERT response code before any confidentiality-gated early return — the
+doc comment: "`ImapClient`'s `alert` event (spec I-7) must fire regardless
+of confidentiality (with `trusted` reflecting it), unlike `serverStatus`,
+which stays suppressed pre-TLS." One emission site backs every row that
+asserts ALERT content reaches the caller, with the marking that
+distinguishes a pre-confidentiality (untrusted) alert from a post-TLS/SASL
+one.
+
+**Discharged rows:** `RFC3501-7.1-1` (rev1), `RFC9051-7.1-2` (rev2),
+`RFC9051-7.1-3` (rev2), `RFC9051-11.3-2` (rev2) — 4 ids, 4 row-profile
+instances. (`RFC9051-7.1-1` itself — the SHOULD-ignore-pre-confidentiality
+duty — is NOT included here: it already has its own dedicated adjudication
+entry above, "RFC9051-7.1-1 — deviate (permanent, SHOULD-level)", because
+this client's actual behavior is a deliberate deviation from that one row,
+not a structural pass. `RFC9051-11.3-2` states the identical SHOULD from
+§11.3's angle and is `pass`, not `violation`, purely because the compliance
+catalog scores its "no status-event emission" half rather than the
+display-suppression half that RFC9051-7.1-1's own adjudication trades
+away — see that entry's rationale for the full accounting.)
+
+## I-8 — PREAUTH greeting honored as already-authenticated
+
+**Mechanism:** `src/connection/connection.ts` resolves the greeting
+(BYE/PREAUTH/OK) exactly once per connect, on every connect path, before
+anything else runs (doc comment: "resolves BYE/PREAUTH/policy checks
+(§10.5, I-8) up front"), and a PREAUTH greeting sets connection state so
+`Session` reports itself already authenticated without ever issuing LOGIN/
+AUTHENTICATE.
+
+**Discharged rows:** `RFC3501-7.1.4-1` (rev1), `RFC9051-7.1.4-1` (rev2),
+`RFC9051-7.1.4-2` (rev2) — 3 ids, 3 row-profile instances.
+
+## I-9 — Capability-gated commands write zero bytes when the capability is absent
+
+**Mechanism:** Every capability-gated public method checks the live
+`CapabilityView` and throws `CapabilityError` (`src/errors.ts`) *before*
+the underlying `Command` subclass is ever constructed, so the prohibited
+option/verb never reaches `CommandWriter` and never reaches the wire — the
+same "gate before construction" shape repeated at each of the ~20 call
+sites that import `CapabilityError` across `src/client/` and
+`src/commands/`, rather than a bespoke prohibition per extension. Each row
+below was verified to have a compliance test that actually scripts the
+capability as ABSENT and checks the wire stayed clean (not merely a test
+that happens to also be blocked by an unrelated state guard — see the
+exclusions below).
+
+**Discharged rows:** `RFC4731-3.1-1` (rev1, rev2 — ESEARCH RETURN options),
+`RFC5182-2.1-1` (rev1 — SEARCHRES SAVE/`$`), `RFC5032-2-1` (rev1, rev2 —
+WITHIN OLDER/YOUNGER), `RFC6203-1-1` (rev1, rev2 — FUZZY/RELEVANCY),
+`RFC5258-3-1` (rev1) and its rev2 counterpart `RFC9051-6.3.9-5` (rev2) — LIST
+selection/return options, `RFC6154-3-1` (rev1, rev2 — CREATE USE),
+`RFC8437-3-1` (rev1, rev2 — UNAUTHENTICATE), `RFC5957-1-1` (rev1, rev2 —
+SORT DISPLAYFROM/DISPLAYTO), `RFC5267-4.1-1` (rev1, rev2 — SEARCH CONTEXT/
+UPDATE/PARTIAL), `RFC4467-1-1` (rev1, rev2 — URLAUTH GENURLAUTH/URLFETCH/
+RESETKEY), `RFC3691-1-1` (rev1 — UNSELECT), `RFC2177-3-1` (rev1, rev2 —
+IDLE).
+
+13 ids, 22 row-profile instances.
+
+**Deliberately excluded** (checked, not overlooked): `RFC5267-3.1-1` and
+`RFC5267-4.1-2` (SORT RETURN/CONTEXT gating) are `pass`, but their own
+compliance-test commentary states the drive never selects a mailbox, so
+`requireMailboxSession()`'s `StateError` (I-11) fires first and the
+`CapabilityError` gate this group is about is never actually exercised in
+that test — "trivially (and compliantly) satisfies this MUST NOT" per the
+test's own words. These two rows are real, but they are I-11's discharge in
+this measurement, not I-9's; relisting them here would misattribute the
+mechanism. `RFC5259-3.1-1` (CONVERT capability gate) was also checked and
+excluded for a related reason: its one compliance test scripts the
+capability as PRESENT and pins the wire form, never driving the
+capability-absent half at all — the row passes on the positive half only,
+so I-9 is not what discharges it.
+
+## I-10 — 63-bit (number64) quantities round-trip as `bigint`, no precision loss
+
+**Mechanism:** `src/lexer/rules/number.ts` promotes any numeric token above
+`MAX_ALLOWED_NUMBER` (2^32) to a `BigIntToken` (`src/lexer/tokens/number.ts`)
+at the lexer layer — the single point where the number-vs-bigint decision
+is made — so every RFC extension that defines a 63-bit "number64" quantity
+(mod-sequences, QUOTA usage/limits, SIZE, Gmail's 64-bit X-GM-MSGID/
+X-GM-THRID ids) automatically survives past `Number.MAX_SAFE_INTEGER`
+without each call site re-implementing bigint promotion.
+
+**Discharged rows:** `RFC9051-D-1` (rev2 — 63-bit body-part/message sizes),
+`RFC7162-7-1` (rev1, rev2 — full-range 63-bit mod-sequence values),
+`RFC8438-3-2` (rev1, rev2 — 63-bit STATUS SIZE), `X-GM-EXT-1-msgid-3` (rev1,
+rev2), `X-GM-EXT-1-thrid-3` (rev1, rev2) — 5 ids, 9 row-profile instances.
+
+## I-11 — Commands submitted in an illegal client state fail locally, before any bytes are written
+
+**Mechanism:** `src/client/state.ts` ("ClientState machine (spec §3.1,
+invariant I-11)... This module is the SINGLE writer of `ImapClient`'s
+state") exposes `assertIn()`, which every `Command` subclass's declared
+`states` list (`src/commands/base.ts`) is checked against; a mismatch
+throws `IllegalStateError`/`StateError` synchronously, before the command
+is constructed and before `CommandWriter` ever runs. The core §3 rows below
+are the generic statement of this duty; the identical mechanism also
+backs a large number of individual per-command state-precondition rows
+scattered across the extension catalog (named, not relisted, to avoid
+double-counting): `RFC5464-4.2-1` (GETMETADATA), `RFC5255-4.7-1`
+(COMPARATOR), `RFC5161-3.1-2` (ENABLE after SELECT), `RFC3691-2-1`
+(UNSELECT only while selected), `RFC5267-3.1-1`/`RFC5267-4.1-2` (SORT
+context options with no mailbox selected — see the I-9 entry's exclusion
+note for why these score here and not there).
+
+**Discharged rows (core §3 family):** `RFC3501-3-1` (rev1) / `RFC9051-3-1`
+(rev2) — generic "no state-restricted command in the wrong state";
+`RFC3501-3.1-1` (rev1) / `RFC9051-3.1-1` (rev2) — credentials required in
+Not Authenticated state; `RFC3501-3.2-1` (rev1) / `RFC9051-3.2-1` (rev2) —
+mailbox must be selected before message-affecting commands; `RFC3501-3.4-1`
+(rev1) / `RFC9051-3.4-1` (rev2) — tagged OK read before closing after
+LOGOUT; `RFC3501-3.4-2` (rev1) / `RFC9051-3.4-2` (rev2) — SHOULD NOT
+unilaterally close.
+
+5 ids × 2 profiles = 10 row-profile instances in the core family (plus the
+6 named extension-catalog instances above, all independently verified
+`pass`, cited for completeness rather than relisted as a second group).
+
+## I-12 / I-13 — Structural per-command hygiene limits (ID field/value limits; IDLE DONE-ordering)
+
+Two small, unrelated-in-domain but structurally identical invariants —
+each a single input-validation/ordering boundary on one command — are
+grouped into one entry to avoid two near-empty sections.
+
+**I-12 mechanism:** `src/commands/id.ts`'s `IdCommand` constructor enforces
+RFC 2971 §3.3's syntax limits synchronously (doc comment: "Enforce RFC 2971
+§3.3 limits (I-12) at the command boundary... these are MUST NOT rules on
+what the client may put on the wire, so violating input... is a caller
+error"): at most 30 field/value pairs, field names ≤30 octets, values
+≤1024 octets, each checked with `RangeError` thrown before the command can
+be constructed. **Discharged rows:** `RFC2971-3.3-1` (rev1, rev2 — ≤30
+pairs), `RFC2971-3.3-2` (rev1, rev2 — field/value octet limits) — 2 ids, 4
+row-profile instances. (`RFC2971-3.3-3`, "no duplicate field names," is
+also `pass` but is discharged by a different, narrower fact — `valuesToSend`
+is a plain object/`Record`, whose keys are inherently unique — not by the
+`RangeError`-throwing length checks I-12 names; noted here rather than
+folded in, to keep the mechanism attribution accurate.)
+
+**I-13 mechanism:** `src/client/idle-controller.ts`'s `IdleController`
+implements RFC 2177 §3's "any command submission while idling causes:
+write DONE, await tagged completion, run the command" auto-DONE discipline
+as one state machine, so a caller-issued command while IDLE is active
+always waits for DONE to complete first rather than being interleaved.
+**Discharged rows:** `RFC2177-3-5` (rev1 — client terminates IDLE via
+DONE), `RFC2177-3-6` (rev1 — MUST NOT send a command while awaiting DONE)
+— 2 ids, 2 row-profile instances. (`RFC2177-3-1`, the IDLE capability gate,
+is discharged by I-9 and is listed in that entry instead; `RFC2177-3-7`,
+the 29-minute re-issue guidance, is `untestable` at rev1 and is not a
+`pass` row, so it is not claimed here.)
