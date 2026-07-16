@@ -5,6 +5,8 @@ export type ScriptStep =
 	| { kind: "expect"; matcher: LineMatcher }
 	| { kind: "reply"; suffix: string; untagged?: string[] }
 	| { kind: "startTls"; expectAbort?: boolean }
+	| { kind: "startCompression" }
+	| { kind: "endCompression"; direction: "inbound" | "outbound" }
 	| { kind: "close" }
 	| { kind: "destroy" };
 
@@ -37,6 +39,45 @@ export function expectLine(matcher: LineMatcher): ScriptStep {
  */
 export function startTls(opts: { expectAbort?: boolean } = {}): ScriptStep {
 	return { kind: "startTls", ...opts };
+}
+
+/**
+ * Server-side activation of RFC 4978 COMPRESS=DEFLATE, mid-script. Place it
+ * immediately after the `reply("OK ...")` that accepts the client's
+ * COMPRESS DEFLATE command (RFC 4978 §3: both sides start compressing
+ * directly after that tagged OK's CRLF). From this step on, every incoming
+ * client byte is run through a raw-DEFLATE (RFC 1951) inflater before line
+ * matching, and every outgoing `send`/`reply` is deflated before hitting
+ * the socket — the transcript keeps recording the PLAINTEXT forms on both
+ * sides (that is what assertions grep), with `!` markers bracketing the
+ * compressed span.
+ */
+export function startCompression(): ScriptStep {
+	return { kind: "startCompression" };
+}
+
+/**
+ * Server-side termination of ONE direction of an active COMPRESS=DEFLATE
+ * layer, mid-script — the RFC 8437 UNAUTHENTICATE boundary is per-direction
+ * (RFC8437-4.1-1), so the two teardowns are separate steps at their exact
+ * wire positions:
+ *
+ *   - `endCompression("inbound")` goes immediately AFTER the
+ *     `expectLine(<UNAUTHENTICATE>)` and BEFORE the reply: the CLIENT's
+ *     outgoing layer terminates at the CRLF following the UNAUTHENTICATE
+ *     command itself, so every client byte after that line — starting with
+ *     whatever arrives while the server is still composing its reply — is
+ *     plaintext and must stop routing through the harness inflater. A
+ *     client that wrongly keeps compressing produces opaque bytes that
+ *     fail the next line match (and error the inflater in the
+ *     already-torn-down case).
+ *   - `endCompression("outbound")` goes immediately AFTER the
+ *     `reply("OK ...")`: the SERVER's outgoing layer terminates after the
+ *     CRLF following that OK, so the reply itself is still compressed and
+ *     every later send is plaintext.
+ */
+export function endCompression(direction: "inbound" | "outbound"): ScriptStep {
+	return { kind: "endCompression", direction };
 }
 
 export function close(): ScriptStep {

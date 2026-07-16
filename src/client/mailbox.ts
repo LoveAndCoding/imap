@@ -168,12 +168,25 @@ export interface MailboxSessionDriver {
  *  judgment call on that backstop's reason); `"disconnected"` is still wired
  *  wherever the connection teardown path lands (not this task either -- a
  *  future task's carry-forward).
+ *
+ *  `"unauthenticated"` (M5.10, RFC 8437 §3): the session died because
+ *  `ImapClient.unauthenticate()` succeeded while this mailbox was selected
+ *  -- "the mailbox ceases to be selected, but no expunge event is
+ *  generated" (RFC8437-3-3). A NEW reason rather than a reuse, because
+ *  every existing member states a different (wrong, here) fact: `"closed"`
+ *  promises a CLOSE-style silent expunge happened (RFC8437-3-3 promises
+ *  the opposite), `"unselected"` claims an UNSELECT was issued,
+ *  `"reselected"` claims another mailbox took this one's place, and
+ *  `"disconnected"` claims the connection is gone -- after UNAUTHENTICATE
+ *  the connection is alive and reusable (that is the extension's entire
+ *  point), the client just isn't authenticated on it any more.
  */
 export type MailboxClosedReason =
 	| "closed"
 	| "unselected"
 	| "reselected"
-	| "disconnected";
+	| "disconnected"
+	| "unauthenticated";
 
 export interface MailboxFlagsUpdate {
 	seq: number;

@@ -26,6 +26,7 @@ export * from "./search-criteria";
 export * from "./select";
 export * from "./starttls";
 export * from "./subscribe";
+export * from "./unauthenticate";
 export * from "./unselect";
 export * from "./unsubscribe";
 export * from "./status";

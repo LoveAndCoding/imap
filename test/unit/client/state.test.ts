@@ -76,6 +76,21 @@ describe("ClientStateMachine", () => {
 			expect(machine.current).toBe("not-authenticated");
 		});
 
+		test("selected -> not-authenticated (UNAUTHENTICATE OK from selected, RFC 8437)", () => {
+			// RFC 8437 §6 extends command-select with UNAUTHENTICATE; §3: a
+			// selected mailbox "ceases to be selected" with no expunge event —
+			// the client lands in not-authenticated in ONE transition, never
+			// passing through authenticated (M5.10).
+			const machine = new ClientStateMachine();
+			advance(machine, [
+				"connecting",
+				"authenticated",
+				"selected",
+				"not-authenticated",
+			]);
+			expect(machine.current).toBe("not-authenticated");
+		});
+
 		test("logout -> disconnected (drain complete)", () => {
 			const machine = new ClientStateMachine();
 			advance(machine, ["connecting", "authenticated", "logout"]);

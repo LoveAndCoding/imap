@@ -111,7 +111,7 @@ caveat. Concretely, at authoring time:
 | M5.7 SAVEDATE/PREVIEW/OBJECTID | DONE (worktree — FETCH items + typed fields + 3 date SEARCH keys pre-existed from M3.5; this task landed the SAVEDATESUPPORTED search key and flipped RFC8514-4.3-4) |
 | M5.8 X-GM-EXT-1 | MERGED |
 | M5.9 COMPRESS=DEFLATE | MERGED |
-| M5.10 UNAUTHENTICATE | IN FLIGHT (worktree) |
+| M5.10 UNAUTHENTICATE | MERGED (incl. harness DEFLATE steps + plan recommendation-(a) correction) |
 | M5.11 LANGUAGE/COMPARATOR | MERGED |
 | M5.12 CONVERT | MERGED (commit 83b8bb7; 1112 pass) |
 | M5.13 Referrals + UTF8 completion | MERGED (commit ae83c6b; codec question SETTLED — no raw-UTF-8 arm) |
@@ -656,6 +656,24 @@ this doc's line numbers/call names blindly.
   handling and MOVE's capability-gated-not-emulated posture) — an implicit
   deselect on the caller's behalf would be inventing behavior the RFC
   doesn't ask for.
+  **[Amended at M5.10 landing: this bullet's premise is factually wrong,
+  and neither (a) nor (b) is what the RFC specifies. RFC 8437 §6's grammar
+  extends BOTH `command-auth` and `command-select` with UNAUTHENTICATE
+  (quoted verbatim in the RFC8437-3-1 catalog entry), and §3 states the
+  from-selected outcome directly: "If a mailbox was selected, the mailbox
+  ceases to be selected, but no expunge event is generated" (RFC8437-3-3,
+  a catalogued, tested duty whose compliance row drives SELECT then
+  UNAUTHENTICATE). So a call from selected is a first-class legal use —
+  not a `StateError` (which would make the RFC8437-3-3 row unpassable) and
+  not a client-synthesized close/unselect (no extra wire command is sent;
+  no CLOSE-style expunge happens). The landed behavior: UNAUTHENTICATE is
+  legal from authenticated OR selected; from selected, the tagged OK alone
+  deselects — the `MailboxSession` is invalidated with new closed reason
+  `"unauthenticated"` and the state machine takes a new direct
+  `selected → not-authenticated` edge (spec §3.1 table amended
+  accordingly). The "no auto-XYZ magic" posture is preserved: nothing is
+  issued on the caller's behalf; the deselection is the server's own
+  documented effect of the one command the caller asked for.]**
 - Gated on the `UNAUTHENTICATE` capability, zero bytes when absent (I-9).
 
 **Depends on:** none functionally — plumbing on top of already-landed

@@ -150,11 +150,24 @@ transition emits `stateChange` *before* the promise that caused it settles):
 | selected | `close()`/`unselect()` OK, or select of another mailbox begins | authenticated |
 | selected | untagged CLOSED resp-code (RFC 7162) | authenticated |
 | authenticated | `unauthenticate()` OK (RFC 8437) | not-authenticated |
+| selected | `unauthenticate()` OK (RFC 8437) | not-authenticated |
 | any | `logout()` called | logout → disconnected |
 | any | socket close / fatal error / server BYE | disconnected |
 
 Commands declare their legal states (§7.1); submitting a command in an
 illegal state rejects locally with `StateError` and writes no bytes.
+
+[Amended at M5.10: the original table carried only the
+authenticated → not-authenticated UNAUTHENTICATE row. RFC 8437 §6's grammar
+extends BOTH `command-auth` and `command-select` with UNAUTHENTICATE, and
+§3 states the from-selected outcome directly ("If a mailbox was selected,
+the mailbox ceases to be selected, but no expunge event is generated" —
+RFC8437-3-3), so a selected client lands in not-authenticated in ONE
+transition — there is no intermediate deselect on the wire, and no
+`selected → authenticated` hop is synthesized client-side. The
+`MailboxSession` is invalidated with `closed` reason `"unauthenticated"`
+(a new `MailboxClosedReason` member — no pre-existing reason states the
+true fact that the connection survives but the authentication didn't).]
 
 ### 3.2 Class surface
 
@@ -693,7 +706,10 @@ export interface MailboxSessionEvents {
 	vanished: (uids: number[], earlier: boolean) => void; // QRESYNC
 	flags: (update: { seq: number; uid?: number; flags: ReadonlySet<string>; modSeq?: bigint }) => void;
 	uidValidityChanged: (next: number, prev: number) => void;  // loud: also logs warn
-	closed: (reason: "closed" | "unselected" | "reselected" | "disconnected") => void;
+	closed: (reason: "closed" | "unselected" | "reselected" | "disconnected" | "unauthenticated") => void;
+	// "unauthenticated" amended at M5.10 (RFC 8437): UNAUTHENTICATE succeeded
+	// while this mailbox was selected — the connection survives, the mailbox
+	// ceases to be selected, and no expunge event accompanies it (RFC8437-3-3).
 }
 export type MailboxUpdate =
 	| { type: "exists"; count: number }

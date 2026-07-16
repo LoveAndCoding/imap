@@ -4,7 +4,13 @@ import { clearTimeout, setTimeout } from "timers";
 import * as tls from "tls";
 import { TypedEmitter } from "tiny-typed-emitter";
 
-import { CapabilityCommand, CompressCommand, StartTLSCommand, Command } from "../commands";
+import {
+	CapabilityCommand,
+	CompressCommand,
+	StartTLSCommand,
+	UnauthenticateCommand,
+	Command,
+} from "../commands";
 import { ConnectionError, IMAPError, ServerBadError, ServerNoError } from "../errors";
 import NewlineTranform from "../newline.transform";
 import { wrapCompression } from "./compress";
@@ -1061,5 +1067,72 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.commandQueue.release();
 
 		return true;
+	}
+
+	/**
+	 * UNAUTHENTICATE (RFC 8437, M5.10) — the Layer-1 wire exchange plus the
+	 * one piece of stream-topology surgery this command can imply: if
+	 * COMPRESS=DEFLATE is active, both compression directions terminate at
+	 * this command's boundary (RFC8437-4.1-1: "The client terminates its
+	 * outgoing compression layer after the CRLF following the UNAUTHENTICATE
+	 * command"; the server's own outgoing layer terminates after the CRLF
+	 * following its OK). Same division of labor as `compress()` directly
+	 * above: capability/state gating and ALL client-level state bookkeeping
+	 * (state machine, mailbox session, ENABLE state, capability registry)
+	 * live one layer up in `ImapClient.unauthenticate()` — this method owns
+	 * only the exchange and the codec teardown.
+	 *
+	 * Choreography mirrors `compress()` exactly: `runCommand()` writes the
+	 * (isolated) command's bytes synchronously before the queue is held;
+	 * `hold()` then blocks every other write until `release()`, so nothing
+	 * can cross the teardown boundary through a stale (still-compressing)
+	 * write path — this window is what makes "the client's outgoing layer
+	 * terminates after the command's CRLF" true in effect: the command line
+	 * is the LAST compressed thing this client writes, since no other write
+	 * can happen until after the codec is gone. A tagged NO/BAD propagates
+	 * as a rejection (unlike COMPRESS's swallowed decline — a server that
+	 * refuses UNAUTHENTICATE leaves the connection state unchanged, and the
+	 * caller must know); the queue is released and the topology untouched.
+	 *
+	 * When compression was never active this reduces to a plain isolated
+	 * round trip (the hold/release pair is kept unconditionally for a
+	 * uniform, simpler invariant — it is a no-op-cost window when there is
+	 * no topology to swap).
+	 */
+	public async unauthenticate(): Promise<void> {
+		const cmd = new UnauthenticateCommand();
+		const result = this.runCommand(cmd);
+		this.commandQueue.hold();
+
+		try {
+			await result;
+		} catch (err) {
+			this.commandQueue.release();
+			throw err;
+		}
+
+		if (this.compression) {
+			// MEDIUM-7 parity (same defense class as starttls()/compress()):
+			// the tagged OK was just observed and the server's outgoing
+			// compression layer ends at that OK's CRLF — discard any
+			// buffered-but-incomplete line residue before touching topology,
+			// so post-teardown plaintext is never glued onto pre-teardown
+			// residue.
+			this.processingPipeline.forceNewLine(false);
+
+			// Tear the codec down and restore the direct pipe (the exact
+			// inverse of compress()'s interposition): read side back to
+			// socket -> processingPipeline, write side back to raw
+			// `sendCommand` writes.
+			const socket = this.socket!;
+			this.compression.destroy();
+			this.compression = null;
+			socket.pipe(this.processingPipeline);
+		}
+
+		// MEDIUM-6 parity: topology fully restored BEFORE releasing the held
+		// queue — anything parked during the hold dispatches against the new
+		// (uncompressed) path.
+		this.commandQueue.release();
 	}
 }

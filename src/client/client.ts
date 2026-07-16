@@ -1916,6 +1916,119 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	/**
+	 * UNAUTHENTICATE (spec §3.2, RFC 8437, M5.10): returns the connection to
+	 * "not-authenticated" state WITHOUT closing it -- the client is then
+	 * free to `authenticate()` again as a different (or the same) identity
+	 * on the same connection (RFC8437-3-5), which is the extension's whole
+	 * point (administrative connection reuse).
+	 *
+	 * Gating, zero bytes written on either failure (I-9/I-11), in the same
+	 * order `run()` itself checks: state first (RFC 8437 §6 extends both
+	 * `command-auth` and `command-select`, so "authenticated" and "selected"
+	 * are the two legal submission states -- from anywhere else this is a
+	 * local `StateError`, RFC8437-3-1), then capability (`CapabilityError`
+	 * when UNAUTHENTICATE isn't advertised -- checked against the LIVE view,
+	 * which the auth flow's own mandatory post-auth refresh keeps current,
+	 * satisfying RFC8437-3-7's "consult a post-authentication capability
+	 * list" reading). State-first also means a not-authenticated caller gets
+	 * the honest diagnosis even when the capability view is (expectedly,
+	 * pre-auth) missing UNAUTHENTICATE.
+	 *
+	 * On the tagged OK, client-side state mirrors RFC 8437 §3's "reset all
+	 * connection state except ... TLS" server-side reset:
+	 *
+	 * - A selected mailbox's `MailboxSession` is invalidated with reason
+	 *   `"unauthenticated"` -- learned solely from the tagged OK, never from
+	 *   an expunge event ("the mailbox ceases to be selected, but no expunge
+	 *   event is generated", RFC8437-3-3). Pointer/state first, `markClosed`
+	 *   last, same convention as every other invalidation lane in this file.
+	 * - The state machine transitions to "not-authenticated" (§3.1:
+	 *   authenticated -> not-authenticated, or the RFC8437-specific direct
+	 *   selected -> not-authenticated edge).
+	 * - `_enabled`/`_notifyState` are cleared: RFC 8437 §4.1 has the server
+	 *   discard all ENABLE-negotiated state ("any extensions enabled ... are
+	 *   no longer enabled" -- per the RFC8437 catalog module's §4.1
+	 *   extraction note: CONDSTORE-as-if-unissued, ENABLE-state clearing,
+	 *   SEARCHRES/LANGUAGE reset) and NOTIFY registrations are connection
+	 *   state the same §3 reset discards -- a client that kept treating
+	 *   QRESYNC as ENABLEd (or kept refusing seq-grain calls for a dead
+	 *   NOTIFY registration) would desync exactly like the reconnect case
+	 *   ST1 fixed (see the `disconnected` bridge in
+	 *   `wireConnectionEvents()`, which clears the same pair for the same
+	 *   reason).
+	 * - Capabilities: RFC 8437 anticipates the post-UNAUTHENTICATE
+	 *   capability set differing from the authenticated one, and spec §3.5
+	 *   names UNAUTHENTICATE as an invalidation trigger. Both server shapes
+	 *   are handled: a `[CAPABILITY ...]` code on the tagged OK was already
+	 *   ingested by `handleTaggedResponse()` (detected via the same
+	 *   epoch-compare `performAuthSelection` uses) and is kept as current;
+	 *   absent that code, the registry is invalidated (loudly --
+	 *   `capabilitiesChanged` fires; unlike the disconnect bridge's silent
+	 *   housekeeping this IS a fact about the server's live capability set)
+	 *   and the next consumer that needs capabilities forces the CAPABILITY
+	 *   round trip lazily. No eager round trip is issued here: RFC 8437
+	 *   imposes none, and the very next thing a caller typically does is
+	 *   `authenticate()`, whose own §3.3-step-5 refresh machinery already
+	 *   guarantees fresh capabilities the moment they matter.
+	 *
+	 * If COMPRESS=DEFLATE was active, `Connection.unauthenticate()` also
+	 * tears the compression codec down at the command boundary
+	 * (RFC8437-4.1-1) -- see its doc comment for the hold()/release()
+	 * choreography. A tagged NO/BAD rejects (`ServerNoError`/
+	 * `ServerBadError`) with every piece of client state left exactly as it
+	 * was -- a refused UNAUTHENTICATE changes nothing on either end.
+	 */
+	public async unauthenticate(): Promise<void> {
+		const current = this.stateMachine.current;
+		if (current !== "authenticated" && current !== "selected") {
+			throw new StateError(
+				'unauthenticate() requires the client to be "authenticated" or "selected"',
+				{ state: current, required: ["authenticated", "selected"] },
+			);
+		}
+		if (!this.capabilityRegistry.view.has("UNAUTHENTICATE")) {
+			throw new CapabilityError(
+				"unauthenticate() requires the UNAUTHENTICATE capability (RFC 8437), " +
+					"which the server hasn't advertised",
+				{ capability: "UNAUTHENTICATE", rfc: "RFC8437" },
+			);
+		}
+
+		const epochBefore = this.capabilityRegistry.view.epoch;
+		await this.connection.unauthenticate();
+
+		// Tagged OK observed -- mirror the server's §3 connection-state reset.
+		// Pointer/state first, `markClosed` last (the F7/F2 convention): a
+		// `closed` listener already observes `client.mailbox === null` and
+		// state "not-authenticated".
+		const session = this._mailboxSession;
+		this._mailboxSession = null;
+		const stateAtOk = this.stateMachine.current;
+		if (stateAtOk === "authenticated" || stateAtOk === "selected") {
+			this.stateMachine.transition("not-authenticated");
+		}
+		// Defensive `else`: the connection dropped in the same instant the OK
+		// arrived and the disconnect bridge already moved us to
+		// "disconnected" -- its handler has also already done (a superset of)
+		// the bookkeeping below; running the rest again is harmless and keeps
+		// this path simple.
+
+		this._enabled.clear();
+		this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+
+		if (this.capabilityRegistry.view.epoch === epochBefore) {
+			// No [CAPABILITY ...] code accompanied the tagged OK -- the
+			// authenticated-state capability set is no longer trustworthy
+			// (spec §3.5's post-UNAUTHENTICATE invalidation trigger).
+			this.capabilityRegistry.invalidate();
+		}
+
+		if (session) {
+			MailboxSession.markClosed(session, "unauthenticated");
+		}
+	}
+
+	/**
 	 * Maps a `connection.connect()` rejection onto the spec §4 error
 	 * hierarchy: `ConnectionTimeout` -> `ConnectionError`/`TlsError` (by
 	 * phase), `TLSSocketError` -> `TlsError`, a BYE greeting -> `ConnectionError`

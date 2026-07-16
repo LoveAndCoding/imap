@@ -1092,8 +1092,17 @@ export class ComplianceDriver {
 	// Each throws NotImplementedError so compliance tests fail with the
 	// 'unimplemented' annotation rather than a compile/type error.
 
-	public async unauthenticate(): Promise<never> {
-		throw new NotImplementedError("UNAUTHENTICATE");
+	/**
+	 * UNAUTHENTICATE (RFC 8437, M5.10). Delegates straight to
+	 * `ImapClient.unauthenticate()` -- zero protocol logic lives here, per
+	 * this milestone's driver-wiring rule (I-4). State gating (StateError
+	 * outside authenticated/selected), the UNAUTHENTICATE capability gate
+	 * (CapabilityError, zero bytes, I-9), the mailbox-session invalidation,
+	 * the ENABLE-state reset, and the capability refresh/invalidation all
+	 * happen inside the real client method.
+	 */
+	public async unauthenticate(): Promise<void> {
+		await this.requireClient().unauthenticate();
 	}
 	/**
 	 * COMPRESS DEFLATE (RFC 4978, M5.9). Delegates straight to

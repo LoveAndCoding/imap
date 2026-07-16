@@ -97,6 +97,16 @@ const TRANSITIONS: Readonly<Record<ClientState, readonly TransitionRule[]>> = {
 			event:
 				"close()/unselect() OK, untagged CLOSED (RFC 7162), or select of another mailbox begins",
 		},
+		{
+			// RFC 8437 §6 extends BOTH command-auth and command-select with
+			// UNAUTHENTICATE, and §3 makes the from-selected outcome explicit:
+			// "If a mailbox was selected, the mailbox ceases to be selected,
+			// but no expunge event is generated" (RFC8437-3-3) — the client
+			// lands directly in not-authenticated, never passing through
+			// authenticated (there is no intermediate deselect on the wire).
+			to: "not-authenticated",
+			event: "unauthenticate() OK from selected (RFC 8437)",
+		},
 		// Note: selected -> selected is deliberately NOT an edge. Reselecting
 		// (SELECT while already selected) passes through authenticated first.
 	],
