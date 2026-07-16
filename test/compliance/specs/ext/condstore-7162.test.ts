@@ -705,7 +705,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await server.assertCompleted();
 		const select = server.commandLines.find((l) => l.verb === "SELECT");
@@ -754,7 +754,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await driver.store("1:2", "+FLAGS.SILENT", ["\\Deleted"], {
 			unchangedSince: 320162338n,
@@ -805,7 +805,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n });
 		await server.assertCompleted();
@@ -852,7 +852,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await driver.fetch("1:3", ["MODSEQ"]);
 		await server.assertCompleted();
@@ -904,7 +904,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		// Structured criterion payload; the wire form above is what matters.
 		await driver.search([
@@ -959,7 +959,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
 		await server.assertCompleted();
@@ -1012,7 +1012,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
 		await server.assertCompleted();
@@ -1100,7 +1100,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
 		// The caller asks for CHANGEDSINCE on the NOMODSEQ mailbox — the client
 		// must refuse locally or strip the modifier.

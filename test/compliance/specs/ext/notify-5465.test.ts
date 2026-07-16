@@ -575,7 +575,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({
 			set: [
 				{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] },
@@ -615,7 +615,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({ none: true });
 		await server.assertCompleted();
 		const notify = server.commandLines.find((l) => l.verb === "NOTIFY");
@@ -657,7 +657,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({
 			status: true,
 			set: [{ mailboxes: "personal", events: ["MessageNew", "MessageExpunge"] }],
@@ -700,7 +700,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// The caller asks for flag-change monitoring; the client's emitted list
 		// must carry the mandatory message-event companions.
 		await driver.notify({
@@ -742,7 +742,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({
 			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
 		});
@@ -782,7 +782,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({
 			set: [
 				{ mailboxes: "SELECTED", events: "NONE" },
@@ -963,7 +963,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.notify({
 			set: [
 				{
@@ -1024,7 +1024,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.notify({
 			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
@@ -1082,7 +1082,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.notify({
 			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
