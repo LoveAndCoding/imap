@@ -105,6 +105,41 @@ Itemized (not fixed — hardening notes for post-1.0):
   architecture-level discharges.
 - Zero unexplained non-passing rows anywhere.
 
+## Post-open review round (PR #18, owner review 2026-07-17)
+
+The repo owner's review of PR #18 returned HOLD-FOR-CHANGES with 3
+Critical / 6 High / 26 Medium / 12 Low findings (two Criticals
+reproduced live). All Critical & High and the full Medium/Low tier were
+addressed across four commits (`212e3a3` writer/search, `9bd8dd6`
+parser crash-safety, `6eaeafb` SASL/auth, `147ce7e` connection/client
+lifecycle) — every finding verified before fixing, each fix
+revert-verified with a test. Headliners: SCRAM mutual-auth now fails
+closed on a missing/unverifiable server signature; malformed tagged/
+untagged server lines no longer crash the process (typed errors + a
+pipeline `'error'` listener); compression-codec-error wedge, negotiation
+timeouts, add-after-`stop()`, and `logout()`-after-reconnect all fixed;
+capability-epoch invalidation closed on STARTTLS/COMPRESS/UNAUTHENTICATE
+(I-2). Unit tests 1936 → 2053; compliance matrix stayed byte-identical
+(1138/6/2/451, problems []) — the fixes tighten refusal on
+malformed/adversarial inputs the fixtures don't exercise in those exact
+shapes. One review candidate disproven (`assertIn()` is live code, not
+dead). The 22 raw compliance-project vitest failures were confirmed
+pre-existing (byte-identical failing set with the fixes reverted): the 8
+adjudicated rows plus the driver-env / import-hygiene carry-forwards
+below.
+
+Two items deliberately deferred (flagged in the PR reply for the
+owner's call, not silently dropped):
+
+- **Escape-hatch cleartext-credential guard.** `client.connection`
+  (Layer-1 escape hatch) can send a plaintext LOGIN even with
+  `allowInsecureAuth: false`. A real guard needs a `CommandWriter`-level
+  security-context plumb-through (architecturally significant); the
+  escape hatch is documented policy-agnostic. Doc-strengthened for now.
+- **Instant graceful-FIN reaction during `connect()`.** The new command
+  timeout bounds the hang; a live FIN-detector through the whole connect
+  ritual is a larger socket-lifecycle change.
+
 ## Carry-forwards past 1.0 (recorded, not blocking)
 
 - `idle()` unification through the shared refcounted
