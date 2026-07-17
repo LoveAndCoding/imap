@@ -70,6 +70,15 @@ export interface SaslContext {
  * constructor already established a clean slate) if it is meant to be safe
  * to supply as such a literal instance — `ScramMechanism` (`sasl/scram.ts`)
  * follows this rule; see its own `ScramMechanismOptions` doc comment.
+ *
+ * PR #18 REVIEW FIX (High #8): this rule was violated in practice by every
+ * built-in mechanism carrying per-attempt mutable state — `ScramMechanism`
+ * never reset `verificationFailure` in `start()`, and `CramMd5Mechanism`/
+ * `OAuthBearerMechanism`/`XOAuth2Mechanism` never reset their `stepCalled`/
+ * `errorPayload` fields — so a caller-supplied literal instance reused
+ * across a failed attempt followed by a retry stayed permanently poisoned
+ * by the first attempt's state. All four now reset their per-attempt
+ * fields at the top of `start()`; see each mechanism's own file for detail.
  */
 export interface SaslMechanism {
 	/** Canonical upper-case SASL mechanism name, e.g. "PLAIN" (RFC 4422 §3.1
@@ -101,8 +110,41 @@ export interface SaslMechanism {
 	 *  verification failure (e.g. a SCRAM server signature that does not
 	 *  match — the client MUST verify it, not merely accept success because
 	 *  the server said OK) or when an error condition was recorded earlier
-	 *  in the exchange (e.g. OAUTHBEARER/XOAUTH2's JSON error payload). */
+	 *  in the exchange (e.g. OAUTHBEARER/XOAUTH2's JSON error payload).
+	 *
+	 *  PR #18 REVIEW FIX (Critical #1): this signature always declared BOTH
+	 *  parameters, but `ScramMechanism`'s own implementation (`sasl/scram.ts`)
+	 *  used to declare `finish(): Promise<void>` — zero parameters.
+	 *  TypeScript's bivariant method-shorthand parameter checking (methods
+	 *  declared with the `foo(): T` syntax, as this interface member is,
+	 *  compare parameter lists bivariantly rather than contravariantly)
+	 *  silently accepted that as satisfying this interface, even though it
+	 *  meant the implementation could never actually inspect `data`/`ctx` —
+	 *  a real gap, since `data` is exactly the channel a genuine tagged-OK
+	 *  server-final-message would need to arrive through if `step()` never
+	 *  saw one (see `scram.ts`'s `finish()` for how it now uses `data` as a
+	 *  last resort before failing closed). Any new `SaslMechanism`
+	 *  implementation should assume `data`/`ctx` are both real, inspectable
+	 *  arguments — not merely tolerated as unused. */
 	finish(data: Buffer | null, ctx: SaslContext): Promise<void>;
+
+	/** OPTIONAL: additional diagnostic detail this mechanism recorded
+	 *  mid-exchange (e.g. OAUTHBEARER/XOAUTH2's RFC 7628 §3.2.2 / vendor
+	 *  JSON error-recovery payload, `oauthbearer.ts`/`xoauth2.ts`) that would
+	 *  otherwise be LOST when the exchange concludes via a tagged NO/BAD
+	 *  rather than a tagged OK. `finish()` never runs on that path (it is
+	 *  only ever invoked after a tagged OK — see `connection/execute-
+	 *  command.ts`, which routes NO/BAD to the command's `onError()`
+	 *  instead), so a mechanism whose realistic failure mode concludes via
+	 *  tagged NO (the RFC 7628 §3.2.2 one-shot error-recovery round trip:
+	 *  server sends a JSON error continuation, client sends a dummy
+	 *  response, server then fails with a tagged NO) has no other seam to
+	 *  surface that detail from. `AuthenticateCommand.onError()`
+	 *  (`commands/authenticate.ts`) calls this (if defined) and folds a
+	 *  non-`undefined` result into the `AuthError` message. Returns
+	 *  `undefined` when nothing was recorded (the common case, and every
+	 *  mechanism that doesn't implement this hook at all). */
+	describeFailure?(): string | undefined;
 }
 
 /**

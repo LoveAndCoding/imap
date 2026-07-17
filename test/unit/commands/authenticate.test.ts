@@ -219,6 +219,71 @@ describe("AuthenticateCommand (spec §9.1/§9)", () => {
 			// finish() was never reached (the tagged response was NO, not OK).
 			expect(recordedFinishData).toBeUndefined();
 		});
+
+		test("PR #18 review fix (Medium, report-or-fix): onError() folds describeFailure()'s diagnostic into the AuthError message on the realistic tagged-NO path", async () => {
+			// This is the concrete demonstration of the "dead code" finding: the
+			// mechanism's own recorded diagnostic (e.g. OAUTHBEARER/XOAUTH2's
+			// JSON error-recovery payload) used to be visible ONLY from
+			// finish() -- which the test above proves never runs on this path
+			// (a tagged NO, not OK). `describeFailure()` is the fix: `onError()`
+			// now calls it and folds a non-undefined result into the message.
+			const { connection, router } = makeFakeConnection();
+			const mechanism: SaslMechanism = {
+				name: "MOCK-OAUTHBEARER",
+				requiresSecureTransport: true,
+				async start(): Promise<Buffer> {
+					return Buffer.from("initial-response", "utf8");
+				},
+				async step(): Promise<Buffer> {
+					return Buffer.from([0x01]);
+				},
+				async finish(): Promise<void> {
+					// Never reached on this path -- see the test above.
+				},
+				describeFailure(): string | undefined {
+					return "status=invalid_token, scope=mail";
+				},
+			};
+			const cmd = new AuthenticateCommand({
+				mechanism,
+				ctx: CTX,
+				initialResponse: await mechanism.start(CTX),
+				saslIrAllowed: true,
+			});
+
+			const resultPromise = executeCommand(connection, cmd, "A11");
+			await flushMicrotasks();
+			router.routeTagged(
+				parseLine(`A11 NO [AUTHENTICATIONFAILED] invalid_token${CRLF}`) as TaggedResponse,
+			);
+
+			const err = await resultPromise.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(AuthError);
+			expect((err as AuthError).message).toContain("invalid_token");
+			expect((err as AuthError).message).toContain("status=invalid_token, scope=mail");
+		});
+
+		test("REVERT-VERIFY: a mechanism with no describeFailure() (the common case) leaves the message unchanged", async () => {
+			const { connection, router } = makeFakeConnection();
+			const mechanism = makePlainLikeMechanism();
+			const cmd = new AuthenticateCommand({
+				mechanism,
+				ctx: CTX,
+				initialResponse: await mechanism.start(CTX),
+				saslIrAllowed: true,
+			});
+
+			const resultPromise = executeCommand(connection, cmd, "A12");
+			await flushMicrotasks();
+			router.routeTagged(
+				parseLine(`A12 NO [AUTHENTICATIONFAILED] bad credentials${CRLF}`) as TaggedResponse,
+			);
+
+			const err = await resultPromise.catch((e: unknown) => e);
+			expect((err as AuthError).message).toBe(
+				"AUTHENTICATE PLAIN failed with NO: bad credentials",
+			);
+		});
 	});
 
 	describe("'*' abort on a mechanism throw", () => {

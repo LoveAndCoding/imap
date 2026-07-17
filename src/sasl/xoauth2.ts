@@ -28,11 +28,37 @@ export class XOAuth2Mechanism implements SaslMechanism {
 	private errorPayload: string | undefined;
 
 	async start(ctx: SaslContext): Promise<Buffer> {
+		// PR #18 review fix (High #8): reset per-attempt state — see
+		// `OAuthBearerMechanism.start()`'s matching comment for why a
+		// caller-supplied literal instance's stale `stepCalled`/`errorPayload`
+		// from a PRIOR attempt must never leak into this one.
+		this.stepCalled = false;
+		this.errorPayload = undefined;
+
 		if (!ctx.accessToken) {
 			throw mechanismAuthError(
 				this.name,
 				"XOAUTH2 requires accessToken (missing from SaslContext)",
 			);
+		}
+		// PR #18 review fix (Medium, kvpair-injection): this format's
+		// delimiter is a literal 0x01 byte (no escaping mechanism of any
+		// kind, unlike OAUTHBEARER's GS2 header) -- an untrusted `user`/
+		// `accessToken` carrying one would inject an attacker-controlled
+		// field boundary (e.g. splicing in a forged `auth=` value). CR/LF
+		// are rejected alongside it as defense in depth.
+		for (const [label, value] of [
+			["user", ctx.user],
+			["accessToken", ctx.accessToken],
+		] as const) {
+			if (value.includes("\x01") || value.includes("\r") || value.includes("\n")) {
+				throw mechanismAuthError(
+					this.name,
+					`XOAUTH2 cannot encode a field-separator (0x01) or CR/LF byte in ${label} ` +
+						"(this format has no escaping mechanism; an untrusted value carrying " +
+						"one could inject extra fields)",
+				);
+			}
 		}
 		return Buffer.from(
 			`user=${ctx.user}\x01auth=Bearer ${ctx.accessToken}\x01\x01`,
@@ -58,12 +84,24 @@ export class XOAuth2Mechanism implements SaslMechanism {
 
 	async finish(): Promise<void> {
 		if (this.errorPayload !== undefined) {
-			throw mechanismAuthError(
-				this.name,
-				`XOAUTH2 authentication failed: ${this.errorPayload}`,
-			);
+			throw mechanismAuthError(this.name, this.describeErrorPayload());
 		}
 		// No error was recorded: a tagged OK is success.
+	}
+
+	/** PR #18 review fix (Medium, report-or-fix — diagnostic dead code): see
+	 *  `OAuthBearerMechanism.describeFailure()`'s doc comment — the same
+	 *  reasoning applies here. XOAUTH2's realistic failure mode (the
+	 *  vendor-documented one-shot error-recovery round trip: a JSON error
+	 *  continuation, then a tagged NO) never reaches `finish()` at all, so
+	 *  this hook is what actually surfaces `errorPayload` to the caller on
+	 *  that path. */
+	describeFailure(): string | undefined {
+		return this.errorPayload !== undefined ? this.describeErrorPayload() : undefined;
+	}
+
+	private describeErrorPayload(): string {
+		return `XOAUTH2 authentication failed: ${this.errorPayload}`;
 	}
 }
 

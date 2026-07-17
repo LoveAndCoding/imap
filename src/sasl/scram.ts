@@ -41,28 +41,63 @@ import { mechanismAuthError, SaslContext, SaslMechanism } from "./mechanism";
  * `handleServerFinal()`'s THREE possible shapes (M5.16, Finding 4 fixed the
  * third of these to fail closed instead of silently tolerating it):
  *   1. Genuinely ABSENT (`step()` never called again for this phase at all —
- *      `phase` stays "awaiting-server-final" forever): legal on failure
- *      (RFC5802-5.1-14) and also what a server that only signals success via
- *      the tagged OK, without ever sending "v=", produces. Nothing was ever
- *      received to verify — `finish()` has no verdict to render and resolves
- *      normally.
+ *      `phase` stays "awaiting-server-final" forever): this is the shape a
+ *      server that only signals success via the tagged OK, without ever
+ *      sending "v=", produces.
  *   2. EMPTY continuation (`step()` called with a zero-length challenge,
- *      `text === ""`): the same tolerance as case 1 — some servers signal
- *      everything through the tagged OK and send only a bare "+" here.
+ *      `text === ""`): some servers signal everything through the tagged OK
+ *      and send only a bare "+" here.
  *   3. NON-EMPTY but unparseable (some bytes arrived, but none of
- *      "e="/"v="/"m=" could be found): this must NOT collapse into cases 1/2
- *      — something was sent and it wasn't a verifiable ServerSignature, so
- *      `finish()` must reject (fail closed), the same posture as an explicit
- *      "e=" or a mismatched "v=". Before this fix, a garbled non-empty
- *      server-final-message left `verificationFailure` unset and `finish()`
- *      resolved as if case 1/2 applied — silently accepting an exchange with
- *      no verified mutual authentication at all.
+ *      "e="/"v="/"m=" could be found): something was sent and it wasn't a
+ *      verifiable ServerSignature.
+ *
+ * PR #18 REVIEW FIX (Critical #1, MITM fail-open): cases 1 and 2 used to
+ * make `finish()` resolve normally, on the theory that RFC5802-5.1-14
+ * ("the entire server-final-message is OPTIONAL") legitimizes a tagged-OK
+ * success with no "v=" ever presented. That citation was wrong: RFC5802-
+ * 5.1-14 is explicit that the omission it permits is "on failed
+ * authentication" (a tagged NO/BAD) — a path that never even reaches this
+ * class's `finish()` at all, since `AuthenticateCommand.accept()` (and thus
+ * `finish()`) only runs after a tagged **OK** (`connection/execute-
+ * command.ts` routes NO/BAD to `onError()` instead, never to `accept()`).
+ * There is no RFC5802 sanction for a tagged OK with no verified
+ * ServerSignature — that shape is either a non-conformant server or an
+ * active MITM that could not forge the real proof, and silently accepting
+ * it defeats the entire point of SCRAM's mutual-authentication duty
+ * (RFC5802-5-3/-5.1-13). Cases 1 and 2 now leave `verified` `false`, and
+ * `finish()` fails closed whenever `verified` is `false` (see `finish()`'s
+ * own doc comment) — the ONLY way `finish()` resolves is a genuine,
+ * matching "v=" actually observed (by `step()`, or — belt-and-suspenders —
+ * by `finish()` itself parsing `data`, see below), which is the sole branch
+ * that sets `verified = true`.
  */
 
 export type ScramHashAlgo = "sha1" | "sha256";
 
 /** PBKDF2/HMAC/H() output length in bytes for each supported digest. */
 const HASH_LEN: Record<ScramHashAlgo, number> = { sha1: 20, sha256: 32 };
+
+/**
+ * PR #18 REVIEW FIX (Medium, unbounded PBKDF2 iteration count): the
+ * server-supplied `i=` (RFC5802-5.1-9) drives a synchronous `pbkdf2Sync`
+ * call directly (`handleServerFirst` below) — with no upper bound, a
+ * malicious or compromised server could send an absurd `i=` (e.g.
+ * `99999999`) and block the event loop for as long as it takes this one
+ * synchronous call to grind through that many HMAC iterations, a
+ * client-side denial-of-service triggered entirely by server-controlled
+ * input. RFC 7677 §3 (RFC7677-3-1's own SHOULD) recommends a MINIMUM of
+ * 4096; real-world deployments span roughly 4096-600,000 (RFC7677-3-2's
+ * cited range). One million is chosen as the ceiling here: comfortably
+ * above every known real deployment (leaving headroom for a server that
+ * legitimately wants a stronger-than-typical setting) while still bounding
+ * a single PBKDF2 call to, at worst, a few hundred milliseconds on
+ * commodity hardware — nowhere near enough to constitute a meaningful
+ * denial-of-service. An `i=` above this is rejected as a typed
+ * `AuthError` (`mechanismAuthError`) BEFORE `pbkdf2Sync` ever runs, the
+ * same "abort before the expensive/unsafe operation" posture as every
+ * other `handleServerFirst` validation.
+ */
+const MAX_SCRAM_ITERATIONS = 1_000_000;
 
 /** Construction options for {@link createScramSha1Mechanism}/
  *  {@link createScramSha256Mechanism}. */
@@ -82,12 +117,21 @@ export interface ScramMechanismOptions {
 	 *  `resolveMechanism()` (`src/client/auth.ts`) returns THAT instance
 	 *  unchanged -- reused verbatim across every attempt and reconnect on a
 	 *  caller-supplied instance, never reconstructed. `ScramMechanism` is
-	 *  safe under reuse regardless (`start()` reinitializes every piece of
-	 *  per-attempt state: `gs2Header`, `clientNonce`,
-	 *  `clientFirstMessageBare`, `phase`, `authMessage`,
-	 *  `expectedServerSignature`, `verificationFailure`), so this specific
-	 *  class has no bug here -- but the CONTRACT as stated was wrong for the
-	 *  caller-supplied-instance path, and any FUTURE `SaslMechanism`
+	 *  safe under reuse (`start()` reinitializes every piece of per-attempt
+	 *  state: `gs2Header`, `clientNonce`, `clientFirstMessageBare`, `phase`,
+	 *  `authMessage`, `expectedServerSignature`, `verificationFailure`,
+	 *  `verified`) -- PR #18 REVIEW FIX (High #8): this claim was FALSE as
+	 *  originally written. `start()` reset the first four fields but never
+	 *  `verificationFailure` (`authMessage`/`expectedServerSignature` were
+	 *  harmless to leave stale since `handleServerFirst` unconditionally
+	 *  overwrites both on its very next call) -- a caller-supplied instance
+	 *  reused after ONE failed attempt (e.g. a forged/mismatched
+	 *  ServerSignature) stayed permanently poisoned: every SUBSEQUENT
+	 *  attempt's `finish()` would keep throwing the FIRST attempt's stale
+	 *  `verificationFailure`, even after a genuinely successful second
+	 *  exchange. `start()` now clears `verificationFailure`/`verified`
+	 *  itself, so the claim is accurate again -- but any FUTURE
+	 *  `SaslMechanism`
 	 *  implementation that assumes fresh-per-attempt construction (e.g.
 	 *  memoizing something in its constructor instead of `start()`) would be
 	 *  reused across attempts exactly like this one is. This seam
@@ -166,6 +210,14 @@ export class ScramMechanism implements SaslMechanism {
 	 *  or reports an error; consumed (and thrown) by `finish()` — see this
 	 *  module's doc comment for why the verdict is rendered there. */
 	private verificationFailure: string | null = null;
+	/** PR #18 review fix (Critical #1): `true` ONLY once a genuine, matching
+	 *  "v=" ServerSignature has actually been observed (by `step()`'s
+	 *  `handleServerFinal`, or by `finish()` itself parsing its `data`
+	 *  parameter as a last resort) — the sole condition under which
+	 *  `finish()` is allowed to resolve. Reset per-attempt in `start()`
+	 *  exactly like `verificationFailure` (see this class's own
+	 *  `ScramMechanismOptions` doc comment on reuse safety). */
+	private verified = false;
 
 	constructor(algo: ScramHashAlgo, opts: ScramMechanismOptions = {}) {
 		this.algo = algo;
@@ -196,6 +248,15 @@ export class ScramMechanism implements SaslMechanism {
 		this.clientNonce = this.nonceFactory();
 		this.clientFirstMessageBare = `n=${escapeSaslname(preparedUser)},r=${this.clientNonce}`;
 		this.phase = "awaiting-server-first";
+		// PR #18 review fix (High #8): per-attempt verification state MUST be
+		// reset here too, not just the client-first-message fields above — a
+		// caller-supplied `SaslMechanism` instance (`ImapAuthConfig.mechanisms`
+		// as a literal object, see this file's own `ScramMechanismOptions` doc
+		// comment) is reused verbatim across every attempt/reconnect, and a
+		// stale `verificationFailure`/`verified` from a PRIOR attempt must
+		// never leak into this one.
+		this.verificationFailure = null;
+		this.verified = false;
 		return Buffer.from(this.gs2Header + this.clientFirstMessageBare, "utf8");
 	}
 
@@ -256,6 +317,20 @@ export class ScramMechanism implements SaslMechanism {
 				`${this.name} server-first-message carries an invalid iteration count '${iterText}'`,
 			);
 		}
+		// PR #18 review fix (Medium, unbounded PBKDF2 iteration count): reject
+		// an oversized 'i=' BEFORE the expensive/blocking `pbkdf2Sync` call
+		// below ever runs — see `MAX_SCRAM_ITERATIONS`'s own doc comment for
+		// the bound's rationale. A malicious/compromised server supplying an
+		// absurd iteration count (e.g. 99999999) would otherwise block the
+		// event loop for however long that many HMAC iterations take.
+		if (iterations > MAX_SCRAM_ITERATIONS) {
+			throw mechanismAuthError(
+				this.name,
+				`${this.name} server-first-message carries an iteration count ` +
+					`'${iterText}' exceeding this client's maximum of ${MAX_SCRAM_ITERATIONS} ` +
+					"(refusing to run PBKDF2 with an unbounded, server-controlled cost)",
+			);
+		}
 		// `Buffer.from(str, "base64")` never throws (Node decodes leniently) --
 		// a malformed value simply produces a salt that won't reproduce the
 		// server's expected SaltedPassword, which is a wire-level PBKDF2/HMAC
@@ -314,6 +389,12 @@ export class ScramMechanism implements SaslMechanism {
 				expected !== null && serverSig.length === expected.length && timingSafeEqual(serverSig, expected);
 			if (!matches) {
 				this.verificationFailure = `${this.name} server signature does not match the client-computed ServerSignature`;
+			} else {
+				// PR #18 review fix (Critical #1): the ONLY branch that marks a
+				// genuine, verified mutual authentication — `finish()` fails
+				// closed on every other shape (this file's doc comment, and
+				// `finish()`'s own).
+				this.verified = true;
 			}
 		} else if (attrs.has("m")) {
 			this.verificationFailure = `${this.name} server-final-message carries an unsupported mandatory 'm=' extension`;
@@ -334,11 +415,12 @@ export class ScramMechanism implements SaslMechanism {
 				"as if no server-final-message had been sent at all";
 		}
 		// A genuinely EMPTY server-final-message (`text === ""`) falls through
-		// every branch above with `verificationFailure` left as-is (`null` on
-		// first arrival here) -- this is the one case that keeps the
-		// documented tolerance: some servers send an empty "+" continuation
-		// here and signal everything through the tagged OK alone, which
-		// `finish()` treats identically to the message never having arrived.
+		// every branch above with `verificationFailure` left `null` and
+		// `verified` left `false` -- PR #18 review fix (Critical #1): this is
+		// NOT a tolerated-success shape (see this module's doc comment for why
+		// the earlier RFC5802-5.1-14 citation for that was wrong); `finish()`
+		// fails closed on it exactly like the "genuinely absent" case (`step()`
+		// never called a third time at all).
 		//
 		// The wire reply to this continuation is always empty, concluding
 		// the exchange normally regardless of what was found above — see
@@ -348,15 +430,47 @@ export class ScramMechanism implements SaslMechanism {
 		return Buffer.alloc(0);
 	}
 
-	async finish(): Promise<void> {
+	async finish(data: Buffer | null): Promise<void> {
 		if (this.verificationFailure) {
 			throw mechanismAuthError(this.name, this.verificationFailure);
 		}
-		// No server-final-message was ever presented — legal on failure
-		// (RFC5802-5.1-14) and also the shape a server that signals success
-		// via the tagged OK alone (never sending "v=") produces. Nothing was
-		// received to verify, so this is not itself a rejection: `finish()`
-		// only ever rejects a verdict it actually computed.
+		if (this.verified) {
+			// A genuine, matching "v=" was already observed by `step()` — the
+			// one shape RFC 5802 actually defines as a verified mutual
+			// authentication.
+			return;
+		}
+		// PR #18 review fix (Critical #1): nothing was verified via `step()`.
+		// Belt-and-suspenders: if the caller (`AuthenticateCommand.accept()`)
+		// ever has real tagged-OK extra data to hand over, parse/verify it
+		// exactly like an ordinary server-final-message rather than assuming
+		// its mere presence means success. Today `authenticate.ts` documents
+		// that it has no structured way to distinguish SASL data from
+		// ordinary human-readable tagged-OK text and so always passes `null`
+		// here — this branch exists so that changes automatically the moment
+		// a real source for it exists, without another security review of
+		// this class.
+		if (data && data.length > 0) {
+			this.handleServerFinal(data.toString("utf8"));
+			if (this.verificationFailure) {
+				throw mechanismAuthError(this.name, this.verificationFailure);
+			}
+			if (this.verified) {
+				return;
+			}
+		}
+		// FAIL CLOSED: a tagged OK arrived (that's the only way `finish()` is
+		// ever invoked at all, see this module's doc comment), but no
+		// verifiable ServerSignature was EVER presented — neither consumed by
+		// `step()` nor supplied here via `data`. RFC 5802 requires "v=" on a
+		// genuine success; the server either violated that, or is an active
+		// MITM that could not forge the real proof. Either way this MUST NOT
+		// be treated as a successfully mutually-authenticated exchange.
+		throw mechanismAuthError(
+			this.name,
+			`${this.name} claimed success (tagged OK) without ever presenting a ` +
+				"verifiable server signature ('v='); refusing to treat this as mutual authentication",
+		);
 	}
 }
 

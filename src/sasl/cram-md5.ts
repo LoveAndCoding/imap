@@ -38,6 +38,16 @@ export class CramMd5Mechanism implements SaslMechanism {
 	private stepCalled = false;
 
 	async start(): Promise<null> {
+		// PR #18 review fix (High #8): reset per-attempt state here — a
+		// caller-supplied `SaslMechanism` literal instance
+		// (`ImapAuthConfig.mechanisms`) is reused verbatim across every
+		// attempt/reconnect (`resolveMechanism()`, `client/auth.ts`), so a
+		// stale `stepCalled` left over from a PRIOR attempt must never leak
+		// into this one (it would otherwise make every retry after the
+		// first attempt's `step()` call permanently reject with "received a
+		// second server challenge", even though this is attempt N's FIRST
+		// challenge).
+		this.stepCalled = false;
 		return null;
 	}
 

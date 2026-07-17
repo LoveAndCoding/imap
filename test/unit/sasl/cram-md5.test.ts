@@ -114,4 +114,27 @@ describe("CramMd5Mechanism", () => {
 			mech.finish(Buffer.from("ignored"), ctx()),
 		).resolves.toBeUndefined();
 	});
+
+	describe("PR #18 review fix (High #8): reused instance resets per-attempt state in start()", () => {
+		test("REVERT-VERIFY: after one step() call, a second start()+step() cycle on the SAME instance does not throw 'second challenge'", async () => {
+			//Arrange: the SAME instance (as `ImapAuthConfig.mechanisms` supplying
+			// a literal `SaslMechanism` object would reuse across reconnects) is
+			// driven through two full cycles. Pre-fix, `stepCalled` stayed
+			// `true` forever after cycle 1's `step()`, so cycle 2's very first
+			// `step()` call would incorrectly throw "received a second server
+			// challenge" even though it is cycle 2's FIRST challenge.
+			const mech = new CramMd5Mechanism();
+
+			// Cycle 1.
+			await mech.start(ctx());
+			await mech.step(Buffer.from(CHALLENGE, "utf8"), ctx());
+
+			// Cycle 2, same instance.
+			await mech.start(ctx());
+
+			//Act & Assert: cycle 2's first step() must succeed cleanly.
+			const response = await mech.step(Buffer.from(CHALLENGE, "utf8"), ctx());
+			expect(response.toString("utf8")).toBe(`${USERNAME} ${EXPECTED_DIGEST}`);
+		});
+	});
 });

@@ -15,6 +15,32 @@ function escapeSaslName(name: string): string {
 	return name.replace(/=/g, "=3D").replace(/,/g, "=2C");
 }
 
+/**
+ * PR #18 review fix (Medium, kvpair-injection): RFC 7628 §3.1's `kvsep` is a
+ * single 0x01 byte, and it is what actually delimits every field of this
+ * mechanism's wire format (the gs2-header/`a=` slot included — `\x01`
+ * immediately follows it, per `start()` below). `escapeSaslName` only
+ * escapes ',' and '=' (the RFC 5801 saslname production's own reserved
+ * characters); a literal 0x01 byte inside `user`/`host`/`accessToken` is
+ * NOT escaped by anything, and would inject an attacker-controlled kvpair
+ * boundary into the exchange (e.g. a malicious/compromised `user` value
+ * could terminate the `a=` field early and splice in extra kvpairs the
+ * server would parse as if the client had sent them). CR/LF are rejected
+ * alongside it purely as defense in depth against any transport that
+ * might treat them as its own framing, even though this mechanism's own
+ * wire format has no CR/LF significance of its own.
+ */
+function assertNoKvsepInjection(mechanismName: string, label: string, value: string): void {
+	if (value.includes("\x01") || value.includes("\r") || value.includes("\n")) {
+		throw mechanismAuthError(
+			mechanismName,
+			`OAUTHBEARER cannot encode a kvsep (0x01) or CR/LF byte in ${label} ` +
+				"(RFC 7628 §3.1's kvsep is the wire delimiter between fields; an " +
+				"untrusted value carrying one could inject extra kvpairs)",
+		);
+	}
+}
+
 interface OAuthBearerErrorPayload {
 	status?: string;
 	scope?: string;
@@ -47,12 +73,26 @@ export class OAuthBearerMechanism implements SaslMechanism {
 	private errorPayload: OAuthBearerErrorPayload | undefined;
 
 	async start(ctx: SaslContext): Promise<Buffer> {
+		// PR #18 review fix (High #8): reset per-attempt state — a
+		// caller-supplied `SaslMechanism` literal instance is reused verbatim
+		// across every attempt/reconnect (`resolveMechanism()`,
+		// `client/auth.ts`); a stale `stepCalled`/`errorPayload` from a PRIOR
+		// attempt must never leak into this one (it would otherwise make
+		// every retry after the first attempt's error-recovery round trip
+		// permanently reject `step()` and/or resurface the FIRST attempt's
+		// error from `finish()`, even after a genuinely successful retry).
+		this.stepCalled = false;
+		this.errorPayload = undefined;
+
 		if (!ctx.accessToken) {
 			throw mechanismAuthError(
 				this.name,
 				"OAUTHBEARER requires accessToken (missing from SaslContext)",
 			);
 		}
+		assertNoKvsepInjection(this.name, "user", ctx.user);
+		assertNoKvsepInjection(this.name, "host", ctx.host);
+		assertNoKvsepInjection(this.name, "accessToken", ctx.accessToken);
 
 		const gs2Header = `n,a=${escapeSaslName(ctx.user)},`;
 		// RFC 7628 §3.1's grammar is `gs2-header kvsep *kvpair kvsep`, and
@@ -100,22 +140,46 @@ export class OAuthBearerMechanism implements SaslMechanism {
 
 	async finish(): Promise<void> {
 		if (this.errorPayload !== undefined) {
-			const { status, scope } = this.errorPayload;
-			const details = [
-				status ? `status=${status}` : undefined,
-				scope ? `scope=${scope}` : undefined,
-			]
-				.filter((s): s is string => s !== undefined)
-				.join(", ");
-			throw mechanismAuthError(
-				this.name,
-				`OAUTHBEARER authentication failed` +
-					(details ? ` (${details})` : "") +
-					`: ${JSON.stringify(this.errorPayload)}`,
-			);
+			throw mechanismAuthError(this.name, this.describeErrorPayload());
 		}
 		// No error was recorded during the exchange: a tagged OK is success,
 		// there is no server signature or other data to verify here.
+	}
+
+	/**
+	 * PR #18 review fix (Medium, report-or-fix — diagnostic dead code):
+	 * `finish()` above only ever runs after a tagged OK
+	 * (`connection/execute-command.ts` routes NO/BAD to `onError()`
+	 * instead) — but the REALISTIC OAUTHBEARER failure this class records
+	 * (`errorPayload`, set by `step()`) concludes the RFC 7628 §3.2.2
+	 * one-shot error-recovery round trip with a tagged **NO**, not OK. That
+	 * means `finish()`'s rich `status=.../scope=...` diagnostic was
+	 * previously unreachable on the path real servers actually use —
+	 * `AuthenticateCommand.onError()` built its `AuthError` purely from the
+	 * tagged NO's own resp-text, never consulting this mechanism's own
+	 * recorded payload at all. This method (the `SaslMechanism.
+	 * describeFailure()` optional hook) is the cheap fix: it exposes the
+	 * SAME diagnostic on the tagged-NO path too, so a caller sees
+	 * `status=invalid_token` etc. regardless of which of the two tagged
+	 * outcomes the exchange actually concludes with.
+	 */
+	describeFailure(): string | undefined {
+		return this.errorPayload !== undefined ? this.describeErrorPayload() : undefined;
+	}
+
+	private describeErrorPayload(): string {
+		const { status, scope } = this.errorPayload ?? {};
+		const details = [
+			status ? `status=${status}` : undefined,
+			scope ? `scope=${scope}` : undefined,
+		]
+			.filter((s): s is string => s !== undefined)
+			.join(", ");
+		return (
+			`OAUTHBEARER authentication failed` +
+			(details ? ` (${details})` : "") +
+			`: ${JSON.stringify(this.errorPayload)}`
+		);
 	}
 }
 

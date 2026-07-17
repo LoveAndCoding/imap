@@ -86,7 +86,38 @@ export async function performAuthSelection(
 
 	const candidates = auth.mechanisms ?? defaultCandidates(auth);
 
+	// PR #18 review fix (Medium, LOGIN-fallback exclusion): a NON-EMPTY
+	// explicit `mechanisms` list is authoritative for whether LOGIN may EVER
+	// be attempted. LOGIN isn't a SASL mechanism — it has no AUTH=
+	// advertisement, no AUTHENTICATE exchange — so a caller passing an
+	// explicit list of real SASL candidates intending "SASL-only" (e.g.
+	// `mechanisms: ["SCRAM-SHA-256"]`) had no way to actually exclude it
+	// before this fix: step 4 below unconditionally attempted LOGIN whenever
+	// every listed SASL candidate was excluded or failed, silently sending
+	// the real password over a fallback the caller never opted into. Two
+	// shapes keep the PRE-EXISTING fallback-allowed behavior on purpose: the
+	// default candidate list (`auth.mechanisms` unset), and an explicit but
+	// EMPTY array (`mechanisms: []`) — the latter names no SASL preference at
+	// all (a long-standing, widely-used idiom throughout this codebase's own
+	// test suite for "skip SASL, go straight to LOGIN"), so it carries no
+	// "SASL-only" signal to exclude LOGIN from. Only a NON-EMPTY explicit
+	// list that omits the literal string `"LOGIN"` excludes it.
+	const loginExplicitlyRequested = candidates.some(
+		(c) => typeof c === "string" && c.toUpperCase() === "LOGIN",
+	);
+	const nonEmptyExplicitMechanisms = auth.mechanisms !== undefined && auth.mechanisms.length > 0;
+	const loginAllowed = !nonEmptyExplicitMechanisms || loginExplicitlyRequested;
+
 	for (const candidate of candidates) {
+		if (typeof candidate === "string" && candidate.toUpperCase() === "LOGIN") {
+			// Handled entirely by step 4 below (`loginAllowed`) — LOGIN has no
+			// SASL registry entry, so looking it up here would always miss and
+			// misreport it as "unknown mechanism (not registered)". Listing it
+			// in an explicit `mechanisms` array is purely how a caller opts
+			// back into the LOGIN fallback (see `loginExplicitlyRequested`
+			// above); it is never itself attempted as a SASL candidate.
+			continue;
+		}
 		const { name, mechanism } = resolveMechanism(candidate);
 		mechanismsTried.push(name);
 
@@ -167,7 +198,17 @@ export async function performAuthSelection(
 	// token/mechanism concept) or, per §10.3, over cleartext without opt-in.
 	const loginDisabled = deps.capabilities.has("LOGINDISABLED");
 	mechanismsTried.push("LOGIN");
-	if (loginDisabled) {
+	if (!loginAllowed) {
+		// PR #18 review fix (Medium, LOGIN-fallback exclusion): see
+		// `loginAllowed`'s own comment above — an explicit `mechanisms` list
+		// that didn't include "LOGIN" excludes it outright, before even
+		// checking LOGINDISABLED/password/transport, so a caller relying on
+		// this to keep the password entirely out of an explicit-list attempt
+		// gets a typed `AuthError`, never a LOGIN command on the wire.
+		exclusions.push(
+			'LOGIN: excluded by an explicit `mechanisms` list that does not include "LOGIN"',
+		);
+	} else if (loginDisabled) {
 		exclusions.push("LOGIN: server advertised LOGINDISABLED");
 	} else if (auth.pass === undefined) {
 		exclusions.push("LOGIN: no password configured");

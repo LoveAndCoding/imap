@@ -158,6 +158,15 @@ export class AuthenticateCommand extends Command<void> {
 		// is always `null` today; a later milestone (SCRAM, once a concrete
 		// server convention needs it) is the right place to add a typed code
 		// for this rather than heuristically parsing free text now.
+		// PR #18 review fix (Critical #1): `extraData` being always `null`
+		// here is NOT a security gap by itself -- `ScramMechanism.finish()`
+		// (`sasl/scram.ts`) now fails CLOSED whenever it never independently
+		// verified a "v=" ServerSignature via `step()`, regardless of what
+		// (if anything) `extraData` carries. `null` genuinely is "no
+		// structured data available", which is exactly what a mechanism
+		// depending on this parameter as its ONLY source of verification
+		// data must treat as "nothing to verify" (i.e. fail closed), not
+		// "trust the tagged OK".
 		const extraData: Buffer | null = null;
 		try {
 			await this.mechanism.finish(extraData, this.ctx);
@@ -202,9 +211,18 @@ export class AuthenticateCommand extends Command<void> {
 		const status = resp.status.status as "NO" | "BAD";
 		const text = resp.status.text?.content ?? "";
 		const code = toTypedResponseCode(resp.status.text?.code);
+		// PR #18 review fix (Medium, report-or-fix — diagnostic dead code):
+		// `finish()` only ever runs after a tagged OK, so a mechanism whose
+		// realistic failure mode concludes via tagged NO/BAD (e.g. OAUTHBEARER/
+		// XOAUTH2's one-shot error-recovery round trip) has no other seam to
+		// surface a recorded diagnostic from — `describeFailure()` is that
+		// seam (`SaslMechanism`'s own doc comment). Optional and `undefined`
+		// for every mechanism that doesn't implement/need it.
+		const diagnostic = this.mechanism.describeFailure?.();
 		const message =
 			`AUTHENTICATE ${this.mechanism.name} failed with ${status}` +
-			(text ? `: ${text}` : "");
+			(text ? `: ${text}` : "") +
+			(diagnostic ? ` (${diagnostic})` : "");
 		return new AuthError(message, { mechanismsTried: [this.mechanism.name], code });
 	}
 }

@@ -100,4 +100,95 @@ describe("XOAuth2Mechanism", () => {
 		//Act & Assert
 		await expect(mech.finish(null, ctx())).resolves.toBeUndefined();
 	});
+
+	describe("PR #18 review fix (High #8): reused instance resets per-attempt state in start()", () => {
+		test("REVERT-VERIFY: a recorded error in attempt 1 does not poison finish() on a genuinely-successful attempt 2", async () => {
+			//Arrange: the SAME instance is driven through two cycles, mirroring
+			// how `ImapAuthConfig.mechanisms` supplying a literal `SaslMechanism`
+			// object gets reused verbatim across reconnects. Pre-fix,
+			// `errorPayload`/`stepCalled` from attempt 1 stayed set forever.
+			const mech = new XOAuth2Mechanism();
+
+			// Attempt 1: error-recovery flow records a failure.
+			await mech.start(ctx());
+			await mech.step(Buffer.from(JSON.stringify({ status: "400" }), "utf8"), ctx());
+			await expect(mech.finish(null, ctx())).rejects.toThrow(AuthError);
+
+			// Attempt 2, same instance: clean success, no challenge at all.
+			await mech.start(ctx());
+
+			//Act & Assert
+			await expect(mech.finish(null, ctx())).resolves.toBeUndefined();
+		});
+
+		test("REVERT-VERIFY: attempt 2's own step() is not rejected as a stale 'second challenge'", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+			await mech.start(ctx());
+			await mech.step(Buffer.from(JSON.stringify({ status: "400" }), "utf8"), ctx());
+			await mech.start(ctx());
+
+			//Act & Assert: attempt 2's FIRST step() call must succeed.
+			const result = await mech.step(Buffer.from(JSON.stringify({ status: "400" }), "utf8"), ctx());
+			expect(result).toEqual(Buffer.alloc(0));
+		});
+	});
+
+	describe("PR #18 review fix (Medium): field-separator (0x01)/CR/LF injection guards", () => {
+		test("REVERT-VERIFY: a 0x01 byte in user is rejected before it reaches the wire", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+
+			//Act & Assert
+			await expect(
+				mech.start(ctx({ user: "attacker\x01auth=Bearer forged" })),
+			).rejects.toThrow(AuthError);
+		});
+
+		test("REVERT-VERIFY: a 0x01 byte in accessToken is rejected before it reaches the wire", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+
+			//Act & Assert
+			await expect(
+				mech.start(ctx({ accessToken: "real-token\x01auth=Bearer forged" })),
+			).rejects.toThrow(AuthError);
+		});
+
+		test("a CRLF byte in user is rejected", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+
+			//Act & Assert
+			await expect(mech.start(ctx({ user: "someone\r\nSTUFF" }))).rejects.toThrow(AuthError);
+		});
+
+		test("a clean context with no 0x01/CR/LF is unaffected", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+
+			//Act & Assert
+			await expect(mech.start(ctx())).resolves.toBeInstanceOf(Buffer);
+		});
+	});
+
+	describe("PR #18 review fix (Medium, report-or-fix): describeFailure() surfaces the diagnostic on the realistic tagged-NO path", () => {
+		test("describeFailure() returns undefined before any error is recorded", () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+
+			//Act & Assert
+			expect(mech.describeFailure?.()).toBeUndefined();
+		});
+
+		test("describeFailure() surfaces the same diagnostic finish() would have thrown, after a recorded error", async () => {
+			//Arrange
+			const mech = new XOAuth2Mechanism();
+			await mech.start(ctx());
+			await mech.step(Buffer.from(JSON.stringify({ status: "400" }), "utf8"), ctx());
+
+			//Act & Assert
+			expect(mech.describeFailure?.()).toMatch(/400/);
+		});
+	});
 });

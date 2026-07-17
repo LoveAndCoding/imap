@@ -198,25 +198,33 @@ describe("ScramMechanism", () => {
 			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
 		});
 
-		test("finish() resolves when no server-final-message was ever presented", async () => {
-			//Arrange: some servers signal success via the tagged OK alone,
-			// without ever sending a 'v=' continuation (RFC5802-5.1-14's
-			// permissive shape, exercised here on the success side).
+		test("PR #18 REVERT-VERIFY (Critical #1, headline fix): finish() REJECTS when no server-final-message was ever presented, despite a tagged OK", async () => {
+			//Arrange: a server (or MITM) that signals "success" via the tagged
+			// OK alone, without ever sending a 'v=' continuation. Before the
+			// fix, this used to be silently ACCEPTED on the theory that
+			// RFC5802-5.1-14 ("the entire server-final-message is OPTIONAL")
+			// covers it -- that citation was wrong: 5.1-14 only excuses the
+			// omission "on failed authentication" (a tagged NO/BAD), a path
+			// that never even reaches finish() (only a tagged OK does). A
+			// tagged OK with no verified ServerSignature must fail CLOSED: it
+			// is either a non-conformant server or an active MITM that could
+			// not forge the real proof.
 			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
 			const c = ctx();
 			await mech.start(c);
 			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
 
 			//Act & Assert
-			await expect(mech.finish(null, c)).resolves.toBeUndefined();
+			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
+			await expect(mech.finish(null, c)).rejects.toThrow(/verifiable server signature/);
 		});
 
-		test("finish() resolves when the server-final-message is an EMPTY continuation ('+' with no bytes)", async () => {
+		test("PR #18 REVERT-VERIFY (Critical #1): finish() REJECTS when the server-final-message is an EMPTY continuation ('+' with no bytes)", async () => {
 			//Arrange: distinct from "never presented" above -- here `step()` IS
 			// called again for the server-final phase, but with a zero-length
-			// challenge. Same documented tolerance (RFC5802-5.1-14's shape),
-			// exercised on the actual empty-string path through
-			// `handleServerFinal()` rather than never reaching it at all.
+			// challenge. Same fail-closed posture as the fully-absent case:
+			// nothing verifiable was ever produced, so a tagged OK afterward
+			// must not be treated as mutual authentication.
 			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
 			const c = ctx();
 			await mech.start(c);
@@ -226,7 +234,37 @@ describe("ScramMechanism", () => {
 			await mech.step(Buffer.alloc(0), c);
 
 			//Assert
-			await expect(mech.finish(null, c)).resolves.toBeUndefined();
+			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
+		});
+
+		test("finish() resolves when the genuine 'v=' is supplied via finish()'s own `data` param (never observed by step())", async () => {
+			//Arrange: belt-and-suspenders path -- no server-final-message ever
+			// reached step(), but finish() itself is handed the real
+			// ServerSignature as tagged-OK extra data. Not exercised by
+			// `AuthenticateCommand` today (it always passes `null`, see its own
+			// doc comment), but `ScramMechanism.finish()` must still honor a
+			// genuine signature if one is ever supplied this way.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+
+			//Act & Assert
+			await expect(
+				mech.finish(Buffer.from(`v=${SHA1_VECTOR.expectedServerSignature}`, "utf8"), c),
+			).resolves.toBeUndefined();
+		});
+
+		test("finish() REJECTS when a forged 'v=' is supplied via finish()'s own `data` param", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+			const forged = Buffer.alloc(20, 0x42).toString("base64");
+
+			//Act & Assert
+			await expect(mech.finish(Buffer.from(`v=${forged}`, "utf8"), c)).rejects.toThrow(AuthError);
 		});
 
 		test("M5.16 Finding 4: finish() REJECTS when the server-final-message is NON-EMPTY but garbled (no 'e='/'v='/'m=')", async () => {
@@ -352,6 +390,72 @@ describe("ScramMechanism", () => {
 
 			//Act & Assert
 			await expect(mech.step(Buffer.from("r=onlynonce", "utf8"), c)).rejects.toThrow(AuthError);
+		});
+	});
+
+	describe("PR #18 review fix (Medium): unbounded PBKDF2 iteration count", () => {
+		test("REVERT-VERIFY: an oversized 'i=' is rejected BEFORE PBKDF2 ever runs", async () => {
+			//Arrange: an absurd, server-controlled iteration count that would
+			// otherwise block the event loop for as long as pbkdf2Sync takes to
+			// grind through it.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			const maliciousFirst = `r=${combinedNonce(SHA1_VECTOR)},s=${SHA1_VECTOR.salt},i=99999999`;
+
+			//Act & Assert
+			await expect(mech.step(Buffer.from(maliciousFirst, "utf8"), c)).rejects.toThrow(AuthError);
+			await expect(mech.step(Buffer.from(maliciousFirst, "utf8"), c)).rejects.toThrow(
+				/exceeding this client's maximum/,
+			);
+		});
+
+		test("an iteration count at the documented ceiling is still accepted (not an off-by-one over-reject)", async () => {
+			//Arrange: 1,000,000 is the documented ceiling itself -- must still
+			// be legal (only strictly-above is rejected). Kept small enough not
+			// to slow the suite down noticeably by using SHA-1's minimal
+			// digest/key size and the RFC vector's short password.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			const atCeiling = `r=${combinedNonce(SHA1_VECTOR)},s=${SHA1_VECTOR.salt},i=1000000`;
+
+			//Act & Assert: doesn't throw (successfully produces a client-final-message).
+			const final = await mech.step(Buffer.from(atCeiling, "utf8"), c);
+			expect(final.toString("utf8").startsWith(`c=biws,r=${combinedNonce(SHA1_VECTOR)},p=`)).toBe(
+				true,
+			);
+		}, 10000);
+	});
+
+	describe("PR #18 review fix (High #8): reused instance resets per-attempt state in start()", () => {
+		test("REVERT-VERIFY: a forged ServerSignature in attempt 1 does not poison finish() on a genuinely-successful attempt 2", async () => {
+			//Arrange: the SAME instance (as `ImapAuthConfig.mechanisms` supplying
+			// a literal `SaslMechanism` object would reuse across reconnects,
+			// per this class's own `ScramMechanismOptions` doc comment) drives
+			// two full attempts back to back.
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+
+			// Attempt 1: forged ServerSignature -- finish() correctly rejects,
+			// and (pre-fix) leaves `verificationFailure` set afterward.
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+			const forged = Buffer.alloc(20, 0x42).toString("base64");
+			await mech.step(Buffer.from(`v=${forged}`, "utf8"), c);
+			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
+
+			// Attempt 2: a fresh, genuinely successful exchange on the SAME
+			// instance. Pre-fix, `verificationFailure` from attempt 1 would
+			// still be set (never cleared by `start()`), so this `finish()`
+			// would incorrectly keep throwing attempt 1's stale error even
+			// though attempt 2's ServerSignature verified correctly.
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+			await mech.step(Buffer.from(`v=${SHA1_VECTOR.expectedServerSignature}`, "utf8"), c);
+
+			//Act & Assert
+			await expect(mech.finish(null, c)).resolves.toBeUndefined();
 		});
 	});
 });

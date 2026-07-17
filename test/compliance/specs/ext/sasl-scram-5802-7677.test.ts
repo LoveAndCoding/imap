@@ -618,6 +618,22 @@ complianceTest(
 						expectedProofB64: v.expectedProofB64,
 					}),
 				),
+				// PR #18 review fix (Critical #1): a genuine 'v=' server-final-
+				// message is now REQUIRED for a tagged OK to be accepted as
+				// mutual authentication (ScramMechanism.finish() fails closed
+				// otherwise) -- see this file's `finish() rejected` test group.
+				// Every worked-example/wire-form leg in this suite must present
+				// one to keep exercising a genuinely RFC-compliant exchange.
+				send(
+					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+				),
+				expectLine({
+					description: "empty reply concluding the SASL exchange",
+					match: (line: string) => ({
+						ok: line === "",
+						reason: `expected an empty concluding reply, got: '${line}'`,
+					}),
+				}),
 				// [CAPABILITY ...] avoids an unscripted post-auth CAPABILITY refresh
 				// (spec §3.3 step 5) -- see the ANONYMOUS compliance spec's identical
 				// note.
@@ -780,6 +796,18 @@ complianceTest(
 						expectedProofB64: v.expectedProofB64,
 					}),
 				),
+				// PR #18 review fix (Critical #1): see the worked-example test's
+				// identical note above -- a genuine 'v=' is now required.
+				send(
+					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+				),
+				expectLine({
+					description: "empty reply concluding the SASL exchange",
+					match: (line: string) => ({
+						ok: line === "",
+						reason: `expected an empty concluding reply, got: '${line}'`,
+					}),
+				}),
 				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed"),
 			],
 		]);
@@ -834,6 +862,18 @@ complianceTest(
 						expectedProofB64: v.expectedProofB64,
 					}),
 				),
+				// PR #18 review fix (Critical #1): see the SHA-1 worked-example
+				// test's identical note above -- a genuine 'v=' is now required.
+				send(
+					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+				),
+				expectLine({
+					description: "empty reply concluding the SASL exchange",
+					match: (line: string) => ({
+						ok: line === "",
+						reason: `expected an empty concluding reply, got: '${line}'`,
+					}),
+				}),
 				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-256] AUTHENTICATE completed"),
 			],
 		]);
@@ -1185,9 +1225,20 @@ complianceTest(
 		const serverFirstWithExtension =
 			`r=${combinedNonce},s=${v.salt.toString("base64")},i=${v.iterations},x=foo`;
 		// AuthMessage is the LITERAL server-first-message bytes, extension
-		// included (see computeScram's doc comment) — the expected proof MUST
-		// be computed against the extended message, not the clean one.
-		const { expectedProofB64 } = computeScram(v, gs2Header, combinedNonce, serverFirstWithExtension);
+		// included (see computeScram's doc comment) — the expected proof AND
+		// ServerSignature MUST both be computed against the extended message,
+		// not the clean one (PR #18 review fix, Critical #1: a genuine 'v='
+		// is now required for the tagged OK to be accepted -- and since this
+		// exchange's AuthMessage differs from the plain vector's, so does the
+		// correct ServerSignature; the fixed `v.expectedServerSigB64` would
+		// be WRONG here and would make the client correctly, but unhelpfully,
+		// reject this leg).
+		const { expectedProofB64, serverSignatureB64 } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+			serverFirstWithExtension,
+		);
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
@@ -1207,6 +1258,16 @@ complianceTest(
 						expectedProofB64,
 					}),
 				),
+				send(
+					"+ " + Buffer.from(`v=${serverSignatureB64}`, "utf8").toString("base64") + "\r\n",
+				),
+				expectLine({
+					description: "empty reply concluding the SASL exchange",
+					match: (line: string) => ({
+						ok: line === "",
+						reason: `expected an empty concluding reply, got: '${line}'`,
+					}),
+				}),
 				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed"),
 			],
 		]);
