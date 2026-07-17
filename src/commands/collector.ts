@@ -14,6 +14,23 @@ import type { UIDSet } from "../parser/structure/uid";
 import type { TextCode } from "../parser/structure/text.code";
 import type { TypedResponseCode } from "../protocol/response-codes";
 
+/**
+ * Sane ceiling on how many concrete UIDs a single `expandUidSet()` call will
+ * materialize into the returned array. Every legitimate caller (a single
+ * MULTIAPPEND batch's `APPENDUID`, a single COPY's `COPYUID`, a single
+ * CONDSTORE `MODIFIED` failure list) is bounded by how many messages ONE
+ * command touched, which never approaches this in practice -- it exists
+ * specifically to stop a hostile or non-conformant server's `VANISHED
+ * (EARLIER) 1:4294967295` (RFC 7162 §3.2.10, `uid-set` legally permits a
+ * range spanning the FULL 32-bit UID space) from turning one response line
+ * into an attempt to allocate a multi-billion-entry array -- a one-line DoS
+ * this function would otherwise walk straight into with its `for` loop. Not
+ * itself an RFC-mandated number (the spec places no ceiling on `uid-set`
+ * range width), the same kind of implementation judgment call as
+ * `commands/writer.ts`'s own `MAX_QUOTABLE_OCTETS`.
+ */
+const MAX_EXPANDED_UIDS = 1_000_000;
+
 /** Expands a parsed `UIDSet` (individual UIDs and `a:b` ranges, per RFC
  *  3501/9051 §9 `uid-set`) into an ascending flat list of concrete numbers,
  *  used by the `COPYUID`/`APPENDUID` handling below. RFC 4315's
@@ -23,12 +40,33 @@ import type { TypedResponseCode } from "../protocol/response-codes";
  *  element is skipped rather than guessed at, tolerating a non-conformant
  *  server without inventing a number (I-6). Exported for
  *  `commands/append.ts`'s `MultiAppendCommand`, which pairs this same
- *  ascending expansion positionally onto its message array (M3.10). */
+ *  ascending expansion positionally onto its message array (M3.10), AND for
+ *  `commands/select.ts`/`client/client.ts`'s VANISHED handling, which is
+ *  where `MAX_EXPANDED_UIDS` above actually matters -- see its own doc
+ *  comment. A single `a:b` range wider than that ceiling throws a
+ *  `RangeError` BEFORE any of its UIDs are materialized (not a silent
+ *  truncation, which would misreport which UIDs were removed/appended/
+ *  modified): this is a resource-exhaustion refusal, not a tolerance
+ *  concern (I-6 covers unrecognized-shape response DATA, not an
+ *  implementation choosing not to allocate an unbounded array on the
+ *  strength of one wire line -- see M3.3's own "oversized/malformed literal
+ *  framing is a parse error surfaced the normal way" precedent for the same
+ *  refuse-rather-than-silently-stall posture). */
 export function expandUidSet(set: UIDSet): number[] {
 	const out: number[] = [];
 	for (const el of set.set) {
 		if (el instanceof UIDRange) {
 			if (typeof el.startId === "number" && typeof el.endId === "number") {
+				const span = el.endId - el.startId + 1;
+				if (span > MAX_EXPANDED_UIDS || out.length + span > MAX_EXPANDED_UIDS) {
+					throw new RangeError(
+						`expandUidSet: refusing to materialize a uid-set range ` +
+							`${el.startId}:${el.endId} (${span} UIDs) -- exceeds the ` +
+							`${MAX_EXPANDED_UIDS}-UID ceiling this client expands in one call ` +
+							"(a range this wide is almost certainly a malformed or hostile " +
+							"response, not a legitimate single-command result)",
+					);
+				}
 				for (let n = el.startId; n <= el.endId; n++) {
 					out.push(n);
 				}

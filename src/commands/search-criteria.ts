@@ -435,9 +435,31 @@ function estimateKeyCount(criteria: SearchCriteria): number {
 /** Compiles `criteria` into a SINGLE `search-key` slot (spec §5.3: `fuzzy`
  *  wraps exactly one key, and each `OR`/`NOT` operand is one key) — wrapping
  *  in a parenthesized group when (per `estimateKeyCount`) it would otherwise
- *  expand to more than one token. */
-function compileAsSingleKey(w: CommandWriter, criteria: SearchCriteria, caps: SearchCapabilityProbe): void {
-	if (estimateKeyCount(criteria) <= 1) {
+ *  expand to more than one token. `context` labels the operand for the
+ *  empty-operand error below (e.g. `"SearchCriteria.or"`, `"SearchCriteria.
+ *  fuzzy"`). An operand with ZERO search-keys (`estimateKeyCount === 0`,
+ *  e.g. a bare `{}`) is refused rather than silently compiled to nothing:
+ *  IMAP's wire grammar has no "empty search-key" — `OR <nothing> B` isn't a
+ *  legal two-operand `OR`, it's just `B`, silently changing an intended
+ *  `(A OR B) AND C` into `A OR (B AND C)` (or, for `fuzzy: {}`, emitting a
+ *  bare `FUZZY` atom with no wrapped key at all). Dropping the operand would
+ *  change semantics the caller can't see; refusing loudly is safer than
+ *  guessing which reading was intended. */
+function compileAsSingleKey(
+	w: CommandWriter,
+	criteria: SearchCriteria,
+	caps: SearchCapabilityProbe,
+	context: string,
+): void {
+	const count = estimateKeyCount(criteria);
+	if (count === 0) {
+		throw new RangeError(
+			`${context}: operand has no search-keys (an empty {} is not expressible ` +
+				"as an IMAP search-key -- silently dropping it would change the " +
+				"surrounding AND/OR/NOT semantics)",
+		);
+	}
+	if (count <= 1) {
 		compileCriteria(w, criteria, caps);
 	} else {
 		w.list((inner) => compileCriteria(inner, criteria, caps));
@@ -463,17 +485,22 @@ function compileNot(w: CommandWriter, payload: SearchCriteria, caps: SearchCapab
 		const values = Array.isArray(payload.keyword) ? payload.keyword : [payload.keyword];
 		for (const kw of values) {
 			w.atom("UNKEYWORD");
-			w.astring(kw);
+			// `flag-keyword = atom` (RFC 3501/9051 §9) -- NOT astring. `w.atom()`
+			// throws on anything that isn't a legal bare atom, where `w.astring()`
+			// would have silently QUOTED an invalid keyword (e.g. one containing
+			// a space) into a syntactically-different, wire-invalid token for
+			// this position instead of refusing it.
+			w.atom(kw);
 		}
 		return;
 	}
 	w.atom("NOT");
-	compileAsSingleKey(w, payload, caps);
+	compileAsSingleKey(w, payload, caps, "SearchCriteria.not");
 }
 
 function compileOrOperand(w: CommandWriter, list: SearchCriteria[], caps: SearchCapabilityProbe): void {
 	if (list.length === 1) {
-		compileAsSingleKey(w, list[0], caps);
+		compileAsSingleKey(w, list[0], caps, "SearchCriteria.or");
 	} else {
 		w.list((inner) => compileOr(inner, list, caps));
 	}
@@ -489,7 +516,7 @@ function compileOr(w: CommandWriter, list: SearchCriteria[], caps: SearchCapabil
 		throw new RangeError("SearchCriteria.or: requires at least one entry");
 	}
 	if (list.length === 1) {
-		compileAsSingleKey(w, list[0], caps);
+		compileAsSingleKey(w, list[0], caps, "SearchCriteria.or");
 		return;
 	}
 	w.atom("OR");
@@ -563,7 +590,10 @@ export function compileCriteria(
 				const values = Array.isArray(value) ? (value as string[]) : [value as string];
 				for (const kw of values) {
 					w.atom("KEYWORD");
-					w.astring(kw);
+					// `flag-keyword = atom` (RFC 3501/9051 §9) -- see `compileNot`'s
+					// identical UNKEYWORD fix above for why this must be `atom()`,
+					// not `astring()`.
+					w.atom(kw);
 				}
 				break;
 			}
@@ -752,7 +782,7 @@ export function compileCriteria(
 			case "fuzzy":
 				assertCap(caps, "SEARCH=FUZZY", "fuzzy", "RFC6203");
 				w.atom("FUZZY");
-				compileAsSingleKey(w, value as SearchCriteria, caps);
+				compileAsSingleKey(w, value as SearchCriteria, caps, "SearchCriteria.fuzzy");
 				break;
 			case "not":
 				compileNot(w, value as SearchCriteria, caps);

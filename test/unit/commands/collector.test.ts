@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { ResponseCollector, toTypedResponseCode } from "../../../src/commands/collector";
+import { ResponseCollector, expandUidSet, toTypedResponseCode } from "../../../src/commands/collector";
 import Lexer from "../../../src/lexer/lexer";
 import Parser from "../../../src/parser/parser";
 import { StatusResponse } from "../../../src/parser/structure/status";
 import TaggedResponse from "../../../src/parser/structure/tagged";
+import { UID, UIDRange, UIDSet } from "../../../src/parser/structure/uid";
 import UntaggedResponse from "../../../src/parser/structure/untagged";
 
 const CRLF = "\r\n";
@@ -287,6 +288,52 @@ describe("ResponseCollector live/incremental bridge (M3.4, spec §7.3)", () => {
 		const codes = c.codes();
 		expect(codes).toHaveLength(1);
 		expect(codes[0].name).toBe("PERMANENTFLAGS");
+	});
+});
+
+describe("expandUidSet (VANISHED/APPENDUID/COPYUID/MODIFIED uid-set expansion)", () => {
+	test("expands a mix of singletons and ranges, ascending, as before", () => {
+		const set: UIDSet = { set: [new UID(7), new UIDRange(2, 4)] };
+		expect(expandUidSet(set)).toEqual([7, 2, 3, 4]);
+	});
+
+	test("a '*'-bearing element is skipped, not guessed at (I-6)", () => {
+		const set: UIDSet = { set: [new UID("*"), new UID(5)] };
+		expect(expandUidSet(set)).toEqual([5]);
+	});
+
+	// Regression: a one-line DoS -- `expandUidSet` used to loop
+	// unconditionally over the full range width, so a hostile or
+	// non-conformant server's "VANISHED (EARLIER) 1:4294967295" (RFC 7162
+	// §3.2.10's `uid-set` grammar legally permits a range spanning the
+	// entire 32-bit UID space) would attempt to materialize a
+	// multi-billion-entry array. It must now refuse instead of hanging /
+	// exhausting memory.
+	describe("bounded against a pathologically wide range (the VANISHED DoS)", () => {
+		test("a full 32-bit-space range (1:4294967295) throws immediately instead of allocating it", () => {
+			const set: UIDSet = { set: [new UIDRange(1, 4294967295)] };
+			const start = Date.now();
+			expect(() => expandUidSet(set)).toThrow(RangeError);
+			// "Immediately" -- this is the actual DoS assertion: if the old
+			// unbounded loop ran instead, this would hang far past any sane
+			// per-test budget rather than complete in milliseconds.
+			expect(Date.now() - start).toBeLessThan(1000);
+		});
+
+		test("a merely large-but-legitimate range (well under the ceiling) still expands normally", () => {
+			const set: UIDSet = { set: [new UIDRange(1, 10_000)] };
+			const result = expandUidSet(set);
+			expect(result).toHaveLength(10_000);
+			expect(result[0]).toBe(1);
+			expect(result[result.length - 1]).toBe(10_000);
+		});
+
+		test("multiple ranges whose individual widths are small but combined total exceeds the ceiling also throw", () => {
+			const set: UIDSet = {
+				set: [new UIDRange(1, 999_999), new UIDRange(1_000_000, 2_000_000)],
+			};
+			expect(() => expandUidSet(set)).toThrow(RangeError);
+		});
 	});
 });
 

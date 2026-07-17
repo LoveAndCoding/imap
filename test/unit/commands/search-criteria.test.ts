@@ -64,6 +64,20 @@ describe("compileCriteria (spec §5.3)", () => {
 		);
 	});
 
+	// Regression: `flag-keyword = atom` (RFC 3501/9051 §9) -- KEYWORD/
+	// UNKEYWORD's argument must be a bare atom. Emitting it through
+	// `astring()` instead of `atom()` meant an invalid keyword (one
+	// containing a space or other non-ATOM-CHAR) was silently QUOTED into a
+	// syntactically different, wire-invalid token instead of being refused.
+	test("keyword: an invalid keyword (not a legal atom) throws instead of being silently quoted", () => {
+		expect(() => compile({ keyword: "has space" })).toThrow(RangeError);
+		expect(() => compile({ keyword: "" })).toThrow(RangeError);
+	});
+
+	test("keyword: a valid keyword is emitted as a bare atom, never quoted", () => {
+		expect(compile({ keyword: "MyKeyword" })).toBe("KEYWORD MyKeyword");
+	});
+
 	test("uid: keyed UID <sequence-set> form", () => {
 		expect(compile({ uid: "1:5,9" })).toBe("UID 1:5,9");
 	});
@@ -265,6 +279,14 @@ describe("compileCriteria (spec §5.3)", () => {
 				compile({ fuzzy: { modSeq: { since: 1n } } }, caps),
 			).toThrow(CapabilityError);
 		});
+
+		// Regression: `fuzzy: {}` used to compile to a bare "FUZZY" atom with
+		// no wrapped key at all (spec §5.3: FUZZY wraps EXACTLY one key) --
+		// same empty-operand class of bug as the "or" fix above.
+		test("fuzzy: {} throws RangeError instead of emitting a bare FUZZY with no wrapped key", () => {
+			const caps = capsOf("SEARCH=FUZZY");
+			expect(() => compile({ fuzzy: {} }, caps)).toThrow(RangeError);
+		});
 	});
 
 	describe("fuzzy: exactly one wrapped key, parenthesized when compound", () => {
@@ -302,6 +324,13 @@ describe("compileCriteria (spec §5.3)", () => {
 
 		test("not: {} throws RangeError (at least one criterion required)", () => {
 			expect(() => compile({ not: {} })).toThrow(RangeError);
+		});
+
+		// Regression: `flag-keyword = atom` (RFC 3501/9051 §9) -- see the
+		// identical KEYWORD fix/test above. UNKEYWORD's argument has the same
+		// grammar.
+		test("not: { keyword } with an invalid keyword throws instead of being silently quoted", () => {
+			expect(() => compile({ not: { keyword: "has space" } })).toThrow(RangeError);
 		});
 
 		describe("C1 fix: estimateKeyCount correctly counts a bare-keyword-negation's emitted UNKEYWORD keys, so nesting it parenthesizes correctly", () => {
@@ -352,6 +381,37 @@ describe("compileCriteria (spec §5.3)", () => {
 
 		test("empty or throws RangeError", () => {
 			expect(() => compile({ or: [] })).toThrow(RangeError);
+		});
+
+		// Regression: an empty `{}` OPERAND (as opposed to an empty `or`
+		// ARRAY, covered above) used to compile to ZERO search-key tokens
+		// instead of being refused -- `{ or: [{}, { subject: "x" }], from:
+		// "y" }` silently produced the wire text "OR SUBJECT x FROM y"
+		// instead of throwing, dropping the empty operand entirely and
+		// turning the intended "(A OR B) AND C" reading into "A OR (B AND
+		// C)": a real semantics change a caller has no way to see happened.
+		describe("empty operand refusal (an empty {} search-key isn't expressible on the wire)", () => {
+			test("a bare empty-object operand throws, standing alone", () => {
+				expect(() => compile({ or: [{}, { subject: "x" }] })).toThrow(RangeError);
+			});
+
+			test("reproduces the finding exactly: or:[{}, {subject}] AND from -- throws rather than silently compiling to 'OR SUBJECT x FROM y'", () => {
+				expect(() =>
+					compile({ or: [{}, { subject: "x" }], from: "y" } as SearchCriteria),
+				).toThrow(RangeError);
+			});
+
+			test("an empty operand nested three levels deep (left-folded OR) still throws", () => {
+				expect(() =>
+					compile({ or: [{}, { from: "a" }, { from: "b" }] }),
+				).toThrow(RangeError);
+			});
+
+			test("a non-empty nested or/fuzzy/not still compiles correctly (no false positive)", () => {
+				expect(
+					compile({ or: [{ from: "a" }, { subject: "b" }], not: { seen: true } }),
+				).toBe("OR FROM a SUBJECT b NOT SEEN");
+			});
 		});
 	});
 

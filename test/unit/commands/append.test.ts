@@ -63,9 +63,62 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 			expect(() => new AppendCommand("INBOX", data, { binary: false })).toThrow(RangeError);
 		});
 
-		test("accepts a NUL-bearing Buffer message when opts.binary is true", () => {
+		test("accepts a NUL-bearing Buffer message when opts.binary is true and BINARY is advertised", () => {
 			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
-			expect(() => new AppendCommand("INBOX", data, { binary: true })).not.toThrow();
+			expect(() =>
+				new AppendCommand("INBOX", data, { binary: true }, {
+					has: (c) => c === "BINARY",
+					knownAppendLimit: () => false,
+				}),
+			).not.toThrow();
+		});
+
+		test("opts.binary:true without the BINARY capability (or IMAP4rev2) throws CapabilityError", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			expect(() => new AppendCommand("INBOX", data, { binary: true })).toThrow(
+				CapabilityError,
+			);
+		});
+
+		test("opts.binary:true is also accepted on a bare IMAP4rev2 server with no separate BINARY advertisement", () => {
+			// RFC 9051 folds literal8 transmission into rev2 core.
+			const data = Buffer.from([0x00]);
+			expect(() =>
+				new AppendCommand("INBOX", data, { binary: true }, {
+					has: (c) => c === "IMAP4rev2",
+					knownAppendLimit: () => false,
+				}),
+			).not.toThrow();
+		});
+
+		test("opts.binary:true gate fails before any bytes are written (I-9): a rejected AppendCommand never reaches write()", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			expect(() => new AppendCommand("INBOX", data, { binary: true })).toThrow(
+				CapabilityError,
+			);
+			// The constructor itself throws -- no partially-built command
+			// object exists for `write()` to ever be called on.
+		});
+
+		test("MULTIAPPEND: an entry's opts.binary:true is also gated on BINARY (per-entry)", () => {
+			const data = Buffer.from([0x00]);
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[{ message: data, binary: true }],
+						{ has: () => false, knownAppendLimit: () => false },
+					),
+			).toThrow(CapabilityError);
+
+			expect(
+				() =>
+					new MultiAppendCommand(
+						"INBOX",
+						[{ message: data, binary: true }],
+						{ has: (c) => c === "BINARY", knownAppendLimit: () => false },
+					),
+			).not.toThrow();
 		});
 
 		test("does not reject a message with no NUL bytes when opts.binary is unset", () => {
@@ -137,7 +190,10 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 
 		test("Buffer message with a NUL byte and opts.binary:true passes through verbatim", () => {
 			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
-			const cmd = new AppendCommand("INBOX", data, { binary: true });
+			const cmd = new AppendCommand("INBOX", data, { binary: true }, {
+				has: (c) => c === "BINARY",
+				knownAppendLimit: () => false,
+			});
 			const w = writerWithCaps();
 			Command.writeArgs(cmd, w);
 			const segments = w.segments();
@@ -181,7 +237,10 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 		});
 
 		test("opts.binary requests the RFC 3516 literal8 (~{n}) form", () => {
-			const cmd = new AppendCommand("INBOX", Buffer.from([0x00, 0x01]), { binary: true });
+			const cmd = new AppendCommand("INBOX", Buffer.from([0x00, 0x01]), { binary: true }, {
+				has: (c) => c === "BINARY",
+				knownAppendLimit: () => false,
+			});
 			const w = writerWithCaps();
 			Command.writeArgs(cmd, w);
 			expect(wireText(w)).toMatch(/^INBOX ~\{2\}\r\n/);
@@ -248,7 +307,7 @@ describe("AppendCommand (RFC 3501 §6.3.11 / RFC 9051 §6.3.12) — M2.11", () =
 					"INBOX",
 					Buffer.from([0x00, 0x01]),
 					{ binary: true },
-					{ has: () => false, knownAppendLimit: () => false },
+					{ has: (c) => c === "BINARY", knownAppendLimit: () => false },
 				);
 				const w = writerWithCaps(["LITERAL+"]);
 				Command.writeArgs(cmd, w);

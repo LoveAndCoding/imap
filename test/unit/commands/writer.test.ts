@@ -46,6 +46,7 @@ describe("CommandWriter", () => {
 			["backslash", "a\\b"],
 			["control (NUL)", "a\x00b"],
 			["control (BEL)", "a\x07b"],
+			["DEL (0x7F)", "a\x7fb"],
 			["8-bit", "café"],
 		];
 		test.each(rejections)("rejects %s", (_label, bad) => {
@@ -187,6 +188,18 @@ describe("CommandWriter", () => {
 				RangeError,
 			);
 		});
+
+		test("DEL (0x7F) is not a bare-atom char -> literal fallback, not a raw unescaped atom", () => {
+			const w = writer();
+			w.astring("a\x7fb");
+			const expectedLen = Buffer.byteLength("a\x7fb", "utf8");
+			expect(flat(w)).toBe(`{${expectedLen}}\r\na\x7fb`);
+		});
+
+		test("throws on an embedded NUL byte (CHAR8, RFC 3501/9051 §9, excludes NUL from a plain literal)", () => {
+			expect(() => writer().astring("a\x00b")).toThrow(RangeError);
+			expect(() => writer().astring("a\x00b")).toThrow(/NUL/);
+		});
 	});
 
 	describe("quotedOrLiteral()", () => {
@@ -209,6 +222,10 @@ describe("CommandWriter", () => {
 				const expectedLen = Buffer.byteLength(bad, "utf8");
 				expect(flat(w)).toBe(`{${expectedLen}}\r\n${bad}`);
 			}
+		});
+
+		test("throws on an embedded NUL byte", () => {
+			expect(() => writer().quotedOrLiteral("a\x00b")).toThrow(RangeError);
 		});
 	});
 
@@ -234,6 +251,10 @@ describe("CommandWriter", () => {
 					"utf8",
 				).toString("binary")}`,
 			);
+		});
+
+		test("throws on an embedded NUL byte", () => {
+			expect(() => writer().nstring("a\x00b")).toThrow(RangeError);
 		});
 	});
 
@@ -306,6 +327,23 @@ describe("CommandWriter", () => {
 			const segs = w.segments();
 			expect(segs).toHaveLength(1);
 			expect(segs[0].bytes.toString("binary")).toBe("~{3+}\r\nbin");
+		});
+
+		test("rejects an embedded NUL byte for a plain (non-binary) literal (CHAR8 excludes NUL)", () => {
+			expect(() => writer().literal(Buffer.from([0x41, 0x00, 0x42]))).toThrow(
+				RangeError,
+			);
+			expect(() => writer().literal(Buffer.from([0x41, 0x00, 0x42]))).toThrow(
+				/NUL/,
+			);
+		});
+
+		test("allows an embedded NUL byte for a binary (literal8) literal", () => {
+			const w = writer(NO_CAPS);
+			w.literal(Buffer.from([0x41, 0x00, 0x42]), { binary: true });
+			const segs = w.segments();
+			expect(segs[0].bytes.toString("binary")).toBe("~{3}\r\n");
+			expect(segs[1].bytes.toString("binary")).toBe("A\x00B");
 		});
 
 		test("multiple synchronizing literals -> multiple boundaries in order", () => {
@@ -443,6 +481,47 @@ describe("CommandWriter", () => {
 				RangeError,
 			);
 		});
+
+		// Regression: listMailbox() used to regress the "&"-escaping fix
+		// mailbox() already has -- an all-ASCII pattern containing a literal
+		// "&" (mUTF-7's shift character, RFC 3501 §5.1.3) sailed straight
+		// through the bare-token fast path unescaped, corrupting the mUTF-7
+		// encoding of the pattern. `mailbox()`'s own equivalent case
+		// ("&"-bearing but otherwise ASCII) has always routed through the
+		// codec; `listMailbox()` now matches.
+		test("a literal '&' (mUTF-7 shift char) is escaped as '&-', even in an otherwise all-ASCII pattern", () => {
+			const w = writer();
+			w.listMailbox("Sent&Received");
+			expect(flat(w)).toBe("Sent&-Received");
+		});
+
+		test("'&' escaping applies with wildcards present, and the wildcards themselves stay unescaped", () => {
+			const w = writer();
+			w.listMailbox("Sent&Received/%");
+			expect(flat(w)).toBe("Sent&-Received/%");
+
+			const w2 = writer();
+			w2.listMailbox("A&B/*");
+			expect(flat(w2)).toBe("A&-B/*");
+		});
+
+		test("a bare '&' pattern is escaped, not left as an unescaped shift char", () => {
+			const w = writer();
+			w.listMailbox("&");
+			expect(flat(w)).toBe("&-");
+		});
+
+		test("'&' is NOT escaped when UTF8=ACCEPT is enabled (ordinary UTF-8 there, RFC 6855)", () => {
+			const w = writer((cap) => cap.toUpperCase() === "UTF8=ACCEPT");
+			w.listMailbox("Sent&Received");
+			expect(flat(w)).toBe("Sent&Received");
+		});
+
+		test("wildcards alone (no '&') still take the bare-token fast path, unaffected by the '&' fix", () => {
+			const w = writer();
+			w.listMailbox("Drafts/%*");
+			expect(flat(w)).toBe("Drafts/%*");
+		});
 	});
 
 	describe("sequenceSet()", () => {
@@ -498,6 +577,36 @@ describe("CommandWriter", () => {
 		test("rejects an invalid Date", () => {
 			expect(() => writer().date(new Date(NaN))).toThrow(RangeError);
 			expect(() => writer().dateTime(new Date(NaN))).toThrow(RangeError);
+		});
+
+		// Regression: `date-year` (RFC 3501/9051 §9) is exactly 4DIGIT --
+		// `dateText()`/`dateTimeText()` only ever `padStart(4, "0")`, which
+		// doesn't truncate a 5-digit year and produces garbage for a negative
+		// one. Both used to render malformed wire bytes instead of throwing.
+		describe("year bound-checking (RFC 3501/9051 §9 date-year is exactly 4DIGIT)", () => {
+			test("a 5-digit year throws instead of emitting a malformed date", () => {
+				const d = new Date(0);
+				d.setUTCFullYear(20000);
+				expect(() => writer().date(d)).toThrow(RangeError);
+				expect(() => writer().dateTime(d)).toThrow(RangeError);
+			});
+
+			test("a negative year throws instead of emitting a malformed date", () => {
+				const d = new Date(0);
+				d.setUTCFullYear(-5);
+				expect(() => writer().date(d)).toThrow(RangeError);
+				expect(() => writer().dateTime(d)).toThrow(RangeError);
+			});
+
+			test("year 0 and year 9999 (the boundary values) are accepted", () => {
+				const y0 = new Date(0);
+				y0.setUTCFullYear(0, 6, 12);
+				expect(flat(writer().date(y0))).toBe("12-Jul-0000");
+
+				const y9999 = new Date(0);
+				y9999.setUTCFullYear(9999, 6, 12);
+				expect(flat(writer().date(y9999))).toBe("12-Jul-9999");
+			});
 		});
 	});
 
@@ -648,6 +757,79 @@ describe("CommandWriter", () => {
 				RangeError,
 			);
 			expect(w.segments()).toEqual(before);
+		});
+
+		// Regression: `restore()` used to truncate the CURRENT `chunks`
+		// array's `.length` back to a saved length, which is only correct if
+		// `chunks` is still the SAME array object the length was measured
+		// against. `finalizeSegment()` (triggered by a synchronizing literal)
+		// REASSIGNS `this.chunks` to a fresh empty array -- if that happened
+		// inside a `list()` call that later throws, the outer rollback used
+		// to truncate the NEW (post-reassignment) array instead of restoring
+		// the OLD one, silently leaving the literal's own data bytes in the
+		// buffer in place of whatever was there before the failed call.
+		test("a synchronizing literal followed by a later throw, inside list(), rolls back to the exact pre-call bytes (not the literal's data)", () => {
+			const w = writer();
+			w.atom("A");
+			const before = w.segments();
+
+			expect(() => {
+				w.list((inner) => {
+					// forceSync guarantees a segment boundary (finalizeSegment(),
+					// which reassigns `chunks`) regardless of advertised caps.
+					inner.literal(Buffer.from("X"), { forceSync: true });
+					inner.atom(""); // throws: empty atom
+				});
+			}).toThrow(RangeError);
+
+			expect(w.segments()).toEqual(before);
+			// Writing continues to work correctly afterward -- the writer
+			// isn't left in some half-reassigned state.
+			w.atom("B");
+			expect(flat(w)).toBe("A B");
+		});
+	});
+
+	describe("raw()", () => {
+		test("writes an already-assembled token verbatim", () => {
+			const w = writer();
+			w.raw("BODY[1.HEADER.FIELDS (From To)]<0.100>");
+			expect(flat(w)).toBe("BODY[1.HEADER.FIELDS (From To)]<0.100>");
+		});
+
+		test("rejects the empty string", () => {
+			expect(() => writer().raw("")).toThrow(RangeError);
+		});
+
+		test("rejects CR/LF (line-injection guard)", () => {
+			expect(() => writer().raw("a\r\nb")).toThrow(RangeError);
+		});
+
+		test("rejects 8-bit content", () => {
+			expect(() => writer().raw("café")).toThrow(RangeError);
+		});
+
+		// Regression: the floor check only ever excluded CR/LF specifically
+		// (and 8-bit octets) -- NUL and every other C0 control character, and
+		// DEL, sailed straight through onto the wire unescaped and
+		// unvalidated, contrary to the method's own documented "7-bit ASCII
+		// only" floor.
+		test("rejects an embedded NUL byte", () => {
+			expect(() => writer().raw("BODY[1\x00]")).toThrow(RangeError);
+		});
+
+		test("rejects an embedded DEL (0x7F) byte", () => {
+			expect(() => writer().raw("BODY[1\x7f]")).toThrow(RangeError);
+		});
+
+		test("rejects other C0 control characters (e.g. BEL)", () => {
+			expect(() => writer().raw("BODY[1\x07]")).toThrow(RangeError);
+		});
+
+		test("rejects non-string input", () => {
+			expect(() => writer().raw(42 as unknown as string)).toThrow(
+				RangeError,
+			);
 		});
 	});
 });

@@ -281,6 +281,34 @@ export function assertNoUnencodedNul(data: Buffer, binary: boolean, context: str
 	}
 }
 
+/**
+ * RFC 3516 `BINARY` capability gate for `{ binary: true }`'s literal8
+ * (`~{n}`) message framing -- `CapabilityError`, zero bytes written (I-9),
+ * unless the server has advertised `BINARY` (RFC 3516 §3) OR is an
+ * IMAP4rev2 server (RFC 9051 folds literal8 TRANSMISSION into rev2 core --
+ * see test/compliance/catalog/ext/rfc3516.ts's REV2 note -- so a rev2
+ * server accepts the `~{n}` framing without a separate BINARY
+ * advertisement, same "extension absorbed into core" pattern
+ * `SearchOptions.return`'s ESEARCH gate in `search.ts` already applies).
+ * Every OTHER optional extension this file offers (CATENATE, MULTIAPPEND,
+ * the RFC 6855 UTF8(...) wrapping) is gated on its advertised capability
+ * before any byte for that extension reaches the wire -- `{ binary: true }`
+ * was the one exception that checked nothing at all before this fix.
+ * Exported (M5.6-style) so `ReplaceCommand` can reuse it -- see `NO_CAPS`'s
+ * doc comment for the shared-machinery rationale.
+ */
+export function assertBinaryCapability(caps: AppendCapabilityProbe, context: string): void {
+	if (!caps.has("BINARY") && !caps.has("IMAP4rev2")) {
+		throw new CapabilityError(
+			`${context}: { binary: true } (RFC 3516 literal8 framing) requires the ` +
+				"BINARY capability (RFC 3516 §3), or an IMAP4rev2 server (which folds " +
+				"literal8 transmission into rev2 core), neither of which the server has " +
+				"advertised",
+			{ capability: "BINARY", rfc: "RFC3516" },
+		);
+	}
+}
+
 /** One validated CATENATE cat-part, post-construction (see `CatenatePart`
  *  above for the pre-validation caller-facing shape). TEXT parts have already
  *  been through `toMessageBuffer()`/`assertNoUnencodedNul()`; URL parts are
@@ -509,6 +537,17 @@ export class AppendCommand extends Command<AppendResult> {
 			// (`~{n}`) wire form that legitimately carries NUL octets to a
 			// BINARY-capable server.
 			assertNoUnencodedNul(this.data, this.opts.binary === true, "APPEND");
+			// RFC 3516 §3: the literal8 (`~{n}`) framing `{ binary: true }`
+			// requests is itself an optional extension -- gate it BEFORE any
+			// byte reaches the wire (I-9), same as every other optional
+			// extension this constructor validates (CATENATE above,
+			// MULTIAPPEND/UTF8=ACCEPT in the sibling class/write()). Skipped
+			// when `catenateParts` is set: `binary` is documented as ignored
+			// entirely in that case (see `AppendOptions.binary`'s doc comment),
+			// so there is nothing to gate.
+			if (this.opts.binary === true) {
+				assertBinaryCapability(this.caps, "APPEND");
+			}
 		}
 		// RFC 3501 §2.3.2 (RFC3501-2.3.2-1/-2): \Recent can never appear in a
 		// client-sent flag list; §2.3.2 names APPEND explicitly. Refuse
@@ -636,6 +675,11 @@ export class MultiAppendCommand extends Command<AppendResult[]> {
 			const label = `APPEND (MULTIAPPEND message ${i + 1})`;
 			const data = toMessageBuffer(entry.message, label);
 			assertNoUnencodedNul(data, entry.binary === true, label);
+			// RFC 3516 §3: same per-message BINARY gate as `AppendCommand`'s
+			// constructor -- see `assertBinaryCapability`'s doc comment.
+			if (entry.binary === true) {
+				assertBinaryCapability(this.caps, label);
+			}
 			// RFC 3501 §2.3.2: \Recent refusal applies per-message, exactly like
 			// the single-message `AppendCommand` (M3.6 adjudication) -- each
 			// MULTIAPPEND message carries its own independent flag list.

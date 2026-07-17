@@ -82,17 +82,25 @@ const MONTH_NAMES = [
 /**
  * A single ATOM-CHAR per RFC 3501/9051 §9: `RE_ATOM_CHAR` (the lexer's
  * authoritative atom-specials exclusion set) already excludes SP, "(", ")",
- * "{", the C0 control range, "%", "*", DQUOTE, "\", "[", and "]". We layer on
- * one additional restriction the lexer intentionally does NOT apply: CHAR in
- * the sending grammar is 7-bit US-ASCII (0x01–0x7F), so any code point above
- * 0x7F is rejected here even though the lexer's tolerant *parser* would
- * accept it in already-received bytes. Parsing incoming bytes leniently and
- * validating outgoing bytes strictly are different concerns; this is the
- * strict, sending side of that pair.
+ * "{", the \x00-\x1F C0 control range, "%", "*", DQUOTE, "\", "[", and "]".
+ * We layer on two additional restrictions the lexer intentionally does NOT
+ * apply, both sending-side-only strictness the tolerant *parser* skips for
+ * already-received bytes:
+ *   - CHAR in the sending grammar is 7-bit US-ASCII (0x01–0x7F), so any code
+ *     point above 0x7F is rejected here;
+ *   - CTL (RFC 3501/9051 §9, imported from the RFC 5234 core rules) is
+ *     `%x00-1F / %x7F` — DEL (0x7F) is a control character exactly like the
+ *     C0 range the lexer's own `RE_ATOM_CHAR` already excludes, so it is
+ *     excluded from atom-specials too and must never appear in a bare atom.
+ *     `RE_ATOM_CHAR` itself only ever excludes \x00-\x1F (see its own
+ *     comment), so DEL needs its own check here, same layering pattern as
+ *     the 7-bit-only restriction above.
+ * Parsing incoming bytes leniently and validating outgoing bytes strictly
+ * are different concerns; this is the strict, sending side of that pair.
  */
 function isAsciiAtomChar(ch: string): boolean {
 	const cp = ch.codePointAt(0) ?? 0;
-	return cp > 0 && cp <= 0x7f && RE_ATOM_CHAR.test(ch);
+	return cp > 0 && cp <= 0x7f && cp !== 0x7f && RE_ATOM_CHAR.test(ch);
 }
 
 /** Whole-string ATOM-CHAR validation (non-empty, every character legal). */
@@ -194,6 +202,30 @@ function isValidFlag(flag: string): boolean {
  *  §9 `date-time`). */
 function dateDayFixed(day: number): string {
 	return day < 10 ? ` ${day}` : `${day}`;
+}
+
+/**
+ * `date-year` (RFC 3501/9051 §9 `date-time`/`date-text`) is exactly
+ * `4DIGIT` — no more, no fewer. `date()`/`dateTime()` (below) both render
+ * `d.getUTCFullYear()` with `String(...).padStart(4, "0")`, which only
+ * FIXES a year needing fewer than 4 digits; it neither truncates a year
+ * needing 5+ (e.g. 20000 renders as the literal 5-digit string "20000",
+ * not a legal `date-year`) nor produces anything sane for a negative year
+ * (e.g. -1 renders as "-1".padStart(4, "0") === "00-1", not a date at
+ * all). Both are malformed-wire-bytes bugs a caller could trigger with an
+ * out-of-range but otherwise valid JS `Date` (`Date` itself has no notion
+ * of "year must fit 4DIGIT" -- its own range is roughly ±273,790 years).
+ * Checked once here and shared by both `date()` and `dateTime()` rather
+ * than duplicating the bound in each.
+ */
+function assertWireExpressibleYear(d: Date, method: string): void {
+	const year = d.getUTCFullYear();
+	if (year < 0 || year > 9999) {
+		throw new RangeError(
+			`${method}: ${d.toISOString()} has a year (${year}) outside the wire-` +
+				'expressible range 0000-9999 (RFC 3501/9051 §9 date-year is exactly 4DIGIT)',
+		);
+	}
 }
 
 /**
@@ -323,11 +355,16 @@ export class CommandWriter {
 	// -- atomic-call plumbing -------------------------------------------------
 
 	private snapshot(): {
+		chunksRef: Buffer[];
 		chunksLen: number;
 		segmentsLen: number;
 		pendingSpace: boolean;
 	} {
 		return {
+			// The ARRAY OBJECT `chunks` currently refers to, not just its
+			// length — see `restore()`'s own comment for why the reference
+			// itself has to be captured, not just a length to truncate to.
+			chunksRef: this.chunks,
 			chunksLen: this.chunks.length,
 			segmentsLen: this.finishedSegments.length,
 			pendingSpace: this.pendingSpace,
@@ -335,11 +372,29 @@ export class CommandWriter {
 	}
 
 	private restore(snap: ReturnType<CommandWriter["snapshot"]>): void {
-		// `chunks`/`finishedSegments` only ever grow via push (buffers are
-		// immutable once created), so truncating back to the saved lengths
-		// fully undoes anything appended since the snapshot was taken —
-		// no deep clone needed.
-		this.chunks.length = snap.chunksLen;
+		// `finishedSegments` only ever grows via push (segments are immutable
+		// once finalized), so truncating it back to the saved length fully
+		// undoes anything appended since the snapshot was taken. `chunks` is
+		// DIFFERENT: `finalizeSegment()` (below) doesn't just append to it, it
+		// REASSIGNS `this.chunks` to a brand-new empty array once a
+		// synchronizing literal closes off the current segment. If that
+		// happened since this snapshot was taken, `this.chunks` no longer
+		// refers to the same array object `snap.chunksLen` was measured
+		// against — truncating the CURRENT array's `.length` would silently
+		// leave whatever unrelated bytes now occupy that array (e.g. a
+		// literal's own data bytes) in place of the original pre-call
+		// content, instead of actually undoing anything (the historical bug
+		// this comment replaces: a mid-write throw after a forced-sync
+		// literal lost the writer's prior bytes rather than restoring them).
+		// Slicing the SNAPSHOTTED array reference back to its saved length is
+		// correct whether or not a reassignment happened in between: if
+		// `chunks` was never reassigned, `snap.chunksRef IS this.chunks` and
+		// the slice is just an ordinary truncating copy; if it WAS
+		// reassigned, the snapshotted reference is untouched by everything
+		// that ran after the reassignment (`finalizeSegment()` never mutates
+		// the array it moved wholesale into `finishedSegments`), so slicing
+		// it recovers exactly the bytes that existed at snapshot time.
+		this.chunks = snap.chunksRef.slice(0, snap.chunksLen);
 		this.finishedSegments.length = snap.segmentsLen;
 		this.pendingSpace = snap.pendingSpace;
 	}
@@ -384,8 +439,27 @@ export class CommandWriter {
 	 *  emits the plain synchronizing form -- the caller's override for a
 	 *  command-level SHOULD that outranks ordinary LITERAL+/LITERAL- eagerness
 	 *  (e.g. RFC7889-4-2: avoid non-synchronizing literals when the APPEND
-	 *  upload limit is unknown, even though the server advertised LITERAL+/-). */
+	 *  upload limit is unknown, even though the server advertised LITERAL+/-).
+	 *  A PLAIN (non-`binary`) literal's octets are CHAR8 (RFC 3501/9051 §9:
+	 *  `%x01-ff`, i.e. every byte except NUL) — a NUL byte is refused outright
+	 *  rather than silently written, mirroring the NUL-refusal
+	 *  `commands/append.ts`'s `assertNoUnencodedNul()` already applies to
+	 *  APPEND message bodies. A `binary` literal (RFC 3516 `literal8`,
+	 *  `"~{" number "}" CRLF *OCTET`) has no such restriction — OCTET is any
+	 *  of the full 256 byte values, NUL included, which is the whole point of
+	 *  literal8 existing. `astring()`/`nstring()`/`quotedOrLiteral()` all
+	 *  funnel their non-quotable fallback through here, so this one check
+	 *  covers every caller uniformly rather than needing one refusal per
+	 *  public method. */
 	private emitLiteral(data: Buffer, binary: boolean, forceSync = false): void {
+		if (!binary && data.includes(0x00)) {
+			throw new RangeError(
+				"literal: data contains a NUL byte (0x00), which CHAR8 (RFC 3501/9051 " +
+					'§9\'s plain-literal octet grammar, "%x01-ff") excludes -- pass ' +
+					"{ binary: true } for the RFC 3516 literal8 (\"~{n}\") framing that " +
+					"legitimately carries NUL octets, on a BINARY-capable server",
+			);
+		}
 		const { sync, suffix } = forceSync
 			? { sync: true, suffix: "" as const }
 			: pickLiteralForm(data.length, this.has);
@@ -615,18 +689,31 @@ export class CommandWriter {
 	 * Non-ASCII patterns take the same codec path as `mailbox()` (mUTF-7
 	 * unless UTF8=ACCEPT — the pattern grammar is mailbox-name-shaped, RFC
 	 * 5258 §5); anything not expressible as bare list-chars falls back to
-	 * quoted/literal exactly like `astring()`.
+	 * quoted/literal exactly like `astring()`. A pattern containing a literal
+	 * "&" ALSO takes the codec path even when otherwise all-ASCII — same
+	 * `mUTF-7 shift char must be escaped as "&-"` duty `mailbox()` already
+	 * applies (see that method's own doc comment), just checked here too:
+	 * "&" is ordinary ATOM-CHAR/list-char per the bare wire grammar, so
+	 * without this check a pattern like "Sent&Received" would sail through
+	 * `isValidListMailboxToken()` below as a bare token with its "&"
+	 * unescaped, corrupting the mUTF-7 encoding of any *later* pattern the
+	 * server tries to interpret relative to it. `encodeMailboxName` leaves
+	 * "%"/"*"/"]" untouched (it only shifts non-ASCII runs and escapes a
+	 * bare "&" — see that codec's own doc comment), so routing a wildcard-
+	 * bearing "&"-containing pattern through it is behavior-neutral for the
+	 * wildcards themselves.
 	 */
 	listMailbox(pattern: string): this {
 		return this.atomic(() => {
 			if (typeof pattern !== "string") {
 				throw new RangeError("listMailbox: expected a string");
 			}
-			const encoded = isAsciiOnly(pattern)
-				? pattern
-				: encodeMailboxName(pattern, {
-						utf8Accepted: this.has("UTF8=ACCEPT"),
-					});
+			const encoded =
+				isAsciiOnly(pattern) && !pattern.includes("&")
+					? pattern
+					: encodeMailboxName(pattern, {
+							utf8Accepted: this.has("UTF8=ACCEPT"),
+						});
 			if (isValidListMailboxToken(encoded)) {
 				this.emitValue(Buffer.from(encoded, "ascii"));
 			} else if (isQuotable(encoded)) {
@@ -678,6 +765,7 @@ export class CommandWriter {
 			if (!(d instanceof Date) || Number.isNaN(d.getTime())) {
 				throw new RangeError("date: expected a valid Date");
 			}
+			assertWireExpressibleYear(d, "date");
 			this.emitValue(Buffer.from(dateText(d), "ascii"));
 			return this;
 		});
@@ -690,6 +778,7 @@ export class CommandWriter {
 			if (!(d instanceof Date) || Number.isNaN(d.getTime())) {
 				throw new RangeError("dateTime: expected a valid Date");
 			}
+			assertWireExpressibleYear(d, "dateTime");
 			this.emitValue(Buffer.from(`"${dateTimeText(d)}"`, "ascii"));
 			return this;
 		});
@@ -747,9 +836,15 @@ export class CommandWriter {
 	 * insert their own spacing and would fight the "no space between `]` and
 	 * a following `<`" requirement). This method's own validation is
 	 * intentionally the same universal wire-safety floor every other method
-	 * enforces (no CR/LF — RFC3501/9051 §9 line-injection guard — and 7-bit
-	 * ASCII only, since every segment here is ultimately encoded "ascii"),
-	 * NOT re-validation of the token's own grammar — the caller owns that.
+	 * enforces (no C0 control character (including CR/LF — RFC3501/9051 §9
+	 * line-injection guard) or DEL, and 7-bit ASCII only, since every segment
+	 * here is ultimately encoded "ascii") -- NOT re-validation of the token's
+	 * own grammar — the caller owns that. The floor previously only rejected
+	 * CR/LF specifically (plus 8-bit), silently letting NUL and every other
+	 * C0 control, and DEL, straight onto the wire unescaped; every other
+	 * control character is exactly as unsafe here as CR/LF (none of them can
+	 * legitimately appear in a section-spec token) so the check now covers
+	 * the whole \x00-\x1F / \x7F range uniformly.
 	 */
 	raw(s: string): this {
 		return this.atomic(() => {
@@ -758,9 +853,9 @@ export class CommandWriter {
 			}
 			for (const ch of s) {
 				const cp = ch.codePointAt(0) ?? 0;
-				if (cp > 0x7f || cp === 0x0d || cp === 0x0a) {
+				if (cp > 0x7f || cp <= 0x1f || cp === 0x7f) {
 					throw new RangeError(
-						`raw: ${JSON.stringify(s)} contains a disallowed character (8-bit or CR/LF)`,
+						`raw: ${JSON.stringify(s)} contains a disallowed character (8-bit, a C0 control, or DEL)`,
 					);
 				}
 			}
