@@ -40,21 +40,60 @@ export interface CompressionLayer {
 }
 
 /**
+ * Decompression-bomb ceiling (defense-in-depth, no RFC citation -- RFC 4978
+ * itself has nothing to say about malicious peers): a malicious/compromised
+ * server can advertise COMPRESS=DEFLATE and then send a tiny compressed
+ * frame that inflates to gigabytes, exhausting memory with a handful of
+ * wire bytes. There is no natural per-message framing to bound this against
+ * (RFC 4978's compressed stream is continuous, not chunked per response),
+ * so this is an absolute cap on TOTAL decompressed output for the lifetime
+ * of one `wrapCompression()` call (i.e. one COMPRESS activation -- reset by
+ * every fresh `compress()`/`unauthenticate()` cycle). Generous enough that
+ * no realistic IMAP session (even one fetching many/large message bodies
+ * over a single long-lived compressed connection) should ever legitimately
+ * approach it; small enough that a genuine bomb is caught well before
+ * exhausting typical process memory.
+ */
+export const DEFAULT_MAX_INFLATED_BYTES = 256 * 1024 * 1024; // 256 MiB
+
+/**
  * `onError` receives any 'error' emitted by either transform (e.g.
- * malformed compressed data arriving from the peer) -- the caller is
- * expected to route it through the same failure path a broken socket would
- * take (never an unhandled 'error' event).
+ * malformed compressed data arriving from the peer, or the decompression-
+ * bomb guard below tripping) -- the caller is expected to route it through
+ * the same failure path a broken socket would take (never an unhandled
+ * 'error' event).
  */
 export function wrapCompression(
 	socket: net.Socket | tls.TLSSocket,
 	processingPipeline: NewlineTranform,
 	onError: (err: Error) => void,
+	maxInflatedBytes: number = DEFAULT_MAX_INFLATED_BYTES,
 ): CompressionLayer {
 	const inflate = zlib.createInflateRaw();
 	const deflate = zlib.createDeflateRaw();
 
 	inflate.on("error", onError);
 	deflate.on("error", onError);
+
+	// Decompression-bomb guard: tracks cumulative decompressed output and
+	// destroys `inflate` once it crosses `maxInflatedBytes` -- `destroy(err)`
+	// emits 'error' on `inflate` itself, routing through the SAME `onError`
+	// wired immediately above (and therefore the same teardown path a
+	// malformed-data codec error already takes) rather than needing a
+	// separate failure channel.
+	let inflatedBytes = 0;
+	inflate.on("data", (chunk: Buffer) => {
+		inflatedBytes += chunk.length;
+		if (inflatedBytes > maxInflatedBytes) {
+			inflate.destroy(
+				new Error(
+					`COMPRESS (RFC 4978) decompressed output exceeded the ` +
+						`${maxInflatedBytes}-byte safety cap -- refusing to keep ` +
+						`inflating (possible decompression-bomb DoS from the server)`,
+				),
+			);
+		}
+	});
 
 	// Read direction: decompress everything the socket delivers before it
 	// ever reaches the newline splitter.

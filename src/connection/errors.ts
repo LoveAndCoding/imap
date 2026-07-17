@@ -3,7 +3,7 @@ import { IMAPError } from "../errors";
 export class ConnectionTimeout extends Error {
 	constructor(
 		public readonly timeout: number,
-		public readonly phase: "Socket" | "Greeting" | "TLS Negotiation",
+		public readonly phase: "Socket" | "Greeting" | "TLS Negotiation" | "Command",
 	) {
 		super(`IMAP connection timed out`);
 	}

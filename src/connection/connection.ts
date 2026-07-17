@@ -59,6 +59,28 @@ import { openTls } from "./tls";
 const DEFAULT_TIMEOUT = 10000;
 
 /**
+ * LOW finding (verified real): server-supplied free text (e.g. a BYE
+ * greeting's human-readable explanation) used to be embedded verbatim,
+ * completely unsanitized, into a thrown Error's `message` -- a
+ * malicious/misbehaving server could inject CR/LF (forging fake log lines
+ * once a caller's logger prints `err.message` verbatim) or other C0/DEL
+ * control bytes into this library's own error messages. Escapes CR/LF/TAB
+ * to their visible two-character forms and every other C0/DEL byte to a
+ * `\xHH` escape -- purely cosmetic for the overwhelming majority of server
+ * text (plain ASCII with no control bytes), so no legitimate message
+ * changes shape.
+ */
+function sanitizeForErrorMessage(text: string): string {
+	// eslint-disable-next-line no-control-regex -- \x00-\x1f/\x7f control range is intentional (sanitizing server text before embedding in an error message)
+	return text.replace(/[\x00-\x1f\x7f]/g, (ch) => {
+		if (ch === "\r") return "\\r";
+		if (ch === "\n") return "\\n";
+		if (ch === "\t") return "\\t";
+		return `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`;
+	});
+}
+
+/**
  * Layer-1 IMAP transport connection (spec §3.2): owns the raw socket, the
  * newline/lexer/parser processing pipeline, TLS/STARTTLS negotiation,
  * COMPRESS (RFC 4978) and UNAUTHENTICATE (RFC 8437), and the command queue
@@ -93,6 +115,51 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	private commandQueue!: CommandQueue;
 	private connected: boolean;
 	private secure?: boolean;
+
+	/**
+	 * Re-entrancy guard for `connect()` (MEDIUM finding, implicit-TLS gap):
+	 * `this.socket` alone used to be the sole "already connecting" signal,
+	 * but the implicit-TLS path (`openTls()`) doesn't assign `this.socket`
+	 * until its OWN internal TCP-connect + handshake awaits resolve --
+	 * leaving `this.socket` `undefined` for the entire duration of that
+	 * await. Two overlapping, un-awaited `connect()` calls on the same
+	 * `imaps://`-style instance would BOTH pass the `!this.socket` guard,
+	 * both race their own independent `openTls()` attempt, and whichever
+	 * resolved second would silently clobber `this.socket` -- leaking the
+	 * first TLS socket (never destroyed) and leaving the connection
+	 * cross-wired between two attempts. Set synchronously at the very top
+	 * of `connect()`, before any `await`, so a second call in the same
+	 * synchronous stretch always sees it; cleared on every exit path
+	 * (`teardownFailedConnect()` for every failure, and at the end of a
+	 * successful `connect()`).
+	 */
+	private connectInProgress = false;
+
+	/**
+	 * Armed by `armBoundaryInjectionGuard()` the instant the boundary
+	 * command's (STARTTLS/COMPRESS/UNAUTHENTICATE) own tagged response is
+	 * routed, and held open across the ENTIRE async topology-swap window
+	 * that follows -- not just the one synchronous instant
+	 * `processingPipeline.forceNewLine(false)` runs in. M6.8-review
+	 * hardening: under COMPRESS, decompression happens on a Transform
+	 * (`inflate`) whose output can arrive via a LATER, separate `_transform`
+	 * call than the one that delivered the tagged OK -- the "same
+	 * synchronous callstack" assumption `forceNewLine(false)` alone relies
+	 * on (see `armBoundaryInjectionGuard`'s own doc comment) is unproven
+	 * across that async boundary for a split write (tagged OK in one
+	 * decompressed chunk, an injected line trickling in via a later one).
+	 * While this flag is `true`, every parser-emitted response (untagged,
+	 * tagged, continue, unknown -- see `resetProcessingPipeline()`) is
+	 * silently dropped BEFORE it ever reaches `router`: safe to do
+	 * unconditionally because the queue is ALWAYS held (`holdOnDispatch`)
+	 * for this exact same window, so no other command is ever legitimately
+	 * in flight and nothing genuine could arrive here. Cleared by
+	 * `endBoundaryWindow()`, the same chokepoint that releases the queue --
+	 * on EVERY exit path (success, decline, or hard failure) so a throw
+	 * during the topology swap can never leave this stuck `true` and
+	 * silently blackhole the rest of the connection's traffic.
+	 */
+	private postBoundaryDiscard = false;
 
 	/**
 	 * Set once `compress()` (RFC 4978, M5.9) has successfully negotiated
@@ -283,6 +350,10 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.compression = null;
 		this.commandQueue.stop();
 		this.transientConnectError = undefined;
+		// Re-entrancy guard (MEDIUM finding): every failure path through
+		// `connect()` ends up here, so this is the one place that reliably
+		// clears it regardless of which phase failed.
+		this.connectInProgress = false;
 		// CRITICAL-2: a command (e.g. the STARTTLS/CAPABILITY round trips that
 		// run DURING connect() itself) can be in flight when a connect()
 		// attempt aborts here — clear router state and unstick any suspended
@@ -293,6 +364,82 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.fireTeardown(
 			new ConnectionError("Connection attempt aborted", { phase: "connect" }),
 		);
+	}
+
+	/**
+	 * Shared handler for a processing-pipeline/codec stream error (parser,
+	 * lexer, newline-splitter, or the COMPRESS inflate/deflate transforms --
+	 * HIGH findings #4/#5). None of these forward an 'error' through
+	 * `.pipe()` to their downstream destination (Node's documented `.pipe()`
+	 * behavior), so each needs an explicit listener or an unlistened 'error'
+	 * event crashes the process. Rather than re-deriving "is this a connect-
+	 * time or steady-state failure" here, this destroys the socket WITH the
+	 * error and lets it re-surface through whichever 'error' handler is
+	 * CURRENTLY attached to it -- the transient connect()-time one (rejects
+	 * the in-flight `connect()` attempt, same as a genuine socket error
+	 * would) or the permanent steady-state one (`onSocketError`, emits
+	 * `connectionError`) -- and, via the 'close' event that follows, the
+	 * SAME full teardown (queue stop, compression teardown, capability
+	 * invalidation, router reset) a socket-level failure already gets.
+	 * Without this, a stream/codec error is invisible to all of that
+	 * machinery (it fires on the transform, never the socket) -- exactly
+	 * the "connected stays true, reads/writes wedge forever" failure mode
+	 * this closes (and, for the parser/lexer/pipeline case, the "unlistened
+	 * error crashes the process" one too).
+	 */
+	private onPipelineError = (err: unknown): void => {
+		const wrapped = err instanceof Error ? err : new Error(String(err));
+		this.socket?.destroy(wrapped);
+	};
+
+	/**
+	 * Bounds an in-flight negotiation promise (STARTTLS/COMPRESS/
+	 * UNAUTHENTICATE's own round trip, HIGH finding #6) by
+	 * `this.options.commandTimeout` when configured (`0`/unset = no bound,
+	 * the pre-existing behavior). On expiry, destroys the socket with a
+	 * `ConnectionTimeout(phase: "Command")` -- routing through the same
+	 * transient/permanent 'error' handler and full teardown `onPipelineError`
+	 * above relies on -- so a server that accepts the connection and then
+	 * goes silent mid-negotiation no longer hangs `connect()` (or a later
+	 * `compress()`/`unauthenticate()` call) forever with the queue held
+	 * indefinitely behind it.
+	 */
+	private async withCommandTimeout<T>(promise: Promise<T>): Promise<T> {
+		const ms = this.options.commandTimeout;
+		if (!ms) {
+			return promise;
+		}
+		let timer: NodeJS.Timeout | undefined;
+		const timeoutError = new ConnectionTimeout(ms, "Command");
+		const timeout = new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => {
+				timer = undefined;
+				this.socket?.destroy(timeoutError);
+				reject(timeoutError);
+			}, ms);
+		});
+		try {
+			return await Promise.race([promise, timeout]);
+		} finally {
+			if (timer !== undefined) {
+				clearTimeout(timer);
+			}
+		}
+	}
+
+	/**
+	 * The single chokepoint every exit path of `starttls()`/`compress()`/
+	 * `unauthenticate()` releases the held queue through (MEDIUM finding:
+	 * post-negotiation topology surgery wasn't guarded before `release()`,
+	 * and separately, `postBoundaryDiscard`, above, must never survive past
+	 * the end of its own window). Centralizing both here means every exit
+	 * path -- success, a declined negotiation, or a hard failure mid-swap --
+	 * clears both in the same breath, so neither can be left stuck by a
+	 * code path that forgot one or the other.
+	 */
+	private endBoundaryWindow(): void {
+		this.commandQueue.release();
+		this.postBoundaryDiscard = false;
 	}
 
 	constructor(options: IMAPConnectionConfiguration) {
@@ -378,11 +525,19 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			throw new IMAPError(
 				"Must end previous IMAP connection before starting a new one",
 			);
-		} else if (this.socket) {
+		} else if (this.socket || this.connectInProgress) {
+			// MEDIUM finding (implicit-TLS re-entrancy): `this.socket` alone is
+			// NOT a sufficient guard here -- the implicit-TLS path below
+			// doesn't assign `this.socket` until `openTls()`'s own internal
+			// awaits resolve, leaving a wide window where a second, overlapping
+			// `connect()` call would otherwise sail straight past this check.
+			// `connectInProgress` (set synchronously, immediately below, before
+			// any `await`) closes that window for every TLS mode uniformly.
 			throw new IMAPError(
 				"Existing IMAP connection or connection attempt must be fully closed before a new one can be made",
 			);
 		}
+		this.connectInProgress = true;
 
 		const {
 			host,
@@ -606,6 +761,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		boundSocket.once("end", guard(this.onSocketEnd));
 		boundSocket.once("close", guard(this.onSocketClose));
 
+		// The re-entrancy window (MEDIUM finding, see the field's own doc
+		// comment) ends once we reach here -- a new connect() attempt on this
+		// instance is now legal again (subject to the ordinary `disconnect()`
+		// lifecycle, guarded by `this.connected`/`this.socket` above).
+		this.connectInProgress = false;
+
 		// Manually call because the ready event will likely have passed
 		this.onSocketReady();
 		this.emit("ready", this.isSecure);
@@ -669,19 +830,50 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	/**
 	 * Tears down the current transport connection by destroying the socket.
 	 * A no-op if there is no live socket. Cleanup itself (clearing
-	 * `connected`/`secure`, resetting the router/command queue, emitting
-	 * `disconnected`) happens via the socket's own `close` handler
-	 * (`onSocketClose`), not synchronously here. `error`, if provided, is
-	 * forwarded to the socket's `destroy()` and surfaces via the usual
-	 * socket-error handling.
+	 * `connected`/`secure`, resetting the router/command queue) happens via
+	 * the socket's own `close` handler (`onSocketClose`), not synchronously
+	 * here -- but MEDIUM finding: the returned promise now actually WAITS
+	 * for that cleanup (the `disconnected` event) to complete before
+	 * resolving, rather than resolving the instant `destroy()` is called
+	 * (which only SCHEDULES the close, on a later tick -- `net.Socket`
+	 * never closes synchronously). Before this fix, a Layer-1-only caller
+	 * doing `await connection.disconnect()` could observe `connected` still
+	 * `true`, `compression` not yet torn down, and the capability registry
+	 * not yet invalidated, immediately after their own `await` resumed --
+	 * this class's own doc comment promises a torn-down connection, which
+	 * this now actually is by the time the promise settles. `error`, if
+	 * provided, is forwarded to the socket's `destroy()` and surfaces via
+	 * the usual socket-error handling.
 	 */
 	public async disconnect(error?: Error) {
 		if (!this.socket) {
 			return;
 		}
 
-		// Socket closing event handles cleanup
-		this.socket.destroy(error);
+		// Waits on the SOCKET's own 'close' (guaranteed to fire exactly once
+		// after `destroy()`, per Node's documented `net.Socket` behavior) --
+		// NOT this class's own `disconnected` event, which only ever fires
+		// from `onSocketClose()`, itself only wired up as a PERMANENT listener
+		// at the very END of a successful `connect()`. Waiting on `disconnected`
+		// instead would hang forever if `disconnect()` is called while a
+		// `connect()` attempt is still mid-flight (e.g. stuck mid-STARTTLS
+		// negotiation with no `commandTimeout` configured) -- `onSocketClose`
+		// was never wired up for THIS attempt yet, so it would never emit. A
+		// direct socket reference (not `this.socket`, which another concurrent
+		// teardown could reassign/null out from under this call) is captured
+		// up front so the wait is unaffected by anything else observing/
+		// mutating `this.socket` in the meantime. Whichever handler already
+		// runs cleanup for a NORMAL (post-connect) teardown (`onSocketClose`,
+		// registered before this call in that case) still runs FIRST --
+		// `EventEmitter` invokes 'close' listeners in registration order, and
+		// that listener was always attached earlier than this one -- so this
+		// still only resolves once that cleanup has actually completed.
+		const socket = this.socket;
+		const waitForClose = new Promise<void>((resolve) => {
+			socket.once("close", () => resolve());
+		});
+		socket.destroy(error);
+		await waitForClose;
 	}
 
 	/**
@@ -692,6 +884,27 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * instead of the caller calling `commandQueue.hold()` right after this
 	 * call returns (which only reliably lands at the same moment when the
 	 * queue happens to be empty).
+	 *
+	 * ⚠️ **This is the raw Layer-1 escape hatch (spec §3.2) -- it enforces
+	 * NONE of `ImapClient`'s Layer-2 policy.** In particular, `ImapClient.run()`
+	 * is the ONE chokepoint that enforces spec §10.3/RFC 8314 §5's cleartext-
+	 * credential policy (`Command.sendsCredentials`, gated on
+	 * `allowInsecureAuth`) before a byte is written; calling
+	 * `connection.runCommand(new LoginCommand(user, pass))` (or a hand-built
+	 * `AuthenticateCommand`) directly, bypassing `ImapClient` entirely, sends
+	 * that command with ZERO policy enforcement, regardless of what
+	 * `allowInsecureAuth` is configured to elsewhere. This is deliberate --
+	 * `Connection` is intentionally protocol-state-agnostic and carries no
+	 * concept of `ImapClientConfig` at all (see the class doc comment) -- but
+	 * it means a caller reaching for this escape hatch to run a credential-
+	 * bearing command is entirely responsible for checking `connection.isSecure`
+	 * (or otherwise deciding the transport is acceptable) THEMSELVES before
+	 * doing so. A judgment call recorded here rather than silently assumed:
+	 * pushing this enforcement down into `LoginCommand`/`AuthenticateCommand`
+	 * themselves would need `write()` (and therefore `CommandWriter`) to carry
+	 * transport-security state that doesn't exist on that interface today --
+	 * a materially larger, cross-cutting change for a policy this class's own
+	 * documented contract already places one layer up.
 	 */
 	public async runCommand<T>(
 		command: Command<T>,
@@ -796,6 +1009,19 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.lexer = new Lexer();
 		this.parser = new Parser();
 
+		// HIGH finding #4 (crash amplifier): none of `.pipe()`'s three hops
+		// forward an 'error' event to their downstream destination (that's
+		// Node's documented `.pipe()` behavior) -- without an explicit
+		// listener on EACH of these three streams, a parser/lexer/newline-
+		// splitter failure is an unlistened 'error' event, which crashes the
+		// process. `onPipelineError` routes it through whichever socket-error
+		// handler (transient connect()-time, or the permanent steady-state
+		// one) is currently live, exactly like a genuine socket error would
+		// be handled -- see that method's own doc comment.
+		this.processingPipeline.on("error", this.onPipelineError);
+		this.lexer.on("error", this.onPipelineError);
+		this.parser.on("error", this.onPipelineError);
+
 		// Pipe from our newline splitter to lexer to parser
 		this.processingPipeline.pipe(this.lexer).pipe(this.parser);
 		// Once we hit the parser, everything is routed through the response
@@ -803,16 +1029,34 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// fan-out (+ ALERT/hygiene handling) M0 always has, and additionally
 		// drives tag/claimant/continuation-owner attribution for
 		// `runCommand()`.
+		//
+		// `postBoundaryDiscard` (M6.8 hardening, see its own doc comment):
+		// while armed, every one of these four routes is a silent no-op --
+		// the queue is always held for the exact same window this flag
+		// covers, so nothing genuine is ever lost by dropping a response
+		// here.
 		this.parser.on("untagged", (resp: UntaggedResponse) => {
+			if (this.postBoundaryDiscard) {
+				return;
+			}
 			this.router.routeUntagged(resp);
 		});
 		this.parser.on("tagged", (resp: TaggedResponse) => {
+			if (this.postBoundaryDiscard) {
+				return;
+			}
 			this.router.routeTagged(resp);
 		});
 		this.parser.on("continue", (resp: ContinueResponse) => {
+			if (this.postBoundaryDiscard) {
+				return;
+			}
 			this.router.routeContinuation(resp);
 		});
 		this.parser.on("unknown", (resp: UnknownResponse | null) => {
+			if (this.postBoundaryDiscard) {
+				return;
+			}
 			this.router.routeUnknown(resp);
 		});
 
@@ -890,9 +1134,9 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		if (status.status === "BYE") {
 			throw new IMAPError(
-				`Server rejected the connection with a BYE greeting: ${
-					status.text?.content ?? ""
-				}`,
+				`Server rejected the connection with a BYE greeting: ${sanitizeForErrorMessage(
+					status.text?.content ?? "",
+				)}`,
 			);
 		}
 
@@ -958,6 +1202,13 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		const onTagged = (resp: TaggedResponse) => {
 			if (resp.tag.id === cmd.tag) {
 				this.processingPipeline.forceNewLine(false);
+				// M6.8 hardening: keep discarding EVERY subsequent response
+				// (not just the one synchronous instant `forceNewLine(false)`
+				// covers) until `endBoundaryWindow()` clears it once the
+				// topology swap that follows actually completes -- see
+				// `postBoundaryDiscard`'s own doc comment for the split-write
+				// gap this closes.
+				this.postBoundaryDiscard = true;
 			}
 		};
 		this.on("taggedResponse", onTagged);
@@ -994,7 +1245,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// We need to retrieve the capabilities. Goes through the queue
 			// (not a bare `cmd.run(this)`) so it participates in the same
 			// isolated-context bookkeeping STARTTLS itself relies on.
-			capabilities = await this.runCommand(new CapabilityCommand());
+			// HIGH finding #6: bounded by `commandTimeout` -- a server that
+			// accepts the connection and then goes silent here previously hung
+			// `connect()` (and the queue behind it) forever.
+			capabilities = await this.withCommandTimeout(
+				this.runCommand(new CapabilityCommand()),
+			);
 		}
 
 		if (capabilities.doesntHave("STARTTLS")) {
@@ -1029,13 +1285,17 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// originally relied on) is what actually closes the complete-line
 		// injection gap.
 		const disarmInjectionGuard = this.armBoundaryInjectionGuard(tlsCmd);
-		const negotiationResult = this.runCommand(tlsCmd, { holdOnDispatch: true });
+		// HIGH finding #6: bounded by `commandTimeout` -- see `withCommandTimeout()`'s
+		// own doc comment.
+		const negotiationResult = this.withCommandTimeout(
+			this.runCommand(tlsCmd, { holdOnDispatch: true }),
+		);
 
 		let startNegotiation: boolean;
 		try {
 			startNegotiation = await negotiationResult;
 		} catch (err) {
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			throw err;
 		} finally {
 			disarmInjectionGuard();
@@ -1045,7 +1305,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// In theory we shouldn't be able to hit this as
 			// the above should throw if we can't negotiate,
 			// but want to be safe
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			return false;
 		}
 
@@ -1066,43 +1326,74 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 
 		let tlsSock: tls.TLSSocket;
 		try {
-			tlsSock = await openTls({
-				host: this.options.host,
-				socket: previousSocket,
-				timeoutMs: this.options.timeout || DEFAULT_TIMEOUT,
-				tlsOptions: this.options.tlsOptions,
-			});
+			// HIGH finding #6: bounded by `commandTimeout` -- `openTls()` already
+			// has its OWN handshake timeout (`this.options.timeout`), but that
+			// only covers the handshake itself; this additionally bounds the
+			// whole STARTTLS ritual consistently with the other negotiation
+			// awaits in this method.
+			tlsSock = await this.withCommandTimeout(
+				openTls({
+					host: this.options.host,
+					socket: previousSocket,
+					timeoutMs: this.options.timeout || DEFAULT_TIMEOUT,
+					tlsOptions: this.options.tlsOptions,
+				}),
+			);
 		} catch (err) {
 			// Handshake failure ends the I-1 window — release so the queue
 			// isn't left permanently wedged. connect() tears the whole
 			// connection down regardless of this release.
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			throw err;
 		}
 
-		// MEDIUM-6: swap to the new secure socket BEFORE releasing the held
-		// queue. `release()` synchronously flushes anything parked during the
-		// hold — a command parked there must be dispatched against the NEW
-		// (TLS) socket, never the old plaintext one it would otherwise still
-		// see if release() ran first.
-		this.socket = tlsSock;
-		this.secure = true;
-		this.socket.pipe(this.processingPipeline);
-		// CRITICAL-2: the transient connect-time error handler was bound to
-		// `previousSocket`; follow the swap so a socket failure between here
-		// and the permanent handler's installation (e.g. during the post-TLS
-		// CAPABILITY round trip below) still rejects the in-flight connect()
-		// instead of crashing or hanging it.
-		this.rebindTransientErrorHandler();
-		this.commandQueue.release();
+		// MEDIUM finding (post-negotiation topology surgery unguarded): wrapped
+		// in try/finally so a synchronous throw anywhere in this swap still
+		// releases the held queue (and clears `postBoundaryDiscard`) instead of
+		// wedging it forever -- see `endBoundaryWindow()`'s own doc comment.
+		try {
+			// MEDIUM finding (stale transient-error listener across the STARTTLS
+			// swap): detach BEFORE handing `previousSocket` off -- it's about to
+			// be reused internally by the new TLS wrapper, and left attached, a
+			// LATER 'error' event on it would still invoke this (by-then-stale)
+			// closure long after this connect() attempt has moved past it.
+			if (this.transientConnectError) {
+				previousSocket.off("error", this.transientConnectError);
+			}
+			// MEDIUM-6: swap to the new secure socket BEFORE releasing the held
+			// queue. `release()` synchronously flushes anything parked during the
+			// hold — a command parked there must be dispatched against the NEW
+			// (TLS) socket, never the old plaintext one it would otherwise still
+			// see if release() ran first.
+			this.socket = tlsSock;
+			this.secure = true;
+			this.socket.pipe(this.processingPipeline);
+			// CRITICAL-2: the transient connect-time error handler was bound to
+			// `previousSocket`; follow the swap so a socket failure between here
+			// and the permanent handler's installation (e.g. during the post-TLS
+			// CAPABILITY round trip below) still rejects the in-flight connect()
+			// instead of crashing or hanging it.
+			this.rebindTransientErrorHandler();
+		} finally {
+			this.endBoundaryWindow();
+		}
+
+		// I-2 (client-level capability epoch): fired the instant TLS goes
+		// live, before the fresh post-TLS CAPABILITY round trip below --
+		// lets `ImapClient` invalidate ITS OWN, separate capability registry
+		// at the same moment (see `secureUpgrade`'s own doc comment). This
+		// connection's own precursor registry is invalidated immediately
+		// after, same as before this fix.
+		this.emit("secureUpgrade");
 
 		// I-2: discard everything captured before confidentiality was
 		// established, then re-issue CAPABILITY over the now-protected
 		// channel before connect() resolves (spec §10.4). `Session` consults
 		// `capabilityRegistry` and reuses this value instead of re-fetching.
 		this.capabilityRegistry.invalidate();
-		const postTlsCapabilities = await this.runCommand(
-			new CapabilityCommand(),
+		// HIGH finding #6: bounded by `commandTimeout`.
+		const postTlsCapabilities = await this.withCommandTimeout(
+			this.runCommand(new CapabilityCommand()),
 		);
 		this.capabilityRegistry.set(postTlsCapabilities);
 
@@ -1169,13 +1460,17 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// M6.2: same complete-line injection defense as starttls() -- armed
 		// before dispatch, see `armBoundaryInjectionGuard`'s doc comment.
 		const disarmInjectionGuard = this.armBoundaryInjectionGuard(compressCmd);
-		const negotiationResult = this.runCommand(compressCmd, { holdOnDispatch: true });
+		// HIGH finding #6: bounded by `commandTimeout` -- see
+		// `withCommandTimeout()`'s own doc comment.
+		const negotiationResult = this.withCommandTimeout(
+			this.runCommand(compressCmd, { holdOnDispatch: true }),
+		);
 
 		let activated: boolean;
 		try {
 			activated = await negotiationResult;
 		} catch (err) {
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			if (err instanceof ServerNoError || err instanceof ServerBadError) {
 				// RFC4978-3-3: leave the connection exactly as it was --
 				// fully functional, uncompressed.
@@ -1190,7 +1485,7 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// In theory unreachable (a non-OK tagged response always throws,
 			// caught above) -- kept for safety, same posture as starttls()'s
 			// own identical guard.
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			return false;
 		}
 
@@ -1206,15 +1501,32 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		const socket = this.socket!;
 		socket.unpipe(this.processingPipeline);
 
-		this.compression = wrapCompression(socket, this.processingPipeline, (err) => {
-			this.onSocketError(err);
-		});
+		// MEDIUM finding (post-negotiation topology surgery unguarded): wrapped
+		// in try/finally so a sync throw from `wrapCompression()` itself still
+		// releases the held queue instead of wedging it forever.
+		try {
+			// HIGH finding #5: a codec (inflate/deflate) error fires on the
+			// TRANSFORM, never the socket -- `onPipelineError` routes it through
+			// a REAL teardown (destroy the socket, which cascades through
+			// `onSocketClose`'s full cleanup: queue stop, compression teardown,
+			// state reset) instead of the bare `connectionError` emission
+			// `onSocketError` alone used to produce here, which left `connected`
+			// true and reads/writes permanently wedged against a dead codec.
+			this.compression = wrapCompression(socket, this.processingPipeline, this.onPipelineError);
+		} finally {
+			// MEDIUM-6 parity: the codec is fully interposed BEFORE releasing
+			// the held queue -- anything parked during the hold must write
+			// through the NEW (compressing) path, never bypass it by writing to
+			// the raw socket first.
+			this.endBoundaryWindow();
+		}
 
-		// MEDIUM-6 parity: the codec is fully interposed BEFORE releasing the
-		// held queue -- anything parked during the hold must write through
-		// the NEW (compressing) path, never bypass it by writing to the raw
-		// socket first.
-		this.commandQueue.release();
+		// Connection-local capability epoch (I-2, Layer-1-only callers): a
+		// topology change is exactly the kind of event `capabilityRegistry`'s
+		// own doc comment already applies to STARTTLS -- apply it here too so
+		// `getCapabilityProbe()`'s fallback never reasons about pre-COMPRESS
+		// capabilities as still current post-COMPRESS.
+		this.capabilityRegistry.invalidate();
 
 		return true;
 	}
@@ -1260,6 +1572,20 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * no topology to swap).
 	 */
 	public async unauthenticate(): Promise<void> {
+		// MEDIUM finding parity: `starttls()`/`compress()` both refuse to
+		// proceed with no live transport to negotiate over -- UNAUTHENTICATE
+		// lacked the same guard, so a caller invoking it with no socket would
+		// dispatch straight into `runCommand()` and hang/reject in a much less
+		// direct way than the immediate, honest `false`-shaped refusal its
+		// siblings give. Layer-2 (`ImapClient.unauthenticate()`) already gates
+		// on client-level state before ever reaching here, so this is
+		// defense-in-depth for a Layer-1-only caller.
+		if (!this.socket) {
+			throw new IMAPError(
+				"unauthenticate() has no live connection to negotiate over",
+			);
+		}
+
 		const cmd = new UnauthenticateCommand();
 		// M6.2: same complete-line injection defense as starttls()/compress()
 		// -- armed before dispatch, see `armBoundaryInjectionGuard`'s doc
@@ -1269,37 +1595,55 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// must never be parsed as a live response under the WRONG
 		// (pre-reset) state either, compression or not.
 		const disarmInjectionGuard = this.armBoundaryInjectionGuard(cmd);
-		const result = this.runCommand(cmd, { holdOnDispatch: true });
+		// HIGH finding #6: bounded by `commandTimeout` -- see
+		// `withCommandTimeout()`'s own doc comment.
+		const result = this.withCommandTimeout(
+			this.runCommand(cmd, { holdOnDispatch: true }),
+		);
 
 		try {
 			await result;
 		} catch (err) {
-			this.commandQueue.release();
+			this.endBoundaryWindow();
 			throw err;
 		} finally {
 			disarmInjectionGuard();
 		}
 
-		if (this.compression) {
-			// MEDIUM-7 parity + M6.2's completion of it: `armBoundaryInjectionGuard`
-			// above already discarded any buffered residue -- partial OR
-			// complete-line -- the instant UNAUTHENTICATE's own tagged OK was
-			// routed. Nothing left to do here before touching topology;
-			// `processingPipeline.pending` is already empty by this point.
+		// MEDIUM finding (post-negotiation topology surgery unguarded): wrapped
+		// in try/finally so a sync throw anywhere in this restoration still
+		// releases the held queue instead of wedging it forever.
+		try {
+			if (this.compression) {
+				// MEDIUM-7 parity + M6.2's completion of it: `armBoundaryInjectionGuard`
+				// above already discarded any buffered residue -- partial OR
+				// complete-line -- the instant UNAUTHENTICATE's own tagged OK was
+				// routed. Nothing left to do here before touching topology;
+				// `processingPipeline.pending` is already empty by this point.
 
-			// Tear the codec down and restore the direct pipe (the exact
-			// inverse of compress()'s interposition): read side back to
-			// socket -> processingPipeline, write side back to raw
-			// `sendCommand` writes.
-			const socket = this.socket!;
-			this.compression.destroy();
-			this.compression = null;
-			socket.pipe(this.processingPipeline);
+				// Tear the codec down and restore the direct pipe (the exact
+				// inverse of compress()'s interposition): read side back to
+				// socket -> processingPipeline, write side back to raw
+				// `sendCommand` writes.
+				const socket = this.socket!;
+				this.compression.destroy();
+				this.compression = null;
+				socket.pipe(this.processingPipeline);
+			}
+		} finally {
+			// MEDIUM-6 parity: topology fully restored BEFORE releasing the held
+			// queue — anything parked during the hold dispatches against the new
+			// (uncompressed) path.
+			this.endBoundaryWindow();
 		}
 
-		// MEDIUM-6 parity: topology fully restored BEFORE releasing the held
-		// queue — anything parked during the hold dispatches against the new
-		// (uncompressed) path.
-		this.commandQueue.release();
+		// Connection-local capability epoch (I-2, Layer-1-only callers): RFC
+		// 8437 itself names UNAUTHENTICATE as an invalidation trigger (the
+		// post-UNAUTHENTICATE capability set may differ) -- mirror the same
+		// invalidation `ImapClient.unauthenticate()` already applies to its
+		// OWN registry onto this connection's separate precursor one, so
+		// `getCapabilityProbe()`'s fallback never reasons about pre-
+		// UNAUTHENTICATE capabilities as still current.
+		this.capabilityRegistry.invalidate();
 	}
 }

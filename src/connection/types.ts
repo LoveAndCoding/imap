@@ -51,6 +51,21 @@ export type IMAPConnectionConfiguration = {
 	 *  unset. */
 	timeout?: number;
 	/**
+	 * Milliseconds to bound the post-greeting isolated negotiation round
+	 * trips this class drives internally -- STARTTLS, COMPRESS, and
+	 * UNAUTHENTICATE (spec §6.1/I-1's exclusive windows). Unlike `timeout`
+	 * above (TCP connect / greeting / TLS handshake, all already bounded),
+	 * these negotiations had NO timeout at all: a server that accepts the
+	 * connection and then goes silent mid-negotiation hung `connect()` (or a
+	 * later `compress()`/`unauthenticate()` call) forever and wedged the
+	 * held queue behind it. `0`/unset = no bound (the pre-existing
+	 * behavior) -- mirrors `ImapClientTimeouts.command`'s own semantics
+	 * (`client/config.ts`), which `ImapClient` threads through to this
+	 * field so Layer-1-only callers of this same `Connection` class get the
+	 * identical protection when they configure it directly.
+	 */
+	commandTimeout?: number;
+	/**
 	 * Optional notification channel (spec I-7/§10.6): Connection uses this to
 	 * surface things like ALERT response-code text. Defaults to a no-op so
 	 * Connection can always call it unconditionally. `Session`/`IMAPConfiguration`
@@ -65,6 +80,24 @@ export interface IConnectionEvents {
 	ready: (isSecure: boolean) => void;
 	connectionError: (error: ConnectionErrors) => void;
 	disconnected: (wasGraceful: boolean) => void;
+	/**
+	 * Fired once, synchronously, the INSTANT the STARTTLS handshake succeeds
+	 * during `connect()` -- BEFORE the post-handshake CAPABILITY round trip
+	 * that follows it. Spec §3.5 (invariant I-2, "capability epochs"): any
+	 * capability data observed pre-TLS is attacker-forgeable (no
+	 * confidentiality/integrity yet) and must never be treated as current
+	 * once a more trustworthy vantage point exists. This connection's own
+	 * precursor `capabilityRegistry` already invalidates itself at exactly
+	 * this moment (see `starttls()`); this event lets a Layer-2 owner
+	 * (`ImapClient`) do the same to ITS OWN, separate capability registry
+	 * -- without it, a cleartext greeting's `[CAPABILITY ...]` code could
+	 * sit in `ImapClient`'s registry (and have already fired a public
+	 * `capabilitiesChanged` event with that forgeable data) for the entire
+	 * span between the greeting and the fresh post-TLS CAPABILITY response
+	 * landing, rather than being invalidated the moment TLS actually goes
+	 * live.
+	 */
+	secureUpgrade: () => void;
 
 	// Response Events
 	serverStatus: (response: UntaggedResponse) => void;

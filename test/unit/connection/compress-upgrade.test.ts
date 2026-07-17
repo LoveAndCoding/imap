@@ -286,6 +286,38 @@ async function startTlsThenCompressServer(fixture: {
 	return { port: address.port, close: closeServer(server, sockets) };
 }
 
+/**
+ * HIGH finding #5 (verified real): activates COMPRESS normally, then writes
+ * deliberately MALFORMED raw-DEFLATE bytes straight to the socket (bypassing
+ * `deflate` entirely) -- the client's `inflate` transform will fail to
+ * decode this and emit 'error'. Before the fix, that error routed to
+ * `onSocketError`, which ONLY emits `connectionError` -- no socket destroy,
+ * no queue stop, no state reset -- leaving `connected` `true` and every
+ * future read/write permanently wedged against a dead codec.
+ */
+async function startCompressThenSendGarbageServer(): Promise<{
+	port: number;
+	close: () => Promise<void>;
+}> {
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		linesUntilCompress(socket, (line, tag) => {
+			if (/\bCOMPRESS\b/i.test(line)) {
+				socket.removeAllListeners("data");
+				socket.write(`${tag} OK COMPRESS active\r\n`);
+				// Malformed raw-DEFLATE bytes -- not a valid compressed stream at
+				// all, written directly (never through a real `deflate`).
+				socket.write(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return { port: address.port, close: closeServer(server, sockets) };
+}
+
 describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 	let cleanup: (() => Promise<void>) | undefined;
 	let connection: Connection | undefined;
@@ -488,5 +520,69 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 		// DEFLATE octets, so a plain `net`/string-matching round trip here
 		// already proves the point without needing a codec on this branch.
 		await expect(connection.runCommand(new NoopCommand())).resolves.toBeNull();
+	});
+
+	// MEDIUM finding (I-2, Layer-1-only callers): `Connection`'s own precursor
+	// `capabilityRegistry` is invalidated on STARTTLS but was never
+	// invalidated on COMPRESS -- a topology change `getCapabilityProbe()`'s
+	// fallback should not keep reasoning about as if nothing changed.
+	test("compress() invalidates this connection's OWN (Layer-1) capabilityRegistry", async () => {
+		const server = await startCompressCapableServer();
+		cleanup = server.close;
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: server.port,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+		await connection.connect();
+
+		const fakeCaps: any = { has: (c: string) => c === "COMPRESS=DEFLATE" };
+		connection.capabilityRegistry.set(fakeCaps);
+		expect(connection.capabilityRegistry.isValid).toBe(true);
+
+		const activated = await connection.compress();
+		expect(activated).toBe(true);
+
+		expect(connection.capabilityRegistry.isValid).toBe(false);
+	});
+
+	test("HIGH finding #5: a codec (inflate) error triggers a REAL teardown -- socket destroyed, queue stopped, state reset -- not just a connectionError emission that leaves the connection wedged", async () => {
+		const server = await startCompressThenSendGarbageServer();
+		cleanup = server.close;
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: server.port,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+		await connection.connect();
+
+		const activated = await connection.compress();
+		expect(activated).toBe(true);
+
+		const disconnected = new Promise<void>((resolve) => {
+			connection!.once("disconnected", () => resolve());
+		});
+		const connectionErrors: unknown[] = [];
+		connection.on("connectionError", (err) => connectionErrors.push(err));
+
+		// Trigger the malformed inflate: any further round trip is enough to
+		// pump the garbage bytes already sitting on the wire through the codec.
+		await expect(connection.runCommand(new NoopCommand())).rejects.toBeDefined();
+
+		await disconnected;
+
+		expect(connectionErrors.length).toBeGreaterThan(0);
+		expect(connection.isActive).toBe(false);
+		expect(connection.isCompressed).toBe(false);
+		expect(
+			(connection as unknown as { commandQueue: { isHeld: boolean } }).commandQueue.isHeld,
+		).toBe(false);
+
+		// Not merely "torn down" -- genuinely usable again for a NEW attempt
+		// (proves nothing is left permanently wedged): a subsequent runCommand
+		// on the now-dead connection must reject promptly, never hang.
+		await expect(connection.runCommand(new NoopCommand())).rejects.toBeDefined();
 	});
 });

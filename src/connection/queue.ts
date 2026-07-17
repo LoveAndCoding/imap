@@ -272,6 +272,26 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	private held: boolean;
 	private readonly tagGenerator = commandIdGenerator();
 
+	/**
+	 * HIGH finding #7 (verified real): `true` from the moment `stop()` runs
+	 * until the NEXT `start()`. `AsyncQueueContext.add()` only ever dispatches
+	 * `if (this.running)`, with no rejecting else-branch -- a command handed
+	 * to `CommandQueue.add()` while the queue is in this window used to just
+	 * sit in a freshly-created context's `commands` set forever (parked, not
+	 * rejected), because that context's own `running` starts `false` and
+	 * nothing ever flips it back UNLESS a LATER `start()` promotes it. Since
+	 * this same `CommandQueue`/`Connection` pair is reused across reconnects,
+	 * that later `start()` (the NEXT connect()) would then dispatch the
+	 * stale, pre-stop command straight onto a brand-new connection instead of
+	 * ever rejecting it. Distinct from "never started yet" (default `false`,
+	 * both at construction and set back on the NEXT `start()`): a command
+	 * submitted before this queue has EVER been started still legitimately
+	 * queues up for that first `start()` to dispatch (existing, tested
+	 * behavior, e.g. commands queued immediately post-construction) -- only
+	 * the "was running, then explicitly stopped" window rejects synchronously.
+	 */
+	private stopped = false;
+
 	constructor(
 		public readonly connection: Connection,
 		private running: boolean = false,
@@ -321,6 +341,17 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	 * empty or another context was still active when they were called.
 	 */
 	add<T>(command: Command<T>, options?: { holdOnDispatch?: boolean }): Promise<T> {
+		if (this.stopped) {
+			// HIGH finding #7: reject synchronously rather than silently
+			// parking this command in a brand-new (never-to-be-promoted)
+			// context -- see `stopped`'s own doc comment.
+			return Promise.reject(
+				new ConnectionError(
+					"Cannot submit a command: the connection has been stopped/torn down",
+					{ phase: "steady" },
+				),
+			);
+		}
 		const mode = command.queueMode;
 		const waiting = this.waitingContext;
 		const needsNewContext =
@@ -371,6 +402,11 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 
 	start() {
 		this.running = true;
+		// HIGH finding #7: a fresh `start()` (a new `connect()` on this same
+		// reused `Connection`/`CommandQueue`) re-opens submission -- any
+		// command submitted from here on is a genuine new attempt against
+		// THIS (new) connection, not a stale one from before the stop.
+		this.stopped = false;
 		if (this.activeContext) {
 			this.activeContext.run();
 		}
@@ -380,6 +416,9 @@ export default class CommandQueue extends TypedEmitter<CommandQueueEvents> {
 	 *  `ConnectionError(phase:"steady")` carrying `cause` (spec §6.3). */
 	stop(cause?: unknown) {
 		this.running = false;
+		// HIGH finding #7: armed until the next `start()` -- see `stopped`'s
+		// own doc comment.
+		this.stopped = true;
 		// Defensive hygiene (CRITICAL-2): a dead/erroring socket must never
 		// leave the queue permanently held. `stop()` is the one operation every
 		// teardown path (both the normal socket-close lifecycle and a

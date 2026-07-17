@@ -5,6 +5,7 @@ import type { ClaimContext } from "./base";
 import { Command } from "./base";
 import {
 	NO_CAPS,
+	assertBinaryCapability,
 	assertNoUnencodedNul,
 	toMessageBuffer,
 	validateCatenateParts,
@@ -156,6 +157,19 @@ export class ReplaceCommand extends Command<AppendResult> {
 		this.catenateParts = validateCatenateParts(this.opts.catenate, this.caps, this.verb);
 		if (!this.catenateParts) {
 			assertNoUnencodedNul(this.data, this.opts.binary === true, this.verb);
+			// MEDIUM finding (verified real; same gap `AppendCommand` just had
+			// fixed): `{ binary: true }` requests the RFC 3516 literal8 (`~{n}`)
+			// wire form -- an optional extension that must be gated on the
+			// server actually advertising it (BINARY, or an IMAP4rev2 server
+			// that folds literal8 transmission into core) BEFORE any byte
+			// reaches the wire (I-9), same as every other optional extension
+			// this constructor validates. `assertBinaryCapability` was exported
+			// from `append.ts` specifically so `ReplaceCommand` could reuse it
+			// (see that function's own doc comment) but was never actually
+			// called here -- this command gated NOTHING on `opts.binary`.
+			if (this.opts.binary === true) {
+				assertBinaryCapability(this.caps, this.verb);
+			}
 		}
 		// RFC 3501 §2.3.2: \Recent can never appear in a client-sent flag list
 		// -- same M3.6-adjudicated refusal `AppendCommand` enforces, applying

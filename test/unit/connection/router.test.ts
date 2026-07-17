@@ -164,6 +164,59 @@ describe("Router (spec §8)", () => {
 			expect(calls.serverStatus).toEqual([resp]);
 			expect((calls.log[0] as { detail: { trusted: boolean } }).detail.trusted).toBe(true);
 		});
+
+		// LOW finding (verified real): a stray space immediately inside the
+		// opening "[" (e.g. `[ ALERT]`) makes the resp-text-code matcher parse
+		// the keyword into `contents[0]` instead of `kind` (confirmed
+		// empirically: `AtomTextCode { kind: " ", contents: ["ALERT"] }`) -- a
+		// bare `code.kind === "ALERT"` check silently misses this, bypassing
+		// the RFC9051-11.3-2 trusted/untrusted-marking gate entirely (the
+		// response falls through to an ordinary, unconditional
+		// `emitServerStatus`, even pre-confidentiality).
+		test("a stray space inside the bracket ([ ALERT]) still trips the trusted-marking gate pre-confidentiality (does not silently bypass it)", () => {
+			const { host, calls, setSecure } = makeHost();
+			setSecure(false);
+			const router = new Router(host);
+
+			const resp = parseLine(`* OK [ ALERT] forged pre-TLS message${CRLF}`) as UntaggedResponse;
+			router.routeUntagged(resp);
+
+			expect(
+				calls.serverStatus,
+				"must be suppressed pre-confidentiality exactly like a well-formed [ALERT], not silently pass through",
+			).toEqual([]);
+			expect(calls.log).toHaveLength(1);
+			expect((calls.log[0] as { detail: { trusted: boolean } }).detail.trusted).toBe(false);
+			expect(calls.alert).toEqual([
+				{ text: "forged pre-TLS message", meta: { trusted: false } },
+			]);
+		});
+
+		test("a stray space inside the bracket ([ ALERT]) still logs trusted:true and emits serverStatus post-confidentiality", () => {
+			const { host, calls, setSecure } = makeHost();
+			setSecure(true);
+			const router = new Router(host);
+
+			const resp = parseLine(`* OK [ ALERT] system going down${CRLF}`) as UntaggedResponse;
+			router.routeUntagged(resp);
+
+			expect(calls.serverStatus).toEqual([resp]);
+			expect((calls.log[0] as { detail: { trusted: boolean } }).detail.trusted).toBe(true);
+		});
+
+		test("an ordinary (non-ALERT) code with a stray leading space is unaffected -- still surfaced as a normal serverStatus regardless of confidentiality", () => {
+			const { host, calls, setSecure } = makeHost();
+			setSecure(false);
+			const router = new Router(host);
+
+			const resp = parseLine(
+				`* OK [ APPENDUID 1 2] not an alert${CRLF}`,
+			) as UntaggedResponse;
+			router.routeUntagged(resp);
+
+			expect(calls.serverStatus).toEqual([resp]);
+			expect(calls.log).toHaveLength(0);
+		});
 	});
 
 	describe("tagged routing", () => {

@@ -95,9 +95,47 @@ describe("ReplaceCommand (RFC 8508) -- M5.6", () => {
 			expect(() => new ReplaceCommand(1, "Drafts", data)).toThrow(/NUL byte/);
 		});
 
-		test("accepts a NUL-bearing Buffer message when opts.binary is true", () => {
+		test("accepts a NUL-bearing Buffer message when opts.binary is true and BINARY is advertised", () => {
 			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
-			expect(() => new ReplaceCommand(1, "Drafts", data, { binary: true })).not.toThrow();
+			expect(() =>
+				new ReplaceCommand(1, "Drafts", data, { binary: true }, {
+					has: (c) => c === "BINARY",
+					knownAppendLimit: () => false,
+				}),
+			).not.toThrow();
+		});
+	});
+
+	// MEDIUM finding (verified real; same gap `AppendCommand` just had fixed):
+	// `{ binary: true }` requests the RFC 3516 literal8 (`~{n}`) wire form --
+	// ReplaceCommand gated NOTHING on it before this fix, unlike every other
+	// optional extension this constructor validates.
+	describe("BINARY capability gate (RFC 3516 §3, reused from AppendCommand)", () => {
+		test("opts.binary:true without the BINARY capability (or IMAP4rev2) throws CapabilityError, zero bytes written", () => {
+			const data = Buffer.from([0x53, 0x75, 0x00, 0x01]);
+			expect(() => new ReplaceCommand(1, "Drafts", data, { binary: true })).toThrow(
+				CapabilityError,
+			);
+		});
+
+		test("opts.binary:true is also accepted on a bare IMAP4rev2 server with no separate BINARY advertisement", () => {
+			const data = Buffer.from([0x00]);
+			expect(() =>
+				new ReplaceCommand(1, "Drafts", data, { binary: true }, {
+					has: (c) => c === "IMAP4rev2",
+					knownAppendLimit: () => false,
+				}),
+			).not.toThrow();
+		});
+
+		test("gate is skipped entirely when catenate is present (opts.binary documented as ignored there)", () => {
+			expect(
+				() =>
+					new ReplaceCommand(1, "Drafts", Buffer.alloc(0), {
+						binary: true,
+						catenate: [{ type: "TEXT", message: Buffer.from("hi\r\n") }],
+					}, { has: (c) => c === "CATENATE", knownAppendLimit: () => false }),
+			).not.toThrow();
 		});
 	});
 
@@ -166,7 +204,10 @@ describe("ReplaceCommand (RFC 8508) -- M5.6", () => {
 		});
 
 		test("opts.binary requests the RFC 3516 literal8 (~{n}) form", () => {
-			const cmd = new ReplaceCommand(1, "Drafts", Buffer.from([0x00, 0x01]), { binary: true });
+			const cmd = new ReplaceCommand(1, "Drafts", Buffer.from([0x00, 0x01]), { binary: true }, {
+				has: (c) => c === "BINARY",
+				knownAppendLimit: () => false,
+			});
 			const w = writerWithCaps();
 			Command.writeArgs(cmd, w);
 			expect(wireText(w)).toMatch(/^1 Drafts ~\{2\}\r\n/);

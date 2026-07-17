@@ -13,6 +13,15 @@ import type { CommandWriter } from "./writer";
  * arguments, with `CommandWriter` handling quoting/literal decisions
  * (including the literal gate for an 8-bit or otherwise unquotable
  * password) exactly like any other command's arguments.
+ *
+ * ⚠️ **Cleartext-credential policy (spec §10.3/RFC 8314 §5) is enforced by
+ * `ImapClient.run()`, NOT by this class or by `Connection`.** `sendsCredentials`
+ * below is what that chokepoint keys its `allowInsecureAuth` gate on --
+ * submitting a `LoginCommand` directly through the Layer-1 `Connection`
+ * escape hatch (`connection.runCommand(new LoginCommand(...))`) bypasses that
+ * gate entirely and will happily send the password in the clear over a
+ * non-TLS socket. See `Connection.runCommand()`'s own doc comment for the
+ * full rationale for why that enforcement is not duplicated down here.
  */
 export class LoginCommand extends Command<void> {
 	readonly verb = "LOGIN";
@@ -44,7 +53,22 @@ export class LoginCommand extends Command<void> {
 	 *  back to once LOGIN itself fails). */
 	protected onError(resp: TaggedResponse): ImapError {
 		const status = resp.status.status as "NO" | "BAD";
-		const text = resp.status.text?.content ?? "";
+		// LOW finding (verified real): the server's free-text explanation used
+		// to be embedded verbatim, with no sanitization, into this thrown
+		// error's `message` -- a malicious/misbehaving server could inject
+		// CR/LF (forging fake log lines once a caller's logger prints
+		// `err.message` verbatim) or other control bytes. Escaped the same way
+		// `connection.ts`'s BYE-greeting rejection now is (CR/LF/TAB to their
+		// visible two-character forms, every other C0/DEL byte to `\xHH`) --
+		// purely cosmetic for ordinary plain-ASCII server text.
+		const rawText = resp.status.text?.content ?? "";
+		// eslint-disable-next-line no-control-regex -- \x00-\x1f/\x7f control range is intentional (sanitizing server text before embedding in an error message)
+		const text = rawText.replace(/[\x00-\x1f\x7f]/g, (ch) => {
+			if (ch === "\r") return "\\r";
+			if (ch === "\n") return "\\n";
+			if (ch === "\t") return "\\t";
+			return `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`;
+		});
 		const code = toTypedResponseCode(resp.status.text?.code);
 		const message = `LOGIN failed with ${status}` + (text ? `: ${text}` : "");
 		return new AuthError(message, { mechanismsTried: ["LOGIN"], code });

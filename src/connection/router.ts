@@ -252,6 +252,33 @@ export class Router {
 	}
 
 	/**
+	 * Resolves the effective resp-code keyword for an `AtomTextCode`,
+	 * tolerating a stray space (or other whitespace) immediately inside the
+	 * opening `"["` (e.g. a server sending `[ ALERT]` instead of `[ALERT]`).
+	 * LOW finding (verified real): the resp-text-code matcher (`parser/
+	 * structure/text.code.ts`'s `match()`) treats the FIRST token after `"["`
+	 * as the keyword unconditionally -- when that token is whitespace, the
+	 * genuine keyword ends up in `contents[0]` instead of `kind` (confirmed
+	 * empirically: `[ ALERT]` parses to `AtomTextCode { kind: " ", contents:
+	 * ["ALERT"] }`). A bare `code.kind === "ALERT"` check silently misses
+	 * that case entirely -- `isAlert` reads `false`, and the whole
+	 * trusted/untrusted-marking gate below (RFC9051-11.3-2) is skipped, so a
+	 * pre-confidentiality `[ ALERT]` would be surfaced as an ordinary,
+	 * trusted `serverStatus` response instead of being logged untrusted and
+	 * suppressed. Falls back to the first content item (case-insensitively,
+	 * since resp-code names are case-insensitive keywords, spec §11.1) only
+	 * when `kind` itself is empty/whitespace-only -- a normal, non-degenerate
+	 * `kind` (the overwhelming majority of responses) is returned unchanged.
+	 */
+	private effectiveAtomCodeKind(code: AtomTextCode): string {
+		const trimmedKind = code.kind.trim();
+		if (trimmedKind) {
+			return trimmedKind;
+		}
+		return (code.contents?.[0] ?? "").trim().toUpperCase();
+	}
+
+	/**
 	 * Re-homed verbatim from `Connection`'s former `handleStatusResponse`
 	 * (M0.3): ALERT resp-code anywhere always reaches the logger at "warn";
 	 * when the transport is not yet confidential the log entry is marked
@@ -265,7 +292,8 @@ export class Router {
 	private handleStatusResponse(resp: UntaggedResponse): void {
 		const status = resp.content as StatusResponse;
 		const code = status.text?.code;
-		const isAlert = code instanceof AtomTextCode && code.kind === "ALERT";
+		const isAlert =
+			code instanceof AtomTextCode && this.effectiveAtomCodeKind(code) === "ALERT";
 
 		if (isAlert) {
 			const alertText = status.text?.content ?? "";

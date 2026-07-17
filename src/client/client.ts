@@ -281,6 +281,26 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	private readonly _enabled = new Set<string>();
 
 	private _serverId: IdResponseMap = null;
+	/**
+	 * De-dups CONCURRENT `logout()` calls onto the SAME attempt. HIGH finding
+	 * #9 (verified real, fixed): this used to never be cleared, on the
+	 * documented assumption that "the connection is terminally closing
+	 * anyway" -- but reconnecting on the same `ImapClient` instance IS a
+	 * supported, tested lifecycle (see e.g.
+	 * `test/unit/client/reconnect-clears-enabled-notify.test.ts`), and
+	 * `logout()`'s own any-state -> `"logout"` -> `"disconnected"` edge
+	 * legally permits a LATER `connect()` on this same instance once it
+	 * settles. Left uncleared, a second `connect()` -> `logout()` cycle on
+	 * the same instance silently returned the FIRST cycle's already-resolved
+	 * promise here -- no LOGOUT sent, no `disconnect()` called, no state
+	 * transition -- leaving a live, authenticated connection the caller
+	 * believes is torn down. Cleared in the `disconnected` bridge
+	 * (`wireConnectionEvents()`), the one handler every teardown path (this
+	 * one included, via `doLogout()`'s own `close({force:true})`) always
+	 * reaches -- mirroring how that same handler already resets every other
+	 * piece of per-connection bookkeeping (`_enabled`, `_notifyState`,
+	 * `capabilityRegistry`) for the next `connect()` on this instance.
+	 */
 	private _logoutPromise: Promise<void> | null = null;
 	/**
 	 * M5.16 (Finding 5): de-dups CONCURRENT `unauthenticate()` calls, mirroring
@@ -288,13 +308,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * (state-machine-only, not-yet-changed-until-the-tagged-OK) precondition
 	 * gates and would otherwise both issue their own UNAUTHENTICATE, with the
 	 * second landing on an already-unauthenticated server (a confusing tagged
-	 * BAD/NO instead of the same clean outcome the first caller sees). UNLIKE
-	 * `_logoutPromise` (never cleared -- the connection is terminally closing
-	 * anyway), this one MUST clear once the in-flight attempt settles
-	 * (success OR failure): `unauthenticate()` can legitimately be called
-	 * again LATER, after a fresh `authenticate()` on the same connection, and
-	 * that later call must be a genuine new attempt, not permanently wedged
-	 * onto this already-settled one.
+	 * BAD/NO instead of the same clean outcome the first caller sees). This
+	 * one MUST clear once the in-flight attempt settles (success OR failure):
+	 * `unauthenticate()` can legitimately be called again LATER, after a
+	 * fresh `authenticate()` on the same connection, and that later call must
+	 * be a genuine new attempt, not permanently wedged onto this
+	 * already-settled one.
 	 */
 	private _unauthenticatePromise: Promise<void> | null = null;
 	/** The most recent connection-level error observed via `connectionError`,
@@ -479,7 +498,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// internal transition error to the public typed one before
 			// tearing down, rather than letting `IllegalStateTransitionError`
 			// leak through `connect()`'s public promise.
-			throw await this.abortConnect(this.mapLogoutRaceError(err));
+			throw await this.abortConnect(this.mapLogoutRaceError(err, "connecting", "connect"));
 		}
 
 		try {
@@ -519,7 +538,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// and surface as a nested `IllegalStateTransitionError`; map it the
 			// same way as the post-greeting transition above rather than
 			// leaking the internal class through a different code path.
-			throw await this.abortConnect(this.mapLogoutRaceError(err));
+			throw await this.abortConnect(this.mapLogoutRaceError(err, "connecting", "connect"));
 		}
 	}
 
@@ -561,7 +580,21 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 					"or configure `auth` on the ImapClientConfig",
 			);
 		}
-		await this.runAuthSelection(effective);
+		try {
+			await this.runAuthSelection(effective);
+		} catch (err) {
+			// MEDIUM finding (verified real): `connect()`'s own call into
+			// `runAuthSelection()` (via `performAuthentication()`) is already
+			// wrapped this way (see `connect()`'s own doc comment, M6.2) --  a
+			// concurrent `logout()` racing in between this method's precondition
+			// check above and `runAuthSelection()`'s own final
+			// `stateMachine.transition("authenticated")` throws the internal
+			// `IllegalStateTransitionError` there too, but THIS public entry
+			// point had no equivalent mapping and would leak that internal class
+			// straight through its promise. Map it the same way `connect()`
+			// does, rather than duplicating a second, subtly different mapping.
+			throw this.mapLogoutRaceError(err, "not-authenticated", "authenticate");
+		}
 	}
 
 	/**
@@ -1540,6 +1573,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// once a caller overrides one but not the other. Splitting Connection's
 			// timeout handling is left to a later milestone.
 			timeout: this.config.timeouts.connect,
+			// HIGH finding #6: `ImapClientTimeouts.command` (spec §2) existed but
+			// was never actually consumed anywhere -- wired through to bound
+			// `Connection`'s own internal STARTTLS/COMPRESS/UNAUTHENTICATE
+			// negotiation round trips (see `Connection.withCommandTimeout()`).
+			// `0` (the default) keeps today's unbounded behavior.
+			commandTimeout: this.config.timeouts.command || undefined,
 			logger: this.config.logger,
 		};
 	}
@@ -1551,6 +1590,23 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		);
 		this.connection.on("taggedResponse", (resp) => this.handleTaggedResponse(resp));
 		this.connection.on("alert", (text, meta) => this.emit("alert", text, meta));
+		// MEDIUM finding (I-2 capability epoch gap): STARTTLS never invalidated
+		// THIS client's own capability registry -- only `Connection`'s separate
+		// precursor one. A cleartext greeting's `[CAPABILITY ...]` code (see
+		// `handleServerStatus()` below) is bridged in, and fires a public
+		// `capabilitiesChanged`, BEFORE STARTTLS ever runs; without this, that
+		// attacker-forgeable pre-TLS data would keep reading as "current" for
+		// the entire span between the handshake succeeding and the fresh
+		// post-TLS CAPABILITY response landing, rather than being invalidated
+		// the instant confidentiality is actually established. Silent (like
+		// the disconnect bridge's own `invalidateSilently()` above): the very
+		// next thing that happens is the genuine post-TLS `.set()` from
+		// `Connection`'s own re-fetch, which fires the real, trustworthy
+		// `capabilitiesChanged` -- this is housekeeping to close the gap in
+		// between, not itself a fact about the server worth a public event.
+		this.connection.on("secureUpgrade", () => {
+			this.capabilityRegistry.invalidateSilently();
+		});
 		this.connection.on("unhandled", (resp) => {
 			if (resp instanceof UntaggedResponse || resp instanceof UnknownResponse) {
 				this.emit("unhandled", resp);
@@ -1613,6 +1669,17 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// actually armed.
 			this._enabled.clear();
 			this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+			// HIGH finding #9: `_logoutPromise` is per-CONNECTION de-dup
+			// bookkeeping, same category as everything else reset in this
+			// handler -- left uncleared, a second `connect()` -> `logout()`
+			// cycle on this same instance would silently return the FIRST
+			// cycle's already-resolved promise instead of running `doLogout()`
+			// again. Cleared here (not in `doLogout()`'s own `finally`) so it's
+			// reset on EVERY path to `disconnected`, not just the ones that
+			// went through `logout()` itself (a mid-command drop while
+			// mid-logout, or a bare `close()`, must equally leave a fresh
+			// slate for the next `connect()`/`logout()` cycle).
+			this._logoutPromise = null;
 			if (session) {
 				MailboxSession.markClosed(session, "disconnected");
 			}
@@ -2235,12 +2302,28 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `transition()` call and this handler running); `required` names the
 	 * state `connect()` needed to still be in.
 	 */
-	private mapLogoutRaceError(err: unknown): unknown {
+	/**
+	 * MEDIUM finding (verified real): originally written only for `connect()`
+	 * (M6.2), and hardcoded to that call site's own `required: ["connecting"]`
+	 * shape -- `authenticate()`'s public entry point has the IDENTICAL race
+	 * (a concurrent `logout()` moving state out from under it between its own
+	 * precondition check and `runAuthSelection()`'s final `stateMachine.
+	 * transition("authenticated")` call) but a DIFFERENT required state
+	 * ("not-authenticated", not "connecting"). Generalized to accept the
+	 * caller's own required state + a label for the message, rather than
+	 * `authenticate()` either duplicating this mapping with a second,
+	 * subtly-different copy or reporting the wrong `required` value.
+	 */
+	private mapLogoutRaceError(
+		err: unknown,
+		requiredState: ClientState,
+		caller: string,
+	): unknown {
 		if (err instanceof IllegalStateTransitionError) {
 			return new StateError(
-				"connect() lost a race with a concurrent logout(): the client's " +
-					"state changed before connect() could complete",
-				{ state: this.stateMachine.current, required: ["connecting"], cause: err },
+				`${caller}() lost a race with a concurrent logout(): the client's ` +
+					`state changed before ${caller}() could complete`,
+				{ state: this.stateMachine.current, required: [requiredState], cause: err },
 			);
 		}
 		return err;

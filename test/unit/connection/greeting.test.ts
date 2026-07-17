@@ -116,6 +116,32 @@ describe("Connection greeting handling (spec §10.5/§10.6, I-7, I-8)", () => {
 			expect(connection.isActive).toBe(false);
 		});
 
+		// LOW finding (verified real): the BYE greeting's free text used to be
+		// embedded verbatim into the thrown IMAPError's message with no
+		// sanitization -- a misbehaving server could inject a control byte
+		// (e.g. ESC, the classic ANSI-escape-injection vector) that a caller's
+		// logger would print raw. Escaped to a visible `\xHH` form instead.
+		test("a control byte (ESC) in the BYE greeting text is escaped, never embedded raw, in the rejection message", async () => {
+			const server = await startScriptedServer("* BYE bad\x1b[31mtext\r\n");
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.FORCE_OFF,
+				timeout: 2000,
+			});
+
+			let caught: unknown;
+			try {
+				await connection.connect();
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(Error);
+			expect((caught as Error).message).not.toContain("\x1b");
+			expect((caught as Error).message).toContain("\\x1b");
+		});
+
 		test("rejects with a Greeting-phase timeout when the server never greets", async () => {
 			const server = await startSilentServer();
 			cleanup = server.close;

@@ -480,4 +480,65 @@ describe("CommandQueue", () => {
 			},
 		);
 	});
+
+	// HIGH finding #7 (verified real): `add()` used to have no rejecting
+	// else-branch for the post-stop() window -- a command submitted there
+	// just sat, unsettled, in a brand-new context's `commands` set forever
+	// (nothing dispatches it until a LATER `start()` promotes it, and nothing
+	// rejects it either, since `CommandQueue.stop()` already emptied
+	// `queueContexts` before this new one was even created).
+	describe("HIGH finding #7: add() after stop() / before the next start()", () => {
+		test("add() called after stop() (queue never restarted) rejects synchronously instead of hanging", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			q.stop("simulated teardown");
+
+			const promise = q.add(fakeCommand());
+
+			await expect(promise).rejects.toBeInstanceOf(ConnectionError);
+			await expect(promise).rejects.toMatchObject({ phase: "steady" });
+			expect(mockExecuteCommand).not.toBeCalled();
+			// Confirms this never silently created a live, dispatchable context.
+			expect(q.queueContexts).toHaveLength(0);
+		});
+
+		test("a command added post-stop is NOT resurrected/dispatched by a later start() on a fresh connection", async () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			q.start();
+			q.stop("simulated teardown -- e.g. a mid-command drop");
+
+			// Submitted during the "stopped" window -- e.g. a caller racing a
+			// disconnect. Before the fix this call would just queue silently.
+			const stalePromise = q.add(fakeCommand());
+			stalePromise.catch(() => undefined);
+
+			// Reconnect: a fresh start() on the SAME (reused) queue/connection.
+			mockExecuteCommand.mockResolvedValue(null);
+			q.start();
+			q.add(fakeCommand());
+			await flushMicrotasks();
+
+			// Only the command submitted AFTER the reconnect actually dispatched
+			// -- the stale pre-stop command must have been rejected outright, not
+			// silently carried into the new connection's queue.
+			expect(mockExecuteCommand).toHaveBeenCalledTimes(1);
+			await expect(stalePromise).rejects.toBeInstanceOf(ConnectionError);
+		});
+
+		test("add() before the queue has EVER been started still queues normally (not a rejection) -- distinct from the post-stop window", () => {
+			const connMock: any = vi.fn();
+			const q = new CommandQueue(connMock);
+			// Never started, never stopped -- pre-existing, tested behavior: a
+			// command submitted before the first start() legitimately waits for
+			// it, rather than being treated as "stopped".
+			const cmd = fakeCommand();
+			const promise = q.add(cmd);
+			promise.catch(() => undefined);
+
+			expect(q.queueContexts).toHaveLength(1);
+			expect(q.queueContexts[0].commands.size).toBe(1);
+		});
+	});
 });

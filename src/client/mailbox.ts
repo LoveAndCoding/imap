@@ -2816,8 +2816,18 @@ function createUpdatesIterator(
 		void MailboxSession.acquireLiveUpdatesDriver(session, mode, requireIdle).catch((err: unknown) => {
 			ended = true;
 			if (pending) {
+				// MEDIUM finding (verified real): a `next()` call is currently
+				// blocked on `pending` -- rejecting it is this rejection's ONLY
+				// path to the caller (a `for await...of` loop that has `next()`
+				// itself reject never calls `.return()` afterward, per the
+				// for-await-of protocol), so `cleanup()` must run HERE or the 5
+				// listeners `ensureStarted()` subscribed above leak on `session`
+				// forever. Mirrors the `pendingError` branch below, which already
+				// calls `cleanup()` before handing its error to the NEXT `next()`
+				// call.
 				pending.reject(err);
 				pending = undefined;
+				cleanup();
 			} else {
 				pendingError = err;
 			}

@@ -136,4 +136,28 @@ describe("LoginCommand (RFC 3501/9051 §6.2.3)", () => {
 		expect(err).toBeInstanceOf(AuthError);
 		expect((err as AuthError).mechanismsTried).toEqual(["LOGIN"]);
 	});
+
+	// LOW finding (verified real): the server's free-text explanation used to
+	// be embedded verbatim into the thrown AuthError's message with no
+	// sanitization -- a misbehaving server could inject a control byte (e.g.
+	// ESC, the classic ANSI-escape-injection vector) that a caller's logger
+	// would print raw. Escaped to a visible `\xHH` form instead.
+	test("a control byte (ESC) in the tagged NO/BAD text is escaped, never embedded raw, in the AuthError message", async () => {
+		const { connection, router } = makeFakeConnection();
+		const cmd = new LoginCommand("tim", "wrong");
+
+		const resultPromise = executeCommand(connection, cmd, "L6");
+		await flushMicrotasks();
+		// An ESC (0x1B) byte embedded in the resp-text, immediately followed by
+		// ordinary text -- a real server could send this as raw octets within
+		// one resp-text line (never a line terminator itself, so it survives
+		// the lexer's line-splitting untouched).
+		const injected = `bad\x1b[31mcreds`;
+		router.routeTagged(parseLine(`L6 NO ${injected}${CRLF}`) as TaggedResponse);
+
+		const err = await resultPromise.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(AuthError);
+		expect((err as AuthError).message).not.toContain("\x1b");
+		expect((err as AuthError).message).toContain("\\x1b");
+	});
 });

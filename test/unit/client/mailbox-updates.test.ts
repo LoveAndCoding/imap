@@ -422,6 +422,56 @@ describe("MailboxSession.updates() (spec §5b/§3.7, M4.3)", () => {
 		},
 	);
 
+	// MEDIUM finding (verified real): the driver-acquisition-reject path above
+	// (`acquireLiveUpdatesDriver()` rejecting while a `next()` call is
+	// currently blocked awaiting it) settled that `next()` call's promise via
+	// `pending.reject(err)` WITHOUT calling `cleanup()` -- leaking the 5
+	// `session.on(...)` listeners `ensureStarted()` had already subscribed,
+	// forever, because a `for await...of` loop whose `next()` itself rejects
+	// never calls `.return()` afterward (nothing else was ever going to
+	// unsubscribe them).
+	test(
+		"MEDIUM finding: the CapabilityError join-reject path above does not leak iterB's session listeners",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port, { noopFallbackInterval: 60_000 }));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+			]);
+
+			const session = await client.select("INBOX");
+			const before =
+				session.listenerCount("exists") +
+				session.listenerCount("expunge") +
+				session.listenerCount("vanished") +
+				session.listenerCount("flags") +
+				session.listenerCount("closed");
+
+			const iterA = session.updates({ idle: false })[Symbol.asyncIterator]();
+			const pendingA = iterA.next();
+
+			const iterB = session.updates({ idle: "require" })[Symbol.asyncIterator]();
+			await expect(iterB.next()).rejects.toBeInstanceOf(CapabilityError);
+
+			// The crux of the fix: iterB's own 5 listeners must already be gone
+			// by the time its rejection has been observed -- not leaked forever
+			// on `session` (a `for await...of` loop whose `next()` itself
+			// rejects never gets a chance to call `.return()` to clean up
+			// after itself).
+			const afterB =
+				session.listenerCount("exists") +
+				session.listenerCount("expunge") +
+				session.listenerCount("vanished") +
+				session.listenerCount("flags") +
+				session.listenerCount("closed");
+			expect(afterB).toBe(before + /* iterA's own 5 listeners, still live */ 5);
+
+			await iterA.return?.(undefined);
+			await pendingA.catch(() => undefined);
+			await server.assertCompleted();
+		},
+	);
+
 	test(
 		'ST2 negative (no regression): plain updates() (idle:true default) joining an existing ' +
 			"NOOP-mode driver is still accepted (only \"require\" refuses)",

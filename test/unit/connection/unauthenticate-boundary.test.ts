@@ -202,4 +202,47 @@ describe("UNAUTHENTICATE teardown boundary (RFC 8437, M6.2 plaintext-injection d
 			"a complete line injected in the same compressed flush as UNAUTHENTICATE's tagged OK must never be parsed as a live response",
 		).toBe(false);
 	});
+
+	// HIGH finding #7 (verified real): starttls()/compress() both refuse (via
+	// an early `false`) when there is no live socket to negotiate over --
+	// unauthenticate() had no equivalent guard at all.
+	test("unauthenticate() with no live connection rejects cleanly instead of hanging/throwing an unguarded error", async () => {
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: 1,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+		// Never connected -- `this.socket` is `undefined`.
+		await expect(connection.unauthenticate()).rejects.toThrow(
+			/no live connection/i,
+		);
+	});
+
+	// MEDIUM finding (I-2, Layer-1-only callers): `Connection`'s own precursor
+	// `capabilityRegistry` is invalidated on STARTTLS but was never
+	// invalidated on UNAUTHENTICATE, even though RFC 8437 explicitly
+	// anticipates the post-UNAUTHENTICATE capability set differing.
+	test("unauthenticate() invalidates this connection's OWN (Layer-1) capabilityRegistry", async () => {
+		const server = await startPlainUnauthCompleteLineInjectionServer();
+		cleanup = server.close;
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: server.port,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+		await connection.connect();
+
+		// Populate the connection-local registry the same way STARTTLS does,
+		// so there's something real to invalidate (same `any`-cast fake shape
+		// `test/unit/connection/capabilities.test.ts` itself uses).
+		const fakeCaps: any = { has: (c: string) => c === "UNAUTHENTICATE" };
+		connection.capabilityRegistry.set(fakeCaps);
+		expect(connection.capabilityRegistry.isValid).toBe(true);
+
+		await connection.unauthenticate();
+
+		expect(connection.capabilityRegistry.isValid).toBe(false);
+	});
 });
