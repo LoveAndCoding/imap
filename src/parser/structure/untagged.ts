@@ -82,6 +82,7 @@ export default class UntaggedResponse {
 			!firstToken ||
 			!(firstToken instanceof OperatorToken) ||
 			firstToken.getTrueValue() !== "*" ||
+			!secondToken ||
 			!secondToken.isType(TokenTypes.space)
 		) {
 			throw new ParsingError(
@@ -94,7 +95,7 @@ export default class UntaggedResponse {
 		const contentTokens = tokens.slice(2);
 		const contentTypeToken = contentTokens[0];
 
-		if (contentTypeToken.isType(TokenTypes.atom)) {
+		if (contentTypeToken && contentTypeToken.isType(TokenTypes.atom)) {
 			// We have an Atom token, which means we want to search for
 			// the matching command for that atom. This atom is itself a
 			// protocol keyword (e.g. "CAPABILITY", "LIST", "QUOTA"), so
@@ -148,7 +149,7 @@ export default class UntaggedResponse {
 					// See comment above -- deliberately swallowed.
 				}
 			}
-		} else if (contentTypeToken.isType(TokenTypes.number)) {
+		} else if (contentTypeToken && contentTypeToken.isType(TokenTypes.number)) {
 			// The content type token indicates we've got a number first,
 			// which matches another set of response types
 			const toCheckList = [

@@ -1,4 +1,5 @@
 import { decodeWords } from "../../encoding";
+import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer";
 import {
 	getNStringValue,
@@ -6,6 +7,16 @@ import {
 	splitSpaceSeparatedList,
 } from "../../utility";
 import { AddressList } from "./address";
+
+/** The exact positional field count of an ENVELOPE (RFC 3501/9051 §7.4.2):
+ *  date, subject, from, sender, reply-to, to, cc, bcc, in-reply-to,
+ *  message-id. A malformed/truncated ENVELOPE with fewer items would
+ *  otherwise leave later destructured fields (e.g. `from`) `undefined`,
+ *  crashing deep inside `AddressList`/`getNStringValue` with a raw
+ *  TypeError -- those helpers only guard against the WRONG token shape, not
+ *  a missing token list entirely -- instead of a typed, catchable
+ *  ParsingError. */
+const ENVELOPE_FIELD_COUNT = 10;
 
 /** RFC 3501/9051 §7.5 ENVELOPE data item: the 10 wire fields (in this exact
  *  order) parsed out of a FETCH ENVELOPE response. */
@@ -32,6 +43,17 @@ export class Envelope {
 	public readonly messageId: null | string;
 
 	constructor(envelopeList: LexerTokenList[]) {
+		if (envelopeList.length !== ENVELOPE_FIELD_COUNT) {
+			throw new ParsingError(
+				`ENVELOPE must have exactly ${ENVELOPE_FIELD_COUNT} fields, ` +
+					`received ${envelopeList.length}`,
+				envelopeList.reduce(
+					(all, block) => all.concat(block),
+					[] as LexerTokenList,
+				),
+			);
+		}
+
 		const [
 			date,
 			subject,
