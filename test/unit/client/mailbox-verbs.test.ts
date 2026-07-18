@@ -80,7 +80,7 @@ describe("mailbox-management command declarations (M2.3-M2.6)", () => {
 		).toBe("CREATE-SPECIAL-USE");
 	});
 
-	test("CreateCommand throws RangeError synchronously on an empty specialUse array (RFC 6154 §6 grammar: 1+ use-attr)", () => {
+	test("CreateCommand throws RangeError synchronously on an empty specialUse array (client-side guardrail: empty (USE ()) is a no-op equivalent to a plain CREATE, though RFC 6154 §6's ABNF brackets the list as optional)", () => {
 		expect(() => new CreateCommand("X", { specialUse: [] })).toThrow(RangeError);
 	});
 });

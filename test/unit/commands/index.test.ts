@@ -26,4 +26,19 @@ describe("M34 fix: src/commands/index.ts barrel exports every command class", ()
 		const cmd = new commandsBarrel.ExpungeCommand(undefined, false);
 		expect(cmd.verb).toBe("EXPUNGE");
 	});
+
+	// Same M34 class, remaining siblings (flagged during the R2-E1 review as
+	// out of that agent's territory): every command file under src/commands/
+	// that exports a Command subclass must be reachable through the barrel.
+	test.each([
+		"ComparatorCommand",
+		"ConvertCommand",
+		"GmailLabelsStoreCommand",
+		"LanguageCommand",
+		"ReplaceCommand",
+		"StoreCommand",
+	])("%s is importable from the barrel", (name) => {
+		expect((commandsBarrel as Record<string, unknown>)[name]).toBeDefined();
+		expect(typeof (commandsBarrel as Record<string, unknown>)[name]).toBe("function");
+	});
 });

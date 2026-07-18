@@ -80,11 +80,15 @@ export class CreateCommand extends Command<void> {
 					? [...opts.specialUse]
 					: [opts.specialUse];
 		if (opts.specialUse !== undefined && attrs.length === 0) {
+			// RFC 6154 §6's ABNF brackets the inner use-attr list as optional
+			// (`"USE" SP "(" [use-attr *(SP use-attr)] ")"`), so an empty
+			// `(USE ())` is grammatically legal -- but it is a no-op identical to
+			// omitting the USE parameter, so we refuse it as a likely caller
+			// mistake (a client-side usability guardrail, not a grammar rule).
 			throw new RangeError(
-				"CREATE: specialUse was given but empty — RFC 6154 §6's grammar " +
-					'requires at least one use-attr inside "(USE (...))" ' +
-					"(use-attr *(SP use-attr)); omit the option entirely for a " +
-					"plain CREATE",
+				"CREATE: specialUse was given but empty. An empty use-attr " +
+					'list "(USE ())" is a no-op equivalent to a plain CREATE; ' +
+					"omit the option entirely instead",
 			);
 		}
 		this.useAttrs = attrs;
