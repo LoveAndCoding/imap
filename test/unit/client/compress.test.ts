@@ -4,9 +4,10 @@ import { command } from "../../compliance/harness/matchers";
 import { expectLine, reply, send } from "../../compliance/harness/script";
 import { ScriptedServer } from "../../compliance/harness/scripted-server";
 
+import { CompressCommand } from "../../../src/commands/compress";
 import { ImapClient } from "../../../src/client/client";
 import type { ImapClientConfig } from "../../../src/client/config";
-import { CapabilityError, ImapError } from "../../../src/errors";
+import { CapabilityError, ImapError, StateError } from "../../../src/errors";
 
 function baseConfig(port: number): ImapClientConfig {
 	return { host: "127.0.0.1", port, tls: "off", timeouts: { connect: 2000, greeting: 2000 } };
@@ -38,6 +39,35 @@ describe("ImapClient.compress() (RFC 4978, M5.9)", () => {
 		await expect(client.compress()).rejects.toBeInstanceOf(CapabilityError);
 		await server.assertCompleted();
 		expect(server.transcript.clientLines()).not.toMatch(/\bCOMPRESS\b/);
+	});
+
+	// M17 (verified real): unlike every other verb in this file, `compress()`
+	// used to perform no client-state precondition check at all -- calling it
+	// on a client that was never connected fell straight through to
+	// `Connection.compress()`, whose own `!this.socket` guard resolves
+	// `false` for "no live transport", conflated (since the caller discarded
+	// that boolean) with the RFC4978-3-3 "server declined" `false` a genuine
+	// NO/BAD produces. `client.compress()` never even reached the wire in
+	// this scenario, so a StateError with zero bytes written is the correct,
+	// honest diagnosis.
+	test("M17: StateError, zero bytes written, when the client was never connected (state 'disconnected')", async () => {
+		client = new ImapClient(baseConfig(1));
+		expect(client.state).toBe("disconnected");
+
+		let caught: unknown;
+		try {
+			await client.compress();
+		} catch (err) {
+			caught = err;
+		}
+
+		// REVERT-VERIFY: reverting the state-precondition check added to
+		// `ImapClient.compress()` would instead surface `CapabilityError`
+		// here (COMPRESS=DEFLATE was never advertised either, since nothing
+		// ever connected) -- a fundamentally different, less honest
+		// diagnosis for "there is no connection at all".
+		expect(caught).toBeInstanceOf(StateError);
+		expect((caught as StateError).state).toBe("disconnected");
 	});
 
 	test("a second compress() attempt is refused locally (client-bug-shaped, not a protocol retry) -- exactly one COMPRESS reaches the wire", async () => {
@@ -141,6 +171,43 @@ describe("ImapClient.compress() (RFC 4978, M5.9)", () => {
 
 		expect(client.state).toBe("authenticated");
 		expect(client.connection.isCompressed).toBe(false);
+		await server.assertCompleted();
+		expect(server.transcript.clientLines()).not.toMatch(/\bCOMPRESS\b/);
+	});
+
+	// M15 (verified real): every sibling capability-gated command declares
+	// `capability` so `ImapClient.run()`'s escape-hatch enforcement (§3.6/I-9)
+	// actually gates it -- `CompressCommand` had none, so
+	// `client.run(new CompressCommand())` reached the wire with ZERO
+	// capability check, bypassing the exact gate `ImapClient.compress()`
+	// itself enforces for the same command.
+	test("M15: client.run(new CompressCommand()) is gated on COMPRESS=DEFLATE -- CapabilityError, zero bytes written, when absent", async () => {
+		server = await ScriptedServer.start();
+		server.arm([
+			[
+				send("* OK ready\r\n"),
+				expectLine(command("CAPABILITY", { args: null })),
+				reply("OK caps", ["* CAPABILITY IMAP4rev1"]),
+			],
+		]);
+		client = new ImapClient(baseConfig(server.port));
+		await client.connect();
+
+		let caught: unknown;
+		try {
+			await client.run(new CompressCommand());
+		} catch (err) {
+			caught = err;
+		}
+
+		// REVERT-VERIFY: reverting `CompressCommand`'s `capability =
+		// "COMPRESS=DEFLATE"` field back to undeclared would let this
+		// `client.run()` call reach the wire unconditionally -- `caught`
+		// would be `undefined` (or a wire-level rejection from the
+		// scripted server never expecting a COMPRESS line) instead of this
+		// local, zero-bytes-written `CapabilityError`.
+		expect(caught).toBeInstanceOf(CapabilityError);
+		expect((caught as CapabilityError).capability).toBe("COMPRESS=DEFLATE");
 		await server.assertCompleted();
 		expect(server.transcript.clientLines()).not.toMatch(/\bCOMPRESS\b/);
 	});

@@ -460,5 +460,45 @@ describe("AuthenticateCommand (spec §9.1/§9)", () => {
 			expect(err).toBeInstanceOf(AuthError);
 			expect((err as AuthError).mechanismsTried).toEqual(["PLAIN"]);
 		});
+
+		// M14 (log-injection defense, verified real): the server's free-text
+		// explanation used to be embedded verbatim, completely unsanitized,
+		// into the resulting `AuthError`'s `message`. A literal CR/LF can't
+		// actually ride inside a single parsed response line (CRLF IS the
+		// line terminator -- the wire grammar itself excludes it from
+		// resp-text), but other C0/DEL control bytes (ESC, in particular --
+		// terminal-escape-sequence injection into a log viewer) pass through
+		// completely unremarkable to the lexer/parser and land in
+		// `resp.status.text.content` verbatim.
+		test("M14: a C0 control byte (ESC) in the server's NO text is escaped, never embedded raw, in the resulting AuthError message", async () => {
+			const { connection, router } = makeFakeConnection();
+			const mechanism = makePlainLikeMechanism();
+			const cmd = new AuthenticateCommand({
+				mechanism,
+				ctx: CTX,
+				initialResponse: await mechanism.start(CTX),
+				saslIrAllowed: true,
+			});
+
+			const resultPromise = executeCommand(connection, cmd, "A11");
+			await flushMicrotasks();
+			// A raw ESC (\x1b) byte embedded in the resp-text -- a single
+			// line, so it parses cleanly (no CRLF involved) but still
+			// carries a live control byte through to `text.content`.
+			router.routeTagged(
+				parseLine(`A11 NO bad credentials\x1b[31minjected${CRLF}`) as TaggedResponse,
+			);
+
+			const err = await resultPromise.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(AuthError);
+			// REVERT-VERIFY: reverting `authenticate.ts`'s `sanitizeForErrorMessage()`
+			// call back to the raw `resp.status.text?.content` this test would
+			// instead see the literal ESC byte (`"\x1b"`) inside the message --
+			// this asserts the ESCAPED two-character form is present and the
+			// raw control byte is not.
+			expect((err as AuthError).message).toContain("\\x1b[31minjected");
+			// eslint-disable-next-line no-control-regex -- asserting the raw control byte is absent is the whole point of this test
+			expect((err as AuthError).message).not.toMatch(/\x1b/);
+		});
 	});
 });

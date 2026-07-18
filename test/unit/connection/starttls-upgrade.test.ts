@@ -11,6 +11,7 @@ import Connection from "../../../src/connection";
 import { NoopCommand } from "../../../src/commands";
 import { TLSSocketError } from "../../../src/connection/errors";
 import { TLSSetting } from "../../../src/connection/types";
+import { TlsError } from "../../../src/errors";
 
 const localhost = loadCertFixture("localhost");
 
@@ -61,6 +62,49 @@ async function startCapabilityOnlyServer(capabilityLine: string): Promise<{
 				} else if (/\bSTARTTLS\b/i.test(line)) {
 					sawStartTls = true;
 					socket.write(`${tag} BAD unexpected STARTTLS\r\n`);
+				}
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return {
+		port: address.port,
+		close: closeServer(server, sockets),
+		sawStartTls: () => sawStartTls,
+	};
+}
+
+/**
+ * H3: advertises STARTTLS (unlike `startCapabilityOnlyServer`), but then
+ * DECLINES the actual STARTTLS command itself with a tagged NO/BAD --
+ * distinct from "capability not advertised" (`startCapabilityOnlyServer`
+ * above): here the client genuinely issues STARTTLS and the server
+ * genuinely refuses it.
+ */
+async function startStartTlsDeclineServer(status: "NO" | "BAD"): Promise<{
+	port: number;
+	close: () => Promise<void>;
+	sawStartTls: () => boolean;
+}> {
+	let sawStartTls = false;
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		let buffered = "";
+		socket.on("data", (chunk: Buffer) => {
+			buffered += chunk.toString("latin1");
+			let idx: number;
+			while ((idx = buffered.indexOf("\r\n")) >= 0) {
+				const line = buffered.slice(0, idx);
+				buffered = buffered.slice(idx + 2);
+				const tag = line.split(" ")[0];
+				if (/\bCAPABILITY\b/i.test(line)) {
+					socket.write(`* CAPABILITY IMAP4rev1 STARTTLS\r\n${tag} OK caps\r\n`);
+				} else if (/\bSTARTTLS\b/i.test(line)) {
+					sawStartTls = true;
+					socket.write(`${tag} ${status} STARTTLS declined\r\n`);
 				}
 			}
 		});
@@ -272,6 +316,86 @@ describe("STARTTLS upgrade edge cases", () => {
 			expect(caught).toBeInstanceOf(TLSSocketError);
 			expect((caught as TLSSocketError).reason).toBe("policy");
 			expect(connection.isActive).toBe(false);
+		});
+	});
+
+	describe("H3: opportunistic STARTTLS when the server ADVERTISES it but then DECLINES the command itself", () => {
+		// H3 (verified real): distinct from HIGH-4 above ("capability not
+		// advertised" -- `starttls()`'s own early return, never an exception).
+		// Here the server DOES advertise STARTTLS, the client genuinely issues
+		// it, and the server replies NO/BAD -- `StartTLSCommand.onError()`
+		// maps ANY tagged NO/BAD to a `TlsError` (never `ServerNoError`/
+		// `ServerBadError`, since that command overrides the default mapping),
+		// which used to propagate as an unconditional hard failure through
+		// `starttls()`'s own catch block regardless of policy -- silently
+		// promoting STARTTLS_OPTIONAL into STARTTLS-strength for this one
+		// failure shape. Fixed: STARTTLS_OPTIONAL now tolerates a genuine
+		// in-protocol decline the same way it tolerates an absent capability
+		// (spec §3.3, "opportunistic continues cleartext"); STARTTLS
+		// (mandatory) still hard-fails.
+		test("opportunistic (STARTTLS_OPTIONAL) mode continues over plaintext after a tagged NO decline", async () => {
+			const server = await startStartTlsDeclineServer("NO");
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.STARTTLS_OPTIONAL,
+				timeout: 2000,
+			});
+
+			const ok = await connection.connect();
+
+			expect(ok).toBe(true);
+			expect(connection.isActive).toBe(true);
+			expect(connection.isSecure).toBe(false);
+			expect(server.sawStartTls()).toBe(true);
+		});
+
+		test("opportunistic (STARTTLS_OPTIONAL) mode continues over plaintext after a tagged BAD decline", async () => {
+			const server = await startStartTlsDeclineServer("BAD");
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.STARTTLS_OPTIONAL,
+				timeout: 2000,
+			});
+
+			const ok = await connection.connect();
+
+			expect(ok).toBe(true);
+			expect(connection.isActive).toBe(true);
+			expect(connection.isSecure).toBe(false);
+			expect(server.sawStartTls()).toBe(true);
+		});
+
+		test("strict (STARTTLS) mode still fails when the server declines the command it advertised", async () => {
+			const server = await startStartTlsDeclineServer("NO");
+			cleanup = server.close;
+			connection = new Connection({
+				host: "127.0.0.1",
+				port: server.port,
+				tls: TLSSetting.STARTTLS,
+				timeout: 2000,
+			});
+
+			let caught: unknown;
+			try {
+				await connection.connect();
+			} catch (err) {
+				caught = err;
+			}
+
+			// REVERT-VERIFY: reverting the `err instanceof TlsError &&
+			// this.options.tls === TLSSetting.STARTTLS_OPTIONAL` branch in
+			// `Connection.starttls()`'s catch block would make the OPTIONAL
+			// test above ALSO reject with this same `TlsError` instead of
+			// resolving `true` -- this mandatory-mode test's own expectation
+			// (still rejecting) is unaffected either way, which is exactly
+			// the point: only OPTIONAL policy's behavior changes.
+			expect(caught).toBeInstanceOf(TlsError);
+			expect(connection.isActive).toBe(false);
+			expect(server.sawStartTls()).toBe(true);
 		});
 	});
 

@@ -219,9 +219,26 @@ export class AsyncQueueContext extends TypedEmitter<AsyncQueueEvents> {
 	}
 
 	/**
-	 * Starts every command withheld while the queue was held. A no-op (left
-	 * for the next release) if still held — nested hold()/release() pairs
-	 * must not let an inner release flush an outer hold.
+	 * Starts every command withheld while the queue was held. A no-op (still
+	 * held after `release()` runs, i.e. `release()` was itself a no-op
+	 * because `held` was already `false` -- see that method's own doc
+	 * comment) if `isHeld()` still reports `true`.
+	 *
+	 * M12 (doc correction, verified real): this used to claim nested
+	 * `hold()`/`release()` pairs are supported ("an inner release must not
+	 * flush an outer hold"), but `CommandQueue.held` (`hold()`/`release()`,
+	 * below) is a plain boolean with no depth counter -- a second `hold()`
+	 * call while already held is a no-op (not incremented), and the very
+	 * next `release()` unconditionally clears `held` regardless of how many
+	 * times `hold()` was called. Verified no caller in this codebase ever
+	 * nests these calls: `hold()` is only ever engaged via `add()`'s
+	 * `holdOnDispatch` hook (one hold per isolated STARTTLS/COMPRESS/
+	 * UNAUTHENTICATE command), and the queue's own structural invariant --
+	 * only one context, isolated or not, is ever active at a time -- means
+	 * two of those commands can never be in flight (and therefore never
+	 * both holding) simultaneously. Nesting was aspirational, not load-
+	 * bearing; this comment now describes the actual (non-nesting)
+	 * contract rather than a guarantee nothing implements.
 	 */
 	public flushPending() {
 		if (this.isHeld() || this.pending.size === 0) {

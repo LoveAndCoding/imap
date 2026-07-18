@@ -324,6 +324,76 @@ describe("ImapClient.unauthenticate() (RFC 8437, M5.10)", () => {
 		await server.assertCompleted();
 	});
 
+	// M18 (verified real): `doUnauthenticate()`'s post-await state check used
+	// to only ever reason about ONE way to land outside "authenticated"/
+	// "selected" at that point -- the connection dropping in the same instant
+	// (straight to "disconnected"). A CONCURRENT `logout()` racing in (spec
+	// §3.1's any-state -> "logout" edge, same as M6.2's `connect()`/
+	// `authenticate()` precedent) instead moves state to "logout" first, and
+	// the OLD code silently ran ALL of its own bookkeeping anyway (nulling
+	// `_mailboxSession`, marking it closed with reason "unauthenticated") even
+	// though the connection is actually on its way to a DIFFERENT, more
+	// accurate terminal reason ("disconnected") the racing `logout()` reaches
+	// moments later -- by which point the disconnect bridge finds
+	// `_mailboxSession` already `null` and never re-marks it, permanently
+	// mislabeling the session's close reason. `unauthenticate()`'s own promise
+	// also resolved successfully, silently implying "you're not-authenticated
+	// now" when the state machine never actually reflected that.
+	test("M18: unauthenticate() racing a concurrent logout() rejects StateError (never a silently-successful resolution); logout() itself always wins the race", async () => {
+		const caps = ["IMAP4rev1", "UNAUTHENTICATE"];
+		server = await ScriptedServer.start();
+		server.arm([
+			[
+				...authenticatedPrelude(caps),
+				expectLine(UNAUTH_LINE),
+				// Deliberately delayed so logout() below is guaranteed to still
+				// be racing this in-flight UNAUTHENTICATE when it's called.
+				// Tags are deterministic: CAPABILITY=A00001, LOGIN=A00002, so
+				// UNAUTHENTICATE is A00003.
+				send("A00003 OK completed\r\n", { delayMs: 50 }),
+				// logout()'s own LOGOUT (queueMode "isolated") is submitted
+				// concurrently but structurally queued BEHIND UNAUTHENTICATE's
+				// still-active isolated context -- it only actually dispatches
+				// once the delayed reply above lands and that context drains.
+				expectLine(command("LOGOUT", { args: null })),
+				reply("OK LOGOUT completed", ["* BYE logging out"]),
+			],
+		]);
+		client = new ImapClient({ ...baseConfig(server.port), auth: { user: "u", pass: "p" } });
+		await client.connect();
+		expect(client.state).toBe("authenticated");
+
+		const unauthPromise = client.unauthenticate();
+		// Fired synchronously, in the SAME tick -- `doLogout()`'s own
+		// `stateMachine.transition("logout")` runs before its own first
+		// `await`, so by the time UNAUTHENTICATE's delayed tagged OK arrives,
+		// state has already moved to "logout".
+		const logoutPromise = client.logout();
+
+		let unauthErr: unknown;
+		try {
+			await unauthPromise;
+		} catch (err) {
+			unauthErr = err;
+		}
+
+		// REVERT-VERIFY: reverting `doUnauthenticate()`'s state check back to
+		// `if (stateAtOk === "authenticated" || stateAtOk === "selected") {
+		// transition(...) }` with no `else` (the pre-M18 shape) would instead
+		// resolve `unauthPromise` successfully here (silently skipping the
+		// transition, but still running the rest of the method's bookkeeping)
+		// -- this `StateError` expectation is exactly what that revert
+		// breaks.
+		expect(unauthErr).toBeInstanceOf(StateError);
+		expect((unauthErr as StateError).state).toBe("logout");
+		expect((unauthErr as StateError).required).toEqual(["authenticated", "selected"]);
+
+		// logout() always settles normally -- it owns the race, it doesn't
+		// lose it.
+		await expect(logoutPromise).resolves.toBeUndefined();
+		expect(client.state).toBe("disconnected");
+	});
+
 	test("with COMPRESS=DEFLATE active, both compression layers terminate at the UNAUTHENTICATE boundary (RFC8437-4.1-1) and post-boundary traffic is plaintext", async () => {
 		const caps = ["IMAP4rev1", "COMPRESS=DEFLATE", "UNAUTHENTICATE"];
 		server = await ScriptedServer.start();

@@ -186,6 +186,27 @@ class NewlineTranform extends Transform {
 	private active: LiteralBodyStream | null = null;
 	private activeRemaining = 0;
 
+	/**
+	 * M10 fix (COMPRESS/UNAUTHENTICATE topology-swap straddling): while
+	 * `true`, `_transform()` short-circuits entirely -- every incoming chunk
+	 * is appended to `pending` RAW, never CRLF-scanned, never split into a
+	 * `line`, never counted against `maxLineLength`. Armed by
+	 * `beginOpaqueCapture()` the instant a COMPRESS/UNAUTHENTICATE boundary
+	 * command's own tagged response routes (mirrors `armBoundaryInjectionGuard`'s
+	 * STARTTLS-side `forceNewLine(false)` call, but must NOT discard: unlike
+	 * STARTTLS (which replaces the socket -- any residual plaintext is
+	 * provably untrustworthy injection risk, safe to throw away), COMPRESS/
+	 * UNAUTHENTICATE swap a CODEC in place on the SAME byte stream, so bytes
+	 * arriving here are the genuine, in-order continuation of that stream
+	 * (very possibly the opening bytes of the server's newly-compressed
+	 * output, RFC 4978) -- discarding them (the bug this fixes) permanently
+	 * desyncs DEFLATE decompression from that point on. Ended by
+	 * `endOpaqueCapture()`, which hands the accumulated bytes back to the
+	 * caller for correct redelivery (into the new codec, or back through
+	 * ordinary line processing) instead of losing them.
+	 */
+	private opaqueCapture = false;
+
 	private maxLineLength: number;
 	private readonly streamThreshold: number;
 	private readonly streamHighWaterMark: number;
@@ -232,6 +253,67 @@ class NewlineTranform extends Transform {
 		}
 		this.pending = Buffer.alloc(0);
 		this.opaqueGuard = 0;
+		this.opaqueCapture = false;
+	}
+
+	/**
+	 * M10 fix: begins opaque capture (see `opaqueCapture`'s own doc comment)
+	 * -- from this call onward, every byte this transform receives (plus
+	 * whatever is ALREADY sitting in `pending` at this exact instant) is
+	 * accumulated verbatim rather than CRLF-split, until `endOpaqueCapture()`
+	 * is called. Idempotent-safe to call while already capturing (a no-op
+	 * re-arm, matching `forceNewLine`'s own tolerance).
+	 */
+	public beginOpaqueCapture(): void {
+		this.opaqueCapture = true;
+	}
+
+	/**
+	 * M10 fix: ends opaque capture and returns everything accumulated since
+	 * `beginOpaqueCapture()` (including whatever was already in `pending` at
+	 * that instant) as one buffer, for the caller to redeliver correctly
+	 * (see `injectBytes()` for the "route back through ordinary line
+	 * processing" case, and `wrapCompression()`'s `initialCompressedBytes`
+	 * parameter for the "feed into the new codec" case). A safe no-op
+	 * (returns an empty buffer, touches nothing) if capture was never begun
+	 * — this matters because a caller may not know in advance whether the
+	 * boundary command's tagged response ever actually routed (e.g. the
+	 * connection dropped first) before calling this defensively; only a
+	 * genuinely-armed capture may claim `pending` as its own.
+	 */
+	public endOpaqueCapture(): Buffer {
+		if (!this.opaqueCapture) {
+			return Buffer.alloc(0);
+		}
+		this.opaqueCapture = false;
+		const bytes = this.pending;
+		this.pending = Buffer.alloc(0);
+		this.opaqueGuard = 0;
+		return bytes;
+	}
+
+	/**
+	 * M10 fix: re-injects `buf` (typically bytes just returned by
+	 * `endOpaqueCapture()`) at the FRONT of ordinary processing, exactly as
+	 * if it had just arrived via a normal `_transform()` call -- used once
+	 * it's been determined captured bytes need ordinary (non-codec) line
+	 * processing after all (COMPRESS declining/failing before activation;
+	 * UNAUTHENTICATE, whether or not COMPRESS was active, since any bytes
+	 * captured during ITS boundary window are either already-decompressed
+	 * -- inflate was still live in the pipe the whole time -- or were never
+	 * compressed to begin with). A no-op for an empty/zero-length `buf`.
+	 * Calls `push()`/emits `line` directly, same as `forceNewLine(true)`
+	 * already does outside of `_transform()`'s own call context -- an
+	 * established-safe pattern for this class, not a new one.
+	 */
+	public injectBytes(buf: Buffer): void {
+		if (!buf.length) {
+			return;
+		}
+		this.pending = this.pending.length
+			? Buffer.concat([this.pending, buf])
+			: buf;
+		this.process();
 	}
 
 	_flush(done: (error?: Error) => void) {
@@ -279,6 +361,21 @@ class NewlineTranform extends Transform {
 					`Unable to transform object of type ${typeof chunk} into lines of text`,
 				),
 			);
+		}
+
+		// M10 fix: while opaque capture is armed, every byte is accumulated
+		// raw -- never CRLF-scanned (a raw DEFLATE stream has no reason to
+		// respect line framing at all; treating it as text risks slicing off
+		// an accidental CRLF byte pair as a phantom "line", which would be
+		// unrecoverably lost from the bytes `endOpaqueCapture()` later
+		// returns) and never counted against `maxLineLength` (a length cap
+		// that makes no sense against an as-yet-undetermined amount of
+		// buffered ciphertext). See `opaqueCapture`'s own doc comment.
+		if (this.opaqueCapture) {
+			this.pending = this.pending.length
+				? Buffer.concat([this.pending, chunk])
+				: chunk;
+			return done();
 		}
 
 		// Fast path: while a literal stream is active and nothing else is
@@ -330,6 +427,26 @@ class NewlineTranform extends Transform {
 
 	private process(): void {
 		for (;;) {
+			// M10 fix (complete-line-in-same-segment gap): `beginOpaqueCapture()`
+			// can be called SYNCHRONOUSLY nested inside THIS loop's own
+			// `emit("line", line)` call a few lines below -- routing a
+			// COMPRESS/UNAUTHENTICATE boundary command's tagged response all
+			// the way through the router and back out to
+			// `armBoundaryInjectionGuard`'s listener happens within the same
+			// callstack. Setting the flag mid-loop does nothing on its own to
+			// stop THIS already-running loop from continuing to split
+			// whatever else is still sitting in `pending` (e.g. a SECOND
+			// complete line bundled into the same `data` event/write() as the
+			// tagged OK) -- checked at the top of every iteration so the loop
+			// bails the INSTANT the flag flips, leaving everything from that
+			// point on (already reflected in `this.pending` via the
+			// `subarray` reassignment above) untouched for `endOpaqueCapture()`
+			// to hand back intact, exactly like the STARTTLS-side
+			// `forceNewLine(false)` call already achieves for the "discard"
+			// case (see `armBoundaryInjectionGuard`'s own doc comment).
+			if (this.opaqueCapture) {
+				return;
+			}
 			if (this.active) {
 				if (!this.pending.length) {
 					return;

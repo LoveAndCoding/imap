@@ -1,5 +1,6 @@
 import { ImapError, TlsError } from "../errors";
 import type { TaggedResponse } from "../parser";
+import { sanitizeForErrorMessage } from "../connection/utils";
 import { Command } from "./base";
 import type { ResponseCollector } from "./collector";
 import type { CommandWriter } from "./writer";
@@ -65,9 +66,18 @@ export class StartTLSCommand extends Command<boolean> {
 			reason = "handshake";
 		}
 
+		// M14 (log-injection defense, verified real): unlike `login.ts`'s
+		// analogous NO/BAD mapping (and `connection.ts`'s BYE-greeting
+		// rejection), this appended the server's free text completely
+		// unsanitized -- and via a literal `\r\n` prefix, no less, making an
+		// injected CR/LF trivially indistinguishable from this message's own
+		// intentional line break. STARTTLS is negotiated pre-authentication
+		// (often pre-TLS too, for the plaintext-decline case), i.e. against an
+		// entirely untrusted peer -- sanitize the same way every other
+		// server-text embed site in this codebase does (shared helper, M14).
 		const text = resp.status.text?.content;
 		if (text) {
-			message += `\r\n${text}`;
+			message += `\r\n${sanitizeForErrorMessage(text)}`;
 		}
 
 		return new TlsError(message, { phase: "steady", reason });

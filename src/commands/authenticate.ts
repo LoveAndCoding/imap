@@ -1,6 +1,7 @@
 import { AuthError, ImapError } from "../errors";
 import type { ContinueResponse, TaggedResponse } from "../parser";
 import type { SaslContext, SaslMechanism } from "../sasl/mechanism";
+import { sanitizeForErrorMessage } from "../connection/utils";
 import { Command } from "./base";
 import { ResponseCollector, toTypedResponseCode } from "./collector";
 import type { CommandWriter } from "./writer";
@@ -209,7 +210,14 @@ export class AuthenticateCommand extends Command<void> {
 	 *  `AuthError` doesn't carry the raw NO/BAD status — see `client/auth.ts`). */
 	protected onError(resp: TaggedResponse): ImapError {
 		const status = resp.status.status as "NO" | "BAD";
-		const text = resp.status.text?.content ?? "";
+		// M14 (log-injection defense, verified real): the server's free-text
+		// explanation used to be embedded verbatim, completely unsanitized,
+		// into this thrown error's `message` -- a malicious/misbehaving
+		// pre-auth peer could inject CR/LF (forging fake log lines once a
+		// caller's logger prints `err.message` verbatim) or other C0/DEL
+		// control bytes. Same escaping `commands/login.ts`/`connection.ts`'s
+		// BYE-greeting rejection already apply (shared helper, M14).
+		const text = sanitizeForErrorMessage(resp.status.text?.content ?? "");
 		const code = toTypedResponseCode(resp.status.text?.code);
 		// PR #18 review fix (Medium, report-or-fix — diagnostic dead code):
 		// `finish()` only ever runs after a tagged OK, so a mechanism whose
@@ -217,12 +225,18 @@ export class AuthenticateCommand extends Command<void> {
 		// XOAUTH2's one-shot error-recovery round trip) has no other seam to
 		// surface a recorded diagnostic from — `describeFailure()` is that
 		// seam (`SaslMechanism`'s own doc comment). Optional and `undefined`
-		// for every mechanism that doesn't implement/need it.
+		// for every mechanism that doesn't implement/need it. Sanitized the
+		// same way `text` is: a mechanism's diagnostic (e.g. OAUTHBEARER/
+		// XOAUTH2's `describeFailure()`) is itself built from a server-supplied
+		// error payload, so it carries the exact same untrusted-text risk.
 		const diagnostic = this.mechanism.describeFailure?.();
+		const sanitizedDiagnostic = diagnostic
+			? sanitizeForErrorMessage(diagnostic)
+			: diagnostic;
 		const message =
 			`AUTHENTICATE ${this.mechanism.name} failed with ${status}` +
 			(text ? `: ${text}` : "") +
-			(diagnostic ? ` (${diagnostic})` : "");
+			(sanitizedDiagnostic ? ` (${sanitizedDiagnostic})` : "");
 		return new AuthError(message, { mechanismsTried: [this.mechanism.name], code });
 	}
 }

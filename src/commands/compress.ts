@@ -28,6 +28,15 @@ import type { CommandWriter } from "./writer";
 export class CompressCommand extends Command<boolean> {
 	readonly verb = "COMPRESS";
 	readonly queueMode = "isolated" as const;
+	/** M15 fix (verified real): every sibling capability-gated command
+	 *  declares this so `ImapClient.run()`'s escape-hatch enforcement
+	 *  (§3.6/I-9) actually gates it -- this command had none, so
+	 *  `client.run(new CompressCommand())` reached the wire with ZERO
+	 *  capability check, bypassing the exact gate `ImapClient.compress()`
+	 *  itself enforces for the same command. RFC 4978 §5's ABNF names the
+	 *  capability `COMPRESS=DEFLATE` (the only algorithm this extension
+	 *  currently defines). */
+	readonly capability = "COMPRESS=DEFLATE";
 
 	protected write(w: CommandWriter): void {
 		w.atom("DEFLATE");

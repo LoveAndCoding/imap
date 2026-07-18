@@ -43,6 +43,20 @@ export interface OpenTlsOptions {
 	 * UNDER the identity-enforcing values below — see FORBIDDEN_TLS_OPTION_KEYS.
 	 */
 	tlsOptions?: tls.ConnectionOptions;
+	/**
+	 * M11 fix (implicit-TLS `disconnect()` gap): invoked SYNCHRONOUSLY, the
+	 * instant the underlying `tls.TLSSocket` is created (`tls.connect()`
+	 * returns it immediately, well before the handshake itself completes) --
+	 * NOT once this function's own returned promise resolves. `Connection.
+	 * connect()`'s implicit-TLS (`tls: "on"`) branch previously had no socket
+	 * reference at all (`this.socket` stayed `undefined`) for the ENTIRE
+	 * handshake await, during which `disconnect()`'s `if (!this.socket)
+	 * return;` guard made it a silent no-op -- calling `disconnect()`/
+	 * `close()` mid-handshake did nothing until the handshake's OWN timeout
+	 * eventually noticed independently. Wiring `this.socket` (and the
+	 * transient error handler) here instead closes that entire window.
+	 */
+	onSocket?: (socket: tls.TLSSocket) => void;
 }
 
 /**
@@ -104,7 +118,7 @@ function toTlsError(err: Error, socket: tls.TLSSocket): TLSSocketError {
  * hangs and never resolves with a falsy value to signal failure.
  */
 export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
-	const { host, port, socket, timeoutMs, tlsOptions } = opts;
+	const { host, port, socket, timeoutMs, tlsOptions, onSocket } = opts;
 
 	// Validate up front so a caller gets a clear failure — as a rejected
 	// promise, same as every other openTls() failure mode, never a
@@ -151,6 +165,11 @@ export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
 		let settled = false;
 
 		const tlsSocket = tls.connect(connectOptions);
+		// M11 fix: hand the raw socket to the caller THE INSTANT it exists --
+		// see `OpenTlsOptions.onSocket`'s own doc comment for the window this
+		// closes. Synchronous, before any awaits or 'data'/'error' events can
+		// fire, so the caller's own state is never observed half-updated.
+		onSocket?.(tlsSocket);
 
 		let timer: NodeJS.Timeout | undefined = setTimeout(() => {
 			if (settled) {
@@ -159,6 +178,7 @@ export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
 			settled = true;
 			tlsSocket.off("error", onError);
 			tlsSocket.off("secureConnect", onSecureConnect);
+			tlsSocket.off("close", onClose);
 			const err = new ConnectionTimeout(
 				timeoutMs,
 				socket ? "TLS Negotiation" : "Socket",
@@ -174,6 +194,7 @@ export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
 			}
 			tlsSocket.off("error", onError);
 			tlsSocket.off("secureConnect", onSecureConnect);
+			tlsSocket.off("close", onClose);
 		};
 
 		const onError = (err: Error) => {
@@ -196,11 +217,37 @@ export async function openTls(opts: OpenTlsOptions): Promise<tls.TLSSocket> {
 			resolve(tlsSocket);
 		};
 
+		// M11/H1 fix: a socket destroyed with NO explicit error (the common
+		// shape -- `Connection.disconnect()`'s default caller path passes
+		// none) does not reliably raise a distinct 'error' event for a
+		// TLSSocket mid-handshake on every Node/OpenSSL version -- without
+		// this listener, a `disconnect()`/`close()` racing this exact window
+		// (now reachable thanks to `onSocket` above exposing the socket
+		// early) could leave this promise hanging until ITS OWN internal
+		// `timer` above eventually fires, rather than rejecting promptly the
+		// instant the socket is actually gone. 'close' is guaranteed to fire
+		// exactly once after `destroy()`, per Node's documented `net.Socket`
+		// behavior, regardless of whether 'error' also fires.
+		const onClose = () => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			cleanup();
+			reject(
+				new TLSSocketError(
+					"TLS handshake aborted before completion (socket closed)",
+					"handshake",
+				),
+			);
+		};
+
 		// Attach the error listener BEFORE waiting for secureConnect: a
 		// handshake/identity failure surfaces as an 'error' event, and an
 		// unhandled 'error' event would otherwise crash the process instead
 		// of rejecting this promise.
 		tlsSocket.once("error", onError);
 		tlsSocket.once("secureConnect", onSecureConnect);
+		tlsSocket.once("close", onClose);
 	});
 }

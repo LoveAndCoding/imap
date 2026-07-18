@@ -11,7 +11,13 @@ import {
 	UnauthenticateCommand,
 	Command,
 } from "../commands";
-import { ConnectionError, IMAPError, ServerBadError, ServerNoError } from "../errors";
+import {
+	ConnectionError,
+	IMAPError,
+	ServerBadError,
+	ServerNoError,
+	TlsError,
+} from "../errors";
 import NewlineTranform from "../newline.transform";
 import { wrapCompression } from "./compress";
 import type { CompressionLayer } from "./compress";
@@ -37,6 +43,7 @@ import {
 } from "./types";
 import { ConnectionTimeout, TLSSocketError } from "./errors";
 import { openTls } from "./tls";
+import { sanitizeForErrorMessage } from "./utils";
 
 // NOTE on scope (spec §10.6 pre-confidentiality/state hygiene lane): this
 // milestone does NOT implement a blanket "suppress LIST/FLAGS/EXISTS/etc.
@@ -58,27 +65,15 @@ import { openTls } from "./tls";
 
 const DEFAULT_TIMEOUT = 10000;
 
-/**
- * LOW finding (verified real): server-supplied free text (e.g. a BYE
- * greeting's human-readable explanation) used to be embedded verbatim,
- * completely unsanitized, into a thrown Error's `message` -- a
- * malicious/misbehaving server could inject CR/LF (forging fake log lines
- * once a caller's logger prints `err.message` verbatim) or other C0/DEL
- * control bytes into this library's own error messages. Escapes CR/LF/TAB
- * to their visible two-character forms and every other C0/DEL byte to a
- * `\xHH` escape -- purely cosmetic for the overwhelming majority of server
- * text (plain ASCII with no control bytes), so no legitimate message
- * changes shape.
- */
-function sanitizeForErrorMessage(text: string): string {
-	// eslint-disable-next-line no-control-regex -- \x00-\x1f/\x7f control range is intentional (sanitizing server text before embedding in an error message)
-	return text.replace(/[\x00-\x1f\x7f]/g, (ch) => {
-		if (ch === "\r") return "\\r";
-		if (ch === "\n") return "\\n";
-		if (ch === "\t") return "\\t";
-		return `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`;
-	});
-}
+// LOW finding (verified real): server-supplied free text (e.g. a BYE
+// greeting's human-readable explanation) used to be embedded verbatim,
+// completely unsanitized, into a thrown Error's `message` -- a
+// malicious/misbehaving server could inject CR/LF (forging fake log lines
+// once a caller's logger prints `err.message` verbatim) or other C0/DEL
+// control bytes into this library's own error messages. `sanitizeForErrorMessage`
+// (M14, `connection/utils.ts`) closes this -- shared with
+// `commands/authenticate.ts`/`commands/starttls.ts`, which had the identical
+// gap for their own server-text-bearing errors.
 
 /**
  * Layer-1 IMAP transport connection (spec §3.2): owns the raw socket, the
@@ -336,6 +331,24 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * STARTTLS eligibility and silently resolve over plaintext), and stops
 	 * the command queue so a hold engaged mid-STARTTLS can never survive a
 	 * torn-down connection attempt.
+	 *
+	 * H1 fix (verified real): this used to be the ONE teardown chokepoint
+	 * that never emitted `disconnected` -- that event was wired up (via
+	 * `onSocketClose`) only at the very END of a SUCCESSFUL `connect()`, so a
+	 * `disconnect()`/`close()`/`logout()` racing a still-negotiating
+	 * `connect()` (anywhere between the greeting wait and a STARTTLS
+	 * handshake) that ended up tearing down through THIS method instead left
+	 * any caller waiting on `disconnected` (`ImapClient.close()`'s
+	 * `waitForDisconnect()`, in particular) hanging indefinitely -- past even
+	 * the eventual `connect()`-side timeout, since that timeout only ever
+	 * rejects `connect()`'s OWN promise, never emits this event. Safe to add
+	 * unconditionally: every one of `connect()`'s failure paths calls this
+	 * BEFORE the permanent `onSocketClose`/`onSocketEnd`/`onSocketError`
+	 * handlers are ever wired onto a socket (that wiring is the LAST thing a
+	 * successful `connect()` does, see the end of that method) -- so this
+	 * and `onSocketClose` can never both fire for the same attempt, and
+	 * `disconnected` still fires at most once per `connect()` attempt either
+	 * way.
 	 */
 	private teardownFailedConnect(): void {
 		if (this.transientConnectError) {
@@ -364,6 +377,13 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.fireTeardown(
 			new ConnectionError("Connection attempt aborted", { phase: "connect" }),
 		);
+		// H1 fix: guarantee a terminal `disconnected` from this path too (see
+		// this method's own doc comment above) -- `true` (graceful) here
+		// mirrors `onSocketClose`'s own `!hadErr` semantics for a teardown
+		// that wasn't itself caused by a raw socket error (a failed
+		// handshake/greeting/policy check is reported through the rejected
+		// `connect()` promise itself, not through this event's boolean).
+		this.emit("disconnected", true);
 	}
 
 	/**
@@ -537,8 +557,6 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 				"Existing IMAP connection or connection attempt must be fully closed before a new one can be made",
 			);
 		}
-		this.connectInProgress = true;
-
 		const {
 			host,
 			port,
@@ -546,11 +564,22 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			tlsOptions,
 			timeout,
 		} = this.options;
+		// H1 fix (verified real, coherence gap): validated BEFORE
+		// `connectInProgress` is set -- this used to run AFTER, so a
+		// misconfigured instance (no `port`) threw here having already
+		// flipped the re-entrancy guard `true` with NO path that ever clears
+		// it back (this throw bypasses `teardownFailedConnect()` entirely,
+		// the ONE place that resets it): every subsequent `connect()` call on
+		// the SAME instance would then hit the `this.connectInProgress` guard
+		// above and throw "must be fully closed", permanently, even though
+		// nothing was ever actually in flight. Moved above the guard so a
+		// config error can never mutate any state that needs cleaning up.
 		if (typeof port !== "number") {
 			throw new IMAPError(
 				"A port must be provided in the connection configuration",
 			);
 		}
+		this.connectInProgress = true;
 		this.socket = undefined;
 		const timeoutWait = timeout || DEFAULT_TIMEOUT;
 
@@ -602,6 +631,20 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 					port,
 					timeoutMs: timeoutWait,
 					tlsOptions,
+					// M11 fix: assign + rebind the transient error handler the
+					// INSTANT the underlying TLS socket exists, rather than only
+					// once the WHOLE handshake resolves -- closes the window
+					// (spanning the entire handshake) where `this.socket` was
+					// previously `undefined`, during which `disconnect()` was a
+					// silent no-op and no listener could reject this in-flight
+					// attempt on a genuine socket failure either. `this.socket =
+					// await openTls(...)` below still reassigns the same
+					// (by-then-secured) socket once the promise resolves, so this
+					// is a harmless redundant assignment on the success path.
+					onSocket: (sock) => {
+						this.socket = sock;
+						this.rebindTransientErrorHandler();
+					},
 				});
 				this.secure = true;
 				connected = true;
@@ -690,8 +733,23 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			throw err;
 		}
 
+		// LOW finding (verified real, tautological check): this used to also
+		// require `!this.isSecure` here -- but `isSecure` is gated on
+		// `this.connected` (the instance field), which isn't assigned until
+		// AFTER this whole `if` block runs (see `this.connected = connected;`
+		// below, and the near-identical note a few lines down inside this
+		// block for the same underlying gotcha). `this.connected` is always
+		// `false` at this point in `connect()`, so `this.isSecure` was always
+		// `false` and `!this.isSecure` was always `true` -- dead weight with
+		// no effect on which branch runs (this STARTTLS/STARTTLS_OPTIONAL
+		// branch is only ever reached via the plain-socket path anyway, where
+		// `this.secure` is always `false` too, so even reading `this.secure`
+		// directly instead would be equally tautological here). Removed
+		// rather than "fixed" to read `this.secure`: there is no plaintext
+		// code path that reaches this branch with `this.secure` already
+		// `true`, so the check has no reachable failure mode to guard against
+		// either way.
 		if (
-			!this.isSecure &&
 			!this.preauthed &&
 			(tlsSetting === TLSSetting.STARTTLS ||
 				tlsSetting === TLSSetting.STARTTLS_OPTIONAL)
@@ -778,8 +836,18 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		this.connected = true;
 		this.commandQueue.start();
 	};
-	protected onSocketError = (err) => {
-		this.emit("connectionError", new IMAPError(err));
+	protected onSocketError = (err: unknown) => {
+		// LOW finding (verified real, implicit `any`): `err` had no type
+		// annotation; `noImplicitAny` is off project-wide so this compiled
+		// silently, but every genuinely `unknown`-typed error elsewhere in
+		// this file (`onPipelineError`, `transientConnectError`) is annotated
+		// and coerced the same way -- match that convention here too, rather
+		// than passing a possibly-non-`Error` value straight to `IMAPError`'s
+		// `string | Error` constructor (which only accepts those two shapes;
+		// a real socket 'error' event always emits a genuine `Error`, but the
+		// declared type shouldn't silently promise more than that).
+		const wrapped = err instanceof Error ? err : new Error(String(err));
+		this.emit("connectionError", new IMAPError(wrapped));
 	};
 	protected onSocketClose = (hadErr: boolean) => {
 		this.commandQueue.stop();
@@ -846,6 +914,53 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * the usual socket-error handling.
 	 */
 	public async disconnect(error?: Error) {
+		// H1/M11 fix (verified real): a `disconnect()` racing a still-
+		// negotiating `connect()` (the greeting wait, a STARTTLS/implicit-TLS
+		// handshake) used to either silently no-op entirely (no live
+		// `this.socket` yet -- the implicit-TLS window, M11, before
+		// `openTls()`'s own handshake resolves) or destroy whatever socket DID
+		// exist without promptly unblocking whichever `connect()`-internal
+		// await was suspended -- leaving it to idle until its OWN greeting/
+		// command timeout eventually noticed independently (up to `timeout`/
+		// `commandTimeout`, not "promptly"). `connectInProgress` is set
+		// synchronously at the very top of `connect()` (see that field's own
+		// doc comment) and is a reliable signal here regardless of which
+		// phase the attempt is currently in or whether `this.socket` exists
+		// yet. This branch aborts the in-flight attempt through the SAME
+		// `connectAbort`/`transientConnectError` mechanism a genuine
+		// mid-connect socket error already uses (`teardownFailedConnect()` is
+		// what it ultimately routes through, which now itself guarantees a
+		// `disconnected` emission -- see that method's own doc comment) --
+		// race-free and uniform across every `connect()` phase.
+		if (this.connectInProgress) {
+			const waitForTeardown = new Promise<void>((resolve) => {
+				this.once("disconnected", () => resolve());
+			});
+			// Destroys whatever socket exists right now (implicit-TLS's own
+			// early-exposed socket, the plain TCP socket, or the STARTTLS
+			// upgrade's not-yet-swapped-in `previousSocket`) -- a no-op if
+			// none does. `openTls()`'s own defensive `close` listener (M11)
+			// guarantees a settle even when this destroys a socket mid-
+			// handshake with no explicit `error` (the common case, which
+			// raises no distinct 'error' event on every Node/OpenSSL version).
+			this.socket?.destroy(error);
+			// Promptly unblocks whichever OTHER hazardous await `connect()`
+			// is currently suspended on (the greeting wait in particular,
+			// which listens to neither the socket directly nor `openTls()`'s
+			// own close handling) -- without this, only the destroy() above
+			// would eventually matter, and only for phases that actually
+			// listen to the socket.
+			this.transientConnectError?.(
+				error ??
+					new ConnectionError(
+						"Connection aborted: disconnect() called during an in-flight connect() attempt",
+						{ phase: "connect" },
+					),
+			);
+			await waitForTeardown;
+			return;
+		}
+
 		if (!this.socket) {
 			return;
 		}
@@ -854,16 +969,12 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// after `destroy()`, per Node's documented `net.Socket` behavior) --
 		// NOT this class's own `disconnected` event, which only ever fires
 		// from `onSocketClose()`, itself only wired up as a PERMANENT listener
-		// at the very END of a successful `connect()`. Waiting on `disconnected`
-		// instead would hang forever if `disconnect()` is called while a
-		// `connect()` attempt is still mid-flight (e.g. stuck mid-STARTTLS
-		// negotiation with no `commandTimeout` configured) -- `onSocketClose`
-		// was never wired up for THIS attempt yet, so it would never emit. A
-		// direct socket reference (not `this.socket`, which another concurrent
-		// teardown could reassign/null out from under this call) is captured
-		// up front so the wait is unaffected by anything else observing/
-		// mutating `this.socket` in the meantime. Whichever handler already
-		// runs cleanup for a NORMAL (post-connect) teardown (`onSocketClose`,
+		// at the very END of a successful `connect()`. A direct socket
+		// reference (not `this.socket`, which another concurrent teardown
+		// could reassign/null out from under this call) is captured up front
+		// so the wait is unaffected by anything else observing/mutating
+		// `this.socket` in the meantime. Whichever handler already runs
+		// cleanup for a NORMAL (post-connect) teardown (`onSocketClose`,
 		// registered before this call in that case) still runs FIRST --
 		// `EventEmitter` invokes 'close' listeners in registration order, and
 		// that listener was always attached earlier than this one -- so this
@@ -1198,16 +1309,35 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 	 * injected bytes after a REFUSED STARTTLS/COMPRESS/UNAUTHENTICATE is
 	 * exactly as dangerous as one that does it after acceptance.
 	 */
-	private armBoundaryInjectionGuard(cmd: Command<unknown>): () => void {
+	private armBoundaryInjectionGuard(
+		cmd: Command<unknown>,
+		residualBytes: "discard" | "preserve" = "discard",
+	): () => void {
 		const onTagged = (resp: TaggedResponse) => {
 			if (resp.tag.id === cmd.tag) {
-				this.processingPipeline.forceNewLine(false);
+				if (residualBytes === "preserve") {
+					// M10 fix: COMPRESS/UNAUTHENTICATE swap a CODEC in place on
+					// the SAME byte stream (no socket replacement, unlike
+					// STARTTLS) -- bytes riding along with/after this boundary
+					// command's own tagged response are the genuine, in-order
+					// continuation of that stream (very possibly the opening
+					// bytes of the server's newly-compressed output), never
+					// safe to throw away the way STARTTLS's residual plaintext
+					// is. Capture instead of discard -- see
+					// `NewlineTranform.beginOpaqueCapture()`'s own doc comment.
+					this.processingPipeline.beginOpaqueCapture();
+				} else {
+					this.processingPipeline.forceNewLine(false);
+				}
 				// M6.8 hardening: keep discarding EVERY subsequent response
-				// (not just the one synchronous instant `forceNewLine(false)`
-				// covers) until `endBoundaryWindow()` clears it once the
-				// topology swap that follows actually completes -- see
-				// `postBoundaryDiscard`'s own doc comment for the split-write
-				// gap this closes.
+				// (not just the one synchronous instant `forceNewLine(false)`/
+				// `beginOpaqueCapture()` covers) until `endBoundaryWindow()`
+				// clears it once the topology swap that follows actually
+				// completes -- see `postBoundaryDiscard`'s own doc comment for
+				// the split-write gap this closes. Harmless/redundant
+				// alongside `beginOpaqueCapture()` (which already prevents any
+				// line from ever being emitted in the first place while armed)
+				// but kept as the same defense-in-depth backstop either way.
 				this.postBoundaryDiscard = true;
 			}
 		};
@@ -1296,6 +1426,34 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			startNegotiation = await negotiationResult;
 		} catch (err) {
 			this.endBoundaryWindow();
+			// H3 fix (verified real): a server that ADVERTISED STARTTLS (we
+			// only reach this line because the capability check above already
+			// passed) but then explicitly DECLINES the command itself -- a
+			// tagged NO/BAD, which `StartTLSCommand.onError()` maps to a
+			// `TlsError` and ONLY a `TlsError` (never `ServerNoError`/
+			// `ServerBadError`, since that command overrides the default
+			// mapping) -- is the exact same "opportunistic tolerates,
+			// mandatory doesn't" situation the capability-absent branch above
+			// already handles (spec §3.3: "opportunistic continues
+			// cleartext"). Before this fix, ANY rejection here (capability-
+			// advertised-but-declined included) unconditionally propagated
+			// through this whole `catch` and connect()'s own surrounding one,
+			// tearing down the WHOLE connection under STARTTLS_OPTIONAL too --
+			// silently promoting an opportunistic policy into a mandatory one
+			// for this one failure shape. Only a genuine in-protocol decline
+			// of the negotiation ITSELF is swallowed this way (never a
+			// transport-level failure -- `ConnectionError`/`ConnectionTimeout`/
+			// a plain socket error propagate as `TlsError` is not their type,
+			// so they fall through to the unconditional `throw` below exactly
+			// as before), and only under STARTTLS_OPTIONAL: STARTTLS
+			// (mandatory) must still hard-fail on a decline, matching the
+			// capability-absent branch's own policy split.
+			if (
+				err instanceof TlsError &&
+				this.options.tls === TLSSetting.STARTTLS_OPTIONAL
+			) {
+				return true;
+			}
 			throw err;
 		} finally {
 			disarmInjectionGuard();
@@ -1459,7 +1617,13 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// COMPRESS") -- race-free regardless of what else is in flight.
 		// M6.2: same complete-line injection defense as starttls() -- armed
 		// before dispatch, see `armBoundaryInjectionGuard`'s doc comment.
-		const disarmInjectionGuard = this.armBoundaryInjectionGuard(compressCmd);
+		// M10 fix: "preserve", not "discard" -- see that method's own doc
+		// comment for why COMPRESS's residual bytes are real data, never
+		// safe to throw away the way STARTTLS's are.
+		const disarmInjectionGuard = this.armBoundaryInjectionGuard(
+			compressCmd,
+			"preserve",
+		);
 		// HIGH finding #6: bounded by `commandTimeout` -- see
 		// `withCommandTimeout()`'s own doc comment.
 		const negotiationResult = this.withCommandTimeout(
@@ -1471,6 +1635,16 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			activated = await negotiationResult;
 		} catch (err) {
 			this.endBoundaryWindow();
+			// M10 fix: whatever `armBoundaryInjectionGuard("preserve")` captured
+			// was NEVER actually compressed (the server's own outgoing
+			// compression only activates on a successful OK, RFC 4978) --
+			// it's ordinary plaintext that was merely paused mid-processing
+			// while this negotiation was pending. Replay it through ordinary
+			// line processing rather than losing it, regardless of which of
+			// these two outcomes (decline vs. a harder failure) applies.
+			this.processingPipeline.injectBytes(
+				this.processingPipeline.endOpaqueCapture(),
+			);
 			if (err instanceof ServerNoError || err instanceof ServerBadError) {
 				// RFC4978-3-3: leave the connection exactly as it was --
 				// fully functional, uncompressed.
@@ -1486,14 +1660,20 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// caught above) -- kept for safety, same posture as starttls()'s
 			// own identical guard.
 			this.endBoundaryWindow();
+			// M10 fix: same reasoning as the catch block above -- never
+			// actually compressed, replay as ordinary plaintext.
+			this.processingPipeline.injectBytes(
+				this.processingPipeline.endOpaqueCapture(),
+			);
 			return false;
 		}
 
-		// MEDIUM-7 parity + M6.2's completion of it: `armBoundaryInjectionGuard`
-		// above already discarded any buffered residue -- partial OR
-		// complete-line -- the instant COMPRESS's own tagged OK was routed,
-		// before touching the stream topology at all. Nothing left to do
-		// here; `processingPipeline.pending` is already empty by this point.
+		// MEDIUM-7 parity + M6.2's completion of it, M10 fix: unlike
+		// STARTTLS, `armBoundaryInjectionGuard` above did NOT discard any
+		// buffered residue -- it captured it (opaque capture, see that
+		// method's doc comment), still sitting untouched in
+		// `processingPipeline` until `endOpaqueCapture()` below hands it to
+		// the new codec.
 
 		// Unlike starttls(), the socket itself is never replaced -- only
 		// unpiped from the pipeline so `wrapCompression` can re-pipe it
@@ -1512,7 +1692,21 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 			// state reset) instead of the bare `connectionError` emission
 			// `onSocketError` alone used to produce here, which left `connected`
 			// true and reads/writes permanently wedged against a dead codec.
-			this.compression = wrapCompression(socket, this.processingPipeline, this.onPipelineError);
+			//
+			// M10 fix: `endOpaqueCapture()` hands over whatever arrived on the
+			// still-plain socket between COMPRESS's tagged OK and this exact
+			// instant -- genuinely the opening bytes of the server's
+			// now-compressed stream (RFC 4978), fed into the fresh `inflate`
+			// as its very first input so nothing is lost and decompression
+			// stays correctly ordered (see `wrapCompression()`'s own doc
+			// comment on its `initialCompressedBytes` parameter).
+			this.compression = wrapCompression(
+				socket,
+				this.processingPipeline,
+				this.onPipelineError,
+				undefined,
+				this.processingPipeline.endOpaqueCapture(),
+			);
 		} finally {
 			// MEDIUM-6 parity: the codec is fully interposed BEFORE releasing
 			// the held queue -- anything parked during the hold must write
@@ -1594,6 +1788,34 @@ export default class Connection extends TypedEmitter<IConnectionEvents> {
 		// (RFC8437-3-5), so a complete line injected alongside its tagged OK
 		// must never be parsed as a live response under the WRONG
 		// (pre-reset) state either, compression or not.
+		//
+		// M10 investigated (verified NOT applicable here, unlike COMPRESS's
+		// own activation side): stays "discard", not "preserve". COMPRESS's
+		// M10 bug is specifically that its residual bytes sit UPSTREAM of a
+		// not-yet-created `inflate` -- discarding them means that codec never
+		// sees its own opening bytes, permanently desyncing decompression.
+		// UNAUTHENTICATE's boundary is the opposite shape: if compression was
+		// active, `inflate` is STILL fully wired into the pipe for this
+		// entire window (only torn down further below, AFTER this guard's
+		// window closes) -- so `processingPipeline`'s buffer sits DOWNSTREAM
+		// of an already-live, already-correctly-decoding codec. Discarding
+		// THAT buffer never desyncs `inflate` itself (every byte was already
+		// consumed and correctly decoded by the time it reaches here) -- it
+		// only discards the resulting PLAINTEXT, exactly the same
+		// STARTTLS-style "untrusted boundary-window data" posture this
+		// codebase already establishes and tests for UNAUTHENTICATE
+		// specifically (`test/unit/connection/unauthenticate-boundary.test.ts`
+		// asserts a complete line injected here -- compressed or not -- must
+		// NEVER surface as a live response). A "preserve" attempt was tried
+		// here and reverted: it could never actually change this method's
+		// observable behavior anyway (`postBoundaryDiscard` -- see
+		// `armBoundaryInjectionGuard`'s own doc comment -- is still armed for
+		// the ENTIRE capture window and only clears in `endBoundaryWindow()`,
+		// which necessarily runs AFTER any replay attempt here, so replayed
+		// bytes would just be re-dropped at the router a moment later) while
+		// adding real complexity and a fragile "still gets dropped anyway"
+		// dependency on that ordering -- simpler and more honest to keep this
+		// a plain, established discard.
 		const disarmInjectionGuard = this.armBoundaryInjectionGuard(cmd);
 		// HIGH finding #6: bounded by `commandTimeout` -- see
 		// `withCommandTimeout()`'s own doc comment.

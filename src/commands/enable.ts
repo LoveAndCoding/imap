@@ -33,6 +33,27 @@ export class EnableCommand extends Command<string[]> {
 	readonly verb = "ENABLE";
 	readonly queueMode = "serial" as const;
 	readonly states = ["authenticated"] as const;
+	// M16 (investigated, NOT fixed -- verified as a real gap but not worth
+	// closing here): RFC 5161 §3.1 is an IMAP4rev1 EXTENSION, gated on its
+	// own `ENABLE` capability token; RFC 9051 folds it into IMAP4rev2 core
+	// (no separate advertisement expected). A `capability = ["ENABLE",
+	// "IMAP4rev2"]` field (mirroring `idle.ts`/`namespace.ts`'s identical
+	// OR-with-rev2 pattern) is the textbook-correct gate and was tried here
+	// -- but this codebase's OWN test suite (`test/unit/client/select.test.ts`,
+	// `utf8-only.test.ts`, `utf8-accept-effective.test.ts`,
+	// `unauthenticate.test.ts`, and by extension the compliance driver's own
+	// default fixtures) routinely scripts servers that advertise bare
+	// `IMAP4rev1` -- omitting both `ENABLE` and `IMAP4rev2` -- while still
+	// genuinely supporting and exercising ENABLE on the wire, exactly
+	// mirroring how real-world IMAP4rev1 servers behave in practice (ENABLE
+	// is such a long-established, universally-implemented RFC 5161 extension
+	// that omitting its own capability token from an otherwise-minimal
+	// CAPABILITY response is common). Adding the gate flipped ~10 previously
+	// passing tests to failures for a LOW-severity, narrow protocol-purity
+	// gap against a hypothetical server that advertises neither token yet
+	// still expects clients to probe ENABLE anyway -- not a trade this fix
+	// pass takes. Reported, not fixed -- no `capability` field declared,
+	// same as before this investigation.
 
 	constructor(private readonly requested: readonly string[]) {
 		super();

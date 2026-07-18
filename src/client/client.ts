@@ -61,6 +61,7 @@ import {
 import {
 	CapabilityList,
 	CapabilityTextCode,
+	ContinueResponse,
 	ExistsCount,
 	Expunge,
 	Fetch,
@@ -176,8 +177,19 @@ export interface ImapClientEvents {
 	/** A response the router (spec §8) could attribute to neither an
 	 *  in-flight command's claim function nor the state-tracker lane — a
 	 *  catch-all so callers can observe (and log) server data outside this
-	 *  library's currently-understood surface. */
-	unhandled: (response: UntaggedResponse | UnknownResponse) => void;
+	 *  library's currently-understood surface. Widened (H4 fix) to the SAME
+	 *  4-way union `Connection`'s own `unhandled` event carries
+	 *  (`connection/types.ts`): an unmatched-tag `TaggedResponse` and an
+	 *  unclaimed `ContinueResponse` are exactly the protocol-desync signals
+	 *  this event exists to surface (an unknown tag means some command's
+	 *  tagged response was never attributed to it; an unowned continuation
+	 *  means the server sent a `+` prompt nothing asked for) -- silently
+	 *  narrowing them out here (the bug this widens) meant those two shapes
+	 *  never reached this event at all, with no error/log surfacing them to
+	 *  a consumer either. */
+	unhandled: (
+		response: ContinueResponse | TaggedResponse | UnknownResponse | UntaggedResponse,
+	) => void;
 	/** Fires once the connection has fully torn down, from ANY cause
 	 *  (`logout()`/`close()`, a server BYE, or an unexpected socket drop).
 	 *  `info.graceful` is `true` only when the socket closed cleanly AND no
@@ -1607,10 +1619,18 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		this.connection.on("secureUpgrade", () => {
 			this.capabilityRegistry.invalidateSilently();
 		});
+		// H4 fix: this used to narrow `Connection`'s 4-way `unhandled` union
+		// down to just `UntaggedResponse | UnknownResponse`, silently dropping
+		// the other two shapes the router actually fires it for -- an
+		// unmatched-tag `TaggedResponse` (`Router.routeTagged`'s "unknown tag"
+		// branch) and an unowned `ContinueResponse` (`Router.routeContinuation`'s
+		// "no continuation owner" branch). Both are genuine protocol-desync
+		// signals (this event's whole purpose), not merely uninteresting data,
+		// so they must reach consumers here exactly like the other two shapes
+		// already did -- pass the full union through unconditionally rather
+		// than re-filtering it.
 		this.connection.on("unhandled", (resp) => {
-			if (resp instanceof UntaggedResponse || resp instanceof UnknownResponse) {
-				this.emit("unhandled", resp);
-			}
+			this.emit("unhandled", resp);
 		});
 		this.connection.on("connectionError", (err) => {
 			// `err` is `Connection`'s legacy `ConnectionErrors` union (its own
@@ -2019,14 +2039,47 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * locally rather than silently no-op'd or sent to the wire a second
 	 * time). Otherwise delegates to `Connection.compress()`.
 	 *
-	 * Resolves on ANY outcome the RFC treats as non-fatal, including the
-	 * server declining with a tagged NO/BAD (RFC4978-3-3: the client "MUST
-	 * NOT turn on compression" after such a result, but the connection
-	 * remains fully usable, uncompressed -- COMPRESS is only ever a
-	 * RFC4978-1-1 MAY, so a declined request is not surfaced as an error
-	 * any more than an unadvertised `extensions: "auto"` member is).
+	 * M17 fix (verified real): unlike every other verb in this file, this
+	 * used to perform NO client-state precondition check at all -- calling
+	 * `compress()` on a client that was never connected (or already
+	 * `disconnected`/`logout`) fell straight through to
+	 * `Connection.compress()`, whose own `if (!this.socket) return false;`
+	 * guard resolves `false` for "no live transport" -- INDISTINGUISHABLE,
+	 * since this method discarded that boolean entirely, from the RFC4978-
+	 * 3-3 "server declined" `false` a genuine NO/BAD produces. A caller got
+	 * a silently-resolved promise either way, with no way to tell "nothing
+	 * happened, there's no connection" apart from "I asked the server and it
+	 * said no". State is gated first (mirroring `run()`'s own state-before-
+	 * capability order, and `unauthenticate()`'s identical rationale below):
+	 * COMPRESS itself is state-agnostic (RFC 4978 imposes no legal-states
+	 * restriction, and this library's own tests exercise it from
+	 * "not-authenticated" -- see `test/unit/client/compress.test.ts`), so the
+	 * only illegal states are the three where there is provably no live
+	 * transport to negotiate over at all: "disconnected", "connecting" (no
+	 * transport ready to submit a command over yet), and "logout" (tearing
+	 * down, submissions are refused everywhere else too). Gating those out
+	 * makes `Connection.compress()`'s own `!this.socket` branch structurally
+	 * unreachable from here (no `await` sits between this check and the call
+	 * below, so nothing can race the socket away in between) -- the
+	 * remaining `false` outcome this method can still observe is
+	 * unambiguously "the server declined" (RFC4978-3-3), never "there was no
+	 * connection".
 	 */
 	public async compress(): Promise<void> {
+		const current = this.stateMachine.current;
+		if (
+			current === "disconnected" ||
+			current === "connecting" ||
+			current === "logout"
+		) {
+			throw new StateError(
+				`compress() requires a live connection (state is "${current}")`,
+				{
+					state: current,
+					required: ["not-authenticated", "authenticated", "selected"],
+				},
+			);
+		}
 		if (!this.capabilityRegistry.view.has("COMPRESS=DEFLATE")) {
 			throw new CapabilityError(
 				"compress() requires the COMPRESS=DEFLATE capability (RFC 4978), " +
@@ -2217,21 +2270,69 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		const epochBefore = this.capabilityRegistry.view.epoch;
 		await this.connection.unauthenticate();
 
-		// Tagged OK observed -- mirror the server's §3 connection-state reset.
-		// Pointer/state first, `markClosed` last (the F7/F2 convention): a
-		// `closed` listener already observes `client.mailbox === null` and
-		// state "not-authenticated".
+		// M18 fix (verified real): the state check below used to be an `if`
+		// guard around ONLY the `stateMachine.transition()` call, with every
+		// other piece of this method's bookkeeping (`_mailboxSession` null-out
+		// + `markClosed()`, `_enabled`/`_notifyState` reset, capability
+		// invalidation) running UNCONDITIONALLY regardless of what state we
+		// observe here -- the accompanying comment only ever reasoned about
+		// ONE way to land outside "authenticated"/"selected" at this point
+		// (the connection dropping in the same instant, moving state straight
+		// to "disconnected"), never a CONCURRENT `logout()` racing in (spec
+		// §3.1's any-state -> "logout" edge accepts it from here same as
+		// anywhere else, M6.2's own precedent). A racing `logout()` moves
+		// state to "logout" -- NOT "disconnected" -- while it's still
+		// mid-flight (its own LOGOUT round trip / `close()` teardown haven't
+		// settled yet); the OLD code fell into the same silent "run the rest
+		// anyway" path for that case too, which: (a) nulled out
+		// `_mailboxSession` and marked it closed with reason "unauthenticated"
+		// -- even though the connection is actually on its way to a
+		// DIFFERENT, more accurate terminal reason ("disconnected") the
+		// concurrent `logout()` will reach moments later, and by then
+		// `wireConnectionEvents()`'s own disconnect bridge finds
+		// `_mailboxSession` already `null` and skips re-marking it, so the
+		// session's recorded close reason stays permanently wrong; and (b)
+		// resolved `unauthenticate()`'s OWN promise successfully, implying
+		// "you're not-authenticated now" to the caller when the state machine
+		// never actually reflects that (it goes straight to "disconnected"
+		// instead) -- silently misrepresenting what happened, unlike
+		// `connect()`/`authenticate()`'s own concurrent-logout contract (M6.2),
+		// which rejects a typed `StateError` instead of pretending to
+		// succeed.
+		//
+		// Fixed by checking state FIRST, before touching ANY of this method's
+		// own bookkeeping: "disconnected" is still the genuinely harmless,
+		// nothing-left-to-do case (the disconnect bridge already ran a
+		// superset of everything below) and returns early; anything else that
+		// isn't "authenticated"/"selected" (in practice, "logout" mid-flight)
+		// means a concurrent operation already claimed the state machine --
+		// reject with the same typed `StateError` shape `connect()`/
+		// `authenticate()` use for their own lost races, and touch NOTHING
+		// (leave `_mailboxSession` etc. exactly as they were, so whichever
+		// operation actually wins the race performs its own bookkeeping
+		// correctly, once, with the accurate reason).
+		const stateAtOk = this.stateMachine.current;
+		if (stateAtOk === "disconnected") {
+			return;
+		}
+		if (stateAtOk !== "authenticated" && stateAtOk !== "selected") {
+			throw new StateError(
+				"unauthenticate() lost a race with a concurrent logout(): the " +
+					"client's state changed before unauthenticate() could complete",
+				{
+					state: stateAtOk,
+					required: ["authenticated", "selected"],
+				},
+			);
+		}
+
+		// Tagged OK observed, state unraced -- mirror the server's §3
+		// connection-state reset. Pointer/state first, `markClosed` last (the
+		// F7/F2 convention): a `closed` listener already observes
+		// `client.mailbox === null` and state "not-authenticated".
 		const session = this._mailboxSession;
 		this._mailboxSession = null;
-		const stateAtOk = this.stateMachine.current;
-		if (stateAtOk === "authenticated" || stateAtOk === "selected") {
-			this.stateMachine.transition("not-authenticated");
-		}
-		// Defensive `else`: the connection dropped in the same instant the OK
-		// arrived and the disconnect bridge already moved us to
-		// "disconnected" -- its handler has also already done (a superset of)
-		// the bookkeeping below; running the rest again is harmless and keeps
-		// this path simple.
+		this.stateMachine.transition("not-authenticated");
 
 		this._enabled.clear();
 		this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };

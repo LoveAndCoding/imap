@@ -112,9 +112,18 @@ async function startCompressCapableServer(): Promise<{
  * injected line (no trailing CRLF): the COMPRESS analogue of the STARTTLS
  * plaintext-injection shape (`starttls-upgrade.test.ts`'s MEDIUM-7 test).
  * The rest of that injected line ("STS\r\n", completing "* 999 EXISTS")
- * arrives as the FIRST compressed bytes. If the buffered residue isn't
- * discarded at the COMPRESS boundary, the client reassembles "* 999 EXISTS"
- * as if it were a legitimate post-COMPRESS response.
+ * arrives as the FIRST compressed bytes.
+ *
+ * M10 UPDATE: this no longer proves "the residue is discarded" (see
+ * `NewlineTranform.beginOpaqueCapture()`'s own doc comment for why COMPRESS
+ * residue is never safe to blindly discard the way STARTTLS's is -- it may
+ * be the genuine start of the server's compressed stream, RFC 4978).
+ * Instead this now proves the residue is captured and fed into the new
+ * codec rather than silently lost -- and because THIS (adversarial) server
+ * put plaintext there instead of real DEFLATE bytes, that feed fails
+ * `inflate`'s decode safely (a hard teardown) rather than either silently
+ * accepting the injected bytes or reassembling them into a spoofed
+ * response.
  */
 async function startCompressPartialInjectionServer(): Promise<{
 	port: number;
@@ -152,10 +161,18 @@ async function startCompressPartialInjectionServer(): Promise<{
  * COMPRESS boundary): same shape as `startCompressPartialInjectionServer`,
  * except the injected line is COMPLETE (a real trailing CRLF) rather than
  * deliberately incomplete residue. `NewlineTranform.process()`'s loop
- * splits and emits every complete line it finds in one synchronous pass,
- * so — absent the M6.2 fix — this line reaches the router as a live
- * untagged response before compression is even interposed, regardless of
- * how quickly `compress()`'s own post-await discard runs.
+ * splits and emits every complete line it finds in one synchronous pass --
+ * a COMPLETE second line bundled into the same `data` event/write() as the
+ * tagged OK must never escape as a live response regardless of how quickly
+ * the boundary-window guard arms (see the M10 fix in `NewlineTranform.
+ * process()` itself, which re-checks `opaqueCapture` on every loop
+ * iteration for exactly this reason).
+ *
+ * M10 UPDATE: same reasoning as `startCompressPartialInjectionServer`'s own
+ * updated doc comment -- the captured line is now fed into the new codec
+ * rather than discarded, and (being plaintext, not real DEFLATE) fails to
+ * decode, tearing the connection down safely instead of ever surfacing as
+ * a spoofed `untaggedResponse`.
  */
 async function startCompressCompleteLineInjectionServer(): Promise<{
 	port: number;
@@ -175,6 +192,61 @@ async function startCompressCompleteLineInjectionServer(): Promise<{
 				socket.pipe(inflate);
 				deflate.pipe(socket);
 				wireCompressedNoopResponder(inflate, deflate);
+			}
+		});
+	});
+	const sockets = trackSockets(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address() as net.AddressInfo;
+	return { port: address.port, close: closeServer(server, sockets) };
+}
+
+/**
+ * M10 (positive path): a COMPLIANT server -- unlike the two injection
+ * helpers above -- writes its tagged OK for COMPRESS AND the compressed
+ * form of a genuine unsolicited "* 999 EXISTS" in ONE `write()` call,
+ * simulating a TCP segment boundary that happens to split the tagged OK
+ * from real compressed continuation data (RFC 4978: the server's own
+ * outgoing compression activates immediately after ITS tagged OK, so this
+ * is legitimate, expected server behavior, not an attack). The compressed
+ * chunk is captured from the SAME live `deflate` instance used for every
+ * later write (so the raw-DEFLATE stream stays byte-continuous) by
+ * buffering its `data` events until the `flush()` callback confirms the
+ * whole chunk has been produced, THEN combining it with the tagged OK into
+ * one `socket.write()`.
+ */
+async function startCompressStraddlingServer(): Promise<{
+	port: number;
+	close: () => Promise<void>;
+}> {
+	const server = net.createServer((socket) => {
+		socket.on("error", () => undefined);
+		socket.write("* OK ready\r\n");
+		linesUntilCompress(socket, (line, tag) => {
+			if (/\bCOMPRESS\b/i.test(line)) {
+				socket.removeAllListeners("data");
+				const inflate = zlib.createInflateRaw();
+				const deflate = zlib.createDeflateRaw();
+				const straddlingChunks: Buffer[] = [];
+				deflate.on("data", (chunk: Buffer) => straddlingChunks.push(chunk));
+				deflate.write("* 999 EXISTS\r\n");
+				deflate.flush(zlib.constants.Z_SYNC_FLUSH, () => {
+					// Everything `deflate` has produced so far is now
+					// buffered in `straddlingChunks` -- combine it with the
+					// tagged OK into the SAME write() call, then switch the
+					// listener over to writing straight to the socket for
+					// every later (genuinely separate) compressed write.
+					deflate.removeAllListeners("data");
+					deflate.on("data", (chunk: Buffer) => socket.write(chunk));
+					socket.write(
+						Buffer.concat([
+							Buffer.from(`${tag} OK COMPRESS active\r\n`),
+							...straddlingChunks,
+						]),
+					);
+					socket.pipe(inflate);
+					wireCompressedNoopResponder(inflate, deflate);
+				});
 			}
 		});
 	});
@@ -395,7 +467,7 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 		},
 	);
 
-	test("MEDIUM-7 parity: buffered plaintext residue at the COMPRESS boundary is discarded, not reassembled with the compressed continuation", async () => {
+	test("MEDIUM-7/M10: buffered plaintext residue at the COMPRESS boundary is fed into the new codec (never silently discarded, never reassembled into a spoofed response) -- injected plaintext fails DEFLATE decoding safely", async () => {
 		const server = await startCompressPartialInjectionServer();
 		cleanup = server.close;
 		connection = new Connection({
@@ -407,28 +479,80 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 
 		const untaggedEvents: unknown[] = [];
 		connection.on("untaggedResponse", (resp) => untaggedEvents.push(resp));
+		const connectionErrors: unknown[] = [];
+		connection.on("connectionError", (err) => connectionErrors.push(err));
 
 		await connection.connect();
+
+		const disconnected = new Promise<void>((resolve) => {
+			connection!.once("disconnected", () => resolve());
+		});
+
 		const activated = await connection.compress();
 		expect(activated).toBe(true);
 
-		// Drive a real round trip over the compressed channel -- by the time
-		// this resolves, the earlier "STS\r\n" (byte-ordered ahead of the
-		// NOOP reply on the same TCP stream) has already been delivered
-		// through inflate and either correctly discarded or wrongly
-		// reassembled into a bogus "* 999 EXISTS".
-		await connection.runCommand(new NoopCommand());
-
+		// M10 fix: the buffered residue ("* 999 EXI", captured the instant
+		// COMPRESS's tagged OK routed) is no longer silently thrown away --
+		// `Connection.compress()` feeds it into the freshly-created `inflate`
+		// as its FIRST input (RFC 4978: the server's own outgoing compression
+		// activates immediately after ITS tagged OK, so bytes here are
+		// normally the genuine start of the compressed stream). THIS server
+		// is adversarial -- it put raw plaintext there instead -- so that
+		// feed is not valid DEFLATE and `inflate` rejects it as a decode
+		// error, tearing the connection down safely rather than silently
+		// accepting the injected bytes or reassembling them into a spoofed
+		// response.
+		await disconnected;
+		expect(connectionErrors.length).toBeGreaterThan(0);
+		expect(connection.isActive).toBe(false);
 		expect(
 			untaggedEvents.some(
 				(e) => JSON.stringify(e).includes("999") && JSON.stringify(e).includes("EXISTS"),
 			),
-			"the pre-compression residue must never be reassembled into a post-COMPRESS response",
+			"the injected residue must never be reassembled into a spoofed response either",
 		).toBe(false);
 	});
 
-	test("M6.2: a COMPLETE line injected alongside the COMPRESS tagged OK, in the same TCP segment, is discarded before it can ever be parsed as a live response", async () => {
+	test("M6.2/M10: a COMPLETE line injected alongside the COMPRESS tagged OK, in the same TCP segment, is captured (not discarded) and fails DEFLATE decoding safely rather than ever being parsed as a live response", async () => {
 		const server = await startCompressCompleteLineInjectionServer();
+		cleanup = server.close;
+		connection = new Connection({
+			host: "127.0.0.1",
+			port: server.port,
+			tls: TLSSetting.FORCE_OFF,
+			timeout: 2000,
+		});
+
+		const untaggedEvents: unknown[] = [];
+		connection.on("untaggedResponse", (resp) => untaggedEvents.push(resp));
+		const connectionErrors: unknown[] = [];
+		connection.on("connectionError", (err) => connectionErrors.push(err));
+
+		await connection.connect();
+
+		const disconnected = new Promise<void>((resolve) => {
+			connection!.once("disconnected", () => resolve());
+		});
+
+		const activated = await connection.compress();
+		expect(activated).toBe(true);
+
+		// M10 fix: same reasoning as the partial-injection test above -- the
+		// captured "* 999 EXISTS\r\n" is fed into the new codec rather than
+		// discarded, and (being plaintext) fails to decode as DEFLATE.
+		await disconnected;
+		expect(connectionErrors.length).toBeGreaterThan(0);
+		expect(connection.isActive).toBe(false);
+		expect(
+			untaggedEvents.some(
+				(e) => JSON.stringify(e).includes("999") && JSON.stringify(e).includes("EXISTS"),
+			),
+			"a complete line injected in the same TCP segment as the COMPRESS tagged OK must never be parsed as a live response",
+		).toBe(false);
+	});
+
+	test("M10: legitimate compressed continuation data straddling the COMPRESS tagged OK in the same TCP segment is correctly decoded, not lost", async () => {
+		const server = await startCompressStraddlingServer();
 		cleanup = server.close;
 		connection = new Connection({
 			host: "127.0.0.1",
@@ -443,16 +567,30 @@ describe("COMPRESS=DEFLATE upgrade (RFC 4978, M5.9)", () => {
 		await connection.connect();
 		const activated = await connection.compress();
 		expect(activated).toBe(true);
+		expect(connection.isCompressed).toBe(true);
 
-		// Drive a real round trip over the compressed channel.
-		await connection.runCommand(new NoopCommand());
+		// The server wrote its tagged OK AND the compressed form of a
+		// genuine unsolicited "* 999 EXISTS" in ONE write() call -- the
+		// straddling-segment scenario M10 fixes. Before the fix, those
+		// compressed bytes sat in the plain (pre-codec) pipeline's `pending`
+		// buffer at the moment COMPRESS's tagged OK routed and were
+		// unconditionally discarded (`forceNewLine(false)`) -- never reaching
+		// `inflate` at all, and permanently desyncing the raw DEFLATE stream
+		// for everything that followed (the round trip below would then
+		// hang or reject instead of resolving). `inflate`'s own decode work
+		// runs asynchronously (the zlib threadpool), so this drives a REAL
+		// round trip first -- by the time its reply arrives, the EARLIER
+		// "EXISTS" bytes (strictly ordered ahead of it in the same
+		// continuous DEFLATE stream) are guaranteed to have already been
+		// decoded and routed, rather than racing a fixed delay against zlib.
+		await expect(connection.runCommand(new NoopCommand())).resolves.toBeNull();
 
 		expect(
 			untaggedEvents.some(
 				(e) => JSON.stringify(e).includes("999") && JSON.stringify(e).includes("EXISTS"),
 			),
-			"a complete line injected in the same TCP segment as the COMPRESS tagged OK must never be parsed as a live response",
-		).toBe(false);
+			"the straddling compressed EXISTS must be correctly decoded and delivered, not lost",
+		).toBe(true);
 	});
 
 	test("compression coexists with TLS: COMPRESS negotiates and round-trips over an already-secure (implicit TLS) connection", async () => {

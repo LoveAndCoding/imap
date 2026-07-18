@@ -62,12 +62,27 @@ export const DEFAULT_MAX_INFLATED_BYTES = 256 * 1024 * 1024; // 256 MiB
  * bomb guard below tripping) -- the caller is expected to route it through
  * the same failure path a broken socket would take (never an unhandled
  * 'error' event).
+ *
+ * `initialCompressedBytes` (M10 fix): bytes captured by
+ * `NewlineTranform.endOpaqueCapture()` between COMPRESS's own tagged OK
+ * routing and this function actually being called -- the socket is still
+ * PLAIN at the instant those bytes arrived (this function hasn't interposed
+ * `inflate` yet), so they were never decompressed; per RFC 4978, the
+ * server's own outgoing compression activates immediately after ITS tagged
+ * OK, meaning these are genuinely the OPENING bytes of the now-compressed
+ * stream, not injected/untrusted residue (contrast STARTTLS, which replaces
+ * the socket entirely and can safely discard residual plaintext instead).
+ * Fed into `inflate` synchronously, before this function returns control to
+ * the event loop -- guaranteed to land ahead of anything the live
+ * `socket.pipe(inflate)` wiring below delivers on a later tick, preserving
+ * DEFLATE's strictly-ordered decompression stream.
  */
 export function wrapCompression(
 	socket: net.Socket | tls.TLSSocket,
 	processingPipeline: NewlineTranform,
 	onError: (err: Error) => void,
 	maxInflatedBytes: number = DEFAULT_MAX_INFLATED_BYTES,
+	initialCompressedBytes?: Buffer,
 ): CompressionLayer {
 	const inflate = zlib.createInflateRaw();
 	const deflate = zlib.createDeflateRaw();
@@ -101,6 +116,11 @@ export function wrapCompression(
 	// Write direction: `write()` below feeds `deflate`, which streams its
 	// compressed output straight to the socket as it's produced.
 	deflate.pipe(socket);
+
+	// M10 fix: see this function's own doc comment above.
+	if (initialCompressedBytes && initialCompressedBytes.length) {
+		inflate.write(initialCompressedBytes);
+	}
 
 	return {
 		write(buf: Buffer): void {
