@@ -192,8 +192,14 @@ export class KindValueCapability implements ICapability {
 	public readonly value: string;
 	/** `true` if {@link kind}, case-insensitively, begins with `"X"`. */
 	public readonly isExtension: boolean;
-	/** `true` if {@link kind}, case-insensitively, is not one of the
-	 *  recognized `kind=value` capability names (`kindValueStandardCapabilityNames`). */
+	/** `true` if this capability is not recognized as standard -- neither by
+	 *  {@link kind} (case-insensitively) being one of the "many valid
+	 *  values" kind=value families (`kindValueStandardCapabilityNames`, e.g.
+	 *  `AUTH=`, `CONTEXT=`) NOR by the complete `"KIND=VALUE"` string
+	 *  (case-insensitively) being one of the one-off, single-registered-value
+	 *  standard capabilities in `standardCapabilityNames` (e.g.
+	 *  `COMPRESS=DEFLATE`, which RFC 4978 registers as that exact pair, not
+	 *  as a `COMPRESS=` family with many valid values). */
 	public readonly isUnknown: boolean;
 
 	constructor(
@@ -220,10 +226,23 @@ export class KindValueCapability implements ICapability {
 		// keeps the server's original casing for display.
 		const canonicalKind = ciCanonicalize(kind);
 
-		// We mark this kind as unknown if we don't know about it in our list
-		// of standard defined values
+		// M26 fix: a KIND=VALUE capability is standard if EITHER its kind is
+		// one of the recognized "many valid values" families
+		// (`kindValueStandardCapabilityNames`, e.g. any `AUTH=<mechanism>`)
+		// OR its complete "KIND=VALUE" string is itself one of the
+		// registered one-off standard capabilities in `standardCapabilityNames`
+		// (e.g. `COMPRESS=DEFLATE` -- RFC 4978 registers that exact pair, not
+		// a `COMPRESS=` family, so it was never going to match on kind
+		// alone). Without the second check, `CapabilityList.add()`'s
+		// `includes("=")` branch sends every kind=value capability straight
+		// here, so those `standardCapabilityNames` entries were dead code
+		// and a widely-deployed extension like COMPRESS=DEFLATE reported
+		// `isUnknown: true`.
 		this.isExtension = canonicalKind.startsWith("X");
-		this.isUnknown = !isKindValueStandardCapability(canonicalKind);
+		this.isUnknown = !(
+			isKindValueStandardCapability(canonicalKind) ||
+			isStandardCapability(ciCanonicalize(fullValue))
+		);
 
 		this.kind = kind;
 		this.value = value;

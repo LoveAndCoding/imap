@@ -1,5 +1,8 @@
 import { TokenizationError } from "../../../../src/errors";
-import { StringRule } from "../../../../src/lexer/rules/string";
+import {
+	StringRule,
+	UnterminatedStringError,
+} from "../../../../src/lexer/rules/string";
 import { CRLFToken, OperatorToken } from "../../../../src/lexer/tokens/control";
 import { NumberToken } from "../../../../src/lexer/tokens/number";
 import {
@@ -68,6 +71,23 @@ describe("StringRule", () => {
 		expect(TokenizationErrorMock.mock.calls[0][0]).toContain(
 			"Unable to find end of string",
 		);
+	});
+
+	// H12: an unterminated quoted string must throw the DISTINCT
+	// `UnterminatedStringError` subclass (not just any `TokenizationError`),
+	// so `Lexer._transform` can tell it apart from the genuinely recoverable
+	// "not enough bytes yet for the literal" case and propagate it as a
+	// terminal error instead of buffering forever.
+	test("Throws UnterminatedStringError (not just any TokenizationError) with unclosed double quote string", () => {
+		// Arrange
+		const str = '"Open error';
+
+		const shouldThrow = () => {
+			rule.match(str);
+		};
+
+		// Act / Assert
+		expect(shouldThrow).toThrowError(UnterminatedStringError);
 	});
 
 	// Literal String Tests
@@ -168,6 +188,80 @@ describe("StringRule", () => {
 		// Assert
 		expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
 		expect(LiteralStringTokenMock.mock.calls[0][0]).toBe("~{4}\r\nhi\x00!");
+	});
+
+	// M23: the framing layers upstream of the lexer (`NewlineTranform`'s
+	// `ANNOUNCE_TAIL` and `Lexer`'s own `LITERAL_ANNOUNCEMENT_TAIL`) both
+	// tolerate the non-standard `{n+}` "non-sync" marker on a literal
+	// announcement. Before this fix, `StringRule` didn't, so a below-threshold
+	// `{n+}` literal would desync the two layers: `NewlineTranform` guards
+	// `n` opaque bytes after the announcement, but this rule would fail to
+	// recognize the announcement as a single token at all.
+	describe("M23: '{n+}' non-sync marker tolerance", () => {
+		test("Matches a literal announced with the non-sync '{n+}' marker", () => {
+			// Arrange
+			const str = "{4+}\r\nTest";
+			const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+				typeof LiteralStringToken
+			>;
+
+			// Act
+			rule.match(str);
+
+			// Assert
+			expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+			expect(LiteralStringTokenMock.mock.calls[0][0]).toBe(str);
+		});
+
+		test("Matches a literal8 announced with the non-sync '~{n+}' marker", () => {
+			// Arrange
+			const str = "~{4+}\r\nTest";
+			const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+				typeof LiteralStringToken
+			>;
+
+			// Act
+			rule.match(str);
+
+			// Assert
+			expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+			expect(LiteralStringTokenMock.mock.calls[0][0]).toBe(str);
+		});
+
+		test("Partial match for a '{n+}' literal followed by trailing content", () => {
+			// Arrange
+			const str = "{4+}\r\nThis but not this";
+			const LiteralStringTokenMock = LiteralStringToken as MockedClass<
+				typeof LiteralStringToken
+			>;
+
+			// Act
+			rule.match(str);
+
+			// Assert
+			expect(LiteralStringTokenMock.mock.instances).toHaveLength(1);
+			expect(LiteralStringTokenMock.mock.calls[0][0]).toBe("{4+}\r\nThis");
+		});
+
+		test("Throws with not enough data for a '{n+}' literal (still recoverable by waiting)", () => {
+			// Arrange
+			const str = "{4+}\r\n";
+			const TokenizationErrorMock = TokenizationError as MockedClass<
+				typeof TokenizationError
+			>;
+
+			const shouldThrow = () => {
+				rule.match(str);
+			};
+
+			// Act
+			expect(shouldThrow)
+				// Assert
+				.toThrowError(TokenizationErrorMock);
+			expect(TokenizationErrorMock.mock.calls[0][0]).toContain(
+				"string of specified length",
+			);
+		});
 	});
 
 	test("Throws with invalid size of literal", () => {

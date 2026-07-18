@@ -127,6 +127,17 @@ export function decodeBytes(
 		toOffset: offset + mlen,
 		val: buf.toString("binary"),
 	});
+	// LOW fix: this is a hard (non-partial) failure for the CURRENT word, so
+	// any dangling partial-decode state left over from a PRIOR word must be
+	// abandoned here too -- mirroring the reset already done above (line 32)
+	// when a new word turns out not to be joinable, and after a successful
+	// decode (line 99). Without this, a stale `state.buffer`/`curReplace`
+	// from an earlier partial word survives this word's hard failure, and a
+	// LATER consecutive word (same encoding) can wrongly get concatenated
+	// with those stale bytes -- silently skipping over the word that just
+	// failed and corrupting the eventual replacement offsets/content.
+	state.buffer = state.encoding = undefined;
+	state.curReplace = undefined;
 }
 
 export function decodeWords(str: string, state?: IState) {

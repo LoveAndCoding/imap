@@ -13,6 +13,7 @@ import {
 	OperatorRule,
 	SPRule,
 	StringRule,
+	UnterminatedStringError,
 } from "./rules";
 import { LiteralStreamToken } from "./tokens/literal-stream";
 import { ILexerRule, ILexerToken, LexerTokenList } from "./types";
@@ -23,6 +24,18 @@ import { ILexerRule, ILexerToken, LexerTokenList } from "./types";
 // (the two layers deliberately don't share a literal-parsing implementation,
 // only the marker *shape*).
 const LITERAL_ANNOUNCEMENT_TAIL = /(~?\{(\d+)\+?\})\r\n$/;
+
+// H12 defensive backstop: caps how large `this.buffer` may grow while
+// `_transform` is treating a tokenize() failure as "probably mid-literal,
+// wait for more bytes". A genuine sub-`streamThreshold` literal (see
+// `newline.transform.ts` -- anything at/above it streams around the lexer
+// entirely) is at most a few KB; nothing legitimate needs anywhere near
+// this much. Independent of `NewlineTranform`'s own `maxLineLength`, which
+// bounds a single incoming line/chunk but not how many complete lines the
+// lexer itself may accumulate while waiting on a literal to finish. Guards
+// against any OTHER as-yet-unknown "throw resets to incomplete" mistake
+// turning into the same unbounded-memory failure mode this fixes.
+const MAX_LEXER_BUFFER_LENGTH = 10 * 1024 * 1024; // 10 MiB
 
 type PrioritizedRule = {
 	order: number;
@@ -219,10 +232,41 @@ class Lexer extends Transform {
 				this.emit("tokenized", fullTokens);
 			}
 		} catch (e) {
-			// If we couldn't tokenize the line, it probably
-			// means we're in a literal still. Let the caller
-			// handle if the buffer should be empty and throw
-			// if it needs to.
+			// Most tokenize() failures here mean we're mid-literal
+			// (StringRule's "not enough bytes yet for the declared {n}
+			// length") -- genuinely recoverable by waiting for the next
+			// chunk, so `this.buffer` is left alone and we fall through to
+			// `done()` below, same as always.
+			//
+			// H12: two cases are NOT "wait for more data", and must be
+			// propagated as a terminal error instead of buffering forever:
+			//
+			//  1. An `UnterminatedStringError` (StringRule: a quoted
+			//     string's opening `"` never closed) against a buffer that
+			//     already ends in a complete CRLF-terminated line (the
+			//     contract every `line` this method receives satisfies --
+			//     see `NewlineTranform`). RFC3501/9051 §4.3 forbids CR/LF
+			//     inside a quoted string, so if the WHOLE line is already
+			//     here and the quote still isn't closed, no amount of
+			//     further buffering will ever close it. Treating this as
+			//     "incomplete" is what let a malformed/hostile response
+			//     grow `this.buffer` without bound (memory DoS) and let a
+			//     LATER, unrelated stray `"` retroactively "close" the
+			//     bogus string and silently misparse subsequent valid
+			//     traffic.
+			//  2. `this.buffer` has grown past a defensive size cap
+			//     regardless of cause -- a backstop against any other
+			//     as-yet-unknown mistake with this same "every throw means
+			//     incomplete" shape.
+			const terminal =
+				(e instanceof UnterminatedStringError &&
+					this.buffer.endsWith("\r\n")) ||
+				this.buffer.length > MAX_LEXER_BUFFER_LENGTH;
+			if (terminal) {
+				this.buffer = "";
+				this.pendingPrefix = [];
+				return done(e instanceof Error ? e : new Error(String(e)));
+			}
 		}
 		done();
 	}

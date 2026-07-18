@@ -42,6 +42,33 @@ describe("LiteralStringToken", () => {
 		expect(trueValue).toBe("this");
 	});
 
+	// M23: the non-standard "{n+}" non-sync marker is tolerated by
+	// `StringRule.match()` (see src/lexer/rules/string.ts), so `value` can
+	// legitimately carry the "+" in its prefix -- `stripPrefix()` must
+	// tolerate it too, or the announcement fails to strip and the "true"
+	// value comes back with the announcement still attached.
+	test("True value strips a '{n+}' non-sync marker prefix", () => {
+		// Arrange
+		const token = new LiteralStringToken("{4+}\r\nthis");
+
+		// Act
+		const trueValue = token.getTrueValue();
+
+		// Assert
+		expect(trueValue).toBe("this");
+	});
+
+	test("True value strips a literal8 '~{n+}' non-sync marker prefix", () => {
+		// Arrange
+		const token = new LiteralStringToken("~{4+}\r\nthis");
+
+		// Act
+		const trueValue = token.getTrueValue();
+
+		// Assert
+		expect(trueValue).toBe("this");
+	});
+
 	test("True value preserves embedded NUL octets from a literal8 payload", () => {
 		// Arrange
 		const token = new LiteralStringToken("~{4}\r\nhi\x00!");

@@ -100,6 +100,13 @@ export class LiteralStringToken
 		// `~{NUMBER}\r\nSTRING` for literal8) where `NUMBER` is the number
 		// of octets. By this point, we already have the right length
 		// string, so we just need to strip out the prefix.
-		return this.value.replace(/^~?\{\d+\}\r\n/, "");
+		//
+		// M23: `\+?` tolerates the non-standard `{n+}` marker the same way
+		// `StringRule.match()` does -- when that rule's own literal regex
+		// matched a `{n+}`/`~{n+}` announcement, the `+` is part of
+		// `value`'s prefix too, so it must be tolerated here or the prefix
+		// fails to strip and the literal's content comes back with the
+		// announcement still attached.
+		return this.value.replace(/^~?\{\d+\+?\}\r\n/, "");
 	}
 }

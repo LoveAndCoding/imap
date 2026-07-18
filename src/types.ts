@@ -4,8 +4,19 @@ import type { IdCommandValues } from "./commands";
 /**
  * Payload shape passed to the caller-supplied `logger` callback (spec
  * I-7/§10.6). A discriminated union on `level`: non-error notifications carry
- * an optional free-form `detail`, while error-level notifications instead
- * carry an optional `error` (typically the underlying `Error`/exception).
+ * an optional free-form `detail`, while error-level ("error") notifications
+ * instead carry an optional `error` (typically the underlying
+ * `Error`/exception).
+ *
+ * M20 fix: `level` is now a genuine discriminant -- every level value maps
+ * to exactly one arm ("error" here, everything else in the other arm).
+ * Previously `"warn"` appeared in BOTH arms, so narrowing on
+ * `level === "warn"` couldn't pick a single arm and `.detail`/`.error`
+ * access failed to type-check under that narrowing. This is shape-compatible
+ * with every call site in this library (every `level: "warn"` notification
+ * has only ever carried `detail`, never `error`); see
+ * `test/docs/log-message-discrimination.ts` for a compile-time proof that
+ * narrowing works correctly.
  */
 export type IMAPLogMessage =
 	| {
@@ -18,7 +29,7 @@ export type IMAPLogMessage =
 	  }
 	| {
 			/** Severity of this notification, for error-carrying messages. */
-			level: "error" | "warn";
+			level: "error";
 			/** Human-readable description of the event being logged. */
 			message: string;
 			/** Optional underlying error/exception associated with this
