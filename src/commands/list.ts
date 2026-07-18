@@ -128,6 +128,22 @@ const SPECIAL_USE_ATTRIBUTES: readonly string[] = [
  *   - a stronger attribute implies the weaker one inferable from it
  *     (RFC5258-3.4-1/RFC9051-6.3.9.4-1): `\NoInferiors` ⇒ `\HasNoChildren`,
  *     `\NonExistent` ⇒ `\Noselect`.
+ *
+ * LOW fix (second-review): the contradiction check now runs AFTER the
+ * implication step (not just once, before it) -- the implication step can
+ * itself CREATE the same contradiction it would otherwise catch: a server
+ * sending `\NoInferiors \HasChildren` together (structurally
+ * self-contradictory -- `\NoInferiors` asserts no child mailboxes CAN
+ * exist, `\HasChildren` asserts they DO) has no explicit `\HasNoChildren`
+ * for the pre-implication check to see, so a contradiction-check-THEN-
+ * implication order let `\NoInferiors`'s own implied `\HasNoChildren`
+ * collide with the already-present `\HasChildren` completely unnoticed,
+ * leaving both child-state attributes in the final set -- exactly the
+ * contradiction RFC9051-7.3.1-1 says must be treated as neither. Applying
+ * the implications FIRST, then resolving contradictions LAST, catches this
+ * regardless of whether `\HasNoChildren` was explicit or implied.
+ * `\NoInferiors`/`\NonExistent` themselves are untouched by this cleanup --
+ * only the derived `\HasChildren`/`\HasNoChildren` pair is ever removed.
  */
 function normalizeAttributes(
 	raw: readonly string[],
@@ -138,15 +154,15 @@ function normalizeAttributes(
 		attrs.add(ciCanonicalFrom(CANONICAL_ATTRIBUTES, name) ?? name);
 	}
 	if (applyListAlgebra) {
-		if (attrs.has("\\HasChildren") && attrs.has("\\HasNoChildren")) {
-			attrs.delete("\\HasChildren");
-			attrs.delete("\\HasNoChildren");
-		}
 		if (attrs.has("\\NoInferiors")) {
 			attrs.add("\\HasNoChildren");
 		}
 		if (attrs.has("\\NonExistent")) {
 			attrs.add("\\Noselect");
+		}
+		if (attrs.has("\\HasChildren") && attrs.has("\\HasNoChildren")) {
+			attrs.delete("\\HasChildren");
+			attrs.delete("\\HasNoChildren");
 		}
 	}
 	return attrs;
@@ -449,10 +465,23 @@ export class ListCommand extends Command<MailboxInfo[]> {
 				{ capability: "CHILDREN", rfc: "RFC3348" },
 			);
 		}
-		if (statusItems.length > 0 && !caps.has("LIST-STATUS")) {
+		// M37 fix (second-review): OR-gate IMAP4rev2 alongside LIST-STATUS --
+		// RFC 9051 §6.3.9.2 folds LIST-STATUS into rev2's base command set
+		// (confirmed against the compliance catalog, test/compliance/catalog/
+		// ext/rfc5819.ts's own "REV2-CORE ADJUDICATION" note: "RFC 9051 folded
+		// LIST-STATUS into rev2 core"), no separate capability token needed --
+		// same OR-capability fold-in pattern this file's own SIZE gate
+		// (`assertStatusItemsSupported`, commands/status.ts) and the sibling
+		// namespace/MOVE/UNSELECT/IDLE gates already use. SPECIAL-USE just
+		// below is DELIBERATELY left un-OR'd -- RFC 6154's SPECIAL-USE was NOT
+		// folded into rev2 core (confirmed against the rfc6154 catalog), so
+		// widening that gate the same way would be wrong.
+		if (statusItems.length > 0 && !caps.has("LIST-STATUS") && !caps.has("IMAP4rev2")) {
 			throw new CapabilityError(
 				"list: RETURN (STATUS (...)) requires the LIST-STATUS capability " +
-					"(RFC 5819), which the server has not advertised",
+					"(RFC 5819) or an IMAP4rev2 server (RFC 9051 §6.3.9.2, which folds " +
+					"LIST-STATUS into the base command set with no separate capability " +
+					"token), neither of which the server has advertised",
 				{ capability: "LIST-STATUS", rfc: "RFC5819" },
 			);
 		}

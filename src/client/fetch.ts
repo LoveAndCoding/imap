@@ -1,5 +1,6 @@
 import { Readable } from "stream";
 
+import { ImapError } from "../errors";
 import type { LiteralBodyStream } from "../literal-body-stream";
 import {
 	Address as ParserAddress,
@@ -31,6 +32,24 @@ import {
  * despite every declared byte having genuinely arrived; found empirically
  * while writing this task's own compliance/regression tests). Draining via
  * ordinary events sidesteps that Node behavior entirely.
+ *
+ * H10 fix (second-review): also listens for `'close'` -- `destroy()` (e.g.
+ * `FetchedPartImpl.destroy()`, reached via the abandoned-iterator drain path,
+ * `MailboxSession.fetch()`'s `driveFetch()`) emits ONLY `'close'`, never
+ * `'end'`/`'error'`, for a stream destroyed without an explicit error before
+ * it finished. Pre-fix, a `buffer()` call already in flight (its
+ * `drainReadableAsync()` promise awaiting one of the other three events) when
+ * the underlying stream was destroyed out from under it -- e.g. a `break` out
+ * of a `for await` loop over `fetch()` right after calling `buffer()` but
+ * before awaiting it, which the iterator reads as "abandoned" and destroys
+ * every live part unconditionally, `buffer()`-in-flight or not -- left that
+ * promise permanently unsettled (an eternal hang, not just a stalled
+ * iterator). `'close'` rejects with a `ProtocolError`-adjacent, but public-
+ * surface-appropriate, `ImapError`: the stream is KNOWN incomplete at that
+ * point (every normal completion path settles via `'end'` first and detaches
+ * this listener -- see `cleanup()` -- before Node ever gets around to
+ * scheduling `'close'`), so there is no ambiguity to preserve by resolving
+ * with a partial buffer instead.
  */
 function drainReadableAsync(stream: Readable): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
@@ -45,6 +64,7 @@ function drainReadableAsync(stream: Readable): Promise<Buffer> {
 			stream.removeListener("readable", onReadable);
 			stream.removeListener("end", onEnd);
 			stream.removeListener("error", onError);
+			stream.removeListener("close", onClose);
 		};
 		const onEnd = () => {
 			cleanup();
@@ -54,9 +74,21 @@ function drainReadableAsync(stream: Readable): Promise<Buffer> {
 			cleanup();
 			reject(err);
 		};
+		const onClose = () => {
+			cleanup();
+			reject(
+				new ImapError(
+					"FetchedPart.buffer(): the underlying stream was destroyed before " +
+						"it finished draining (the abandoned-iterator drain path, or a " +
+						"caller-initiated destroy(), reached this part while a buffer() " +
+						"call was still in flight) -- the data is known-incomplete",
+				),
+			);
+		};
 		stream.on("readable", onReadable);
 		stream.on("end", onEnd);
 		stream.on("error", onError);
+		stream.on("close", onClose);
 		// The stream may have already fully arrived (and even ended, if
 		// something else already consumed it) before these listeners attached
 		// -- drain/settle synchronously in that case rather than waiting for
@@ -64,6 +96,13 @@ function drainReadableAsync(stream: Readable): Promise<Buffer> {
 		onReadable();
 		if (stream.readableEnded) {
 			onEnd();
+		} else if (stream.destroyed) {
+			// Already destroyed (synchronously, e.g. by a `destroy()` call
+			// that ran before this promise's listeners were attached) --
+			// don't wait for the (possibly already-missed) async 'close'
+			// event; settle immediately with the same known-incomplete
+			// rejection `onClose()` would produce.
+			onClose();
 		}
 	});
 }
@@ -324,6 +363,15 @@ export interface FetchedPart {
 	 *  uppercase (`normalizeSectionSpec()`) -- the same key
 	 *  `FetchedMessage.part()` looks entries up by. */
 	section: string;
+	/** `true` iff this part answers a `BINARY[section]`/`BINARY.PEEK[section]`
+	 *  (RFC 3516) request rather than a plain `BODY[section]`/`BODY.PEEK
+	 *  [section]` one -- H9 fix (second-review): a single FETCH can request
+	 *  BOTH for the same section number (they're different data items), so
+	 *  this facet is needed to tell the two apart, both when disambiguating
+	 *  via `FetchedMessage.part(section, { binary })` and when iterating
+	 *  `FetchedMessage.parts()` (where two entries can legitimately share the
+	 *  same `section` string). */
+	readonly binary: boolean;
 	/** Literal size as sent (bigint, spec §11.3 number64 class). */
 	size: bigint;
 	/** Rejects if this part was already handed out via `stream()` (see this
@@ -412,8 +460,19 @@ export interface FetchedMessage {
 	 *  lookup argument and every part's own stored key are normalized to the
 	 *  same canonical uppercase form (`normalizeSectionSpec()`), so
 	 *  `part("text")` and `part("TEXT")` always resolve the same entry --
-	 *  matching the parser's own case-insensitive section-atom handling. */
-	part(section: string): FetchedPart | undefined;
+	 *  matching the parser's own case-insensitive section-atom handling.
+	 *
+	 *  H9 fix (second-review): `BODY[section]` and `BINARY[section]` (RFC
+	 *  3516) are different data items that can both be requested for the SAME
+	 *  section number in one FETCH -- `opts.binary` disambiguates which one to
+	 *  return. Omitted (the common case, exactly one of the two ever
+	 *  requested for a given section): resolves the `BODY`/plain entry first,
+	 *  falling back to the `BINARY` one only if that's the only one present --
+	 *  preserving pre-fix lookup behavior for every existing binary-only or
+	 *  body-only caller. When BOTH were requested for the same section, an
+	 *  unqualified call deterministically returns the `BODY` part; pass
+	 *  `{ binary: true }` to reach the `BINARY` one instead. */
+	part(section: string, opts?: { binary?: boolean }): FetchedPart | undefined;
 	/** Every requested body/BINARY part actually returned for this message,
 	 *  in no particular guaranteed order -- use `part(section)` instead when
 	 *  looking for one specific section. */
@@ -441,6 +500,23 @@ export interface FetchedMessage {
  * (a partially-consumed `Readable` can't be safely re-drained into a
  * complete `Buffer`). Calling `stream()` a second time is allowed (returns
  * the SAME underlying stream) -- only `buffer()` after `stream()` rejects.
+ *
+ * M9 fix (second-review): the SAME single-consumer discipline now applies in
+ * the OTHER order too -- `stream()` called while a `buffer()` drain is
+ * already in flight (started, not yet resolved) also rejects, rather than
+ * handing out the live `liveStream` a second time. Pre-fix, `stream()` only
+ * checked `cached !== undefined` (true once the drain FINISHES) to decide
+ * whether to replay from the buffer -- so a `stream()` call landing DURING
+ * the drain (after `buffer()` started, before its promise settles) fell
+ * through to the "hand out the live stream" branch even though
+ * `drainReadableAsync()` was already attached to and reading from that exact
+ * `Readable`. Two independent readers pulling from the same stream's
+ * internal buffer silently split the bytes between them (each `.read()`
+ * consumes what the other would otherwise have seen) -- neither consumer
+ * ever sees the complete content, and neither errors, making this a silent
+ * data-corruption hazard rather than a loud one. `drainPromise` (set the
+ * instant `buffer()` starts draining, well before it resolves) is the signal
+ * `stream()` now checks for this.
  */
 class FetchedPartImpl implements FetchedPart {
 	private cached: Buffer | undefined;
@@ -467,6 +543,7 @@ class FetchedPartImpl implements FetchedPart {
 
 	private constructor(
 		public readonly section: string,
+		public readonly binary: boolean,
 		public readonly size: bigint,
 		initialBuffer: Buffer | undefined,
 		liveStream: LiteralBodyStream | undefined,
@@ -486,16 +563,17 @@ class FetchedPartImpl implements FetchedPart {
 		}
 	}
 
-	static fromBuffer(section: string, data: Buffer): FetchedPartImpl {
-		return new FetchedPartImpl(section, BigInt(data.length), data, undefined);
+	static fromBuffer(section: string, binary: boolean, data: Buffer): FetchedPartImpl {
+		return new FetchedPartImpl(section, binary, BigInt(data.length), data, undefined);
 	}
 
 	static fromLiveStream(
 		section: string,
+		binary: boolean,
 		size: bigint,
 		stream: LiteralBodyStream,
 	): FetchedPartImpl {
-		return new FetchedPartImpl(section, size, undefined, stream);
+		return new FetchedPartImpl(section, binary, size, undefined, stream);
 	}
 
 	get buffered(): boolean {
@@ -535,6 +613,18 @@ class FetchedPartImpl implements FetchedPart {
 			// single chunk instead, which is what a non-object-mode consumer
 			// expects.
 			return Readable.from([this.cached], { objectMode: false });
+		}
+		// M9 fix (second-review): a buffer() call already claimed this live
+		// stream and is still draining it (drainPromise exists, but hasn't
+		// resolved yet -- `cached` is still undefined) -- see this class's own
+		// doc comment for the dual-reader corruption this prevents. Mirrors
+		// `buffer()`'s own `wasStreamed` check for the reverse call order.
+		if (this.drainPromise) {
+			throw new Error(
+				`FetchedPart(${JSON.stringify(this.section)}).stream(): this part was ` +
+					"already handed out via buffer() -- a live stream can't be safely " +
+					"exposed a second time while a buffer() drain may still be reading from it",
+			);
 		}
 		this.wasStreamed = true;
 		return this.liveStream!;
@@ -644,6 +734,35 @@ export function normalizeSectionSpec(section: string): string {
 }
 
 /**
+ * H9 fix (second-review): the internal key `buildFetchedMessage()`'s `parts`
+ * Map (and `commands/fetch.ts`'s `forcedStreamSections` set) use -- a plain
+ * section-spec string is NOT a unique key on its own, because `BODY[1]` and
+ * `BINARY[1]` (RFC 3516) are two DIFFERENT FETCH data items that can both be
+ * requested (and both answered) for the exact same section number in one
+ * FETCH; nothing in the wire grammar forbids `(BODY[1] BINARY[1])`, and
+ * `writeBodyPartItem`/`writeFetchItems` (`commands/fetch.ts`) happily compile
+ * both into the same command. Keying the results map by `section` alone let
+ * whichever of the two was iterated second silently clobber the other's
+ * `FetchedPartImpl` entry (H9). Composing the `binary` facet into the key
+ * (this function) keeps both entries addressable -- `FetchedMessage.part()`'s
+ * new optional second argument disambiguates on lookup (see that method's own
+ * doc comment for the no-collision default).
+ *
+ * NOT part of the public surface (unlike `normalizeSectionSpec`) -- exported
+ * only so `commands/fetch.ts`'s `composeSectionSpecKey()` (the
+ * `forcedStreamSections` producer) can share the identical scheme rather than
+ * a second, driftable copy; both modules already share `normalizeSectionSpec()`
+ * the same way, for the same reason (this module never imports FROM
+ * `commands/fetch.ts`, so this is the one direction that avoids a cycle). The
+ * space separator is safe: `normalizeSectionSpec()`'s output is always a bare
+ * section-spec atom/HEADER.FIELDS keyword (`[0-9A-Z.,]+` or `HEADER.FIELDS(.NOT)?`),
+ * which never itself contains a space.
+ */
+export function sectionPartKey(section: string, binary: boolean): string {
+	return `${binary ? "BINARY" : "BODY"} ${normalizeSectionSpec(section)}`;
+}
+
+/**
  * Builds one `FetchedMessage` from a claimed `Fetch` untagged response (spec
  * §5.4). The buffering rule: a part whose declared size is `<= maxInlineSize`
  * and whose request didn't force `stream: true` is drained into a `Buffer`
@@ -662,25 +781,31 @@ export async function buildFetchedMessage(
 ): Promise<FetchedMessageImpl> {
 	const parts = new Map<string, FetchedPartImpl>();
 
+	// H9 fix (second-review): keyed by `sectionPartKey(section, binary)`, NOT
+	// bare `section` -- see that function's own doc comment for why a plain
+	// section string can't disambiguate a same-numbered BODY[n]/BINARY[n]
+	// pair requested in the same FETCH.
 	const addStreamedOrBuffered = async (
 		section: string,
+		binary: boolean,
 		text: string | undefined,
 		stream: { stream: LiteralBodyStream; length: number } | undefined,
 	): Promise<void> => {
+		const key = sectionPartKey(section, binary);
 		if (stream) {
-			const forceStream = opts.forcedStreamSections.has(section);
+			const forceStream = opts.forcedStreamSections.has(key);
 			if (!forceStream && stream.length <= opts.maxInlineSize) {
 				const buf = await drainReadableAsync(stream.stream);
-				parts.set(section, FetchedPartImpl.fromBuffer(section, buf));
+				parts.set(key, FetchedPartImpl.fromBuffer(section, binary, buf));
 			} else {
 				parts.set(
-					section,
-					FetchedPartImpl.fromLiveStream(section, BigInt(stream.length), stream.stream),
+					key,
+					FetchedPartImpl.fromLiveStream(section, binary, BigInt(stream.length), stream.stream),
 				);
 			}
 		} else {
 			const buf = Buffer.from(text ?? "", "utf8");
-			parts.set(section, FetchedPartImpl.fromBuffer(section, buf));
+			parts.set(key, FetchedPartImpl.fromBuffer(section, binary, buf));
 		}
 	};
 
@@ -701,6 +826,7 @@ export async function buildFetchedMessage(
 		for (const section of fetch.body.sections) {
 			await addStreamedOrBuffered(
 				section.kind,
+				false,
 				section.contents,
 				section.stream ? { stream: section.stream.stream, length: section.stream.length } : undefined,
 			);
@@ -710,6 +836,7 @@ export async function buildFetchedMessage(
 		for (const bin of fetch.binarySections) {
 			await addStreamedOrBuffered(
 				bin.section,
+				true,
 				bin.contents,
 				bin.stream ? { stream: bin.stream.stream, length: bin.stream.length } : undefined,
 			);
@@ -819,13 +946,25 @@ export class FetchedMessageImpl implements FetchedMessage {
 		this.partsMap = fields.parts;
 	}
 
-	part(section: string): FetchedPart | undefined {
+	part(section: string, opts?: { binary?: boolean }): FetchedPart | undefined {
 		// C3 fix: normalize the LOOKUP argument too, so `part("text")` and
 		// `part("TEXT")` resolve the same entry regardless of which case the
 		// caller used -- `partsMap`'s own keys are always the canonical
 		// uppercase form already (`composeSectionSpecKey()`'s side of this
 		// same fix, and the parser's own `MessageBodySection.kind`).
-		return this.partsMap.get(normalizeSectionSpec(section));
+		//
+		// H9 fix (second-review): `partsMap` is now keyed by `sectionPartKey()`
+		// (section + binary facet), not bare section, so an explicit
+		// `opts.binary` looks up exactly that facet; omitted, this prefers the
+		// non-binary (`BODY[...]`) entry and falls back to the binary
+		// (`BINARY[...]`) one -- see this method's own interface doc comment.
+		if (opts?.binary !== undefined) {
+			return this.partsMap.get(sectionPartKey(section, opts.binary));
+		}
+		return (
+			this.partsMap.get(sectionPartKey(section, false)) ??
+			this.partsMap.get(sectionPartKey(section, true))
+		);
 	}
 
 	parts(): FetchedPart[] {

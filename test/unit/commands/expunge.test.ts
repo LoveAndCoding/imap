@@ -55,10 +55,16 @@ describe("ExpungeCommand (RFC 3501/9051 §6.4.3 / RFC 4315 §2.1, M3.9)", () => 
 		expect(cmd.capability).toBeUndefined();
 	});
 
-	test("declares verb UID EXPUNGE + capability UIDPLUS for the UID-grain form", () => {
+	// M29 fix (second-review): widened from a bare "UIDPLUS" string to the
+	// OR-semantics ["UIDPLUS", "IMAP4rev2"] array -- RFC 9051 §6.4.9 absorbs
+	// UID EXPUNGE into rev2's base command set outright (see this class's own
+	// doc comment), so a pure-rev2 server (UIDPLUS never advertised) must
+	// still satisfy this gate, same OR-capability fold-in pattern
+	// MoveCommand/UnselectCommand/IdleCommand already use.
+	test("declares verb UID EXPUNGE + capability [UIDPLUS, IMAP4rev2] (OR-semantics) for the UID-grain form", () => {
 		const cmd = new ExpungeCommand("3:5", true);
 		expect(cmd.verb).toBe("UID EXPUNGE");
-		expect(cmd.capability).toBe("UIDPLUS");
+		expect(cmd.capability).toEqual(["UIDPLUS", "IMAP4rev2"]);
 	});
 
 	test("write() emits no argument for bare EXPUNGE", async () => {

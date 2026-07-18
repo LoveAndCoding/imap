@@ -6,6 +6,7 @@ import { ScriptedServer } from "../../compliance/harness/scripted-server";
 
 import { ImapClient } from "../../../src/client/client";
 import type { ImapClientConfig } from "../../../src/client/config";
+import { MailboxSession } from "../../../src/client/mailbox";
 import { CapabilityError, StateError } from "../../../src/errors";
 
 const CRLF = "\r\n";
@@ -238,4 +239,52 @@ describe("MailboxSession.idle() (spec §3.7/§5b, RFC 2177, M4.1)", () => {
 		const idleCount = server.commandLines.filter((l) => l.verb === "IDLE").length;
 		expect(idleCount, "renewal re-issues a second IDLE round automatically").toBe(2);
 	});
+
+	// M36 fix (second-review): idle()'s IdleController didn't react to the
+	// session closing/being reselected -- only to an explicit handle.done()
+	// call, the renewal timer, or a LATER command reaching the connection's
+	// queue (the "queued behind isolated" interrupt). `ImapClient.
+	// performSelectOrExamine()`'s reselect choreography calls
+	// `MailboxSession.markClosed(previous, "reselected")` BEFORE the new
+	// SELECT/EXAMINE command is even submitted -- this test isolates exactly
+	// that ordering by calling `markClosed()` directly, the same way that
+	// choreography does, WITHOUT ever submitting a second command through
+	// the queue, so the pre-fix-only mechanism (the queue interrupt) can
+	// never be what ends the idle round here. If `idle()` reacted only to
+	// that queue interrupt (the pre-fix behavior), DONE would never be sent
+	// and this test would hang/time out.
+	test(
+		"session close/reselect (markClosed) alone, with NO other command ever submitted and handle.done() NEVER called, still tears down the IdleController (sends DONE)",
+		async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "IDLE"], [
+				...selectSteps("INBOX", 3),
+				expectLine(command("IDLE", { args: null })),
+				send("+ idling\r\n"),
+				expectLine(bareLine("DONE")),
+				reply("OK IDLE terminated"),
+			]);
+
+			const session = await client.select("INBOX");
+			await session.idle(); // handle deliberately discarded -- done() is NEVER called
+
+			// Simulate exactly what performSelectOrExamine()'s reselect
+			// choreography does to the OLD session -- mark it closed
+			// directly, with no new command ever submitted through
+			// session.driver.run()/client.run() to trigger the queue-level
+			// interrupt, and no explicit handle.done() call either. The ONLY
+			// thing that can end the idle round here is idle()'s own
+			// "closed" reaction.
+			MailboxSession.markClosed(session, "reselected");
+
+			// Pre-fix, this hangs forever: DONE is never sent (nothing else
+			// ever asks the controller to stop), so the scripted server's
+			// own expectLine(bareLine("DONE")) step never completes and
+			// assertCompleted() never resolves -- the bounded test timeout
+			// below is the revert-verification signal in that case.
+			await server.assertCompleted();
+		},
+		5000,
+	);
 });

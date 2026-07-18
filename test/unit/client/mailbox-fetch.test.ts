@@ -410,6 +410,110 @@ describe("MailboxSession.fetch()/.fetchOne() (spec §5.4/§5b, M3.5)", () => {
 		});
 	});
 
+	describe("H9 fix (second-review): BODY[section] and BINARY[section] no longer collide on the same map key", () => {
+		// NOTE: uses section "TEXT" rather than a bare numeric leaf section
+		// like "1" -- a PRE-EXISTING, separate parser limitation (see
+		// test/unit/parser/structure/fetch/body.section.test.ts's own "BODY[1]
+		// (numeric section)... parses via the full-body path" test, out of
+		// this task's territory: src/parser/**) means a purely-numeric
+		// `BODY[<n>]`/`BODY[<n>.<n>]` response is parsed via the whole-message
+		// path (`section.kind` always comes back "TEXT", never "1"), which
+		// would mask the exact H9 collision behind an unrelated bug. "TEXT" is
+		// unaffected by that limitation (it's an atom token, not a number one)
+		// and demonstrates the identical collision the finding describes: nothing
+		// in `writeBodyPartItem`/the parser's `BinarySection` matcher stops a
+		// `BINARY[section]` request/response from using the same section string
+		// as a `BODY[section]` one in the same FETCH.
+		test("BODY[TEXT] and BINARY[TEXT] requested together for the same section string both survive, independently addressable", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "BINARY"], [
+				expectLine(command("SELECT", { args: /^INBOX$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 1 EXISTS", "* 0 RECENT"]),
+				expectLine(
+					command("UID FETCH", {
+						args: /^1\s+\(BODY\.PEEK\[TEXT\] BINARY\.PEEK\[TEXT\]\)$/i,
+					}),
+				),
+				reply("OK UID FETCH completed", [
+					'* 1 FETCH (BODY[TEXT] "plain text part" BINARY[TEXT] {3}',
+					"\x00\x01\x02)",
+				]),
+			]);
+			const session = await client.select("INBOX");
+
+			const msg = await session.fetchOne(1, {
+				bodyParts: [
+					{ section: "TEXT", peek: true },
+					{ section: "TEXT", binary: true, peek: true },
+				],
+			});
+			await server.assertCompleted();
+			expect(msg).not.toBeNull();
+
+			// Pre-fix: the second-processed entry (BINARY[TEXT]) clobbered the
+			// Map slot BODY[TEXT] was stored under (both keyed by bare "TEXT"),
+			// so one of the two vanished silently. Post-fix: both are retained.
+			const bodyPart = msg!.part("TEXT", { binary: false });
+			const binaryPart = msg!.part("TEXT", { binary: true });
+			expect(bodyPart).toBeDefined();
+			expect(binaryPart).toBeDefined();
+			expect(bodyPart).not.toBe(binaryPart);
+			expect((await bodyPart!.buffer()).toString("utf8")).toBe("plain text part");
+			expect((await binaryPart!.buffer()).equals(Buffer.from([0x00, 0x01, 0x02]))).toBe(true);
+
+			// Unqualified part() keeps the pre-fix default resolution (BODY
+			// preferred) for a caller that hasn't been updated to pass the new
+			// `{ binary }` option.
+			expect(msg!.part("TEXT")).toBe(bodyPart);
+
+			// Both show up distinctly via parts(), each correctly tagging its
+			// own `binary` facet.
+			const both = msg!.parts().filter((p) => p.section === "TEXT");
+			expect(both).toHaveLength(2);
+			expect(both.find((p) => p.binary === false)).toBe(bodyPart);
+			expect(both.find((p) => p.binary === true)).toBe(binaryPart);
+		});
+
+		test("binary-only fetch: unqualified part() still resolves the BINARY entry when no BODY entry exists for that section (back-compat)", async () => {
+			server = await ScriptedServer.start();
+			client = new ImapClient(baseConfig(server.port));
+			await connectAuthenticated(server, client, ["IMAP4rev1", "BINARY"], [
+				expectLine(command("SELECT", { args: /^INBOX$/i })),
+				reply("OK [READ-WRITE] SELECT completed", ["* 1 EXISTS", "* 0 RECENT"]),
+				expectLine(command("UID FETCH", { args: /^1\s+\(BINARY\.PEEK\[1\]\)$/i })),
+				reply("OK UID FETCH completed", ["* 1 FETCH (BINARY[1] {3}", "\x00\x01\x02)"]),
+			]);
+			const session = await client.select("INBOX");
+
+			const msg = await session.fetchOne(1, {
+				bodyParts: [{ section: "1", binary: true, peek: true }],
+			});
+			await server.assertCompleted();
+			expect(msg).not.toBeNull();
+			const part = msg!.part("1");
+			expect(part).toBeDefined();
+			expect(part!.binary).toBe(true);
+			expect((await part!.buffer()).equals(Buffer.from([0x00, 0x01, 0x02]))).toBe(true);
+		});
+	});
+
+	// NOTE: H10 (buffer() hanging forever if the underlying stream is
+	// destroyed mid-drain) is covered directly against `client/fetch.ts`'s
+	// `buildFetchedMessage()`/`FetchedPart.buffer()` in
+	// test/unit/client/fetch.test.ts, not here. An end-to-end attempt
+	// through this suite's own `fetch()`/abandoned-iterator plumbing turned
+	// out to be a bad vehicle for it: by the time a live part's message is
+	// even yielded, the parser has necessarily already read every declared
+	// byte of that part's literal off the wire (the tokenizer can't finish
+	// the surrounding response line otherwise), so `buffer()`'s own
+	// synchronous initial drain always empties the stream immediately, and
+	// Node's `process.nextTick`-scheduled `'end'` emission then deterministically
+	// wins the race against the async-generator-`.return()`-driven abandon
+	// path (which needs at least one microtask hop to reach
+	// `destroyLiveParts()`) -- so this exact revert never reproduces through
+	// the full stack, only the lower-level direct test does.
+
 	describe("S2 fix: advancing to the next fetch() message auto-destroys any of the current message's live parts the consumer never engaged", () => {
 		test("3-message fetch, consumer only touches message 2's part: full iteration completes, 1/3's parts destroyed, message 2's data intact, next command parses cleanly", async () => {
 			server = await ScriptedServer.start();

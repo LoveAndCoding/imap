@@ -1,3 +1,4 @@
+import { ProtocolError } from "../errors";
 import {
 	AppendUIDTextCode,
 	AtomTextCode,
@@ -78,6 +79,41 @@ export function expandUidSet(set: UIDSet): number[] {
 	return out;
 }
 
+/**
+ * M32 fix (second-review): wraps `expandUidSet()` for use INSIDE
+ * `toTypedResponseCode()` below -- the one chokepoint every resp-code path
+ * that reaches a command's PUBLIC promise goes through
+ * (`CopyCommand.accept()`, `MoveCommand.accept()`, `Command.defaultOnError`,
+ * `ResponseCollector.codes()`). An over-`MAX_EXPANDED_UIDS` uid-set range is
+ * a genuine, if rare, hazard on the LIVE path (a hostile/non-conformant
+ * server's APPENDUID/COPYUID/MODIFIED resp-code) -- `expandUidSet()`'s own
+ * bare `RangeError` would otherwise reach a caller's `await` as an
+ * un-annotated, non-`ImapError` rejection, violating this library's own
+ * "every public promise rejects with an instance of `ImapError`" contract
+ * (`errors.ts`'s own `ImapError` doc comment) -- an uncaught synchronous
+ * throw reaching `executeCommand`'s `try`/`catch` (`connection/execute-
+ * command.ts`) re-throws whatever it caught completely unwrapped. Re-thrown
+ * here as a `ProtocolError` (an `ImapError` subtype already used for
+ * malformed/oversized wire data) carrying the original as `.cause`.
+ *
+ * `expandUidSet()` ITSELF is left throwing a bare `RangeError` unchanged --
+ * its other callers (`MultiAppendCommand`'s positional APPENDUID pairing,
+ * the VANISHED uid-set expansion in `select.ts`/`client.ts`) aren't building
+ * a `TypedResponseCode` and don't share this function's public-promise-
+ * rejection contract, so widening `expandUidSet()`'s own throw type is out
+ * of scope here.
+ */
+function expandUidSetForRespCode(set: UIDSet, codeName: string): number[] {
+	try {
+		return expandUidSet(set);
+	} catch (err) {
+		throw new ProtocolError(
+			`${codeName} resp-code: ${err instanceof Error ? err.message : String(err)}`,
+			{ context: codeName, cause: err },
+		);
+	}
+}
+
 /** Strips one layer of surrounding DQUOTEs, mirroring `commands/status.ts`'s
  *  private helper of the same shape (BADURL's `url-resp-text` argument is a
  *  quoted `astring`, e.g. `"/Sent;UIDVALIDITY=.../;UID=20"`). */
@@ -119,15 +155,15 @@ export function toTypedResponseCode(
 		// (never a real IMAP UID, nz-number) documents "the server sent
 		// something this parse can't have produced" for an empty expansion
 		// without inventing an error for tolerated-but-odd data (I-6).
-		const uids = expandUidSet(code.uids);
+		const uids = expandUidSetForRespCode(code.uids, "APPENDUID");
 		return { name: "APPENDUID", uidValidity: code.uidvalidity, uid: uids[0] ?? 0, uids };
 	}
 	if (code instanceof CopyUIDTextCode) {
 		return {
 			name: "COPYUID",
 			uidValidity: code.uidvalidity,
-			sourceUids: expandUidSet(code.fromUIDs),
-			destUids: expandUidSet(code.toUIDs),
+			sourceUids: expandUidSetForRespCode(code.fromUIDs, "COPYUID"),
+			destUids: expandUidSetForRespCode(code.toUIDs, "COPYUID"),
 		};
 	}
 	if (code instanceof ModifiedTextCode) {
@@ -141,7 +177,7 @@ export function toTypedResponseCode(
 		// `uids` array instead of silently losing the MODIFIED payload to the
 		// open `{name, args}` fallback -- consistent with every other
 		// structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) above.
-		return { name: "MODIFIED", uids: expandUidSet(code.uids) };
+		return { name: "MODIFIED", uids: expandUidSetForRespCode(code.uids, "MODIFIED") };
 	}
 	if (code instanceof PermanentFlagsTextCode) {
 		return { name: "PERMANENTFLAGS", flags: code.flags.flags.map((f) => f.name) };
@@ -188,24 +224,46 @@ export function toTypedResponseCode(
 				const raw = code.contents?.[0];
 				return { name: "BADURL", url: raw ? stripQuotes(raw) : "" };
 			}
-			case "APPENDLIMIT": {
-				// RFC 7889 (M2.9): the same atom that serves as a STATUS item
-				// also appears as a resp-code carrying the advertised limit.
-				// A missing or non-numeric argument surfaces as `null` rather
-				// than an error (I-6).
-				const raw = code.contents?.[0];
-				return {
-					name: "APPENDLIMIT",
-					value: raw !== undefined && /^\d+$/.test(raw) ? BigInt(raw) : null,
-				};
-			}
+			// M33 fix (second-review): the "APPENDLIMIT" typed resp-code branch
+			// that used to live here was DROPPED -- verified against the
+			// compliance catalog (test/compliance/catalog/ext/rfc7889.ts,
+			// RFC7889-4-1's own notes): RFC 7889 defines no resp-code named
+			// "APPENDLIMIT" at all -- an over-limit APPEND is rejected via the
+			// TOOBIG resp-code (RFC 4469, handled by the `case "TOOBIG"` branch
+			// above), which is what that catalog entry's own text confirms
+			// ("RFC 7889 does not itself formalize [an] appendlimit-response-
+			// code ... instead deferring via 'Refer to Section 4 of
+			// [RFC4469]'"). No test anywhere in this repo scripts a bracketed
+			// `[APPENDLIMIT n]` resp-code, and nothing outside this file (and
+			// `protocol/response-codes.ts`'s own now-unreachable union member
+			// declaring the shape) ever matched `code.name === "APPENDLIMIT"`
+			// with a typed `value` field -- a purely speculative branch with a
+			// fabricated citation, not a real RFC-defined shape. A server that
+			// nonetheless sends `[APPENDLIMIT ...]` as a resp-code (conceivably
+			// as an informational aside, per response-codes.ts's own doc
+			// comment's speculation) still surfaces it, untyped, via the
+			// generic `default` fallback below (I-6: tolerate/recognize
+			// unrecognized codes, never throw) -- only the fabricated
+			// typed-`value` parsing was removed, not the code's recognition.
 			case "BADCOMPARATOR": {
-				// RFC 5255 §4.9 (M5.11): `"BADCOMPARATOR" [SP charset]` -- a
-				// tagged-NO code for a COMPARATOR change with no matching
-				// installed comparator. The optional trailing charset is a
-				// bare (unparenthesized) argument `AtomTextCode`'s
-				// bare-vs-parenthesized split already preserves in
-				// `contents[0]`; absent -> `null`, never fabricated (I-6).
+				// RFC 5255 §4.9 (M5.11): `resp-text-code =/ "BADCOMPARATOR"` is
+				// itself ARGUMENT-LESS per §4.9's own formal ABNF (confirmed
+				// against the compliance catalog, test/compliance/catalog/ext/
+				// rfc5255.ts's RFC5255-4.9-1 entry, which quotes that exact
+				// production) -- M33 fix (second-review) corrects this comment,
+				// which previously mis-cited `[SP charset]` as part of the ABNF.
+				// The parsing below is kept (not dropped): the compliance
+				// suite's own probe (test/compliance/specs/ext/language-5255.
+				// test.ts, RFC5255-4.9-1's "WITH its trailing argument" case)
+				// exercises a server sending `[BADCOMPARATOR US-ASCII]` in
+				// practice despite the grammar not naming it, and pins that the
+				// trailing charset-like token must still be captured rather
+				// than silently dropped -- a real, spec-motivated PARSER
+				// tolerance (I-6: preserve whatever the server actually sent),
+				// not a claim that the RFC's grammar itself defines the
+				// argument. `AtomTextCode`'s bare-vs-parenthesized split
+				// already preserves it in `contents[0]`; absent -> `null`,
+				// never fabricated.
 				const raw = code.contents?.[0];
 				return { name: "BADCOMPARATOR", charset: raw ?? null };
 			}
@@ -237,7 +295,7 @@ export function toTypedResponseCode(
 				// `AtomTextCode`'s bare-vs-parenthesized split preserves it in
 				// `contents[0]`; a missing/non-numeric argument from a
 				// non-conformant server surfaces as `null` rather than an error
-				// (I-6), same posture as APPENDLIMIT above.
+				// (I-6), same posture `MAXCONVERTPARTS` below shares.
 				const raw = code.contents?.[0];
 				return {
 					name: "MAXCONVERTMESSAGES",
@@ -289,8 +347,16 @@ export function toTypedResponseCode(
 		}
 	}
 	if (code instanceof CapabilityTextCode) {
+		// M30 fix (second-review): `name` (derived from `code.kind` above) is
+		// `CapabilityTextCode`'s own plural DISPLAY label ("CAPABILITIES", see
+		// that class's own doc comment) -- deliberately distinct from
+		// "CAPABILITY", the actual singular resp-code wire keyword (RFC 3501/
+		// 9051 §7.1: `resp-text-code =/ "CAPABILITY" capability-data`). A
+		// consumer matching `code.name === "CAPABILITY"` (the wire keyword,
+		// the only thing RFC 3501/9051 actually names) would silently never
+		// match this branch if it emitted `name` unchanged.
 		return {
-			name,
+			name: "CAPABILITY",
 			args: code.capabilities.capabilities.map((cap) => cap.fullValue).join(" "),
 		};
 	}
@@ -402,8 +468,22 @@ export class ResponseCollector {
 	 * Marks collection complete: the command's tagged response is now known
 	 * and no more claims are expected. Wakes any `live()` consumer still
 	 * waiting so it can observe completion instead of hanging forever.
+	 *
+	 * M31 fix (second-review): first-wins terminal-state guard, matching
+	 * `abort()`'s own -- teardown can race the tagged response actually
+	 * arriving (`execute-command.ts`'s error path calling `abort()` just as
+	 * the tagged response is parsed), and without this guard a `settle()`
+	 * landing AFTER an `abort()` would overwrite `taggedResp` while
+	 * `abortErr` stays set -- leaving `tagged()` (reads `taggedResp`, now
+	 * non-null) and `live()` (reads `abortErr`, still set) disagreeing about
+	 * whether this collector completed normally or via abort. Once EITHER
+	 * `abort()` or `settle()` has run, the other is now a no-op -- whichever
+	 * reaches this collector first wins.
 	 */
 	settle(tagged: TaggedResponse): void {
+		if (this.settledFlag) {
+			return;
+		}
 		this.taggedResp = tagged;
 		this.settledFlag = true;
 		this.wake();

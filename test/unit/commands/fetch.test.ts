@@ -337,6 +337,80 @@ describe("FetchCommand (RFC 3501/9051 §6.4.5/§6.4.9, M3.5)", () => {
 			});
 		});
 
+		describe("M1 fix (second-review): section-spec/binarySize strings are validated against the RFC grammar before being emitted via writer.raw(), zero bytes written on refusal", () => {
+			test("an injected ']' in bodyParts[].section is rejected (would otherwise close the bracket early and smuggle extra wire tokens)", () => {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ bodyParts: [{ section: "1] BODY[2", peek: true }] },
+							true,
+							1024,
+							ALL_CAPS,
+						),
+				).toThrow(RangeError);
+			});
+
+			test("an injected space in bodyParts[].section is rejected (would otherwise smuggle an extra space-separated fetch-att)", () => {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ bodyParts: [{ section: "1 FLAGS", peek: true }] },
+							true,
+							1024,
+							ALL_CAPS,
+						),
+				).toThrow(RangeError);
+			});
+
+			test("an injected CRLF in bodyParts[].section is rejected (belt-and-suspenders alongside writer.raw()'s own control-char floor)", () => {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ bodyParts: [{ section: "1\r\nA2 NOOP", peek: true }] },
+							true,
+							1024,
+							ALL_CAPS,
+						),
+				).toThrow(RangeError);
+			});
+
+			test("an injected ']' in FetchItems.binarySize[] is rejected the same way", () => {
+				expect(
+					() =>
+						new FetchCommand(
+							seqSet(1),
+							{ binarySize: ["1] BINARY.SIZE[2"] },
+							true,
+							1024,
+							ALL_CAPS,
+						),
+				).toThrow(RangeError);
+			});
+
+			test("negative: every legitimate section-spec shape from the spec's own examples still passes validation", async () => {
+				for (const section of ["", "1.2", "HEADER", "1.MIME", "TEXT", "1.2.3", "2.1.header"]) {
+					const { connection, written, router } = makeFakeConnection();
+					const cmd = new FetchCommand(
+						seqSet(1),
+						{ bodyParts: [{ section, peek: true }] },
+						true,
+						1024,
+						ALL_CAPS,
+					);
+					const resultPromise = executeCommand(connection, cmd, "A1");
+					await flushMicrotasks();
+					expect(Buffer.concat(written).toString("ascii")).toContain(
+						`BODY.PEEK[${section.toUpperCase()}]`,
+					);
+					router.routeTagged(parseLine(`A1 OK done${CRLF}`) as TaggedResponse);
+					await resultPromise;
+				}
+			});
+		});
+
 		test("gmail sub-items emitted in msgId/threadId/labels order", async () => {
 			const { connection, written, router } = makeFakeConnection();
 			const cmd = new FetchCommand(

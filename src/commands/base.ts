@@ -66,15 +66,21 @@ export abstract class Command<TResult> {
 	/** Wire verb, e.g. "CAPABILITY", "UID FETCH". */
 	abstract readonly verb: string;
 
-	/** Legal submission states (spec §7.1). Enforcement (rejecting a command
-	 *  submitted in an illegal state, I-11) lands with `ImapClient` — this
-	 *  milestone only stores the declaration so that later wiring is
-	 *  mechanical. Defaults to every state (no restriction). */
+	/** Legal submission states (spec §7.1). LOW fix (second-review): this
+	 *  comment used to describe enforcement as future/not-yet-wired work
+	 *  ("lands with ImapClient... this milestone only stores the
+	 *  declaration") -- it is live today: `ImapClient.run()` (the Layer-2
+	 *  escape hatch every submission passes through, `client/client.ts`)
+	 *  checks this field BEFORE writing a single byte and rejects with
+	 *  `StateError` (I-11) when the client's current state isn't listed
+	 *  here. Defaults to every state (no restriction). */
 	readonly states: readonly ClientState[] = ALL_STATES;
 
 	/** Required capability/capabilities (OR-semantics between array entries).
-	 *  Enforcement (§3.6/I-9: reject with zero bytes written when absent)
-	 *  also lands with `ImapClient`; stored here for that later wiring. */
+	 *  LOW fix (second-review): same correction as `states` above --
+	 *  enforcement (§3.6/I-9: `CapabilityError`, zero bytes written, when
+	 *  none of the listed capabilities is advertised) is live in
+	 *  `ImapClient.run()` today, not future work. */
 	readonly capability?: string | string[];
 
 	/** Pipelining class (spec §6.1): "pipeline" may share a queue context and
@@ -190,11 +196,13 @@ export abstract class Command<TResult> {
 	protected onCollectorReady?(c: ResponseCollector): void;
 
 	/** Continuation hook for INTERACTIVE commands only (AUTHENTICATE, IDLE —
-	 *  neither lands in this milestone). The queue-automatic literal gate
-	 *  (spec §6.2) is NOT this: a plain multi-segment `write()` output is
-	 *  handled entirely by the queue without ever calling this hook. Return
-	 *  the bytes to send in response to a continuation, or `"abort"` to send
-	 *  the SASL cancel line (`*`). */
+	 *  LOW fix (second-review): this comment used to say "neither lands in
+	 *  this milestone"; both `AuthenticateCommand` and `IdleCommand`
+	 *  implement this hook today). The queue-automatic literal gate (spec
+	 *  §6.2) is NOT this: a plain multi-segment `write()` output is handled
+	 *  entirely by the queue without ever calling this hook. Return the
+	 *  bytes to send in response to a continuation, or `"abort"` to send the
+	 *  SASL cancel line (`*`). */
 	protected onContinuation?(resp: ContinueResponse): Promise<Buffer | "abort">;
 
 	/** Maps a tagged NO/BAD response to the error this command's promise

@@ -188,6 +188,26 @@ export type MailboxClosedReason =
 	| "disconnected"
 	| "unauthenticated";
 
+/**
+ * LOW fix (second-review): the "spread `uid`/`modSeq` onto an object literal
+ * ONLY when each is actually present" pattern (never an explicit
+ * `uid: undefined`/`modSeq: undefined` property) was duplicated verbatim in
+ * two places -- `flushResync()`'s `applyFlagsUpdate()` call and
+ * `createUpdatesIterator()`'s `onFlags` handler, both building a
+ * `MailboxFlagsUpdate`-shaped object from a source that already has the same
+ * two optional fields. Factored out here so the two call sites can never
+ * drift apart on this detail again.
+ */
+function optionalUidModSeq(fields: {
+	uid?: number;
+	modSeq?: bigint;
+}): { uid?: number; modSeq?: bigint } {
+	return {
+		...(fields.uid !== undefined ? { uid: fields.uid } : {}),
+		...(fields.modSeq !== undefined ? { modSeq: fields.modSeq } : {}),
+	};
+}
+
 /** Payload of `MailboxSessionEvents.flags` (an untagged FETCH reporting a
  *  live flag change, spec §5b) — also reused verbatim as the `flags` branch
  *  of `MailboxUpdate` below. */
@@ -1042,10 +1062,21 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 	 * nothing to say about — a legal, common outcome, e.g. a since-expunged
 	 * UID), never a thrown error for that case. Implemented as "take the
 	 * first (and, for a single-UID request, only) yielded message, then stop
-	 * iterating" — the early `return` inside the `for await` loop invokes the
-	 * SAME abandoned-iterator drain path `fetch()`'s own mandatory compliance
-	 * coverage exercises (spec §5.4), so a multi-part response's live streams
-	 * this caller never touched are destroyed rather than left dangling.
+	 * iterating" (`fetchOneOf()` below) — LOW fix (second-review): the
+	 * PREVIOUS wording here claimed the early exit "invokes the SAME
+	 * abandoned-iterator drain path... so a multi-part response's live
+	 * streams this caller never touched are destroyed rather than left
+	 * dangling", which was backwards. `fetchOneOf()` deliberately does NOT
+	 * use a `for await` loop's early `return` (that IS the abandoned-
+	 * iterator/destroy path, spec §5.4's "consumed or destroyed" contract --
+	 * see `fetch()`'s own mandatory compliance coverage) precisely BECAUSE
+	 * that would destroy the very message this method hands back before its
+	 * real caller ever gets to read it. Instead it calls the raw
+	 * `.next()` once and marks the returned message's live parts "engaged"
+	 * (`FetchedPartImpl.protectLiveParts()`) so they are PROTECTED, not
+	 * destroyed: this method hands the message back whole, live parts
+	 * intact, for the caller to use exactly like any other `FetchedMessage`
+	 * — see `fetchOneOf()`'s own doc comment for the full mechanism.
 	 */
 	public async fetchOne(
 		uid: number,
@@ -1114,6 +1145,28 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			idleRenewMs: () => this.driver.idleRenewMs(),
 		};
 		const controller = new IdleController(idleDriver);
+		// M36 fix (second-review): react to THIS session closing/being
+		// reselected out from under this idle() call -- mirrors `updates()`'s
+		// own `session.on("closed", onClosed)` subscription (see that
+		// method's `createUpdatesIterator()`/`onClosed`). Pre-fix, this
+		// controller had no way to learn the session ended except the LATER
+		// queue-level "queued behind isolated" interrupt, which only fires
+		// once whatever superseded this session actually reaches the
+		// connection's command queue -- for a reselect specifically,
+		// `ImapClient.performSelectOrExamine()` calls `MailboxSession.
+		// markClosed(previous, "reselected")` BEFORE the new SELECT/EXAMINE
+		// command is even submitted, leaving a window where `session.closed`
+		// is already `true` while this controller hadn't yet been told to
+		// stop -- reacting directly to `"closed"` removes that race instead
+		// of relying solely on the queue interrupt as an indirect signal.
+		// `"closed"` fires at MOST once per session (`markClosed()`'s own
+		// idempotency guard), so `once()` needs no manual unsubscribe; `
+		// controller.done()` is idempotent (a no-op if the controller
+		// already stopped some other way -- an explicit `handle.done()`
+		// call, or the queue interrupt winning the race instead).
+		this.once("closed", () => {
+			void controller.done();
+		});
 		await controller.start();
 		return { done: () => controller.done() };
 	}
@@ -1646,6 +1699,20 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			has: (cap) => session.driver.hasCapability(cap),
 			knownAppendLimit: () => session.driver.knownAppendLimit(),
 		};
+		// H14 fix (second-review): the '*'-suppression/MSN-prohibition NOTIFY
+		// gate every OTHER seq-grain static here enforces (runStore/
+		// runGmailLabelsStore/runConvert/runCopyOrMove/runFetch) -- runReplace
+		// was missing it. REPLACE atomically appends-and-removes (RFC 8508
+		// §3.2), so under an active NOTIFY SET (SELECTED (MessageExpunge ...))
+		// registration a stale MSN can resolve to a different message by parse
+		// time (RFC 5465 §5.3, RFC5465-5.3-2) -- silently replacing/deleting the
+		// wrong one. `input` is always a single bare number here (REPLACE has
+		// no sequence-SET argument, unlike its siblings), so it can never be
+		// `'*'`-terminated -- the `SequenceSet` wrapper exists purely to reuse
+		// `assertSequenceGrainSafeUnderNotify`'s shared check (the same
+		// MessageExpunge refusal that matters here) rather than duplicating its
+		// logic; see that function's own doc comment.
+		assertSequenceGrainSafeUnderNotify(session.driver, SequenceSet.from(input).withKind(kind), kind, `${label}()`);
 		const command = new ReplaceCommand(input, mailbox, msg, opts, probe, kind === "uid");
 		return session.driver.run(command);
 	}
@@ -1806,12 +1873,23 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 		if (input === undefined) {
 			return session.driver.run(new ExpungeCommand(undefined, false));
 		}
-		if (!session.driver.hasCapability("UIDPLUS")) {
+		// M29 fix (second-review): OR-gate IMAP4rev2 alongside UIDPLUS -- RFC
+		// 9051 §6.4.9 absorbs UID EXPUNGE into rev2's base command set outright
+		// ("new in the rev2 base spec, absorbed from RFC 4315", `test/
+		// compliance/catalog/rfc9051/s6-selected.ts`'s own §6.4.9 note), no
+		// separate capability token needed on a rev2 server -- same
+		// OR-capability fold-in pattern `move()`'s MOVE-or-IMAP4rev2 gate and
+		// `unselect()`'s UNSELECT-or-IMAP4rev2 gate already use.
+		if (
+			!session.driver.hasCapability("UIDPLUS") &&
+			!session.driver.hasCapability("IMAP4rev2")
+		) {
 			throw new CapabilityError(
-				`${label}(uids) requires the UIDPLUS capability (RFC 4315 §2.1) for ` +
-					"UID EXPUNGE -- which the server has not advertised; call " +
-					`${label}() with no argument for the capability-free bare EXPUNGE ` +
-					"form instead",
+				`${label}(uids) requires the UIDPLUS capability (RFC 4315 §2.1) or an ` +
+					"IMAP4rev2 server (RFC 9051 §6.4.9, which folds UID EXPUNGE into the " +
+					"base command set with no separate capability token) for UID EXPUNGE " +
+					`-- neither of which the server has advertised; call ${label}() with ` +
+					"no argument for the capability-free bare EXPUNGE form instead",
 				{ capability: "UIDPLUS", rfc: "RFC4315" },
 			);
 		}
@@ -2379,9 +2457,8 @@ export class MailboxSession extends TypedEmitter<MailboxSessionEvents> {
 			} else {
 				MailboxSession.applyFlagsUpdate(session, {
 					seq: event.seq,
-					...(event.uid !== undefined ? { uid: event.uid } : {}),
+					...optionalUidModSeq(event),
 					flags: event.flags,
-					...(event.modSeq !== undefined ? { modSeq: event.modSeq } : {}),
 				});
 			}
 		}
@@ -2765,9 +2842,8 @@ function createUpdatesIterator(
 		push({
 			type: "flags",
 			seq: update.seq,
-			...(update.uid !== undefined ? { uid: update.uid } : {}),
+			...optionalUidModSeq(update),
 			flags: update.flags,
-			...(update.modSeq !== undefined ? { modSeq: update.modSeq } : {}),
 		});
 	/** The session closing mid-iteration (spec §5b design note, see
 	 *  `updates()`'s own doc comment): ends this iterator GRACEFULLY, not

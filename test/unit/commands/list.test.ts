@@ -280,6 +280,40 @@ describe("ListCommand (RFC 3501/9051 §6.3.8/§6.3.9 + RFC 5258/5819/6154/3348/2
 		expect((thrown as CapabilityError).capability).toBe("LIST-STATUS");
 	});
 
+	// M37 fix (second-review): RFC 9051 §6.3.9.2 folds LIST-STATUS into
+	// rev2's base command set outright (confirmed against the compliance
+	// catalog, test/compliance/catalog/ext/rfc5819.ts's own "REV2-CORE
+	// ADJUDICATION" note), no separate capability token needed on a rev2
+	// server -- same OR-capability fold-in pattern the sibling namespace/
+	// MOVE/UNSELECT/IDLE gates already use (and this file's own SIZE STATUS-
+	// item gate, commands/status.ts).
+	test("RETURN (STATUS (...)) is satisfied by IMAP4rev2 alone, no LIST-STATUS token needed (RFC 9051 §6.3.9.2 fold-in)", async () => {
+		const { wire, result } = await run(
+			new ListCommand(
+				{ pattern: "%", returnStatus: ["MESSAGES", "UNSEEN"] },
+				caps("IMAP4rev2"),
+			),
+			"L11",
+			['* LIST () "." "INBOX"', '* STATUS "INBOX" (MESSAGES 17 UNSEEN 2)'],
+		);
+		expect(wire).toBe(`L11 LIST "" % RETURN (STATUS (MESSAGES UNSEEN))${CRLF}`);
+		expect(result).toHaveLength(1);
+		expect(result[0].name).toBe("INBOX");
+		expect(result[0].status).toMatchObject({ mailbox: "INBOX", messages: 17, unseen: 2 });
+	});
+
+	// Negative control: neither LIST-STATUS nor IMAP4rev2 -- still refused.
+	test("RETURN (STATUS (...)) still refused when neither LIST-STATUS nor IMAP4rev2 is advertised", () => {
+		let thrown: unknown;
+		try {
+			new ListCommand({ returnStatus: ["MESSAGES"] }, caps("LIST-EXTENDED", "IMAP4rev1"));
+		} catch (err) {
+			thrown = err;
+		}
+		expect(thrown).toBeInstanceOf(CapabilityError);
+		expect((thrown as CapabilityError).capability).toBe("LIST-STATUS");
+	});
+
 	test("RETURN (STATUS (...)) wire form + interleaved * STATUS claimed into MailboxInfo.status", async () => {
 		const { wire, result } = await run(
 			new ListCommand(
@@ -421,6 +455,26 @@ describe("ListCommand (RFC 3501/9051 §6.3.8/§6.3.9 + RFC 5258/5819/6154/3348/2
 			expect(result[0].attributes.has("\\HasChildren")).toBe(false);
 			expect(result[0].attributes.has("\\HasNoChildren")).toBe(false);
 			expect(result[0].attributes.has("\\Marked")).toBe(true);
+		});
+
+		// LOW fix (second-review): the contradiction check used to run BEFORE
+		// the \NoInferiors -> \HasNoChildren implication, so a server sending
+		// \NoInferiors alongside an explicit \HasChildren (self-contradictory:
+		// \NoInferiors says no children CAN exist, \HasChildren says they DO)
+		// had no explicit \HasNoChildren for the pre-implication check to
+		// catch -- the implied \HasNoChildren silently coexisted with the
+		// explicit \HasChildren in the final set. The contradiction check now
+		// re-runs AFTER the implication step, catching this case too.
+		test("\\NoInferiors + explicit \\HasChildren: the resulting implied \\HasNoChildren still triggers the contradiction cleanup (both child-state attrs absent, \\NoInferiors itself untouched)", async () => {
+			const { result } = await run(new ListCommand(), "L20", [
+				'* LIST (\\NoInferiors \\HasChildren) "/" Contradictory',
+			]);
+			expect(result[0].attributes.has("\\HasChildren")).toBe(false);
+			expect(result[0].attributes.has("\\HasNoChildren")).toBe(false);
+			// \NoInferiors is a real, independent attribute -- the cleanup only
+			// removes the derived child-state pair, never the attribute that
+			// implied one of them.
+			expect(result[0].attributes.has("\\NoInferiors")).toBe(true);
 		});
 	});
 

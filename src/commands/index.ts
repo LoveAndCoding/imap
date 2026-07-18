@@ -10,6 +10,8 @@ export * from "./copy";
 export * from "./create";
 export * from "./delete";
 export * from "./enable";
+export * from "./expunge";
+export * from "./fetch";
 export * from "./id";
 export * from "./idle";
 export * from "./list";

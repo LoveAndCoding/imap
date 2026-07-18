@@ -1,21 +1,23 @@
 import type { BodyPartRequest, FetchedMessage, FetchItems, FetchRequest } from "../client/fetch";
-import { buildFetchedMessage, normalizeSectionSpec } from "../client/fetch";
+import { buildFetchedMessage, normalizeSectionSpec, sectionPartKey } from "../client/fetch";
 import { CapabilityError } from "../errors";
 import { Fetch, UidFetch } from "../parser";
 import type { UntaggedResponse } from "../parser";
 import type { ClaimContext } from "./base";
 import { Command } from "./base";
 import type { ResponseCollector } from "./collector";
+// M34 fix (second-review): reuse `CopyCommand`'s own `SequenceSetLike`
+// (structurally identical -- `{ toString(): string }`, spec §5.1's
+// `SequenceSet` is the real producer for both) rather than a second,
+// independently-declared copy of it -- the duplicate became a genuine
+// `export *` ambiguity (TS2308) the moment `commands/index.ts`'s public
+// barrel started re-exporting this module alongside `./copy` (both would
+// otherwise declare a same-named public `SequenceSetLike`). `MoveCommand`
+// (`./move`) already imports `CopyCommand`'s `SequenceSetLike` this exact
+// way, for the same reason.
+import type { SequenceSetLike } from "./copy";
 import { validatePartialRange } from "./search";
 import { CommandWriter } from "./writer";
-
-/** Minimal structural shape `FetchCommand` needs from its sequence-set
- *  argument -- mirrors `CopyCommand`'s own `SequenceSetLike` (spec §5.1's
- *  `SequenceSet` is the real producer; kept structural for the same reason
- *  `CommandWriter.sequenceSet()` itself stays structural). */
-export interface SequenceSetLike {
-	toString(): string;
-}
 
 /** The minimal capability read surface FETCH's per-item gates need --
  *  structurally satisfied by `CapabilityView`/`MailboxSessionDriver.
@@ -118,6 +120,58 @@ function resolveHeaderFieldsNot(part: BodyPartRequest): boolean {
 	return isNot;
 }
 
+/**
+ * M1 fix (second-review): the RFC 3501/9051 §6.4.5 `section-spec` grammar,
+ * as a regex --
+ *
+ *   section-spec    = section-msgtext / (section-part ["." section-text])
+ *   section-msgtext = "HEADER" / "HEADER.FIELDS" [".NOT"] SP header-list / "TEXT"
+ *   section-part    = nz-number *("." nz-number)
+ *   section-text    = section-msgtext / "MIME"
+ *
+ * i.e. (once the separately-validated `HEADER.FIELDS`/`.NOT` + header-list
+ * form is set aside -- see `resolveHeaderFieldsNot()`/the `part.fields`
+ * branch below, and `HEADER_FIELDS_RE`'s own refusal of a bare
+ * `section: "HEADER.FIELDS"` reaching here without `fields`): EITHER the
+ * empty string (the whole-message `BODY[]`/`BINARY[]` form), OR a bare
+ * `"HEADER"`/`"TEXT"`/`"MIME"` keyword, OR one-or-more dot-joined `nz-number`
+ * (RFC 3501/9051 §9: no leading zero, `[1-9][0-9]*`) leaf-part segments
+ * optionally followed by exactly one trailing `.HEADER`/`.TEXT`/`.MIME`
+ * keyword segment. Matched case-insensitively (section keywords are
+ * case-insensitive on the wire, same as `normalizeSectionSpec()`'s own
+ * uppercase canonicalization).
+ */
+const SECTION_SPEC_RE =
+	/^(?:|HEADER|TEXT|MIME|[1-9][0-9]*(?:\.[1-9][0-9]*)*(?:\.(?:HEADER|TEXT|MIME))?)$/i;
+
+/**
+ * Validates a raw `BodyPartRequest.section`/`FetchItems.binarySize[]` string
+ * against `SECTION_SPEC_RE` above, throwing `RangeError` (I-9: zero bytes
+ * written) on anything that doesn't match -- M1 fix (second-review).
+ * Pre-fix, this string reached `CommandWriter.raw()` (`writeBodyPartItem`'s
+ * `w.raw(token)`/the `binarySize` case's `w.raw(...)` below) with NO grammar
+ * validation at all: `raw()`'s own floor blocks CR/LF/other C0 controls/
+ * 8-bit/DEL (a real but DIFFERENT, already-existing guard -- see that
+ * method's own doc comment, "NOT re-validation of the token's own grammar —
+ * the caller owns that"), but does NOT block a bare `]`, `(`, `)`, or space --
+ * every one of which is a STRUCTURAL character in the surrounding `FETCH
+ * (BODY[<section>] ...)`/`BINARY.SIZE[<section>]` command. A caller building
+ * `section` from untrusted or externally-derived data (e.g. a MIME part path
+ * threaded through from somewhere else) could inject e.g. `"1] BADITEM"` and
+ * silently smuggle an extra fetch-att into the SAME command's item list --
+ * this validator closes that gap by only ever emitting the closed set of
+ * shapes the grammar actually defines.
+ */
+function assertValidSectionSpec(section: string, field: string): void {
+	if (!SECTION_SPEC_RE.test(section)) {
+		throw new RangeError(
+			`${field}: ${JSON.stringify(section)} is not a valid section-spec ` +
+				"(RFC 3501/9051 §6.4.5: digits/dots and the HEADER/TEXT/MIME " +
+				"keywords only -- no structural characters like ']'/'('/')'/space)",
+		);
+	}
+}
+
 /** Builds the bracket CONTENT (everything between `[` and `]`, exclusive)
  *  for one `BodyPartRequest` -- spec §5.4's `section` examples (`""`,
  *  `"1.2"`, `"HEADER"`, `"1.MIME"`, `"HEADER.FIELDS"`, `"TEXT"`) are
@@ -146,6 +200,10 @@ function composeSectionSpec(part: BodyPartRequest): string {
 				"(spec §5.4: HEADER.FIELDS/HEADER.FIELDS.NOT need the header-name list)",
 		);
 	}
+	// M1 fix (second-review): reject anything outside the closed grammar
+	// BEFORE it's normalized/emitted -- see `assertValidSectionSpec()`'s own
+	// doc comment.
+	assertValidSectionSpec(part.section, "BodyPartRequest.section");
 	return normalizeSectionSpec(part.section);
 }
 
@@ -256,6 +314,16 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 					if (typeof section !== "string") {
 						throw new RangeError("FetchItems.binarySize: each entry must be a string");
 					}
+					// M1 fix (second-review): same grammar validation
+					// `composeSectionSpec()` applies to `bodyParts[].section` --
+					// this string reached `w.raw()` below with no validation at
+					// all pre-fix, letting a structural character (']'/'('/')'/
+					// space) smuggle an extra fetch-att into the item list.
+					// Deliberately NOT also normalizing case here (unlike
+					// `composeSectionSpec()`) -- out of this fix's scope, and
+					// would be a separate, unrequested behavior change to this
+					// item's existing verbatim-case wire emission.
+					assertValidSectionSpec(section, "FetchItems.binarySize[]");
 					w.raw(`BINARY.SIZE[${section}]`);
 				}
 				break;
@@ -303,23 +371,32 @@ function collectForcedStreamSections(request: FetchRequest): ReadonlySet<string>
 	return out;
 }
 
-/** The section-string KEY `buildFetchedMessage()` will use for this part's
- *  response (the server's echo, sans `HEADER.FIELDS`'s own field list --
- *  see `src/client/fetch.ts`'s `FetchedMessage.part()` doc comment for the
- *  parser-level limitation this works around). C3 fix: normalized to the
- *  same canonical uppercase form `composeSectionSpec()`/the parser's own
- *  `MessageBodySection.kind` use, via the shared `normalizeSectionSpec()`.
- *  C4 fix: shares `resolveHeaderFieldsNot()`'s conflict detection with
- *  `composeSectionSpec()` so an inconsistent `.section` alongside `.fields`
- *  is caught here too (this function runs during `FetchCommand`'s
- *  constructor, via `collectForcedStreamSections()`, ahead of
- *  `composeSectionSpec()`'s own call in the same constructor -- either one
- *  throwing satisfies "zero bytes written on refusal", I-9). */
+/** The KEY `buildFetchedMessage()` will use for this part's response (the
+ *  server's echo, sans `HEADER.FIELDS`'s own field list -- see
+ *  `src/client/fetch.ts`'s `FetchedMessage.part()` doc comment for the
+ *  parser-level limitation this works around). C3 fix: the section facet is
+ *  normalized to the same canonical uppercase form `composeSectionSpec()`/the
+ *  parser's own `MessageBodySection.kind` use, via the shared
+ *  `normalizeSectionSpec()`. C4 fix: shares `resolveHeaderFieldsNot()`'s
+ *  conflict detection with `composeSectionSpec()` so an inconsistent
+ *  `.section` alongside `.fields` is caught here too (this function runs
+ *  during `FetchCommand`'s constructor, via `collectForcedStreamSections()`,
+ *  ahead of `composeSectionSpec()`'s own call in the same constructor --
+ *  either one throwing satisfies "zero bytes written on refusal", I-9). H9
+ *  fix (second-review): folds `part.binary` into the key via the shared
+ *  `sectionPartKey()` -- a `stream: true` on `{section:"1"}` (BODY) must NOT
+ *  also force-stream an unrelated `{section:"1", binary:true}` (BINARY)
+ *  request for the same section number, since the two are different data
+ *  items the server answers independently (see `sectionPartKey()`'s own doc
+ *  comment for the full collision this prevents). */
 function composeSectionSpecKey(part: BodyPartRequest): string {
-	if (part.fields !== undefined) {
-		return resolveHeaderFieldsNot(part) ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
-	}
-	return normalizeSectionSpec(part.section);
+	const section =
+		part.fields !== undefined
+			? resolveHeaderFieldsNot(part)
+				? "HEADER.FIELDS.NOT"
+				: "HEADER.FIELDS"
+			: normalizeSectionSpec(part.section);
+	return sectionPartKey(section, part.binary === true);
 }
 
 function compileFetchWire(

@@ -18,14 +18,22 @@ import type { CommandWriter } from "./writer";
  * argument is written), same "one command class, two grains" shape
  * `StoreCommand` already established for STORE/UID STORE.
  *
- * **Capability gate (I-9):** UID EXPUNGE is UIDPLUS-only -- `capability =
- * "UIDPLUS"` is set ONLY on the UID-grain instance (never on bare EXPUNGE,
- * which is base protocol under both revisions and gates on nothing).
+ * **Capability gate (I-9):** UID EXPUNGE requires UIDPLUS (RFC 4315 §2.1) OR
+ * an IMAP4rev2 server -- M29 fix (second-review): RFC 9051 §6.4.9 absorbs UID
+ * EXPUNGE into rev2's base command set outright ("new in the rev2 base spec,
+ * absorbed from RFC 4315", `test/compliance/catalog/rfc9051/s6-selected.ts`'s
+ * own §6.4.9 note), no separate capability token needed -- the identical
+ * OR-capability fold-in pattern `MoveCommand`'s `capability = ["MOVE",
+ * "IMAP4rev2"]`/`UnselectCommand`'s `["UNSELECT", "IMAP4rev2"]`/`IdleCommand`'s
+ * `["IDLE", "IMAP4rev2"]` already establish. `capability = ["UIDPLUS",
+ * "IMAP4rev2"]` (OR-semantics, `Command.capability`'s documented array form)
+ * is set ONLY on the UID-grain instance (never on bare EXPUNGE, which is base
+ * protocol under both revisions and gates on nothing).
  * `MailboxSession.expunge()`/`runExpunge()` (src/client/mailbox.ts) runs the
- * primary, RFC-annotated precheck before ever constructing this class; this
- * declaration is the defense-in-depth backstop for a caller reaching the
- * command directly via the `client.run()` escape hatch, same two-layer
- * pattern `MoveCommand`'s `capability = ["MOVE", "IMAP4rev2"]` established.
+ * primary, RFC-annotated precheck (its own OR-gate, mirroring this one)
+ * before ever constructing this class; this declaration is the
+ * defense-in-depth backstop for a caller reaching the command directly via
+ * the `client.run()` escape hatch, same two-layer pattern as those siblings.
  *
  * `queueMode: "serial"` per spec §6.1 -- EXPUNGE is spec §6.1's own named
  * example of a mailbox-mutating command that "must be alone in flight" (RFC
@@ -74,7 +82,7 @@ export class ExpungeCommand extends Command<number[]> {
 	readonly verb: string;
 	readonly queueMode = "serial" as const;
 	readonly states = ["selected"] as const;
-	declare readonly capability?: string;
+	declare readonly capability?: string | string[];
 
 	constructor(
 		private readonly uids: SequenceSetLike | undefined,
@@ -83,7 +91,10 @@ export class ExpungeCommand extends Command<number[]> {
 		super();
 		this.verb = uidGrain ? "UID EXPUNGE" : "EXPUNGE";
 		if (uidGrain) {
-			this.capability = "UIDPLUS";
+			// M29 fix (second-review): OR-gate IMAP4rev2 alongside UIDPLUS --
+			// see this class's own doc comment for the RFC 9051 §6.4.9
+			// fold-in citation.
+			this.capability = ["UIDPLUS", "IMAP4rev2"];
 		}
 	}
 

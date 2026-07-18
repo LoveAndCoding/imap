@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { ResponseCollector, expandUidSet, toTypedResponseCode } from "../../../src/commands/collector";
+import { ImapError, ProtocolError } from "../../../src/errors";
 import Lexer from "../../../src/lexer/lexer";
 import Parser from "../../../src/parser/parser";
 import { StatusResponse } from "../../../src/parser/structure/status";
@@ -631,5 +632,140 @@ describe("toTypedResponseCode (spec §5.5)", () => {
 			name: "REFERRAL",
 			urls: ["IMAP://MIKE@SERVER2/"],
 		});
+	});
+
+	// M30 fix (second-review): `CapabilityTextCode.kind` is that class's own
+	// PLURAL display label ("CAPABILITIES", see its own doc comment in
+	// src/parser/structure/text.code.ts) -- distinct from "CAPABILITY", the
+	// actual singular RFC 3501/9051 §7.1 resp-code wire keyword. Before this
+	// fix, a consumer matching `code.name === "CAPABILITY"` (the only thing
+	// the RFC actually names) would silently never match this branch.
+	// M33 fix (second-review): the RFC 7889 catalog (test/compliance/catalog/
+	// ext/rfc7889.ts, RFC7889-4-1) confirms RFC 7889 defines NO resp-code
+	// named "APPENDLIMIT" -- an over-limit APPEND is rejected via TOOBIG (RFC
+	// 4469) instead. The fabricated typed-`value` branch for it was dropped;
+	// a bracketed `[APPENDLIMIT ...]` resp-code (however unlikely in
+	// practice) now falls through to the open `{ name, args }` fallback,
+	// same as any other unrecognized code (I-6) -- still recognized by name,
+	// just no longer claiming a numeric `value` field the RFC never defined.
+	test("M33: an [APPENDLIMIT ...] resp-code (never RFC-defined, see RFC7889-4-1) surfaces via the open fallback, not a fabricated typed 'value'", () => {
+		const tagged = parseLine(`A1 NO [APPENDLIMIT 1000000] APPEND failed${CRLF}`) as TaggedResponse;
+		const code = toTypedResponseCode(tagged.status.text?.code);
+		expect(code).toEqual({ name: "APPENDLIMIT", args: "1000000" });
+		expect(code).not.toHaveProperty("value");
+	});
+
+	test("M30: a [CAPABILITY ...] resp-code reports name 'CAPABILITY' (the wire keyword), not 'CAPABILITIES'", () => {
+		const tagged = parseLine(
+			`A1 OK [CAPABILITY IMAP4rev1 ID] LOGIN completed${CRLF}`,
+		) as TaggedResponse;
+		const code = toTypedResponseCode(tagged.status.text?.code);
+		expect(code?.name).toBe("CAPABILITY");
+		expect(code?.name).not.toBe("CAPABILITIES");
+	});
+
+	// M32 fix (second-review): an over-`MAX_EXPANDED_UIDS` uid-set inside a
+	// resp-code (APPENDUID/COPYUID/MODIFIED) must not surface as a bare
+	// `RangeError` -- every public promise this library exposes rejects with
+	// an `ImapError` (see errors.ts's own doc comment on that class), and
+	// `toTypedResponseCode()` is the one chokepoint every resp-code path
+	// reaching a command's public promise goes through (`CopyCommand.
+	// accept()`, `MoveCommand.accept()`, `Command.defaultOnError`,
+	// `ResponseCollector.codes()`).
+	describe("M32: an over-ceiling uid-set inside a resp-code surfaces as a typed ImapError, not a bare RangeError", () => {
+		test("APPENDUID with an oversized uid-set", () => {
+			const tagged = parseLine(
+				`A1 OK [APPENDUID 1 1:2000000] APPEND completed${CRLF}`,
+			) as TaggedResponse;
+			let caught: unknown;
+			try {
+				toTypedResponseCode(tagged.status.text?.code);
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(ImapError);
+			expect(caught).toBeInstanceOf(ProtocolError);
+			expect(caught).not.toBeInstanceOf(RangeError);
+			expect((caught as ProtocolError).cause).toBeInstanceOf(RangeError);
+		});
+
+		test("COPYUID with an oversized uid-set", () => {
+			const tagged = parseLine(
+				`A1 OK [COPYUID 1 1:2000000 1:2000000] COPY completed${CRLF}`,
+			) as TaggedResponse;
+			expect(() => toTypedResponseCode(tagged.status.text?.code)).toThrow(ProtocolError);
+		});
+
+		test("MODIFIED with an oversized uid-set", () => {
+			const tagged = parseLine(
+				`A1 OK [MODIFIED 1:2000000] Conditional STORE failed${CRLF}`,
+			) as TaggedResponse;
+			expect(() => toTypedResponseCode(tagged.status.text?.code)).toThrow(ProtocolError);
+		});
+
+		// Negative: expandUidSet() ITSELF is unaffected -- it keeps throwing a
+		// bare RangeError for its other (non-resp-code) callers, e.g. VANISHED
+		// expansion / MultiAppendCommand's positional pairing, which don't
+		// share toTypedResponseCode()'s public-promise-rejection contract.
+		test("negative: expandUidSet() called directly still throws a bare RangeError, unwrapped", () => {
+			const set: UIDSet = { set: [new UIDRange(1, 2_000_000)] };
+			expect(() => expandUidSet(set)).toThrow(RangeError);
+			expect(() => expandUidSet(set)).not.toThrow(ProtocolError);
+		});
+	});
+});
+
+// M31 fix (second-review): ResponseCollector.settle() lacked the terminal-
+// state guard abort() has -- a settle() landing AFTER an abort() (teardown
+// racing the tagged response actually arriving) overwrote taggedResp while
+// abortErr stayed set, leaving tagged() and live() disagreeing about how
+// this collector completed.
+describe("M31 fix: ResponseCollector.settle() is a no-op once already settled (matches abort()'s first-wins discipline)", () => {
+	test("settle() after abort(): a no-op -- tagged() still throws (no tagged response was ever really supplied), live() still surfaces the abort error", async () => {
+		const c = new ResponseCollector();
+		const abortErr = new Error("connection torn down");
+		c.abort(abortErr);
+		expect(c.settled).toBe(true);
+
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		c.settle(tagged); // must be a no-op -- abort() already won
+
+		expect(() => c.tagged()).toThrow(
+			"ResponseCollector.tagged() called before the tagged response arrived",
+		);
+
+		const drained: unknown[] = [];
+		let caught: unknown;
+		try {
+			for await (const resp of c.live()) {
+				drained.push(resp);
+			}
+		} catch (err) {
+			caught = err;
+		}
+		expect(drained).toEqual([]);
+		expect(caught).toBe(abortErr);
+	});
+
+	test("negative: settle() before any abort() behaves exactly as before (tagged() resolves, live() completes normally)", async () => {
+		const c = new ResponseCollector();
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		c.settle(tagged);
+
+		expect(c.tagged()).toBe(tagged);
+		const drained: unknown[] = [];
+		for await (const resp of c.live()) {
+			drained.push(resp);
+		}
+		expect(drained).toEqual([]);
+	});
+
+	test("abort() after settle(): the EXISTING first-wins guard on abort() itself is unaffected by this fix (tagged() still resolves)", () => {
+		const c = new ResponseCollector();
+		const tagged = parseLine(`A1 OK done${CRLF}`) as TaggedResponse;
+		c.settle(tagged);
+		c.abort(new Error("too late"));
+
+		expect(c.tagged()).toBe(tagged);
 	});
 });

@@ -714,6 +714,29 @@ describe("MailboxSession.expunge() + seq facet (spec §5b, M3.9)", () => {
 		expect(mailbox.exists).toBe(3);
 	});
 
+	// M29 fix (second-review): RFC 9051 §6.4.9 absorbs UID EXPUNGE into rev2's
+	// base command set outright, no separate capability token needed -- a pure
+	// rev2 server that never advertises UIDPLUS must still satisfy this gate,
+	// same OR-capability fold-in pattern the "move(): IMAP4rev2 alone
+	// satisfies the gate" test above pins for MOVE.
+	test("expunge(uids): IMAP4rev2 alone satisfies the gate (RFC 9051 §6.4.9 folds UID EXPUNGE into base protocol, no separate token needed)", async () => {
+		server = await ScriptedServer.start();
+		client = new ImapClient(baseConfig(server.port));
+		// Deliberately NO UIDPLUS in the advertised capabilities -- only
+		// IMAP4rev2.
+		await connectAuthenticated(server, client, ["IMAP4rev2"], [
+			...selectInboxSteps(5),
+			expectLine(command("UID EXPUNGE", { args: "3:5" })),
+			reply("OK UID EXPUNGE completed", ["* 3 EXPUNGE"]),
+		]);
+
+		const mailbox = await client.select("INBOX");
+		const result = await mailbox.expunge([3, 4, 5]);
+		await server.assertCompleted();
+
+		expect(result).toEqual([3]);
+	});
+
 	test("expunge(uids): CapabilityError, zero bytes written, when UIDPLUS is not advertised (RFC 4315 -- never emulated via bare EXPUNGE)", async () => {
 		server = await ScriptedServer.start();
 		client = new ImapClient(baseConfig(server.port));
