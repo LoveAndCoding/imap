@@ -144,12 +144,15 @@ describe("MessageBodySection §11.4 streamed-literal shape", () => {
 		);
 		const lexer = new Lexer();
 		// Tested at the header-matcher level directly (rather than through
-		// the whole Fetch constructor) because Fetch merges the matched
-		// header via `MessageHeader.mergeIn`, whose Map-forEach argument
-		// destructuring garbles field values -- a pre-existing bug outside
-		// this task's §11.4 scope; the §11.4 claim under test is only that
-		// a STREAMED header literal drains into the same MessageHeader
-		// shape a buffered one produces.
+		// the whole Fetch constructor) to keep this test scoped to its own
+		// §11.4 claim -- that a STREAMED header literal drains into the same
+		// MessageHeader shape a buffered one produces -- independent of
+		// whatever else a real Fetch response happens to carry.
+		// (`MessageHeader.mergeIn`'s own Map-argument-destructuring bug,
+		// H13, that used to make ANY merge through Fetch unreliable is fixed
+		// separately -- see the direct `MessageHeader.mergeIn` coverage in
+		// `header.test.ts` and the end-to-end multi-header-item Fetch
+		// regression test below.)
 		const tokens = [
 			...lexer.tokenize("BODY[HEADER] "),
 			makeStreamToken(header),
@@ -176,5 +179,30 @@ describe("MessageBodySection §11.4 streamed-literal shape", () => {
 
 		expect(fetch.body?.header.fields.get("Subject")).toBe("hi");
 		expect(fetch.body?.sections[0].contents).toBe("the actual body text");
+	});
+
+	// H13 regression (end-to-end): a single FETCH response carrying TWO
+	// header-shaped data items (here, RFC822.HEADER and a BODY[HEADER.FIELDS
+	// (...)] section) drives `MessageBody.addMessageBodyPiece` to call
+	// `MessageHeader.mergeIn` twice while accumulating `Fetch.body.header`.
+	// Before the H13 fix, `mergeIn`'s broken Map-argument destructuring
+	// discarded every real field name, so this real, full-pipeline path
+	// (not just direct `MessageHeader.mergeIn` calls) silently lost header
+	// data. Also covered directly (both directions, no full pipeline
+	// involved) in `header.test.ts`.
+	test("a FETCH response with two header data items merges both sets of fields via the real Fetch/MessageBody/MessageHeader.mergeIn path", () => {
+		// Header content carries real CRLFs, which aren't legal inside a
+		// quoted-string per IMAP's `quoted` grammar -- use literals (the
+		// wire form a real server would use for header content) instead.
+		const fromHeader = `From: a@b.com${CRLF}`;
+		const subjectHeader = `Subject: hello${CRLF}${CRLF}`;
+		const line =
+			`* 1 FETCH (RFC822.HEADER {${fromHeader.length}}${CRLF}${fromHeader} ` +
+			`BODY[HEADER.FIELDS (SUBJECT)] {${subjectHeader.length}}${CRLF}${subjectHeader})` +
+			CRLF;
+		const fetch = getFetch(parseLine(line));
+
+		expect(fetch.body?.header.fields.get("From")).toBe("a@b.com");
+		expect(fetch.body?.header.fields.get("Subject")).toBe("hello");
 	});
 });

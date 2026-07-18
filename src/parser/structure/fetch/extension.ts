@@ -1,3 +1,4 @@
+import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { ciEquals } from "../../../lexer/case-insensitive";
 import { getNStringValue, isLiteralStreamToken, matchesFormat } from "../../utility";
@@ -80,6 +81,14 @@ export class SaveDate {
 
 	constructor(dateTimeStr: string | null) {
 		this.datetime = dateTimeStr === null ? null : new Date(dateTimeStr);
+		// LOW fix: same as INTERNALDATE (./internaldate.ts) -- `new Date()`
+		// silently produces an `Invalid Date` (NaN-valued) object for a
+		// malformed date-time string instead of throwing. Surface it as a
+		// typed ParsingError instead, rather than letting a bad `Date`
+		// silently reach a consumer.
+		if (this.datetime && Number.isNaN(this.datetime.getTime())) {
+			throw new ParsingError("Invalid SAVEDATE date-time value", dateTimeStr ?? "");
+		}
 	}
 }
 

@@ -129,7 +129,18 @@ export class MessageHeader {
 	 *  a given field name wins) -- used when a message's header data arrives
 	 *  split across more than one FETCH response. */
 	public mergeIn(withHeader: MessageHeader) {
-		withHeader.fields.forEach(([key, val]) => this.fields.set(key, val));
+		// H13 fix: `Map.prototype.forEach`'s callback signature is
+		// `(value, key, map)`, NOT `([key, value])` -- the previous
+		// `.forEach(([key, val]) => ...)` destructured the VALUE (a
+		// `string | string[]`) as if it were a `[key, value]` tuple, so the
+		// real field name was discarded entirely and `key`/`val` ended up
+		// holding pieces of the value instead (e.g. a string's first two
+		// characters, via array-destructuring a string's iterator). Iterate
+		// entries directly so both the field name and its value survive the
+		// merge intact.
+		for (const [key, val] of withHeader.fields.entries()) {
+			this.fields.set(key, val);
+		}
 	}
 }
 

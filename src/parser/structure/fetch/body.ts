@@ -10,6 +10,7 @@ import { MessageBodySection } from "./body.section";
 import {
 	MessageBodyStructure,
 	MessageBodyMultipartStructure,
+	parseBodyStructureFromParts,
 } from "./body.structure";
 import { MessageHeader } from "./header";
 
@@ -147,46 +148,16 @@ export function match(
 			parts.length +
 			3;
 
-		if (!parts || !parts.length) {
-			throw new ParsingError(
-				"Unable to get body structure components",
-				tokens,
-			);
-		}
-
-		if (
-			parts[0][0] &&
-			(!parts[0][0].isType(TokenTypes.operator) ||
-				parts[0][0].getTrueValue() !== "(")
-		) {
-			return {
-				match: new MessageBodyStructure(parts),
-				length,
-			};
-		} else {
-			const multipartSubtypeTokens = parts[1];
-
-			if (
-				!multipartSubtypeTokens ||
-				multipartSubtypeTokens.length !== 1 ||
-				!multipartSubtypeTokens[0].isType(TokenTypes.string)
-			) {
-				throw new ParsingError(
-					"Unable to get multipart body structure subtypes",
-					tokens,
-				);
-			}
-
-			// We're in a multipart structure, which means we have
-			return {
-				match: new MessageBodyMultipartStructure(
-					parts[0],
-					multipartSubtypeTokens[0].getTrueValue(),
-					parts.slice(2),
-				),
-				length,
-			};
-		}
+		// M4/C1: the detection between a single-part (`body-type-1part`) and
+		// multipart (`body-type-mpart`) BODYSTRUCTURE value, and the
+		// recursion-depth cap (M4) that goes with it, are shared with the
+		// multipart-children loop and the MESSAGE/RFC822 embedded-body case
+		// in `./body.structure.ts` (see `parseBodyStructureFromParts`) --
+		// this is depth 0, the top of the recursion.
+		return {
+			match: parseBodyStructureFromParts(parts, tokens, 0),
+			length,
+		};
 	}
 
 	const isBodySectionMatch = matchesFormat(tokens, [

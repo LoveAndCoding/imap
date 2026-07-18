@@ -1,3 +1,4 @@
+import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
 
@@ -14,6 +15,19 @@ export class InternalDate {
 	constructor(dateTimeStr: string) {
 		// The string we get can be parsed by Date(), so just pass it along
 		this.datetime = new Date(dateTimeStr);
+		// LOW fix: `new Date()` silently produces an `Invalid Date` object
+		// (a `Date` whose `getTime()` is `NaN`) for a malformed date-time
+		// string instead of throwing -- a client reading `.datetime` would
+		// get a value that LOOKS like a real date until something
+		// downstream tries to use it. Surface this as a typed ParsingError
+		// at parse time instead, the same shape every other malformed-field
+		// case in this codebase uses.
+		if (Number.isNaN(this.datetime.getTime())) {
+			throw new ParsingError(
+				"Invalid INTERNALDATE date-time value",
+				dateTimeStr,
+			);
+		}
 	}
 }
 

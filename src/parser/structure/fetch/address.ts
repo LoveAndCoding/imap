@@ -1,10 +1,20 @@
 import { decodeWords } from "../../encoding";
+import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer";
 import {
 	getNStringValue,
 	splitUnseparatedListofLists,
 	splitSpaceSeparatedList,
 } from "../../utility";
+
+/** RFC 3501/9051 §7.5 `address`'s exact positional field count (addr-name,
+ *  addr-adl, addr-mailbox, addr-host). A malformed/truncated address tuple
+ *  with fewer fields would otherwise leave later destructured fields (e.g.
+ *  `host`) `undefined`, crashing inside `getNStringValue`'s raw
+ *  `.isType()` access with an untyped TypeError instead of a typed,
+ *  catchable ParsingError -- mirrors `ENVELOPE_FIELD_COUNT` in
+ *  `./envelope.ts`. */
+const ADDRESS_FIELD_COUNT = 4;
 
 /** RFC 3501 §7.5 `address`: an `(addr-name SP addr-adl SP addr-mailbox SP
  *  addr-host)` 4-tuple parsed out of an ENVELOPE address list. */
@@ -21,7 +31,15 @@ export class Address {
 	public readonly host: null | string;
 
 	constructor(tokens: LexerTokenList) {
-		const [name, route, mailbox, host] = splitSpaceSeparatedList(tokens);
+		const parts = splitSpaceSeparatedList(tokens);
+		if (parts.length !== ADDRESS_FIELD_COUNT) {
+			throw new ParsingError(
+				`Address must have exactly ${ADDRESS_FIELD_COUNT} fields, ` +
+					`received ${parts.length}`,
+				tokens,
+			);
+		}
+		const [name, route, mailbox, host] = parts;
 
 		this.name = getNStringValue(name);
 		if (this.name) {
