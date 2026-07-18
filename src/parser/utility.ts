@@ -87,7 +87,25 @@ export function splitSpaceSeparatedList(
 	return blocks;
 }
 
-export function splitUnseparatedListofLists(tokens: LexerTokenList) {
+/**
+ * Splits a flat token run into its top-level `"(" ... ")"` groups (each
+ * returned list is the group's tokens including its own wrapping parens),
+ * skipping anything outside of a group (M7 fix).
+ *
+ * M7 (review finding): this used to track nesting with a bare
+ * `openParenCount` counter and no validation -- an extra, unmatched `")"`
+ * silently drove the counter negative (so the NEXT `"("` was misread as
+ * already-nested rather than the start of a new top-level group, silently
+ * merging/corrupting later groups), and a missing closing `")"` at the end
+ * of `tokens` silently dropped the remainder of the last group instead of
+ * ever surfacing as a problem. Both shapes are malformed input (an
+ * unbalanced parenthesized list is never valid IMAP framing) and must raise
+ * a typed `ParsingError` instead of quietly producing a wrong-but-plausible
+ * result.
+ */
+export function splitUnseparatedListofLists(
+	tokens: LexerTokenList,
+): LexerTokenList[] {
 	const lists: LexerTokenList[] = [];
 	let currList: LexerTokenList | null = null;
 	let openParenCount = 0;
@@ -107,11 +125,31 @@ export function splitUnseparatedListofLists(tokens: LexerTokenList) {
 		}
 
 		if (tkn.isType(TokenTypes.operator) && tkn.getTrueValue() === ")") {
+			if (openParenCount <= 0) {
+				// M7: an unmatched closing paren with nothing open -- rather
+				// than letting `openParenCount` go negative (which would
+				// silently corrupt how every subsequent "(" in `tokens` is
+				// grouped), this is a malformed list.
+				throw new ParsingError(
+					'Unbalanced parentheses: unexpected ")" with no matching "("',
+					tokens,
+				);
+			}
 			openParenCount--;
 			if (!openParenCount) {
 				currList = null;
 			}
 		}
+	}
+
+	if (openParenCount !== 0) {
+		// M7: at least one "(" was never closed -- the last group's tokens
+		// were silently truncated before this fix. A well-formed
+		// parenthesized list is always balanced, so this is malformed input.
+		throw new ParsingError(
+			'Unbalanced parentheses: missing closing ")"',
+			tokens,
+		);
 	}
 
 	return lists;
@@ -243,7 +281,20 @@ export function getSpaceSeparatedStringList(
 	const list: string[] = [];
 	const splitTokens = splitSpaceSeparatedList(tokens);
 	for (const [shouldBeString, ...shouldBeEmpty] of splitTokens) {
-		if (!shouldBeString.isType(TokenTypes.string) || shouldBeEmpty.length) {
+		// H8 fix: a malformed `( )`-shaped list (an empty block between the
+		// delimiters, e.g. a bare space with nothing either side) makes
+		// `splitSpaceSeparatedList` yield a block with ZERO tokens --
+		// destructuring that empty block leaves `shouldBeString` as
+		// `undefined`, and the pre-fix code called `.isType(...)` on it
+		// unconditionally, throwing a raw, untyped `TypeError` instead of
+		// the `ParsingError` every other malformed-input path in this module
+		// raises. Guard the missing-token case the same way as everywhere
+		// else here.
+		if (
+			!shouldBeString ||
+			!shouldBeString.isType(TokenTypes.string) ||
+			shouldBeEmpty.length
+		) {
 			throw new ParsingError(
 				"Invalid format for space separated string list",
 				tokens,
@@ -260,6 +311,44 @@ export function getSpaceSeparatedStringList(
 	}
 
 	return list;
+}
+
+/**
+ * M5 (ESEARCH complex return-data, `mailbox/search.ts`) / THREAD nesting
+ * (`thread.ts`) share this one cap: both parse a server-controlled,
+ * arbitrarily-nestable parenthesized structure by recursing one JS stack
+ * frame per level of nesting, with no limit. A server (malicious, or just
+ * broken) sending a few thousand levels of nesting doesn't necessarily
+ * overflow the stack outright, but the token-list re-slicing each of those
+ * parsers does at every level makes the total work quadratic in the nesting
+ * depth -- a single line can then pin the event loop for seconds (measured:
+ * ~20s of unresponsiveness at 12,000 levels of nesting in this repo's own
+ * test suite) before either finishing or (at deeper nesting) exhausting the
+ * stack. Both call sites raise a typed `ParsingError` once `depth` exceeds
+ * this cap rather than letting either failure mode happen. Exported as one
+ * shared constant/helper so the two call sites can't drift out of sync.
+ */
+export const MAX_NESTED_LIST_DEPTH = 1000;
+
+/**
+ * Throws a typed `ParsingError` if `depth` (the CURRENT recursion depth a
+ * caller is about to recurse into) exceeds {@link MAX_NESTED_LIST_DEPTH}.
+ * See that constant's doc comment for why this cap exists.
+ *
+ * @param depth - The nesting depth about to be entered (0-indexed: the
+ *  top-level call passes `0`).
+ * @param context - A short label (e.g. `"ESEARCH return-data"`, `"THREAD
+ *  response"`) identifying what was being parsed, for the error message.
+ */
+export function assertNestingDepthWithinLimit(
+	depth: number,
+	context: string,
+): void {
+	if (depth > MAX_NESTED_LIST_DEPTH) {
+		throw new ParsingError(
+			`${context} nesting depth exceeds the maximum of ${MAX_NESTED_LIST_DEPTH} supported levels`,
+		);
+	}
 }
 
 type IFormat = {

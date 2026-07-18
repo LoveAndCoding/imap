@@ -34,10 +34,42 @@ export class UIDRange {
 	}
 }
 
+/**
+ * M27 review finding: {@link UIDSet} parses two grammar shapes that are
+ * ALMOST but not quite the same. RFC3501/9051 §9's `uid-set` (used for
+ * APPENDUID/COPYUID's uid-set, and VANISHED/ESEARCH's `known-uids`/`ALL`
+ * results in practice) is built from `uniqueid = nz-number` -- a real UID can
+ * never be `"*"`. But RFC 7162 §3.8's `MODIFIED` resp-text-code carries a
+ * plain `sequence-set` (`seq-number = nz-number / "*"`), which explicitly
+ * DOES allow the `"*"` wildcard (meaning "the largest sequence number/UID in
+ * the mailbox") -- e.g. a conditional `STORE 2:* +FLAGS ...` that partially
+ * fails can legally report back `[MODIFIED 2:*]`. Before this option
+ * existed, `ModifiedTextCode` fed straight into the `uid-set`-only parsing
+ * below, so a wire-legal `"*"` in a MODIFIED set threw `ParsingError`
+ * instead of parsing.
+ */
+export interface UIDSetOptions {
+	/** Whether a bare `"*"` operator token is accepted anywhere a UID/uid
+	 *  endpoint is expected, in addition to a `TokenTypes.number` token
+	 *  (default `false`, matching `uid-set`'s `uniqueid = nz-number` --
+	 *  callers parsing a genuine `sequence-set`, e.g. `MODIFIED`, opt in). */
+	allowWildcard?: boolean;
+}
+
 export class UIDSet {
 	public readonly set: (UID | UIDRange)[];
 
-	constructor(tokens: LexerTokenList) {
+	constructor(tokens: LexerTokenList, options: UIDSetOptions = {}) {
+		const allowWildcard = options.allowWildcard ?? false;
+		const isValidEndpoint = (token: LexerTokenList[number] | undefined) =>
+			!!token &&
+			(token.isType(TokenTypes.number) ||
+				(allowWildcard &&
+					token.isType(TokenTypes.operator) &&
+					token.getTrueValue() === "*"));
+		const endpointValue = (token: LexerTokenList[number]): number | "*" =>
+			token.isType(TokenTypes.number) ? token.getTrueValue() : "*";
+
 		// Split on ","
 		const list: LexerTokenList[] = tokens.reduce((split, token) => {
 			if (
@@ -68,14 +100,13 @@ export class UIDSet {
 			const [uid, maybeColon, maybeUID] = block;
 
 			if (
-				!uid ||
-				!uid.isType(TokenTypes.number) ||
+				!isValidEndpoint(uid) ||
 				(maybeColon &&
 					!(
 						maybeColon.isType(TokenTypes.operator) &&
 						maybeColon.value === ":"
 					)) ||
-				(maybeUID && !maybeUID.isType(TokenTypes.number))
+				(maybeUID && !isValidEndpoint(maybeUID))
 			) {
 				throw new ParsingError(
 					"Invalid format for UID set value",
@@ -85,13 +116,10 @@ export class UIDSet {
 
 			if (maybeUID) {
 				this.set.push(
-					new UIDRange(
-						uid.getTrueValue(),
-						maybeUID.getTrueValue() as number,
-					),
+					new UIDRange(endpointValue(uid), endpointValue(maybeUID)),
 				);
 			} else {
-				this.set.push(new UID(uid.getTrueValue()));
+				this.set.push(new UID(endpointValue(uid)));
 			}
 		}
 	}

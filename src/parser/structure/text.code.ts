@@ -154,7 +154,17 @@ export class ModifiedTextCode {
 	public readonly uids: UIDSet;
 
 	constructor(tokens: LexerTokenList) {
-		this.uids = new UIDSet(tokens);
+		// M27 (review finding): RFC 7162 §3.8 defines MODIFIED's argument as
+		// a plain `sequence-set` (`seq-number = nz-number / "*"`), NOT the
+		// stricter `uid-set` (`uniqueid = nz-number`, no wildcard) that
+		// APPENDUID/COPYUID use -- MODIFIED can ride either a plain STORE/
+		// EXPUNGE (message sequence numbers) or a UID STORE/EXPUNGE, and
+		// either way `"*"` ("the highest number in the mailbox", e.g. a
+		// `STORE 2:* +FLAGS ...`/`UID STORE 2:* ...` that partially fails
+		// against `UNCHANGEDSINCE`) is wire-legal here. `allowWildcard`
+		// opts `UIDSet`'s otherwise `uid-set`-only parsing into accepting
+		// it -- see `UIDSetOptions`'s doc comment in `uid.ts`.
+		this.uids = new UIDSet(tokens, { allowWildcard: true });
 	}
 }
 

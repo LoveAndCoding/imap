@@ -146,6 +146,33 @@ export default class UntaggedResponse {
 						break;
 					}
 				} catch {
+					// M28 (review finding): for `StatusResponse` specifically
+					// (an untagged `OK`/`NO`/`BAD`/`PREAUTH`/`BYE` line,
+					// RFC3501/9051 §7.1's resp-cond-state/resp-cond-bye/
+					// resp-cond-auth), a throw here means the status word
+					// itself matched but its resp-text-code didn't parse --
+					// exactly the shape `TaggedResponse`'s own tolerance
+					// fallback (`tagged.ts`) already handles for the TAGGED
+					// path, preserving tag+status rather than losing the
+					// whole response. Falling all the way through to the
+					// generic `UnknownContent` backstop below is needlessly
+					// asymmetric: it throws away the status word too, even
+					// though it's known-good (it's what got this checker
+					// invoked to begin with). Mirror `TaggedResponse`'s
+					// fallback -- retry recognizing just the bare status
+					// word, tolerating its resp-text as absent -- before
+					// giving up and moving on to the next checker.
+					if (check === StatusResponse) {
+						const statusWordToken = contentTokens[0];
+						const fallback = statusWordToken
+							? StatusResponse.match([statusWordToken], 0)
+							: null;
+						if (fallback) {
+							this.content = fallback;
+							this.type = StatusResponse.commandType;
+							break;
+						}
+					}
 					// See comment above -- deliberately swallowed.
 				}
 			}

@@ -47,8 +47,17 @@ export class QuotaResponse {
 	}
 
 	constructor(tokens: LexerTokenList) {
+		// LOW review finding: `tokens` here is the QUOTA response's content
+		// AFTER "QUOTA" SP was already sliced off by `match()` below -- a
+		// truncated line (e.g. a bare "QUOTA" with nothing after it) makes
+		// `tokens` (and so `nameToken`) empty/`undefined`, and the pre-fix
+		// code called `.isType(...)` on it unconditionally, raising a raw
+		// `TypeError` instead of this module's own `ParsingError` idiom
+		// (masked today only by `UntaggedResponse`'s blanket per-checker
+		// try/catch, per that class's own tolerance-backstop comment).
 		const [nameToken] = tokens;
 		if (
+			!nameToken ||
 			!(
 				nameToken.isType(TokenTypes.atom) ||
 				nameToken.isType(TokenTypes.string)
@@ -70,6 +79,7 @@ export class QuotaResponse {
 			const limitToken = tripletTokens[t + 4];
 
 			if (
+				!resourceToken ||
 				!(
 					resourceToken.isType(TokenTypes.atom) ||
 					resourceToken.isType(TokenTypes.string)
@@ -77,6 +87,8 @@ export class QuotaResponse {
 			) {
 				throw new ParsingError("Invalid QUOTA resource name", tokens);
 			} else if (
+				!currentToken ||
+				!limitToken ||
 				!(
 					currentToken.isType(TokenTypes.number) ||
 					currentToken.isType(TokenTypes.bigint)

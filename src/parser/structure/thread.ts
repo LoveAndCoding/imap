@@ -1,5 +1,6 @@
 import { LexerTokenList, TokenTypes } from "../../lexer/types";
 import {
+	assertNestingDepthWithinLimit,
 	matchesFormat,
 	splitSpaceSeparatedList,
 	splitUnseparatedListofLists,
@@ -8,7 +9,18 @@ import {
 class ThreadMessage {
 	protected _children: ThreadMessage[];
 
-	public static parseThread(tokens: LexerTokenList) {
+	/**
+	 * LOW review finding (coordinated with the M5 ESEARCH cap): each level of
+	 * a nested THREAD reply tree recurses one JS stack frame deeper via
+	 * `ThreadMessage.parseThread`, with no limit. As with ESEARCH's complex
+	 * return-data, the per-level re-slicing makes total work quadratic in
+	 * nesting depth (a single deeply-nested THREAD line can pin the event
+	 * loop for seconds), so `depth` enforces the same shared cap (see
+	 * `assertNestingDepthWithinLimit`'s doc comment in `utility.ts`) rather
+	 * than letting either failure mode happen.
+	 */
+	public static parseThread(tokens: LexerTokenList, depth = 0) {
+		assertNestingDepthWithinLimit(depth, "THREAD response");
 		const sets = splitSpaceSeparatedList(tokens);
 		let msg: number | undefined;
 
@@ -32,7 +44,9 @@ class ThreadMessage {
 			} else {
 				const lists = splitUnseparatedListofLists(set);
 				for (const list of lists) {
-					currMessage.addChild(ThreadMessage.parseThread(list));
+					currMessage.addChild(
+						ThreadMessage.parseThread(list, depth + 1),
+					);
 				}
 			}
 		}

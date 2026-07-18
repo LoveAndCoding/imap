@@ -2,6 +2,7 @@ import { ParsingError } from "../../../errors";
 import { ILexerToken, LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { ciEquals } from "../../../lexer/case-insensitive";
 import {
+	assertNestingDepthWithinLimit,
 	getAStringValue,
 	matchesFormat,
 	pairedArrayLoopGenerator,
@@ -28,8 +29,15 @@ export function* esearchKeyValuePairGenerator(tokens: LexerTokenList) {
 			// We want the raw value here, not the converted one
 			key += tkn.value;
 		}
-		// Make sure we match the right format
-		if (!key || !key.match(/[a-z\-_.][a-z=_.0-9:]+/i)) {
+		// Make sure we match the right format. Anchored (LOW review finding):
+		// an unanchored `.match()` only requires the pattern to appear
+		// SOMEWHERE in `key`, so a key with an illegal leading character
+		// (e.g. a leading digit, disallowed by `tagged-label-fchar`) used to
+		// slip through as long as some inner substring happened to look
+		// like a valid label (e.g. "1FOO" matched via "FOO" at index 1).
+		// Anchoring to the full string is what actually enforces the
+		// `tagged-ext-label` grammar rather than merely searching it.
+		if (!key || !key.match(/^[a-z\-_.][a-z=_.0-9:]+$/i)) {
 			throw new ParsingError("Invalid ESEARCH key", key);
 		}
 		pair = [key, []];
@@ -239,8 +247,17 @@ export class ExtendedSearchResponse {
 	/** The `ALL` return value (RFC 4731): the full set of matching message numbers/UIDs. */
 	public readonly results?: UIDSet;
 
-	/** Any other search-return-data pairs (e.g. RFC 5267 ADDTO/REMOVEFROM, PARTIAL) not captured by the named fields above, in wire order. */
-	public readonly data: ESearchReturnData<UIDSet | number | ESearchComplexValue>;
+	/** Any other search-return-data pairs (e.g. RFC 5267 ADDTO/REMOVEFROM,
+	 *  PARTIAL) not captured by the named fields above, in wire order. A
+	 *  `bigint` entry here (LOW review finding) is an out-of-spec but
+	 *  tolerated oversized `COUNT`/`MIN`/`MAX` value -- RFC 4731 defines all
+	 *  three as a plain (32-bit) `number`, so a server sending one above that
+	 *  range is itself non-compliant, but per this parser's tolerance
+	 *  posture (I-6) that's still preserved here under its original key
+	 *  rather than silently dropped. */
+	public readonly data: ESearchReturnData<
+		UIDSet | number | bigint | ESearchComplexValue
+	>;
 
 	/** Whether the search-correlator indicated this response reports UIDs (`SP "UID"` present) rather than message sequence numbers. */
 	public readonly isUID: boolean;
@@ -320,12 +337,20 @@ export class ExtendedSearchResponse {
 			} else if (isRange(value)) {
 				this.data.set(key, new UIDSet(value));
 			} else if (
-				valIsNum ||
+				valIsBigIntOrNum ||
 				(value.length === 1 && value[0].isType(TokenTypes.string))
 			) {
+				// LOW review finding: an oversized COUNT/MIN/MAX (or any other
+				// reserved-name key) whose value doesn't fit the plain
+				// `number` the named fields above require used to fail EVERY
+				// branch silently (the earlier COUNT/MIN/MAX checks require
+				// `valIsNum`, and this branch previously did too) -- the pair
+				// vanished instead of being preserved anywhere. `valIsBigIntOrNum`
+				// (already computed above for MODSEQ) lets it fall through to
+				// this generic store instead.
 				this.data.set(
 					key,
-					(value[0] as ILexerToken<number | string>).getTrueValue(),
+					(value[0] as ILexerToken<number | bigint | string>).getTrueValue(),
 				);
 			} else if (
 				value.length > 0 &&
@@ -337,7 +362,12 @@ export class ExtendedSearchResponse {
 				// astring value for each item.
 				const splitComplex = (
 					tks: LexerTokenList,
+					depth: number,
 				): ESearchComplexValue[] => {
+					assertNestingDepthWithinLimit(
+						depth,
+						"ESEARCH complex return-data",
+					);
 					const blocks = splitSpaceSeparatedList(tks);
 					const set: ESearchComplexValue[] = [];
 
@@ -347,7 +377,7 @@ export class ExtendedSearchResponse {
 							block[0].isType(TokenTypes.operator) &&
 							block[0].getTrueValue() === "("
 						) {
-							set.push(splitComplex(block));
+							set.push(splitComplex(block, depth + 1));
 						} else {
 							set.push(getAStringValue(block));
 						}
@@ -355,7 +385,7 @@ export class ExtendedSearchResponse {
 
 					return set;
 				};
-				this.data.set(key, splitComplex(value));
+				this.data.set(key, splitComplex(value, 0));
 			}
 		}
 	}

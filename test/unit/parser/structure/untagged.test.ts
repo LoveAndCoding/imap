@@ -17,6 +17,7 @@
 import Lexer from "../../../../src/lexer/lexer";
 import Parser from "../../../../src/parser/parser";
 import { ParsingError } from "../../../../src/errors";
+import { StatusResponse } from "../../../../src/parser/structure/status";
 import UntaggedResponse from "../../../../src/parser/structure/untagged";
 import { UnknownContent } from "../../../../src/parser/structure/unknown";
 
@@ -53,5 +54,79 @@ describe("UntaggedResponse malformed-line guards (review Critical #3)", () => {
 		const resp = parseLine(`* 7 EXISTS${CRLF}`);
 		expect(resp).toBeInstanceOf(UntaggedResponse);
 		expect((resp as UntaggedResponse).type).toBe("EXISTS");
+	});
+});
+
+// Regression coverage for review finding M28: an untagged OK/NO/BAD/BYE
+// response whose resp-text-code fails to parse used to lose ALL structure,
+// falling all the way through to the generic `UnknownContent` backstop --
+// discarding even the status word, which was already known-good (it's what
+// matched the `StatusResponse` checker to begin with). This is asymmetric
+// with `TaggedResponse`'s own tolerance (`tagged.ts`), which preserves
+// tag+status and drops only the malformed code.
+describe("UntaggedResponse tolerance for a malformed resp-text-code (mirrors TaggedResponse, RFC3501/9051 §7.1)", () => {
+	test("an untagged OK with an invalid UIDVALIDITY (0) preserves the OK status instead of degrading to UnknownContent", () => {
+		const resp = parseLine(`* OK [UIDVALIDITY 0] text${CRLF}`);
+
+		expect(resp).toBeInstanceOf(UntaggedResponse);
+		const untagged = resp as UntaggedResponse;
+		expect(untagged.type).toBe("STATUS");
+		expect(untagged.content).toBeInstanceOf(StatusResponse);
+		expect(untagged.content).not.toBeInstanceOf(UnknownContent);
+
+		const status = untagged.content as StatusResponse;
+		expect(status.status).toBe("OK");
+		// The malformed resp-code itself is tolerated as absent, same as
+		// TaggedResponse's own fallback.
+		expect(status.text?.code).toBeUndefined();
+	});
+
+	test("an untagged BYE with a malformed APPENDUID also preserves the BYE status", () => {
+		const resp = parseLine(`* BYE [APPENDUID 38505] logging out${CRLF}`);
+
+		const untagged = resp as UntaggedResponse;
+		expect(untagged.type).toBe("STATUS");
+		const status = untagged.content as StatusResponse;
+		expect(status.status).toBe("BYE");
+	});
+
+	test("the parser Transform stream survives a malformed untagged resp-code (a following untagged response still parses)", () => {
+		return new Promise<void>((resolve, reject) => {
+			const parser = new Parser();
+			const lexer = new Lexer();
+			lexer.pipe(parser);
+
+			const seenTypes: string[] = [];
+			parser.on("untagged", (resp: UntaggedResponse) => {
+				seenTypes.push(resp.type);
+				if (seenTypes.length === 2) {
+					try {
+						expect(seenTypes).toEqual(["STATUS", "EXISTS"]);
+						resolve();
+					} catch (err) {
+						reject(err);
+					}
+				}
+			});
+			parser.on("error", reject);
+
+			lexer.write(`* OK [UIDVALIDITY 0] text${CRLF}`);
+			lexer.write(`* 7 EXISTS${CRLF}`);
+		});
+	});
+
+	// REVERT-VERIFIED: with the `check === StatusResponse` fallback branch
+	// removed from `UntaggedResponse`'s constructor
+	// (src/parser/structure/untagged.ts, the atom-checklist loop's `catch`),
+	// the first two tests above instead observe `untagged.type === "UNKNOWN"`
+	// and `untagged.content` an instance of `UnknownContent` (the OK/BYE
+	// status word is lost, not just the malformed code).
+
+	test("a well-formed untagged OK with a valid resp-code is unaffected by the fix", () => {
+		const resp = parseLine(`* OK [ALERT] System going down${CRLF}`);
+		const untagged = resp as UntaggedResponse;
+		expect(untagged.type).toBe("STATUS");
+		const status = untagged.content as StatusResponse;
+		expect(status.status).toBe("OK");
 	});
 });

@@ -183,11 +183,19 @@ export class MailboxListing {
 			}
 		}
 		const nameTokens = remainingTokens.slice(0, nameEndIndex);
+		// H7 fix: `getAStringValue` above already throws (`ParsingError`,
+		// "Must have at least one token...") if the name field is missing
+		// entirely -- `nameTokens` empty -- so the ONLY way `name` can come
+		// back falsy here is a well-formed, explicit empty astring (`""`)
+		// for the name. That's not malformed input: `LIST "" ""` (an empty
+		// mailbox name, empty-or-real hierarchy separator) is the standard
+		// RFC 3501/9051 §6.3.9 hierarchy-delimiter-discovery response, and a
+		// rename/OLDNAME notification's extended data can likewise carry an
+		// empty name. A prior version of this parser rejected the empty
+		// name outright, which broke delimiter discovery -- there is
+		// nothing left to validate here, so the empty string is accepted
+		// as-is rather than thrown away.
 		const name = getAStringValue(nameTokens);
-
-		if (!name) {
-			throw new ParsingError("Mailbox listing name is empty");
-		}
 
 		const extendedTokens = remainingTokens.slice(nameEndIndex + 1);
 		const extendedData = extendedTokens.length
