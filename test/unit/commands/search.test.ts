@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { SearchCommand } from "../../../src/commands/search";
+import { SearchCommand, expandRangeString, uidSetToArray } from "../../../src/commands/search";
 import type { SearchOptions } from "../../../src/commands/search";
 import type { SearchCriteria } from "../../../src/commands/search-criteria";
 import { CapabilityError } from "../../../src/errors";
@@ -10,6 +10,7 @@ import Lexer from "../../../src/lexer/lexer";
 import Parser from "../../../src/parser/parser";
 import ContinueResponse from "../../../src/parser/structure/continue";
 import TaggedResponse from "../../../src/parser/structure/tagged";
+import { UIDRange, UIDSet } from "../../../src/parser/structure/uid";
 import UntaggedResponse from "../../../src/parser/structure/untagged";
 
 const CRLF = "\r\n";
@@ -70,6 +71,42 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 
 	test("empty criteria object throws RangeError synchronously", () => {
 		expect(() => new SearchCommand({})).toThrow(RangeError);
+	});
+
+	// H5 fix (second-review round): a bare `Object.keys(criteria).length ===
+	// 0` check only catches a literal `{}`. `{ keyword: [] }`/`{ header: [] }`/
+	// `{ and: [] }` each HAVE a key, but the key's value compiles to zero
+	// actual search-key tokens on the wire -- previously slipping past this
+	// constructor's guard entirely and letting `new SearchCommand({ keyword:
+	// [] })` submit a bare `SEARCH` with no search-key at all (illegal per
+	// RFC 3501/9051 §9: `1*(SP search-key)`).
+	describe("empty-array criteria bypass (H5): constructor rejects zero-token criteria", () => {
+		test("{ keyword: [] } throws RangeError synchronously", () => {
+			expect(() => new SearchCommand({ keyword: [] })).toThrow(RangeError);
+		});
+
+		test("{ header: [] } throws RangeError synchronously", () => {
+			expect(() => new SearchCommand({ header: [] })).toThrow(RangeError);
+		});
+
+		test("{ and: [] } throws RangeError synchronously", () => {
+			expect(() => new SearchCommand({ and: [] })).toThrow(RangeError);
+		});
+
+		test("a non-empty keyword array still constructs fine (no false positive)", () => {
+			expect(() => new SearchCommand({ keyword: ["a"] })).not.toThrow();
+		});
+	});
+
+	// LOW fix (second-review round): `RETURN_VOCAB` (the actual accept/reject
+	// gate) already includes RELEVANCY (RFC 6203 §4, M4.11), but the
+	// unknown-return-atom error message's "expected one of" hint text had
+	// drifted out of sync and omitted it -- misleading, though not a real
+	// validation bug (RELEVANCY itself was always accepted).
+	test("an invalid RETURN atom's error message lists RELEVANCY among the valid options", () => {
+		expect(() => new SearchCommand({ all: true }, { return: ["BOGUS"] })).toThrow(
+			/expected one of MIN, MAX, ALL, COUNT, SAVE, RELEVANCY/,
+		);
 	});
 
 	describe("capability gates throw synchronously, zero bytes written (I-9)", () => {
@@ -477,6 +514,74 @@ describe("SearchCommand (RFC 3501/9051 §6.4.4; RFC 4731/5182/9394)", () => {
 			router.routeTagged(parseLine(`A04 OK SEARCH completed${CRLF}`) as TaggedResponse);
 			const result = await resultPromise;
 			expect(result.partial).toEqual({ range: "24000:24500", uids: [] });
+		});
+
+		// M3 fix (second-review round): RFC 3501/9051/9394 place no ceiling on
+		// how WIDE an ESEARCH `ALL`/`PARTIAL` range may be -- a hostile or
+		// non-conformant server answering with `ALL 1:4294967295` used to be
+		// walked straight into a multi-billion-entry array allocation by
+		// `expandRangeString()`'s own unbounded `for` loop. It now shares the
+		// same ceiling `collector.ts`'s `expandUidSet()` enforces for
+		// COPYUID/APPENDUID/VANISHED.
+		describe("unbounded range expansion is now capped (H5/M3 DoS ceiling)", () => {
+			test("ESEARCH ALL with a range beyond the ceiling rejects with a typed RangeError instead of materializing it", async () => {
+				const { connection, router } = makeFakeConnection(["ESEARCH"]);
+				const cmd = new SearchCommand({ flagged: true }, { return: [] }, capsProbe(["ESEARCH"]));
+				const resultPromise = executeCommand(connection, cmd, "A1");
+				await flushMicrotasks();
+				router.routeUntagged(
+					parseLine(`* ESEARCH (TAG "A1") ALL 1:4294967295${CRLF}`) as UntaggedResponse,
+				);
+				router.routeTagged(parseLine(`A1 OK SEARCH completed${CRLF}`) as TaggedResponse);
+				await expect(resultPromise).rejects.toThrow(RangeError);
+			});
+
+			test("ESEARCH PARTIAL results with a range beyond the ceiling rejects with a typed RangeError instead of materializing it", async () => {
+				const { connection, router } = makeFakeConnection(["ESEARCH", "PARTIAL"]);
+				const cmd = new SearchCommand(
+					{ deleted: false },
+					{ partial: { from: 1, to: 500 } },
+					capsProbe(["ESEARCH", "PARTIAL"]),
+					true,
+				);
+				const resultPromise = executeCommand(connection, cmd, "A01");
+				await flushMicrotasks();
+				router.routeUntagged(
+					parseLine(
+						`* ESEARCH (TAG "A01") UID PARTIAL (1:500 1:4294967295)${CRLF}`,
+					) as UntaggedResponse,
+				);
+				router.routeTagged(parseLine(`A01 OK UID SEARCH completed${CRLF}`) as TaggedResponse);
+				await expect(resultPromise).rejects.toThrow(RangeError);
+			});
+
+			test("expandRangeString: a single oversized range throws", () => {
+				expect(() => expandRangeString("1:4294967295")).toThrow(RangeError);
+			});
+
+			test("expandRangeString: many small ranges that CUMULATIVELY exceed the ceiling also throw", () => {
+				// Each token is individually small, but 2,000 of them at
+				// 1,000 numbers apiece is 2,000,000 -- past the 1,000,000
+				// ceiling in aggregate.
+				const tokens = Array.from({ length: 2000 }, (_, i) => {
+					const base = i * 1000;
+					return `${base + 1}:${base + 1000}`;
+				});
+				expect(() => expandRangeString(tokens.join(","))).toThrow(RangeError);
+			});
+
+			test("expandRangeString: a legitimate small range still expands correctly (no false positive)", () => {
+				expect(expandRangeString("55500:55501,1,3")).toEqual([55500, 55501, 1, 3]);
+			});
+
+			test("uidSetToArray delegates to the shared collector.ts expandUidSet ceiling directly", () => {
+				// A real `UIDRange` instance (`el instanceof UIDRange` is
+				// exactly what `expandUidSet()` checks) standing in for the
+				// parsed `1:4294967295` a hostile ESEARCH `ALL` could carry --
+				// uidSetToArray must reject it via the shared bound.
+				const hugeRangeUidSet = { set: [new UIDRange(1, 4294967295)] } as UIDSet;
+				expect(() => uidSetToArray(hugeRangeUidSet)).toThrow(RangeError);
+			});
 		});
 
 		test("saved: true whenever RETURN (SAVE) was requested and the command completed", async () => {

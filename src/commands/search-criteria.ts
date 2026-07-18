@@ -379,29 +379,48 @@ function assertNzInteger(value: unknown, context: string): number {
 }
 
 /**
- * Rough upper bound on how many actual `search-key` tokens a `SearchCriteria`
- * object compiles to (spec §5.3's compiler). Used ONLY to decide whether a
- * nested criteria object being compiled into a single `search-key` slot
- * (a `fuzzy`/`or`/`not` operand) needs a parenthesized group
- * (`"(" search-key *(SP search-key) ")"`, itself one `search-key`) or can be
- * emitted bare. Conservative by construction: every field except the two
- * genuinely-repeatable ones (`keyword` arrays, `header` arrays) is counted
- * as exactly one token, and `and`'s own sub-criteria are summed recursively
- * — this never UNDER-counts (which would emit an illegal bare multi-key
- * sequence where a single search-key is required), at worst it wraps a
- * single-key case in a harmless (superfluous but legal) parenthesized group.
+ * EXACT count of how many actual `search-key` tokens a `SearchCriteria`
+ * object compiles to (spec §5.3's compiler). Used for two purposes: (1)
+ * deciding whether a nested criteria object being compiled into a single
+ * `search-key` slot (a `fuzzy`/`or`/`not`/`and` operand) needs a
+ * parenthesized group (`"(" search-key *(SP search-key) ")"`, itself one
+ * `search-key`) or can be emitted bare; (2) `search.ts`'s `SearchCommand`
+ * constructor re-uses this (exported for that reason) as the TOP-LEVEL
+ * "does this criteria object compile to at least one wire token at all"
+ * check, since a plain `Object.keys(criteria).length === 0` test only
+ * catches a literal `{}` — it does NOT catch a `{ keyword: [] }` or `{
+ * header: [] }` (a key IS present, its value just reduces to zero tokens)
+ * or a `{ and: [] }` (H5 fix, second-review round). Exact by construction
+ * (previously just an upper bound before the H5 fix): every field except
+ * the two genuinely-repeatable ones (`keyword` arrays, `header` arrays) is
+ * counted as exactly one token, empty `keyword`/`header` arrays count as
+ * exactly 0 (matching `compileCriteria`'s own loops, which emit zero bytes
+ * for them), and `and`'s own sub-criteria are summed recursively.
  */
-function estimateKeyCount(criteria: SearchCriteria): number {
+export function estimateKeyCount(criteria: SearchCriteria): number {
 	let count = 0;
 	for (const key of Object.keys(criteria) as Array<keyof SearchCriteria>) {
 		if (criteria[key] === undefined) {
 			continue;
 		}
 		if (key === "keyword") {
+			// H5 fix (second-review round): a `string[]` value emits ONE
+			// `KEYWORD <kw>` token per element -- a genuinely EMPTY array
+			// emits ZERO (`compileCriteria`'s "keyword" case loop simply
+			// doesn't run), not one. The old `Math.max(v.length, 1)` here
+			// silently rounded that 0 up to 1, letting an empty-array operand
+			// (nested inside `fuzzy`/`or`/`not`, where `compileAsSingleKey`
+			// relies on this count to decide whether to refuse a
+			// zero-search-key operand) slip past that guard and compile to a
+			// bare atom with no wrapped key at all (e.g. `fuzzy: { keyword:
+			// [] }` compiling to a bare `FUZZY` with nothing after it). A
+			// non-array (bare string) value is still exactly 1 token.
 			const v = criteria.keyword;
-			count += Array.isArray(v) ? Math.max(v.length, 1) : 1;
+			count += Array.isArray(v) ? v.length : 1;
 		} else if (key === "header") {
-			count += Math.max((criteria.header ?? []).length, 1);
+			// Same fix, same reasoning: an empty `header` array emits zero
+			// `HEADER <field> <value>` triples, not one.
+			count += (criteria.header ?? []).length;
 		} else if (key === "and") {
 			count += (criteria.and ?? []).reduce((sum, c) => sum + estimateKeyCount(c), 0);
 		} else if (key === "not") {
@@ -419,10 +438,16 @@ function estimateKeyCount(criteria: SearchCriteria): number {
 			// keyword) `not` payload still counts as exactly 1 -- it always
 			// compiles to a single self-wrapping `NOT <key>`/`NOT (...)` token
 			// regardless of how many keys the wrapped payload itself has.
+			//
+			// H5 fix: same `Math.max(..., 1)` bug as "keyword"/"header" above
+			// -- an EMPTY `keyword` array under a bare-keyword-negation emits
+			// zero `UNKEYWORD` tokens (`compileNot` below now refuses this
+			// payload outright rather than silently emitting nothing), so it
+			// must count as 0 here too, not 1.
 			const payload = criteria.not as SearchCriteria;
 			count += isBareKeywordNegation(payload)
 				? Array.isArray(payload.keyword)
-					? Math.max(payload.keyword.length, 1)
+					? payload.keyword.length
 					: 1
 				: 1;
 		} else {
@@ -483,6 +508,20 @@ function compileNot(w: CommandWriter, payload: SearchCriteria, caps: SearchCapab
 	}
 	if (isBareKeywordNegation(payload)) {
 		const values = Array.isArray(payload.keyword) ? payload.keyword : [payload.keyword];
+		// H5 fix (second-review round): an EMPTY `keyword` array here (e.g.
+		// `not: { keyword: [] }`) is a single-key object per
+		// `isBareKeywordNegation` (its one key, "keyword", is present and
+		// !== undefined) but the loop below would iterate zero times and
+		// emit literally nothing -- silently compiling this `not` operand
+		// (top-level, or nested under `or`/`fuzzy`/another `not`) away to
+		// zero bytes instead of refusing it, same wire-invalid-by-omission
+		// class as the `{}` case just above.
+		if (values.length === 0) {
+			throw new RangeError(
+				"SearchCriteria.not: { keyword: [] } has no keywords to negate (an empty " +
+					"UNKEYWORD list is not expressible as an IMAP search-key)",
+			);
+		}
 		for (const kw of values) {
 			w.atom("UNKEYWORD");
 			// `flag-keyword = atom` (RFC 3501/9051 §9) -- NOT astring. `w.atom()`
@@ -792,6 +831,23 @@ export function compileCriteria(
 				break;
 			case "and":
 				for (const sub of value as SearchCriteria[]) {
+					// H5 fix (second-review round): `and`'s sub-criteria are
+					// compiled inline (no wrapping/grouping of their own,
+					// unlike `or`/`fuzzy`/`not` operands which route through
+					// `compileAsSingleKey`'s zero-token guard) -- an operand
+					// with no search-keys at all (a bare `{}`, or a `{
+					// keyword: [] }`/`{ header: [] }` that reduces to zero
+					// tokens) would otherwise compile to zero bytes and be
+					// silently dropped from the AND, same "empty operand
+					// isn't expressible on the wire" class `compileAsSingleKey`
+					// already refuses for the other operand positions.
+					if (estimateKeyCount(sub) === 0) {
+						throw new RangeError(
+							"SearchCriteria.and: operand has no search-keys (an empty {} is not " +
+								"expressible as an IMAP search-key -- silently dropping it would " +
+								"change the surrounding AND semantics)",
+						);
+					}
 					compileCriteria(w, sub, caps);
 				}
 				break;

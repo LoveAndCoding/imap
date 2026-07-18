@@ -1,17 +1,19 @@
 import { CapabilityError } from "../errors";
 import { ExtendedSearchResponse, SearchResponse } from "../parser";
 import type { UntaggedResponse } from "../parser";
-import { UID, UIDRange, UIDSet } from "../parser/structure/uid";
+import type { UIDSet } from "../parser/structure/uid";
 import {
 	NO_SEARCH_CAPS,
 	assertFilterCharsetCompatible,
 	compileCriteria,
 	criteriaHasFuzzy,
 	criteriaHasNonAscii,
+	estimateKeyCount,
 } from "./search-criteria";
 import type { SearchCapabilityProbe, SearchCriteria } from "./search-criteria";
 import { Command } from "./base";
 import type { ClaimContext } from "./base";
+import { expandUidSet } from "./collector";
 import type { ResponseCollector } from "./collector";
 import { CommandWriter } from "./writer";
 
@@ -293,9 +295,16 @@ function normalizeSearchOptions(
 		for (const item of opts.return) {
 			const atom = String(item).toUpperCase();
 			if (!RETURN_VOCAB.has(atom)) {
+				// LOW fix (second-review round): this message's "expected one of"
+				// list had drifted out of sync with `RETURN_VOCAB` itself, which
+				// already accepts RELEVANCY (RFC 6203 §4, M4.11) — that atom is a
+				// genuinely valid return option (see the `RETURN_VOCAB` Set
+				// literal above), just omitted from this hint text, which could
+				// mislead a caller debugging an unrelated typo into thinking
+				// RELEVANCY isn't supported at all.
 				throw new RangeError(
 					`SearchOptions.return: ${JSON.stringify(item)} is not a valid ESEARCH ` +
-						"return option (expected one of MIN, MAX, ALL, COUNT, SAVE)",
+						"return option (expected one of MIN, MAX, ALL, COUNT, SAVE, RELEVANCY)",
 				);
 			}
 			returnAtoms.push(atom);
@@ -471,14 +480,40 @@ function compileSearchWire(
 	compileCriteria(w, criteria, caps);
 }
 
+/**
+ * M3 fix (second-review round): mirrors `collector.ts`'s `MAX_EXPANDED_UIDS`
+ * ceiling -- same value, same rationale (RFC 3501/9051/9394 place no ceiling
+ * on a `uid-set`/`sequence-set` range's WIDTH, so a hostile or
+ * non-conformant server's ESEARCH `ALL`/`PARTIAL` return-data, e.g. an
+ * `ALL 1:4294967295`, would otherwise be walked straight into a
+ * multi-billion-entry array allocation by `expandRangeString()`'s own `for`
+ * loop below -- a one-response-line DoS this client only ever RECEIVES,
+ * never validates as an outgoing sequence-set, so it has no other chance to
+ * refuse an oversized range before this point).
+ *
+ * `collector.ts`'s `MAX_EXPANDED_UIDS` is a module-private `const` (not
+ * exported) and `collector.ts` is out of this fix's file territory, so this
+ * is a same-VALUE local mirror rather than a shared import -- kept
+ * numerically in sync with `collector.ts`'s constant by inspection; see this
+ * finding's own report note flagging that cross-file duplication for the
+ * orchestrator (exporting `MAX_EXPANDED_UIDS` from `collector.ts` would let
+ * this become a real import instead).
+ */
+const MAX_EXPANDED_RANGE_NUMBERS = 1_000_000;
+
 /** Expands a wire range-string (`"55500:55763"`, `"1,3,5:9"`, possibly
  *  negative for RFC 9394 newest-first paging) into its member integers.
  *  Non-numeric tokens (defensively, e.g. a stray `"*"`) are skipped rather
  *  than thrown on — this is read-side tolerance (I-6) for a value this
  *  command only ever RECEIVES, never re-validates as an outgoing sequence-set.
- *  Exported for `SortCommand` (M4.10, RFC 5267 §3.1-2/§3.2-1) — extended SORT
- *  results arrive in this SAME ESEARCH shape, and its ALL/PARTIAL handling
- *  reuses this parser rather than forking a second one (M4.10 plan note). */
+ *  A single `a:b` token whose expansion would exceed
+ *  `MAX_EXPANDED_RANGE_NUMBERS` (either alone or combined with numbers
+ *  already materialized from earlier tokens) throws a `RangeError` BEFORE
+ *  any more numbers are pushed -- see that constant's own doc comment (M3
+ *  fix, second-review round). Exported for `SortCommand` (M4.10, RFC 5267
+ *  §3.1-2/§3.2-1) — extended SORT results arrive in this SAME ESEARCH shape,
+ *  and its ALL/PARTIAL handling reuses this parser rather than forking a
+ *  second one (M4.10 plan note). */
 export function expandRangeString(s: string): number[] {
 	const out: number[] = [];
 	for (const token of s.split(",")) {
@@ -494,6 +529,15 @@ export function expandRangeString(s: string): number[] {
 			if (Number.isFinite(a) && Number.isFinite(b)) {
 				const lo = Math.min(a, b);
 				const hi = Math.max(a, b);
+				const span = hi - lo + 1;
+				if (span > MAX_EXPANDED_RANGE_NUMBERS || out.length + span > MAX_EXPANDED_RANGE_NUMBERS) {
+					throw new RangeError(
+						`expandRangeString: refusing to materialize range "${token}" (${span} ` +
+							`numbers) -- exceeds the ${MAX_EXPANDED_RANGE_NUMBERS}-number ceiling this ` +
+							"client expands in one call (a range this wide is almost certainly a " +
+							"malformed or hostile ESEARCH/ESORT response, not a legitimate result set)",
+					);
+				}
 				for (let n = lo; n <= hi; n++) {
 					out.push(n);
 				}
@@ -504,15 +548,19 @@ export function expandRangeString(s: string): number[] {
 }
 
 /** Flattens a parsed `UIDSet` (ESEARCH ALL return-data / classic legacy
- *  results are already flat) into its member UIDs — going through the same
- *  string-range expansion as `expandRangeString()` rather than a second,
- *  parallel enumeration implementation. Exported for `SortCommand` (M4.10) —
- *  see `expandRangeString()`'s doc comment above. */
+ *  results are already flat) into its member UIDs. M3 fix (second-review
+ *  round): delegates directly to `collector.ts`'s already
+ *  `MAX_EXPANDED_UIDS`-bound-checked `expandUidSet()` (same `UIDSet` input
+ *  shape -- COPYUID/APPENDUID/VANISHED's own DoS-hardening, RFC 3501/9051 §9
+ *  `uid-set`) instead of round-tripping through a synthesized range-string
+ *  and this module's own `expandRangeString()`: same member-numbers/order as
+ *  the old round-trip (both walk `set.set` in order, expanding each
+ *  `UIDRange` ascending and skipping `"*"`-touching elements), but inherits
+ *  the shared ceiling directly rather than needing a second one here.
+ *  Exported for `SortCommand` (M4.10) — see `expandRangeString()`'s doc
+ *  comment above. */
 export function uidSetToArray(set: UIDSet): number[] {
-	const parts: string[] = set.set.map((el) =>
-		el instanceof UIDRange ? `${el.startId}:${el.endId}` : `${(el as UID).id}`,
-	);
-	return expandRangeString(parts.join(","));
+	return expandUidSet(set);
 }
 
 /**
@@ -601,7 +649,18 @@ export class SearchCommand extends Command<SearchResult> {
 		if (typeof criteria !== "object" || criteria === null || Array.isArray(criteria)) {
 			throw new RangeError("SEARCH: criteria must be a SearchCriteria object");
 		}
-		if (Object.keys(criteria).length === 0) {
+		if (Object.keys(criteria).length === 0 || estimateKeyCount(criteria) === 0) {
+			// H5 fix (second-review round): a bare `Object.keys().length === 0`
+			// check only catches a literal `{}`. It does NOT catch a `{
+			// keyword: [] }`, `{ header: [] }`, or `{ and: [] }` -- each of
+			// those HAS a key, but the key's value compiles to zero actual
+			// wire tokens (`compileCriteria`'s loops for "keyword"/"header"
+			// simply don't run for an empty array, and "and" has no
+			// sub-criteria to iterate), so the command would otherwise be
+			// submitted as a bare `SEARCH`/`UID SEARCH` with no search-key at
+			// all -- illegal per RFC 3501/9051 §9's `1*(SP search-key)`.
+			// `estimateKeyCount` (exported from search-criteria.ts for this
+			// reason) is exact for this purpose, not just an upper bound.
 			throw new RangeError(
 				"SEARCH requires at least one search key (RFC 3501/9051 §9: 1*(SP search-key))",
 			);

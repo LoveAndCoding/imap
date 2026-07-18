@@ -261,6 +261,37 @@ describe("StoreCommand (RFC 3501/9051 §6.4.6/§6.4.9, M3.6)", () => {
 		await expect(resultPromise).resolves.toEqual({ modified: [2, 3, 4] });
 	});
 
+	// M2 fix (second-review round): a hostile/non-conformant server's tagged
+	// response can legally carry a `MODIFIED` uid-set/sequence-set range as
+	// wide as the full 32-bit UID space (RFC 7162 places no ceiling on
+	// `sequence-set` range width) -- `accept()` used to expand this via a
+	// private duplicate of `collector.ts`'s `expandUidSet()` that OMITTED
+	// that function's `MAX_EXPANDED_UIDS` ceiling, so a `[MODIFIED
+	// 1:4294967295]` would have been walked straight into an attempt to
+	// allocate a multi-billion-entry array. `accept()` now reuses
+	// `expandUidSet()` directly, inheriting its bound.
+	test("MODIFIED with a range beyond the shared MAX_EXPANDED_UIDS ceiling rejects with a typed RangeError instead of materializing it", async () => {
+		const { connection, router } = makeFakeConnection();
+		const cmd = new StoreCommand(true, seqSet("1:5"), "add", ["\\Deleted"]);
+		const resultPromise = executeCommand(connection, cmd, "A1");
+		await flushMicrotasks();
+		router.routeTagged(
+			parseLine(`A1 OK [MODIFIED 1:4294967295] Conditional STORE failed${CRLF}`) as TaggedResponse,
+		);
+		await expect(resultPromise).rejects.toThrow(RangeError);
+	});
+
+	test("MODIFIED with a range exactly at a sane, small width still resolves normally (no false positive)", async () => {
+		const { connection, router } = makeFakeConnection();
+		const cmd = new StoreCommand(true, seqSet("1:5"), "add", ["\\Deleted"]);
+		const resultPromise = executeCommand(connection, cmd, "A1");
+		await flushMicrotasks();
+		router.routeTagged(
+			parseLine(`A1 OK [MODIFIED 100:105] Conditional STORE failed${CRLF}`) as TaggedResponse,
+		);
+		await expect(resultPromise).resolves.toEqual({ modified: [100, 101, 102, 103, 104, 105] });
+	});
+
 	test("no MODIFIED code -> StoreResult is an empty object (common case, never a thrown error)", async () => {
 		const { connection, router } = makeFakeConnection();
 		const cmd = new StoreCommand(true, seqSet(1), "add", ["\\Seen"]);

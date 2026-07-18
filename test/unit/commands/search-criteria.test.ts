@@ -413,6 +413,60 @@ describe("compileCriteria (spec §5.3)", () => {
 				).toBe("OR FROM a SUBJECT b NOT SEEN");
 			});
 		});
+
+		// H5 fix (second-review round): the empty-`{}` refusal above didn't
+		// catch an empty ARRAY operand (`{ keyword: [] }`, `{ header: [] }`)
+		// because `estimateKeyCount` rounded an empty array's length UP to 1
+		// via `Math.max(v.length, 1)` -- letting it slip past
+		// `compileAsSingleKey`'s zero-token guard and compile to a bare atom
+		// with no wrapped key at all (e.g. `fuzzy: { keyword: [] }` used to
+		// emit a bare "FUZZY" with nothing after it).
+		describe("empty-ARRAY operand refusal (H5: Math.max(v.length, 1) let empty arrays slip past the empty-{} guard)", () => {
+			test("fuzzy: { keyword: [] } throws instead of emitting a bare FUZZY", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(() => compile({ fuzzy: { keyword: [] } }, caps)).toThrow(RangeError);
+			});
+
+			test("fuzzy: { header: [] } throws instead of emitting a bare FUZZY", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(() => compile({ fuzzy: { header: [] } }, caps)).toThrow(RangeError);
+			});
+
+			test("or: [{ keyword: [] }, { all: true }] throws instead of silently compiling to 'OR ALL'", () => {
+				expect(() => compile({ or: [{ keyword: [] }, { all: true }] })).toThrow(RangeError);
+			});
+
+			test("not: { keyword: [] } throws instead of compiling to nothing", () => {
+				expect(() => compile({ not: { keyword: [] } })).toThrow(RangeError);
+			});
+
+			test("not: { header: [] } (non-bare-keyword shape) throws via the estimateKeyCount fix", () => {
+				expect(() => compile({ or: [{ not: { header: [] } }, { all: true }] })).toThrow(
+					RangeError,
+				);
+			});
+
+			test("and: [{ keyword: [] }] operand throws instead of silently dropping", () => {
+				expect(() => compile({ and: [{ all: true }, { keyword: [] }] })).toThrow(RangeError);
+			});
+
+			test("nested three levels deep: or > fuzzy > keyword:[] still throws", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(() =>
+					compile({ or: [{ fuzzy: { keyword: [] } }, { from: "a" }] }, caps),
+				).toThrow(RangeError);
+			});
+
+			test("a non-empty keyword/header array still compiles correctly (no false positive)", () => {
+				const caps = capsOf("SEARCH=FUZZY");
+				expect(compile({ fuzzy: { keyword: ["a", "b"] } }, caps)).toBe(
+					"FUZZY (KEYWORD a KEYWORD b)",
+				);
+				expect(
+					compile({ or: [{ header: [{ field: "X-A", value: "b" }] }, { all: true }] }),
+				).toBe("OR HEADER X-A b ALL");
+			});
+		});
 	});
 
 	describe("and (explicit grouping, inline juxtaposition)", () => {
@@ -420,6 +474,29 @@ describe("compileCriteria (spec §5.3)", () => {
 			expect(compile({ and: [{ answered: true }, { flagged: true }] })).toBe(
 				"ANSWERED FLAGGED",
 			);
+		});
+
+		// H5 fix (second-review round): `and`'s sub-criteria compile inline
+		// (no `compileAsSingleKey` wrap), so an empty operand there needed its
+		// own explicit guard -- otherwise it silently vanished from the AND.
+		// (A bare top-level `{ and: [] }` standing alone as the WHOLE
+		// criteria is refused one layer up, by `SearchCommand`'s constructor
+		// -- see search.test.ts's "empty-array criteria bypass (H5)" suite --
+		// since `compileCriteria` itself has nothing to iterate for an empty
+		// `and` array and legitimately writes zero bytes for THAT key. Nested
+		// as an operand, though, `estimateKeyCount({ and: [] })` correctly
+		// reduces to 0 and `compileAsSingleKey`'s existing zero-token guard
+		// catches it.)
+		test("and: [] nested as an or/fuzzy operand throws RangeError", () => {
+			expect(() => compile({ or: [{ and: [] }, { all: true }] })).toThrow(RangeError);
+		});
+
+		test("an empty {} sub-operand throws instead of silently dropping out of the AND", () => {
+			expect(() => compile({ and: [{ all: true }, {}] })).toThrow(RangeError);
+		});
+
+		test("an empty keyword:[] sub-operand throws instead of silently dropping out of the AND", () => {
+			expect(() => compile({ and: [{ all: true }, { keyword: [] }] })).toThrow(RangeError);
 		});
 	});
 

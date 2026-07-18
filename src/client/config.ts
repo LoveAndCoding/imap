@@ -38,6 +38,23 @@ export interface ImapAuthConfig {
 	 *  concrete `SaslMechanism` instances (a later milestone's selection
 	 *  algorithm consumes this — accepted/validated here, not yet acted on). */
 	mechanisms?: Array<string | SaslMechanism>;
+	/**
+	 * M35 fix (second-review round): the SASL authorization identity
+	 * (authzid, RFC 4422 §2) a mechanism may request to act as, distinct from
+	 * the authentication identity (`user`) — threaded verbatim into every
+	 * mechanism's `SaslContext.authzid` (`client/auth.ts`'s
+	 * `performAuthSelection()`), which already carries a same-named field
+	 * (`sasl/mechanism.ts`) that `ExternalMechanism`/`AnonymousMechanism`
+	 * already consume, but that this config surface had no way to populate
+	 * before this fix. Also doubles as ANONYMOUS's non-empty trace-
+	 * information input (RFC 4505 §2) — see `SaslContext.authzid`'s own doc
+	 * comment for why ANONYMOUS reuses this field rather than having a
+	 * dedicated one. `validateAuth()` below relaxes the pass/accessToken
+	 * requirement when `mechanisms` names only no-secret mechanisms
+	 * (EXTERNAL/ANONYMOUS), which have nothing to authenticate WITH but may
+	 * still legitimately carry a non-empty `authzid`.
+	 */
+	authzid?: string;
 }
 
 /** Per-operation timeout overrides (all in milliseconds), each independently
@@ -176,6 +193,39 @@ function validatePort(port: unknown, tlsMode: TlsMode): number {
 	return port;
 }
 
+/**
+ * M35 fix (second-review round): the built-in mechanisms that need NO
+ * secret at all to authenticate (RFC 4422 Appendix A EXTERNAL — the
+ * identity comes entirely from the already-established TLS client cert;
+ * RFC 4505 ANONYMOUS — unauthenticated by design). `requiresNoSecret()`
+ * below only recognizes these by NAME (case-insensitively, matching how
+ * `client/auth.ts`'s `resolveMechanism()` itself uppercases string
+ * candidates) — a caller-supplied `SaslMechanism` OBJECT candidate is
+ * deliberately NOT special-cased here (this module has no principled way to
+ * introspect an arbitrary mechanism instance for whether it needs a
+ * secret), so mixing one into `mechanisms` still requires `pass`/
+ * `accessToken` exactly as before this fix.
+ */
+const NO_SECRET_MECHANISM_NAMES: ReadonlySet<string> = new Set(["EXTERNAL", "ANONYMOUS"]);
+
+/** `true` only when `mechanisms` is a non-empty array whose EVERY entry is a
+ *  known no-secret mechanism name (see `NO_SECRET_MECHANISM_NAMES`) — the
+ *  narrow carve-out `validateAuth()` uses to relax its pass/accessToken
+ *  requirement. An unset/empty `mechanisms` (the default-candidate-list
+ *  path, `client/auth.ts`'s `defaultCandidates()`, which never proposes
+ *  EXTERNAL/ANONYMOUS on its own) or a list mixing in anything else
+ *  (a password/token mechanism name, LOGIN, or a raw `SaslMechanism`
+ *  object) does NOT qualify — the caller must explicitly and exclusively
+ *  opt into no-secret mechanisms for this carve-out to apply. */
+function requiresNoSecret(mechanisms: unknown): boolean {
+	if (!Array.isArray(mechanisms) || mechanisms.length === 0) {
+		return false;
+	}
+	return mechanisms.every(
+		(m) => typeof m === "string" && NO_SECRET_MECHANISM_NAMES.has(m.toUpperCase()),
+	);
+}
+
 function validateAuth(auth: unknown): ImapAuthConfig | undefined {
 	if (auth === undefined) {
 		return undefined;
@@ -183,9 +233,21 @@ function validateAuth(auth: unknown): ImapAuthConfig | undefined {
 	if (!isPlainObject(auth) || typeof auth.user !== "string") {
 		throw new TypeError("auth.user must be a string");
 	}
-	if (auth.pass === undefined && auth.accessToken === undefined) {
+	if (
+		auth.pass === undefined &&
+		auth.accessToken === undefined &&
+		!requiresNoSecret(auth.mechanisms)
+	) {
+		// M35 fix (second-review round): the no-secret carve-out
+		// (`requiresNoSecret()` above) lets an explicit, EXTERNAL/ANONYMOUS-
+		// only `mechanisms` list through without either credential --
+		// neither mechanism has anything to authenticate WITH (see
+		// `NO_SECRET_MECHANISM_NAMES`'s own doc comment). Every other shape
+		// (the default candidate list, or any mechanism name/object this
+		// carve-out doesn't recognize) still requires one of the two.
 		throw new TypeError(
-			"auth requires either 'pass' or 'accessToken' to be set",
+			"auth requires either 'pass' or 'accessToken' to be set (unless " +
+				"'mechanisms' names only no-secret mechanisms, e.g. EXTERNAL/ANONYMOUS)",
 		);
 	}
 	if (auth.pass !== undefined && typeof auth.pass !== "string") {
@@ -197,14 +259,44 @@ function validateAuth(auth: unknown): ImapAuthConfig | undefined {
 	if (auth.mechanisms !== undefined && !Array.isArray(auth.mechanisms)) {
 		throw new TypeError("auth.mechanisms must be an array");
 	}
+	if (auth.authzid !== undefined && typeof auth.authzid !== "string") {
+		throw new TypeError("auth.authzid must be a string");
+	}
 	return {
 		user: auth.user,
 		pass: auth.pass as string | undefined,
 		accessToken: auth.accessToken as string | undefined,
+		authzid: auth.authzid as string | undefined,
 		mechanisms: auth.mechanisms
 			? [...(auth.mechanisms as Array<string | SaslMechanism>)]
 			: undefined,
 	};
+}
+
+/**
+ * LOW fix (second-review round): every other field in this module VALIDATES
+ * (throws `TypeError` on a wrong-shaped value) rather than silently coercing
+ * -- `allowInsecureAuth`'s old inline `config.allowInsecureAuth === true`
+ * was the one outlier, silently treating ANY non-boolean-`true` value
+ * (including a truthy one, e.g. `"true"` — the string a caller wiring this
+ * from an env var like `process.env.ALLOW_INSECURE_AUTH` would naturally
+ * produce, or `1`) as `false` with no error at all. That direction happens
+ * to be the SAFE one (it can never silently WEAKEN the §10.3/RFC 8314
+ * cleartext-auth policy this field gates), but it is still a confusing
+ * silent-wrong-behavior trap for a caller who believes they opted in and
+ * gets no error telling them otherwise. Matches this module's established
+ * convention (`validateTls`/`validateExtensions`/`validateCompress`/the
+ * `logger`/`tlsOptions` inline checks in `validateConfig`) of throwing
+ * rather than coercing.
+ */
+function validateAllowInsecureAuth(value: unknown): boolean {
+	if (value === undefined) {
+		return false;
+	}
+	if (typeof value !== "boolean") {
+		throw new TypeError(`allowInsecureAuth must be a boolean; got ${JSON.stringify(value)}`);
+	}
+	return value;
 }
 
 function validateId(id: unknown): IdCommandValues | false | undefined {
@@ -288,7 +380,7 @@ export function validateConfig(config: ImapClientConfig): ResolvedConfig {
 	const compress = validateCompress(config.compress);
 	const timeouts = validateTimeouts(config.timeouts);
 
-	const allowInsecureAuth = config.allowInsecureAuth === true;
+	const allowInsecureAuth = validateAllowInsecureAuth(config.allowInsecureAuth);
 
 	const maxInlineSize =
 		config.maxInlineSize === undefined

@@ -108,6 +108,27 @@ describe("ScramMechanism", () => {
 			);
 		});
 
+		// LOW fix (second-review round): `ctx.user` was already NFKC-normalized
+		// before escaping (RFC5802 §2.2's disjunctive-MUST, see `start()`'s own
+		// doc comment) -- `ctx.authzid` was forwarded raw, an inconsistency
+		// with no principled reason (RFC5802-5.1-1: the 'a=' authzid shares the
+		// SAME syntax/preparation as the 'n=' username field).
+		test("NFKC-normalizes a non-empty authzid the same way the username is normalized", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+
+			//Act: U+00BD VULGAR FRACTION ONE HALF ('½') NFKC-normalizes to the
+			// three-character sequence '1⁄2' (digit, U+2044 FRACTION SLASH,
+			// digit) -- the same compatibility-equivalence case the username
+			// normalization's own doc comment cites.
+			const first = await mech.start(ctx({ authzid: "½" }));
+
+			//Assert
+			expect(first.toString("utf8")).toBe(
+				`n,a=1⁄2,n=user,r=${SHA1_VECTOR.clientNonce}`,
+			);
+		});
+
 		test("nonce differs across two fresh instances (production nonce factory)", async () => {
 			//Arrange
 			const first = await new ScramMechanism("sha1").start(ctx());
@@ -295,6 +316,89 @@ describe("ScramMechanism", () => {
 			await mech.step(Buffer.from("e=other-error", "utf8"), c);
 
 			//Assert
+			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
+		});
+	});
+
+	// M13 fix (second-review round): `finish()` only runs after a tagged OK
+	// (`connection/execute-command.ts` routes NO/BAD to
+	// `AuthenticateCommand.onError()` instead) -- but the REALISTIC way a
+	// server communicates a SCRAM 'e=' failure is a server-final-message
+	// continuation immediately followed by a tagged NO, never a tagged OK.
+	// Before this fix, `ScramMechanism` had no `describeFailure()` hook (the
+	// optional `SaslMechanism` seam its OAUTHBEARER/XOAUTH2 siblings already
+	// implement for the identical reason), so the specific 'e=' diagnostic
+	// `handleServerFinal()` already recorded into `verificationFailure` was
+	// silently unreachable on that path -- `onError()` had only the server's
+	// own (often generic) tagged-NO resp-text to go on.
+	describe("describeFailure() (M13 fix, second-review round)", () => {
+		test("surfaces the server's 'e=' diagnostic after step() records it -- the realistic tagged-NO path", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+
+			//Act: the server sends its 'e=' server-final-message continuation
+			// -- realistically followed by a tagged NO, which means finish()
+			// (and thus its own AuthError) never runs at all.
+			await mech.step(Buffer.from("e=invalid-proof", "utf8"), c);
+
+			//Assert
+			expect(mech.describeFailure()).toBe(
+				"SCRAM-SHA-1 server reported a SCRAM failure: e=invalid-proof",
+			);
+		});
+
+		test("surfaces the mismatched-signature diagnostic the same way", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+			const forged = Buffer.alloc(20, 0x42).toString("base64");
+
+			//Act
+			await mech.step(Buffer.from(`v=${forged}`, "utf8"), c);
+
+			//Assert
+			expect(mech.describeFailure()).toBe(
+				"SCRAM-SHA-1 server signature does not match the client-computed ServerSignature",
+			);
+		});
+
+		test("returns undefined before any server-final-message has been seen (no false positive)", () => {
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			expect(mech.describeFailure()).toBeUndefined();
+		});
+
+		test("returns undefined after a genuine matching 'v=' (successful exchange, nothing to report)", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+
+			//Act
+			await mech.step(Buffer.from(`v=${SHA1_VECTOR.expectedServerSignature}`, "utf8"), c);
+
+			//Assert
+			expect(mech.describeFailure()).toBeUndefined();
+			await expect(mech.finish(null, c)).resolves.toBeUndefined();
+		});
+
+		test("does not change finish()'s own accept/reject verdict (diagnostic only)", async () => {
+			//Arrange
+			const mech = new ScramMechanism("sha1", { nonce: () => SHA1_VECTOR.clientNonce });
+			const c = ctx();
+			await mech.start(c);
+			await mech.step(Buffer.from(serverFirstMessage(SHA1_VECTOR), "utf8"), c);
+			await mech.step(Buffer.from("e=invalid-proof", "utf8"), c);
+
+			//Act & Assert: finish() (the fail-closed path this class's own doc
+			// comment documents) still rejects exactly as before -- reading
+			// describeFailure() didn't consume/alter the recorded state.
+			expect(mech.describeFailure()).toBeDefined();
 			await expect(mech.finish(null, c)).rejects.toThrow(AuthError);
 		});
 	});

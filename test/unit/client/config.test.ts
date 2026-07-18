@@ -83,6 +83,102 @@ describe("validateConfig (spec §2)", () => {
 			).not.toThrow();
 		});
 
+		// M35 fix (second-review round): EXTERNAL (RFC 4422 Appendix A) and
+		// ANONYMOUS (RFC 4505) have no secret of any kind to authenticate
+		// with -- forcing `pass`/`accessToken` on a caller who explicitly
+		// asked for only these mechanisms made them impossible to configure
+		// at all through this surface, even though `SaslContext.authzid`
+		// (which `ExternalMechanism`/`AnonymousMechanism` already consume)
+		// had no way to be populated from config either.
+		describe("no-secret mechanism carve-out + authzid (M35)", () => {
+			test("accepts auth with mechanisms: ['EXTERNAL'] and authzid, no pass/accessToken", () => {
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", mechanisms: ["EXTERNAL"], authzid: "someone@example.com" },
+					}),
+				).not.toThrow();
+			});
+
+			test("accepts auth with mechanisms: ['ANONYMOUS'] and authzid, no pass/accessToken", () => {
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", mechanisms: ["ANONYMOUS"], authzid: "trace-info" },
+					}),
+				).not.toThrow();
+			});
+
+			test("carve-out is case-insensitive (matches resolveMechanism()'s own uppercasing)", () => {
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", mechanisms: ["external"] },
+					}),
+				).not.toThrow();
+			});
+
+			test("threads authzid through into ResolvedConfig.auth", () => {
+				const resolved = validateConfig({
+					host: "h",
+					auth: { user: "u", mechanisms: ["EXTERNAL"], authzid: "someone@example.com" },
+				});
+				expect(resolved.auth?.authzid).toBe("someone@example.com");
+			});
+
+			test("still throws when mechanisms is unset (default candidates), even with no pass/accessToken", () => {
+				expect(() => validateConfig({ host: "h", auth: { user: "u" } })).toThrow(TypeError);
+			});
+
+			test("still throws when a password-needing mechanism is mixed into the list", () => {
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", mechanisms: ["EXTERNAL", "PLAIN"] },
+					}),
+				).toThrow(TypeError);
+			});
+
+			test("still throws for an empty mechanisms: [] (no carve-out signal, matches the LOGIN-fallback idiom's own semantics)", () => {
+				expect(() =>
+					validateConfig({ host: "h", auth: { user: "u", mechanisms: [] } }),
+				).toThrow(TypeError);
+			});
+
+			test("still throws for a raw SaslMechanism object candidate (not introspectable, conservative default preserved)", () => {
+				const fakeMechanism = {
+					name: "EXTERNAL",
+					requiresSecureTransport: true,
+					start: async () => Buffer.alloc(0),
+					step: async () => {
+						throw new Error("unused");
+					},
+					finish: async () => undefined,
+				};
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", mechanisms: [fakeMechanism] },
+					}),
+				).toThrow(TypeError);
+			});
+
+			test("rejects a non-string authzid", () => {
+				expect(() =>
+					validateConfig({
+						host: "h",
+						auth: { user: "u", pass: "p", authzid: 42 as unknown as string },
+					}),
+				).toThrow(TypeError);
+			});
+
+			test("PLAIN with pass is unaffected by the carve-out logic", () => {
+				const resolved = validateConfig({ host: "h", auth: { user: "u", pass: "p" } });
+				expect(resolved.auth?.pass).toBe("p");
+				expect(resolved.auth?.authzid).toBeUndefined();
+			});
+		});
+
 		describe("negative timeouts", () => {
 			for (const field of [
 				"connect",
@@ -227,6 +323,44 @@ describe("validateConfig (spec §2)", () => {
 
 		test("allowInsecureAuth defaults to false", () => {
 			expect(validateConfig({ host: "h" }).allowInsecureAuth).toBe(false);
+		});
+
+		test("allowInsecureAuth: true resolves to true", () => {
+			expect(validateConfig({ host: "h", allowInsecureAuth: true }).allowInsecureAuth).toBe(
+				true,
+			);
+		});
+
+		test("allowInsecureAuth: false resolves to false", () => {
+			expect(validateConfig({ host: "h", allowInsecureAuth: false }).allowInsecureAuth).toBe(
+				false,
+			);
+		});
+
+		// LOW fix (second-review round): this field used to silently COERCE any
+		// non-boolean-`true` value to `false` (`config.allowInsecureAuth ===
+		// true`) instead of validating it -- a caller who wired this from an
+		// env var (naturally a string, e.g. `"true"`) got no error at all,
+		// just silent (safe-direction, but confusing) `false`. It now matches
+		// every other field in this module and throws on a wrong-shaped value.
+		describe("validates rather than silently coerces (LOW fix)", () => {
+			test('throws TypeError for a truthy STRING "true" instead of silently treating it as false', () => {
+				expect(() =>
+					validateConfig({ host: "h", allowInsecureAuth: "true" as unknown as boolean }),
+				).toThrow(TypeError);
+			});
+
+			test("throws TypeError for a truthy number 1", () => {
+				expect(() =>
+					validateConfig({ host: "h", allowInsecureAuth: 1 as unknown as boolean }),
+				).toThrow(TypeError);
+			});
+
+			test("throws TypeError for null", () => {
+				expect(() =>
+					validateConfig({ host: "h", allowInsecureAuth: null as unknown as boolean }),
+				).toThrow(TypeError);
+			});
 		});
 	});
 

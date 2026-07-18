@@ -6,6 +6,7 @@ import { assertNoRecentFlag } from "../protocol/vocabularies";
 import type { Flag } from "../protocol/vocabularies";
 import { Command } from "./base";
 import type { ClaimContext } from "./base";
+import { expandUidSet } from "./collector";
 import type { ResponseCollector } from "./collector";
 import type { CommandWriter } from "./writer";
 
@@ -159,6 +160,18 @@ export class StoreCommand extends Command<StoreResult> {
 			w.list((inner) => inner.atom("UNCHANGEDSINCE").bignumber(this.unchangedSince!));
 		}
 		w.atom(this.prefixAtom);
+		// LOW finding (second-review round, verified NOT a bug): an empty
+		// `flags` array reaches `w.flagList([])` here and emits a bare `()`
+		// -- confirmed wire-legal by RFC 3501/9051 §9's own grammar
+		// (`flag-list = "(" [flag *(SP flag)] ")"`; the entire flag content
+		// sits inside one OPTIONAL group, so zero flags is a designed member
+		// of the grammar, not an edge case slipping through unvalidated --
+		// the same production is what a FETCH FLAGS response for an
+		// unflagged message emits). Semantically meaningful, not just
+		// legal: a bare `FLAGS ()` (replace, no `+`/`-` prefix) means
+		// "clear every settable flag on these messages" -- a real, useful
+		// operation, not a caller mistake to guard against. `+FLAGS
+		// ()`/`-FLAGS ()` (add/remove zero flags) are legal no-ops.
 		w.flagList([...this.flags]);
 	}
 
@@ -192,39 +205,26 @@ export class StoreCommand extends Command<StoreResult> {
 		const tagged = c.tagged();
 		const code = tagged.status.text?.code;
 		if (code instanceof ModifiedTextCode) {
-			const modified = expandUidSetToNumbers(code.uids);
+			// M2 fix (second-review round): this used to run its own private
+			// `expandUidSetToNumbers()` -- a byte-for-byte duplicate of
+			// `collector.ts`'s `expandUidSet()` MINUS that function's
+			// `MAX_EXPANDED_UIDS` ceiling. `ModifiedTextCode.uids` is a real
+			// `UIDSet` (RFC 7162 §3.8's MODIFIED resp-text-code carries a
+			// `sequence-set`, wildcard-tolerant per that class's own doc
+			// comment) -- exactly the type `expandUidSet()` already expands,
+			// bound-checked, for COPYUID/APPENDUID/VANISHED. A hostile or
+			// non-conformant server sending back a tagged NO/OK with
+			// `[MODIFIED 1:4294967295]` (RFC 7162's `uid-set`/`sequence-set`
+			// places no ceiling on range width) used to be walked straight
+			// into a multi-billion-entry array allocation by the old
+			// duplicate's unbounded `for` loop; reusing the shared, already
+			// audited `expandUidSet()` here closes that gap by construction
+			// rather than by re-deriving the same bound a second time.
+			const modified = expandUidSet(code.uids);
 			if (modified.length > 0) {
 				return { modified };
 			}
 		}
 		return {};
 	}
-}
-
-/**
- * Expands a parsed UID/sequence-number set's finite elements into a flat,
- * ascending `number[]` -- `StoreResult.modified`'s declared shape. `"*"` (RFC
- * 3501 §9 seq-range note: "the largest number in use") never appears in a
- * real `MODIFIED` payload (RFC 7162's failed-message-identifier list is
- * always concrete numbers), and this parsing layer has no live session
- * snapshot to resolve it against anyway -- a `"*"`-touching element is
- * tolerated data (I-6) and simply excluded rather than guessed at.
- */
-function expandUidSetToNumbers(uids: {
-	set: ReadonlyArray<{ id: number | "*" } | { startId: number | "*"; endId: number | "*" }>;
-}): number[] {
-	const out: number[] = [];
-	for (const el of uids.set) {
-		if ("startId" in el) {
-			if (el.startId === "*" || el.endId === "*") {
-				continue;
-			}
-			for (let n = el.startId; n <= el.endId; n++) {
-				out.push(n);
-			}
-		} else if (el.id !== "*") {
-			out.push(el.id);
-		}
-	}
-	return out;
 }

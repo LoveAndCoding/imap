@@ -243,7 +243,16 @@ export class ScramMechanism implements SaslMechanism {
 
 		// No channel-binding support, ever (see this module's doc comment) —
 		// gs2-cbind-flag is always "n" (RFC5802-6-3), never "y"/"p".
-		const authzid = ctx.authzid ? `a=${escapeSaslname(ctx.authzid)}` : "";
+		//
+		// LOW fix (second-review round): the SAME §2.2 disjunctive-MUST/NFKC
+		// reasoning just above applies equally to the gs2-header's `a=`
+		// authzid (RFC5802-5.1-1: "the same as that of the 'n' field") — it
+		// is, per RFC 4422 §2, an "authzid" string subject to the identical
+		// SASLprep profile as the authentication identity. Previously only
+		// `ctx.user` was NFKC-normalized before escaping; `ctx.authzid` was
+		// forwarded raw, an inconsistency with no principled reason (both
+		// fields share one prepare-then-escape step here).
+		const authzid = ctx.authzid ? `a=${escapeSaslname(ctx.authzid.normalize("NFKC"))}` : "";
 		this.gs2Header = `n,${authzid},`;
 		this.clientNonce = this.nonceFactory();
 		this.clientFirstMessageBare = `n=${escapeSaslname(preparedUser)},r=${this.clientNonce}`;
@@ -471,6 +480,35 @@ export class ScramMechanism implements SaslMechanism {
 			`${this.name} claimed success (tagged OK) without ever presenting a ` +
 				"verifiable server signature ('v='); refusing to treat this as mutual authentication",
 		);
+	}
+
+	/**
+	 * M13 fix (second-review round): mirrors `OAuthBearerMechanism.
+	 * describeFailure()`/`XOAuth2Mechanism.describeFailure()` exactly (same
+	 * hook, same rationale in `SaslMechanism.describeFailure()`'s own doc
+	 * comment). This class's realistic RFC5802-conformant failure shape is a
+	 * server-final-message carrying `e=<error>` (RFC5802-5.1-11: "the server
+	 * MAY include ... an optional 'e=' ... value" on failure) — sent as an
+	 * ordinary "+" continuation, which `step()`/`handleServerFinal()` already
+	 * parse and record into `verificationFailure` (along with the mismatched-
+	 * 'v='/unsupported-'m='/garbled/absent shapes this class also fails
+	 * closed on). BUT that continuation conventionally precedes a tagged
+	 * **NO**, not a tagged OK (the same "server-final-message often rides
+	 * ahead of the tagged status" ordering this class's own top-of-file doc
+	 * comment documents for the tagged-OK/'v=' case) — and `finish()` is only
+	 * ever invoked after a tagged OK (`connection/execute-command.ts` routes
+	 * NO/BAD to `AuthenticateCommand.onError()` instead, never to
+	 * `accept()`/`finish()`). Without this hook, a caller on the realistic
+	 * tagged-NO path saw only the server's own (often generic, e.g. "Invalid
+	 * credentials") resp-text — the specific SCRAM `e=` diagnostic already
+	 * sitting in `verificationFailure` was unreachable. This is diagnostic
+	 * ONLY: it does not change the accept/reject decision, which is (and
+	 * remains) `finish()`'s alone, and `onError()` folds a non-`undefined`
+	 * result into the `AuthError` message rather than treating it as an
+	 * independent verdict.
+	 */
+	describeFailure(): string | undefined {
+		return this.verificationFailure ?? undefined;
 	}
 }
 

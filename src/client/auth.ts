@@ -32,6 +32,20 @@ export interface AuthSelectionDeps {
 	refreshCapabilities(): Promise<void>;
 }
 
+/**
+ * LOW finding (second-review round, verified intentional): this list omits
+ * CRAM-MD5/EXTERNAL/ANONYMOUS on purpose, not by oversight -- it is a
+ * byte-for-byte match of the spec's own §9.3 step 1: "Candidates = config
+ * `mechanisms` order, else default order: `SCRAM-SHA-256, SCRAM-SHA-1,
+ * PLAIN` (pass present) / `OAUTHBEARER, XOAUTH2` (token present)." CRAM-MD5
+ * offers no mutual authentication and is superseded by SCRAM wherever both
+ * are available; EXTERNAL/ANONYMOUS have no secret to try automatically
+ * from `pass`/`accessToken`/`authzid` alone. All three remain fully usable
+ * — just not auto-selected — via an explicit `auth.mechanisms` entry (e.g.
+ * `mechanisms: ["CRAM-MD5"]`, or `["EXTERNAL"]` with `authzid` set, M35 fix)
+ * naming them; they are registered in the mechanism registry
+ * (`sasl/index.ts`) like every other built-in.
+ */
 function defaultCandidates(auth: ImapAuthConfig): Array<string | SaslMechanism> {
 	const candidates: Array<string | SaslMechanism> = [];
 	if (auth.pass !== undefined) {
@@ -138,6 +152,18 @@ export async function performAuthSelection(
 			user: auth.user,
 			pass: auth.pass,
 			accessToken: auth.accessToken,
+			// M35 fix (second-review round): `SaslContext.authzid` already
+			// existed (`sasl/mechanism.ts`) and `ExternalMechanism`/
+			// `AnonymousMechanism` already read it (`sasl/external.ts`/
+			// `sasl/anonymous.ts`) — but nothing here ever populated it from
+			// `ImapAuthConfig`, so a caller had no way to actually supply a
+			// non-empty authzid/trace-information value through the
+			// config-driven `connect()` path (only reachable, if at all,
+			// via a hand-built `SaslContext` bypassing this module
+			// entirely). `config.ts`'s `validateAuth()` now accepts and
+			// type-checks `auth.authzid`; this is the other half, threading
+			// it through to every mechanism uniformly.
+			authzid: auth.authzid,
 			host: deps.host,
 			port: deps.port,
 		};

@@ -8,6 +8,7 @@ import { AuthenticateCommand } from "../../../src/commands/authenticate";
 import type { Command } from "../../../src/commands/base";
 import { LoginCommand } from "../../../src/commands/login";
 import { AuthError } from "../../../src/errors";
+import type { SaslContext, SaslMechanism } from "../../../src/sasl/mechanism";
 
 /**
  * A minimal, hand-rolled `CapabilityView` -- no server round trip involved,
@@ -163,5 +164,81 @@ describe("performAuthSelection LOGIN-fallback exclusion (PR #18 review fix, Medi
 		//Assert
 		expect(deps.runCalls).toHaveLength(1);
 		expect(deps.runCalls[0]).toBeInstanceOf(LoginCommand);
+	});
+});
+
+// M35 fix (second-review round): `SaslContext.authzid` (`sasl/mechanism.ts`)
+// already existed and `ExternalMechanism`/`AnonymousMechanism` already
+// consumed it, but nothing here ever populated it from `ImapAuthConfig.
+// authzid` (which didn't exist either, pre-fix) -- this is the threading
+// half of that fix, verified against a fake mechanism that records the
+// exact `SaslContext` it received.
+describe("performAuthSelection threads ImapAuthConfig.authzid into SaslContext (M35 fix)", () => {
+	function recordingMechanism(name: string): SaslMechanism & { seenCtx: SaslContext[] } {
+		const seenCtx: SaslContext[] = [];
+		return {
+			name,
+			requiresSecureTransport: false,
+			seenCtx,
+			async start(ctx: SaslContext) {
+				seenCtx.push(ctx);
+				return Buffer.alloc(0);
+			},
+			async step() {
+				throw new Error("unused in this test");
+			},
+			async finish() {
+				/* success */
+			},
+		};
+	}
+
+	test("a caller-supplied authzid reaches the mechanism's SaslContext", async () => {
+		//Arrange
+		const mech = recordingMechanism("EXTERNAL");
+		const auth: ImapAuthConfig = {
+			user: "cert-identity",
+			authzid: "someone@example.com",
+			mechanisms: [mech],
+		};
+		const deps = fakeDeps({ capabilities: fakeCapabilities(["AUTH=EXTERNAL"]) });
+
+		//Act
+		await performAuthSelection(auth, deps);
+
+		//Assert
+		expect(mech.seenCtx).toHaveLength(1);
+		expect(mech.seenCtx[0].authzid).toBe("someone@example.com");
+	});
+
+	test("authzid is undefined on the SaslContext when not configured (no false positive)", async () => {
+		//Arrange
+		const mech = recordingMechanism("EXTERNAL");
+		const auth: ImapAuthConfig = { user: "cert-identity", mechanisms: [mech] };
+		const deps = fakeDeps({ capabilities: fakeCapabilities(["AUTH=EXTERNAL"]) });
+
+		//Act
+		await performAuthSelection(auth, deps);
+
+		//Assert
+		expect(mech.seenCtx).toHaveLength(1);
+		expect(mech.seenCtx[0].authzid).toBeUndefined();
+	});
+
+	test("authzid reaches ANONYMOUS's SaslContext identically", async () => {
+		//Arrange
+		const mech = recordingMechanism("ANONYMOUS");
+		const auth: ImapAuthConfig = {
+			user: "anon",
+			authzid: "trace-info",
+			mechanisms: [mech],
+		};
+		const deps = fakeDeps({ capabilities: fakeCapabilities(["AUTH=ANONYMOUS"]) });
+
+		//Act
+		await performAuthSelection(auth, deps);
+
+		//Assert
+		expect(mech.seenCtx[0].authzid).toBe("trace-info");
 	});
 });
