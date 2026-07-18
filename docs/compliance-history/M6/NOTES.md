@@ -140,6 +140,45 @@ owner's call, not silently dropped):
   timeout bounds the hang; a live FIN-detector through the whole connect
   ritual is a larger socket-lifecycle change.
 
+## Second post-open review round (PR #18, owner review 2026-07-17, 4 addenda)
+
+The owner ran a second, wider multi-agent review (27/27 file groups)
+after the first round's fixes landed — final tally **1 Critical · 14
+High · ~37 Medium · ~47 Low**, distinct from the first round and
+concentrated on the same two themes (untrusted-server-data robustness;
+teardown races). Addressed across seven commits (`06c414c` parser
+fetch/BODYSTRUCTURE, `a788113` lexer/capability/types, `46bdb43`
+parser-core resilience, `846e3dd` search/SASL/config, `229038b`
+message-op lifecycle, `f6d15af` connection/client teardown, `dde8139`
+barrel + RFC 6154 cleanup), in two file-disjoint waves of three plus a
+cleanup. Every finding verified before fixing; each fix revert-verified
+with a test; compliance matrix byte-identical throughout
+(1138/6/2/451, problems []); unit tests 2053 → **2258**.
+
+Headliners: the Critical nested-multipart `BODYSTRUCTURE` crash — and,
+found during the fix, the "correct pattern" the review cited was itself
+broken (embedded single-part bodies misparsed); one shared correct
+helper now serves all three call sites. The M8 parser-stream policy (one
+malformed line degrades to an `unknown` event instead of killing the
+Transform) makes a whole family of "malformed line" findings
+non-catastrophic. `mergeIn` (a confirmed production bug a test routed
+around), the lexer memory-DoS on unterminated quoted strings, the
+`seq.replace` NOTIFY guard, BODY/BINARY key collision, `buffer()`-hang,
+the rev2 capability-fold-in gates (UID EXPUNGE, LIST-STATUS), and the
+teardown-race + COMPRESS codec-straddle fixes all landed.
+
+Findings the review's own approach and ours DISPROVED rather than
+force-fixed: `H2` postBoundaryDiscard (already reset by teardown);
+`M21` tokenize O(n²) (benchmarked linear — V8 SlicedString); `M16`
+ENABLE capability gate (an OR-with-rev2 gate breaks real-world-server
+fixtures — left as-is, documented); four parser `.match()` truncation
+Lows (already guarded); empty `FLAGS ()` (legal grammar); CRAM-MD5
+omission from auto-select (spec §9.3). Deferred with rationale: the
+public SCRAM nonce-override footgun (shared test infra imports it via
+the public path — a rename/reroute is a separate follow-up), and (from
+round one, still open) the escape-hatch cleartext-credential
+plumb-through and instant graceful-FIN detection.
+
 ## Carry-forwards past 1.0 (recorded, not blocking)
 
 - `idle()` unification through the shared refcounted
