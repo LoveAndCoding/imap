@@ -15,9 +15,7 @@ ratcheted the same matrix, per row, with regressions blocked at every
 merge. Final state: **1138 passing requirement-profiles across 121
 RFC/profile sources, zero unexplained deviations** — every non-passing
 row carries a written adjudication in
-[`docs/compliance-adjudications.md`](docs/compliance-adjudications.md),
-and milestone-by-milestone snapshots live in
-[`docs/compliance-history/`](docs/compliance-history/).
+[`docs/guides/compliance-adjudications.md`](docs/guides/compliance-adjudications.md).
 
 ### Added
 

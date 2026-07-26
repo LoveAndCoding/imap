@@ -1,3 +1,9 @@
+---
+title: Migration from `node-imap`
+group: More Info
+order: 10
+---
+
 # Migration guide: node-imap → `ImapClient` (1.0)
 
 ## Who this is for

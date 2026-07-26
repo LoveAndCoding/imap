@@ -1,3 +1,9 @@
+---
+title: Compliance Deviations
+group: More Info
+order: 12
+---
+
 # Compliance adjudications
 
 Deliberate, documented deviations from cataloged requirements, per the
@@ -26,6 +32,7 @@ internal design conflict about HOW to comply, recorded here because it
 supersedes a previously documented posture.
 
 **Rationale:**
+
 1. The catalog rows are client-side MUST NOTs whose notes operationalize
    them as "no such attempt appears in the client's command stream" — a
    duty the client can only discharge by never emitting the prohibited
@@ -161,7 +168,7 @@ gain a pure-rev2 raw-UTF-8 arm; the M2 rule above is now permanent):**
 3. **Compliance does not require the arm.** RFC9051-5.1-1's create-side
    clause is a MAY ("Client implementations MAY attempt to create
    Net-Unicode mailbox names"); declining the permission is compliant.
-   RFC9051-A-3 makes mUTF-7 *not required* for rev2-only clients — it
+   RFC9051-A-3 makes mUTF-7 _not required_ for rev2-only clients — it
    nowhere forbids a client that intends rev1 interop from using it.
    The MUST half of 5.1-1 (interpret inbound 8-bit LIST names as
    Net-Unicode) is orthogonal to the outbound codec and already honored.
@@ -239,7 +246,7 @@ the same way for every caller, every time, with no cross-message state to
 track), so a library-level refusal is a faithful, unsurprising translation
 of the RFC text into code. $Junk/$NotJunk/$Forwarded instead require the
 library to (a) watch every incoming FETCH FLAGS result across the whole
-session, (b) recognize a specific cross-flag *pattern*, and (c)
+session, (b) recognize a specific cross-flag _pattern_, and (c)
 unilaterally emit a STORE the caller never asked for — a stateful,
 silent, automatic side effect a protocol library must not perform behind
 its caller's back. Both rows are therefore adjudicated as a permanent
@@ -362,12 +369,13 @@ scoped deliverable the M4.14 plan named regardless of that finding.
 
 **M5 carry-forward (`test/compliance/specs/ext/filters-5466.test.ts`,
 `expectFailure: "unimplemented"`, four rows × two profiles):**
+
 - `RFC5466-3.1-1` — `SEARCH FILTER <filter_name>` command-emission wire
   form (needs `SearchCriteria.filter`).
 - `RFC5466-3.2-1` — stored filter search-key values MUST be UTF-8-encoded
   octets on the wire (needs `setmetadata()`, M5's METADATA facet).
 - `RFC5466-3.2-2` — filter definition via `SETMETADATA "" (/private/
-  filters/values/<name> <value>)` (needs `setmetadata()`).
+filters/values/<name> <value>)` (needs `setmetadata()`).
 - `RFC5466-4-1` — filter-name grammar conformance at both emission sites
   (needs both `SearchCriteria.filter` and `setmetadata()`).
 
@@ -453,6 +461,7 @@ guard's stale "errata 1365" citation, replacing it with a plain RFC 7162
 adjudication record the review found missing.
 
 **Rationale:**
+
 1. RFC 7162 §3.2.3 states plainly that "the presence of the 'QRESYNC'
    capability implies support for the CONDSTORE IMAP extension even if the
    'CONDSTORE' capability isn't advertised" — so a `qresync` select
@@ -506,6 +515,7 @@ it simply declines to accept the unsafe form and leaves the safe one fully
 available.
 
 **Rationale:**
+
 1. This is the same refuse-don't-transform posture already adjudicated for
    `\Recent` (RFC3501-2.3.2-1/-2, above): a client-side prohibition is
    discharged by REFUSING the prohibited form, not by silently reshaping
@@ -585,6 +595,7 @@ an in-file note) since these rows are untestable regardless of
 implementation status, not merely unimplemented today.
 
 **Rationale:**
+
 1. Every SASL mechanism this client implements or has ever implemented —
    PLAIN, LOGIN (not SASL, but the fallback), OAUTHBEARER, XOAUTH2,
    CRAM-MD5, EXTERNAL, SCRAM-SHA-1/SCRAM-SHA-256 (without `-PLUS`), and
@@ -646,6 +657,7 @@ these ids (previously scripting hypothetical `AUTH=SCRAM-SHA-1-PLUS`/
 comment in the same style as the existing RFC5802-6-1 note.
 
 **Rationale:**
+
 1. This client deliberately does not implement or advertise
    SCRAM-`*`-PLUS: channel binding is a permanent design non-goal (spec
    §13; spec §9.2 "no channel binding = `-PLUS` variants out of scope"),
@@ -679,21 +691,20 @@ it lands, all five rows must be reclassified `testable` again and
 re-scripted against the real channel-binding surface — written into each
 row's own `untestableRationale` so the catalog is self-policing.
 
-
 ---
 
 # M6.1 — Satisfied-by-mechanism grouped entries (spec §12 invariants)
 
 The M6 close-out plan (`docs/superpowers/plans/2026-07-12-modern-api-m6-close-out.md`
 §M6.1) requires that requirement rows whose PASSING status is discharged
-*structurally* — by one of spec §12's cross-cutting invariants (I-1…I-13)
+_structurally_ — by one of spec §12's cross-cutting invariants (I-1…I-13)
 rather than by row-specific code — be documented once, here, grouped by
 mechanism, instead of leaving each row's passing status looking like an
 independent, bespoke implementation decision. Every row listed below is
 currently `pass` in `test/compliance/reports/compliance.json` (verified
 directly, not inferred); these are NOT deviations, NOT violations, and NOT
 untestable reclassifications — they are an architectural explanation of
-*why* a whole family of rows passes through one code path. Nothing in this
+_why_ a whole family of rows passes through one code path. Nothing in this
 section changes catalog testability, matchers, or scores; it is
 documentation of already-passing rows, added because the M6.1 process
 requires the satisfied-by-mechanism list to "land here" (per the parent
@@ -705,7 +716,7 @@ named exemplars for that invariant, (b) locating the single source file the
 invariant's own doc comment or the exemplar's compliance-test commentary
 names as the chokepoint, and (c) confirming every listed row's current
 `pass` status directly against the compliance report before including it.
-Rows whose passing was only *coincidentally* adjacent to an invariant (e.g.
+Rows whose passing was only _coincidentally_ adjacent to an invariant (e.g.
 a capability-gated command that in a given test is actually intercepted by
 a state-machine guard first, so the capability gate itself is never
 exercised) were deliberately excluded rather than counted — see the I-9 and
@@ -727,6 +738,7 @@ AUTHENTICATE" is satisfied by the same two chokepoints rather than by
 per-row bookkeeping.
 
 **Discharged rows:**
+
 - I-1 (no further commands until STARTTLS negotiation is complete):
   `RFC3501-6.2.1-3` (rev1), `RFC9051-6.2.1-1` (rev2), `RFC2595-3.1-1`
   (rev1, rev2).
@@ -839,7 +851,7 @@ marked "REAL — clean pass" via the generic branch).
 8 ids, 13 row-profile instances. Explicitly excluded: `RFC4467-8-2`/`-8-3`/
 `-8-4` (untagged GENURLAUTH/URLFETCH acceptance) — these are also currently
 `pass`, but their own compliance-test commentary documents that they now
-pass via *dedicated* typed parsing wired to `client.urlauth`'s facet (as of
+pass via _dedicated_ typed parsing wired to `client.urlauth`'s facet (as of
 M5.5), not via the generic unknown-response fallback; an older comment in
 that same test file, describing a since-fixed violation, was checked
 against the live `compliance.json` status before being excluded to avoid
@@ -884,8 +896,8 @@ AUTHENTICATE.
 ## I-9 — Capability-gated commands write zero bytes when the capability is absent
 
 **Mechanism:** Every capability-gated public method checks the live
-`CapabilityView` and throws `CapabilityError` (`src/errors.ts`) *before
-dispatch* — zero bytes are written when the capability is absent, because
+`CapabilityView` and throws `CapabilityError` (`src/errors.ts`) _before
+dispatch_ — zero bytes are written when the capability is absent, because
 command construction alone never touches the socket. At most call sites
 the gate additionally precedes the `Command` subclass's construction; a
 few (e.g. `ImapClient.create()`, whose own comment documents that
