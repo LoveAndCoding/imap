@@ -15,7 +15,7 @@ afterEach(async () => {
 	driver = undefined;
 });
 
-test("connect() drives Session.start against the scripted server", async () => {
+test("connect() drives ImapClient.connect() against the scripted server", async () => {
 	server = await ScriptedServer.start();
 	server.arm([
 		[
@@ -35,31 +35,181 @@ test("connect() drives Session.start against the scripted server", async () => {
 	await server.assertCompleted();
 });
 
-test("unimplemented verbs throw NotImplementedError", async () => {
+test("noop/login/logout are wired to the public ImapClient (M1.9)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("NOOP", { args: null })),
+			reply("OK NOOP completed"),
+			expectLine(command("LOGOUT", { args: null })),
+			reply("OK LOGOUT completed", ["* BYE logging out"]),
+		],
+	]);
 	driver = new ComplianceDriver();
-	await expect(driver.noop()).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.login("u", "p")).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.select("INBOX")).rejects.toBeInstanceOf(NotImplementedError);
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	expect(driver.authenticated).toBe(true);
+	await driver.noop();
+	await driver.logout();
+	await server.assertCompleted();
 });
 
-test("Phase 3 verbs (unauthenticate, compress) throw NotImplementedError", async () => {
+test("enable() is wired to the public ImapClient (M1.9)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 ENABLE CONDSTORE"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("ENABLE", { args: /^CONDSTORE$/ })),
+			reply("OK ENABLE completed", ["* ENABLED CONDSTORE"]),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	await expect(driver.enable(["CONDSTORE"])).resolves.toEqual(["CONDSTORE"]);
+	await server.assertCompleted();
+});
+
+test("select()/examine() are wired to the public ImapClient (M2.2)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("SELECT", { args: /^INBOX$/i })),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 3 EXISTS",
+				"* 0 RECENT",
+				"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)",
+				"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited",
+				"* OK [UIDVALIDITY 1] UIDs valid",
+				"* OK [UIDNEXT 4] Predicted next UID",
+			]),
+			expectLine(command("EXAMINE", { args: /^INBOX$/i })),
+			reply("OK [READ-ONLY] EXAMINE completed", ["* 3 EXISTS", "* 0 RECENT"]),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	const session = await driver.select("INBOX");
+	expect(session.name).toBe("INBOX");
+	expect(session.readOnly).toBe(false);
+	expect(session.exists).toBe(3);
+	expect(session.canCreateKeywords).toBe(true);
+	// Reselecting via EXAMINE: the same driver call, now forced read-only.
+	const examined = await driver.examine("INBOX");
+	expect(examined.readOnly).toBe(true);
+	await server.assertCompleted();
+});
+
+test("select() translates the CONDSTORE option onto the real SELECT (CONDSTORE) wire form (M4.5)", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 CONDSTORE"]),
+			expectLine(command("LOGIN")),
+			reply("OK LOGIN completed"),
+			expectLine(command("SELECT", { args: /^INBOX \(CONDSTORE\)$/i })),
+			reply("OK [READ-WRITE] SELECT completed", [
+				"* 3 EXISTS",
+				"* 0 RECENT",
+				"* OK [HIGHESTMODSEQ 12345] Highest",
+			]),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.login("user", "pass");
+	const session = await driver.select("INBOX", { condstore: true });
+	expect(session.highestModSeq).toBe(12345n);
+	await server.assertCompleted();
+});
+
+test("select()/examine() still translate the QRESYNC option to NotImplementedError (M4.6 not yet landed)", async () => {
+	driver = new ComplianceDriver();
+	await expect(
+		driver.examine("INBOX", { qresync: { uidvalidity: 1, modseq: 1n } }),
+	).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+test("Phase 3 verbs (unauthenticate) throw NotImplementedError", async () => {
 	driver = new ComplianceDriver();
 	await expect(driver.unauthenticate()).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.compress()).rejects.toBeInstanceOf(NotImplementedError);
 });
 
-test("widened authenticate(mechanism, initialResponse?) still throws NotImplementedError", async () => {
+// M5.9: compress() is real now (delegating to ImapClient.compress()), not a
+// NotImplementedError stub. No connect() here (same rationale as the M3.9/
+// M4.5 notes above): with no client at all, `requireClient()` throws its own
+// plain `Error` before compress()'s own capability gate is ever reached, but
+// that alone already proves this isn't the old NotImplementedError stub --
+// the deep behavior (capability gate, idempotency guard, real DEFLATE
+// round-trip) is covered without network flakiness in
+// test/unit/connection/compress-upgrade.test.ts and the RFC4978 compliance
+// specs.
+test("compress() is wired (no longer NotImplementedError)", async () => {
 	driver = new ComplianceDriver();
-	await expect(driver.authenticate("PLAIN")).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.authenticate("PLAIN", "AGZvbwBiYXI=")).rejects.toBeInstanceOf(
-		NotImplementedError,
-	);
+	await expect(driver.compress()).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
+test("authenticate() with a mechanism the registry doesn't know throws NotImplementedError", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 AUTH=GSSAPI"]),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	// GSSAPI is not (and will never be) a registered mechanism — zero bytes
+	// written, NotImplementedError rather than falling through to AuthError.
+	await expect(driver.authenticate("GSSAPI")).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+test("authenticate(mechanism) drives exactly that mechanism against the scripted server", async () => {
+	server = await ScriptedServer.start();
+	server.arm([
+		[
+			send("* OK ready\r\n"),
+			expectLine(command("CAPABILITY", { args: null })),
+			reply("OK done", ["* CAPABILITY IMAP4rev1 AUTH=PLAIN"]),
+			expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+			send("+ \r\n"),
+			expectLine({
+				description: "base64 SASL response",
+				match: (line: string) => ({ ok: /^[A-Za-z0-9+/=]+$/.test(line), reason: "" }),
+			}),
+			reply("OK AUTHENTICATE completed"),
+		],
+	]);
+	driver = new ComplianceDriver();
+	await driver.connect({ host: "127.0.0.1", port: server.port, security: "none" });
+	await driver.authenticate("PLAIN");
+	await server.assertCompleted();
+});
+
+// `uidExpunge()` (M3.9) and `uidMove()` (M3.8) are both implemented now --
+// see the dedicated "expunge()/uidExpunge() ... require a selected mailbox"
+// test below for their real (StateError, not NotImplementedError) behavior
+// on a driver with no selected mailbox.
 test("Phase 4 verbs throw NotImplementedError", async () => {
 	driver = new ComplianceDriver();
-	await expect(driver.uidExpunge("1:*")).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.uidMove("1", "Dest")).rejects.toBeInstanceOf(NotImplementedError);
 	await expect(driver.replace("1", "Dest", Buffer.from("x"))).rejects.toBeInstanceOf(
 		NotImplementedError,
 	);
@@ -87,6 +237,26 @@ test("Phase 4 verbs throw NotImplementedError", async () => {
 	await expect(driver.multiAppend("INBOX", [{ message: Buffer.from("a") }])).rejects.toBeInstanceOf(
 		NotImplementedError,
 	);
+});
+
+// M3.9: expunge()/uidExpunge() are real now (delegating to
+// MailboxSession.seq.expunge()/.expunge()), not NotImplementedError stubs.
+// uidMove() (M3.8) is included here too: it was still (incorrectly) listed as
+// NotImplementedError above even though it has been wired since M3.8. No
+// connect()/login() here (deliberately -- this file's connect()+login()
+// tests are flaky/environment-sensitive under this sandbox's networking,
+// independent of this change): with no client at all, `requireClient()`
+// throws its own plain `Error` before either method's `StateError` guard is
+// ever reached, but that alone already proves neither is the old
+// `NotImplementedError` stub -- the deep behavior (StateError message,
+// UIDPLUS gate, `exists`/event bookkeeping, return-value ordering) is
+// covered without network flakiness in test/unit/client/mailbox-verbs.test.ts
+// and test/unit/commands/expunge.test.ts.
+test("expunge()/uidExpunge()/uidMove() are wired (no longer NotImplementedError)", async () => {
+	driver = new ComplianceDriver();
+	await expect(driver.expunge()).rejects.not.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidExpunge("1:*")).rejects.not.toBeInstanceOf(NotImplementedError);
+	await expect(driver.uidMove("1", "Dest")).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
 test("Phase 4 widened signatures still throw NotImplementedError", async () => {
@@ -131,12 +301,32 @@ test("Phase 6 verbs throw NotImplementedError", async () => {
 test("Phase 5 widened signatures still throw NotImplementedError", async () => {
 	const driver = new ComplianceDriver();
 	await expect(driver.search(["ALL"], { return: ["MIN", "MAX"] })).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.select("INBOX", { condstore: true })).rejects.toBeInstanceOf(NotImplementedError);
 	await expect(
 		driver.select("INBOX", { qresync: { uidvalidity: 67890007, modseq: 90060115194045000n } }),
 	).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n })).rejects.toBeInstanceOf(NotImplementedError);
-	await expect(driver.store("1", "+FLAGS", ["\\Seen"], { unchangedSince: 320162338n })).rejects.toBeInstanceOf(NotImplementedError);
+});
+
+// M4.5: `condstore`/`changedSince`/`unchangedSince` are real now (delegating
+// to the real, capability-gated CONDSTORE paths on SELECT/FETCH/STORE), not
+// NotImplementedError stubs -- QRESYNC (immediately above) is the one
+// widened-signature option still NotImplementedError, unchanged, since it's
+// M4.6's job. With no client connected at all here (deliberately, same
+// rationale as the M3.9 note above `Phase 4 widened signatures`),
+// `requireClient()` throws its own plain `Error` before any CONDSTORE gate is
+// even reached -- proving these three are no longer the old
+// NotImplementedError stub, without needing a live connection to prove the
+// full real behavior (that's `condstore-7162.test.ts`'s job).
+test("Phase 5 widened signatures: condstore/changedSince/unchangedSince are no longer NotImplementedError (M4.5)", async () => {
+	const driver = new ComplianceDriver();
+	await expect(driver.select("INBOX", { condstore: true })).rejects.not.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n })).rejects.not.toBeInstanceOf(
+		NotImplementedError,
+	);
+	await expect(
+		driver.store("1", "+FLAGS", ["\\Seen"], { unchangedSince: 320162338n }),
+	).rejects.not.toBeInstanceOf(NotImplementedError);
 });
 
 test("driver.logs captures client logger output (BYE/failed-connect path)", async () => {

@@ -88,6 +88,31 @@ describe("BigIntToken", () => {
 		expect(num).toBe(13n);
 	});
 
+	test("Parses 2^64-1 (max 64-bit unsigned value) without precision loss", () => {
+		// Arrange
+		const token = new BigIntToken("18446744073709551615");
+
+		// Act
+		const num = token.getTrueValue();
+
+		// Assert
+		expect(num).toBe(18446744073709551615n);
+	});
+
+	test("Parses 2^53+1 (beyond Number.MAX_SAFE_INTEGER) without precision loss", () => {
+		// Arrange
+		const token = new BigIntToken("9007199254740993");
+
+		// Act
+		const num = token.getTrueValue();
+
+		// Assert
+		// A value routed through a JS number would round to 9007199254740992n
+		// (2^53) — asserting the exact +1 value proves no lossy conversion.
+		expect(num).toBe(9007199254740993n);
+		expect(num).not.toBe(9007199254740992n);
+	});
+
 	test("Throws TokenizationError for non-numeric values", () => {
 		// Arrange
 		const shouldThrow = () => {

@@ -1,4 +1,5 @@
 import { decodeWords } from "../../encoding";
+import { ParsingError } from "../../../errors";
 import { LexerTokenList, TokenTypes } from "../../../lexer";
 import {
 	getNStringValue,
@@ -6,14 +7,39 @@ import {
 	splitSpaceSeparatedList,
 } from "../../utility";
 
+/** RFC 3501/9051 §7.5 `address`'s exact positional field count (addr-name,
+ *  addr-adl, addr-mailbox, addr-host). A malformed/truncated address tuple
+ *  with fewer fields would otherwise leave later destructured fields (e.g.
+ *  `host`) `undefined`, crashing inside `getNStringValue`'s raw
+ *  `.isType()` access with an untyped TypeError instead of a typed,
+ *  catchable ParsingError -- mirrors `ENVELOPE_FIELD_COUNT` in
+ *  `./envelope.ts`. */
+const ADDRESS_FIELD_COUNT = 4;
+
+/** RFC 3501 §7.5 `address`: an `(addr-name SP addr-adl SP addr-mailbox SP
+ *  addr-host)` 4-tuple parsed out of an ENVELOPE address list. */
 export class Address {
+	/** `addr-name` -- the display name (RFC 2822 phrase), MIME-word decoded. */
 	public readonly name: null | string;
+	/** `addr-adl` -- the source route/at-domain-list, rarely used. */
 	public readonly route: null | string;
+	/** `addr-mailbox` -- the mailbox local-part, or the group display-name
+	 *  when this address is a group start/end marker. */
 	public readonly mailbox: null | string;
+	/** `addr-host` -- the domain part, or `null` for a group start/end
+	 *  marker (RFC 2822 group syntax). */
 	public readonly host: null | string;
 
 	constructor(tokens: LexerTokenList) {
-		const [name, route, mailbox, host] = splitSpaceSeparatedList(tokens);
+		const parts = splitSpaceSeparatedList(tokens);
+		if (parts.length !== ADDRESS_FIELD_COUNT) {
+			throw new ParsingError(
+				`Address must have exactly ${ADDRESS_FIELD_COUNT} fields, ` +
+					`received ${parts.length}`,
+				tokens,
+			);
+		}
+		const [name, route, mailbox, host] = parts;
 
 		this.name = getNStringValue(name);
 		if (this.name) {
@@ -25,19 +51,31 @@ export class Address {
 	}
 }
 
+/** An RFC 2822 group of addresses, denoted in the ENVELOPE address list by a
+ *  start marker address (`nil` host, mailbox = group name) and terminated by
+ *  an end marker address (`nil` host and `nil` mailbox). */
 export class AddressGroup {
+	/** The addresses collected inside this group. */
 	public list: Address[];
 
-	constructor(public readonly name: string) {
+	constructor(
+		/** The group's display name (from the start marker's mailbox field). */
+		public readonly name: string,
+	) {
 		this.list = [];
 	}
 
+	/** Appends an address to this group. */
 	addAddress(addr: Address) {
 		this.list.push(addr);
 	}
 }
 
+/** A parsed ENVELOPE address-list field (e.g. `from`, `to`, `cc`), expanding
+ *  RFC 2822 group syntax into {@link AddressGroup} entries alongside plain
+ *  {@link Address} entries. */
 export class AddressList {
+	/** The addresses and groups in this list, in wire order. */
 	public list: (Address | AddressGroup)[];
 
 	constructor(tokens: LexerTokenList) {

@@ -18,11 +18,9 @@
  *   not send LOGIN — that prohibition is tested there. No duplicate here.
  *
  *   AUTH=PLAIN leg: the client must be able to send the AUTHENTICATE command
- *   with the PLAIN mechanism. driver.authenticate() is unimplemented today
- *   (NotImplementedError). We script the full expected PLAIN exchange
+ *   with the PLAIN mechanism. We script the full expected PLAIN exchange
  *   (capability advertisement → AUTHENTICATE PLAIN → base64 challenge →
- *   base64 credentials → tagged OK) so the test self-actualizes when
- *   authenticate() is implemented.
+ *   base64 credentials → tagged OK) and drive driver.authenticate() for real.
  *
  * RFC3501-6.1.2-1 (NOOP): covered in 2.2-commands.test.ts. No test here.
  */
@@ -52,13 +50,11 @@ const f = useComplianceFixture();
 // The base64 payload for "\0user\0pass" is "AHVzZXIAcGFzcw=="
 // (\0=0x00, "user"=75 73 65 72, \0=0x00, "pass"=70 61 73 73)
 //
-// driver.authenticate() is unimplemented today → annotated 'unimplemented'.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.1.1-1"],
 		profiles: ["rev1"],
 		title: "client can issue AUTHENTICATE PLAIN (AUTH=PLAIN capability leg)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -67,11 +63,10 @@ complianceTest(
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=PLAIN"]),
 				// Complete SASL PLAIN exchange: AUTHENTICATE PLAIN → challenge → credentials → OK.
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: ["IMAP4rev1", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.authenticate() is not yet implemented — NotImplementedError expected.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},

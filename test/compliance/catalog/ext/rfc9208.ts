@@ -215,9 +215,8 @@ const rfc9208: CatalogModule = {
 				"final 'A client MUST be prepared ...' sentence binds the client and is " +
 				"quoted. Testable: script a SETQUOTA whose tagged response is NO ('setquota " +
 				"error: can't set that data') and assert the client surfaces the failure " +
-				"gracefully rather than treating a NO as protocol error / crashing. Currently " +
-				"self-actualizing fail: driver.setquota() throws NotImplementedError, so the " +
-				"client has no SETQUOTA surface to exercise this path at all. Standalone in " +
+				"gracefully rather than treating a NO as protocol error / crashing. " +
+				"driver.setquota() is genuinely real, so this row passes for real. Standalone in " +
 				"rev2; profiles ['rev1','rev2'].",
 		},
 
@@ -249,9 +248,9 @@ const rfc9208: CatalogModule = {
 				"makes the command atoms normative. A client using QUOTA must send " +
 				"'GETQUOTA <root>', 'GETQUOTAROOT <mailbox>', and 'SETQUOTA <root> " +
 				"(<resource> <limit> ...)' with an astring quota-root-name and a " +
-				"parenthesized setquota-list. Testable via the exact command form; currently " +
-				"self-actualizing fail (driver.getquota/getquotaroot/setquota throw " +
-				"NotImplementedError). Standalone in rev2; profiles ['rev1','rev2'].",
+				"parenthesized setquota-list. Testable via the exact command form; " +
+				"driver.getquota/getquotaroot/setquota are all genuinely real, so this row " +
+				"passes for real. Standalone in rev2; profiles ['rev1','rev2'].",
 		},
 
 		// ── §4.2 Responses (judgment — client parse/accept duty) ─────────────────

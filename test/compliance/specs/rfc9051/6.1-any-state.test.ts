@@ -15,12 +15,9 @@
  *                    (RFC9051-6.2.3-4). Not duplicated here.
  * RFC9051-6.1.1-2: Client MUST implement AUTH=PLAIN on cleartext and Implicit
  *                  TLS ports. Observable: the client can issue AUTHENTICATE
- *                  PLAIN and complete the SASL exchange. driver.authenticate()
- *                  is unimplemented today → self-actualizing script, annotated
- *                  unimplemented.
+ *                  PLAIN and complete the SASL exchange.
  * RFC9051-6.1.2-1: NOOP usable as a periodic poll (MAY). Observable: the client
- *                  offers a way to issue NOOP. driver.noop() is unimplemented
- *                  today → annotated unimplemented (matches RFC3501-6.1.2-1).
+ *                  offers a way to issue NOOP (matches RFC3501-6.1.2-1).
  *
  * All entries in §6.1 are testable per the catalog; none are skipped.
  *
@@ -38,7 +35,7 @@ import { expectLine, reply, send, startTls } from "../../harness/script";
 import { loadCertFixture } from "../../harness/tls";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { authPlainExchange, greet, sessionPrelude } from "../../runner/state";
+import { authPlainExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -48,8 +45,7 @@ const localhost = loadCertFixture("localhost");
 // The client MUST implement STARTTLS on cleartext ports. Observable: when the
 // server advertises STARTTLS in its CAPABILITY response on a cleartext port
 // and the consumer requests a STARTTLS security policy, the client issues
-// STARTTLS and completes the TLS upgrade. The current client's 'starttls'
-// path is broken (see RFC9051-6.2.1-* in 6.2-notauth.test.ts) → violation.
+// STARTTLS and completes the TLS upgrade.
 //
 // (The LOGINDISABLED leg of this same sentence is the prohibition tested as
 // RFC9051-6.2.3-4 in 6.2-notauth.test.ts; not duplicated here.)
@@ -58,7 +54,6 @@ complianceTest(
 		reqs: ["RFC9051-6.1.1-1"],
 		profiles: ["rev2"],
 		title: "client acts on an advertised STARTTLS capability by upgrading on a cleartext port",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -97,8 +92,6 @@ complianceTest(
 // The client MUST implement AUTH=PLAIN. On the wire the client must be able to
 // issue AUTHENTICATE PLAIN and complete the SASL PLAIN exchange (server sends
 // "+ " challenge, client replies with base64 credentials, server tagged OK).
-// driver.authenticate() is unimplemented today → annotated unimplemented; the
-// scripted exchange self-actualizes when authenticate() is implemented.
 //
 // Cross-cite RFC9051-6.2.2-1 (client MUST implement the AUTHENTICATE command)
 // — the same wire exchange witnesses both the AUTH=PLAIN capability duty and
@@ -109,7 +102,6 @@ complianceTest(
 		reqs: ["RFC9051-6.1.1-2"],
 		profiles: ["rev2"],
 		title: "client can issue AUTHENTICATE PLAIN (AUTH=PLAIN capability leg)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -117,7 +109,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"], { profile: "rev2" }),
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: ["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -130,20 +122,22 @@ complianceTest(
 // rev2 recognizes NOOP as a valid periodic-poll mechanism (cross-referencing
 // IDLE §6.3.13 as preferred for real-time updates). Observable: the client
 // offers a way to issue NOOP, and the NOOP command carries no arguments.
-// driver.noop() is unimplemented today → annotated unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.1.2-1"],
 		profiles: ["rev2"],
 		title: "client can issue NOOP (usable as a periodic poll)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code): forces the CAPABILITY
+				// round trip below to actually happen (an inline-capability rev2
+				// greeting would let the client skip it, leaving this expectLine
+				// unconsumed).
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
 				// NOOP takes no arguments; args:null fails on any trailing token.
@@ -157,7 +151,6 @@ complianceTest(
 			port: server.port,
 			security: "none",
 		});
-		// driver.noop() is not yet implemented — NotImplementedError expected.
 		await driver.noop();
 		await server.assertCompleted();
 	},

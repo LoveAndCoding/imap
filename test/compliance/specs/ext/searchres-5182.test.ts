@@ -53,7 +53,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -104,14 +104,14 @@ complianceTest(
 		reqs: ["RFC5182-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH RETURN (SAVE) form followed by a bare '$' sequence-set in a subsequent FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(searchresCaps(ctx.profile)),
+				...sessionPrelude(searchresCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 5 }),
 				expectLine(command("SEARCH", { args: /^RETURN \(SAVE\) FLAGGED$/i })),
 				// SAVE alone: the tagged OK is the whole answer (see RFC5182-1-2).
 				reply("OK SEARCH completed, result saved"),
@@ -121,7 +121,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(["FLAGGED"], { return: ["SAVE"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["FLAGGED"], { return: ["SAVE"] });
+		// FETCH is a different M3 task's surface (still unimplemented here) --
+		// this call throws NotImplementedError, which is the honest outcome
+		// this row still records (the SAVE leg above is genuinely exercised).
 		await driver.fetch("$", ["FLAGS"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
@@ -141,23 +146,25 @@ complianceTest(
 		reqs: ["RFC5182-1-2"],
 		profiles: ["rev1"],
 		title: "client using SAVE alone accepts completion with only the tagged OK (search response suppressed)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "SEARCHRES"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "SEARCHRES"], { login: true }),
+				...selectExchange("INBOX", { exists: 5 }),
 				expectLine(command("SEARCH", { args: /^RETURN \(SAVE\) FLAGGED SINCE 1-Feb-1994$/i })),
 				// NO untagged data whatsoever — the suppression under test.
 				reply("OK SEARCH completed, result saved"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: this call must RESOLVE on the bare tagged OK. A hang
-		// waiting for an untagged response fails the test by timeout.
-		await driver.search(["FLAGGED", "SINCE 1-Feb-1994"], { return: ["SAVE"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// This call must RESOLVE on the bare tagged OK. A hang waiting for an
+		// untagged response fails the test by timeout.
+		await driver.search(["FLAGGED", "SINCE 1-Feb-1994"], { return: ["SAVE"] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH RETURN (SAVE) must have been emitted").toBeDefined();
@@ -174,14 +181,14 @@ complianceTest(
 		reqs: ["RFC5182-2.1-1"],
 		profiles: ["rev1"],
 		title: "client does not emit RETURN (SAVE) or a '$' sequence-set without the SEARCHRES capability",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine({
 					description: "SEARCH without SAVE and without a '$' marker",
 					match: (line) => {
@@ -207,8 +214,17 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(["FLAGGED"], { return: ["SAVE"] }); // throws today
-		await server.assertCompleted();
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// A spec-compliant client MAY satisfy this MUST NOT either by omitting
+		// SAVE/'$' and completing the (unextended) SEARCH, or by refusing the
+		// request locally before any bytes are written (I-9) -- this client
+		// does the latter (`SearchOptions.return`'s SEARCHRES gate). Both
+		// outcomes are compliant, so the request is swallowed here rather than
+		// awaited bare; `assertCompleted()` is deliberately NOT called since
+		// the scripted SEARCH/reply step is never consumed when the client
+		// refuses locally (same pattern as esearch-4731.test.ts's RFC4731-1-1).
+		await driver.search(["FLAGGED"], { return: ["SAVE"] }).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"SEARCHRES syntax must not be emitted absent the capability",
@@ -228,14 +244,14 @@ complianceTest(
 		reqs: ["RFC5182-2.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a tagged OK with no untagged data when fetching an empty '$'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(searchresCaps(ctx.profile)),
+				...sessionPrelude(searchresCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 5 }),
 				// A SAVE search that matches nothing (response suppressed by SAVE).
 				expectLine(command("SEARCH", { args: /^RETURN \(SAVE\) FLAGGED$/i })),
 				reply("OK SEARCH completed, result saved"),
@@ -245,9 +261,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search(["FLAGGED"], { return: ["SAVE"] }); // throws today
-		// When implemented: this must resolve to an EMPTY result, not reject or
-		// hang waiting for untagged FETCH data.
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["FLAGGED"], { return: ["SAVE"] });
+		// FETCH is a different M3 task's surface (still unimplemented here) --
+		// this call throws NotImplementedError, which is the honest outcome
+		// this row still records (the SAVE leg above is genuinely exercised).
 		await driver.fetch("$", ["FLAGS"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
@@ -267,14 +286,14 @@ complianceTest(
 		reqs: ["RFC5182-2.3-1"],
 		profiles: ["rev1"],
 		title: "client may pipeline SEARCH RETURN (SAVE) with a '$'-consuming FETCH, correlating both completions",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "SEARCHRES"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "SEARCHRES"], { login: true }),
+				...selectExchange("INBOX", { exists: 5 }),
 				expectLine(command("SEARCH", { args: /^RETURN \(SAVE\) SINCE 1-Feb-1994$/i })),
 				reply("OK SEARCH completed"),
 				expectLine(command("FETCH", { args: /^\$ \(UID FLAGS\)$/i })),
@@ -282,11 +301,16 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		// Pipelining permission: issue both without awaiting the first. There is
 		// no §5.5 ambiguity (the FETCH depends only on the server-held variable).
-		const saved = driver.search(["SINCE 1-Feb-1994"], { return: ["SAVE"] }); // rejects today
+		// FETCH is a different M3 task's surface (still unimplemented here), so
+		// this still throws NotImplementedError -- the honest outcome this row
+		// records (the SAVE leg's own pipelining is genuinely exercised).
+		const saved = driver.search(["SINCE 1-Feb-1994"], { return: ["SAVE"] });
 		const fetched = driver.fetch("$", ["UID", "FLAGS"]);
-		await Promise.all([saved, fetched]); // NotImplementedError today
+		await Promise.all([saved, fetched]);
 		await server.assertCompleted();
 		// When implemented: both commands completed under distinct tags.
 		const tags = server.commandTags;

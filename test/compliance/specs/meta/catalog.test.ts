@@ -109,3 +109,17 @@ test("catalog contains the Phase 6 reconciliation-delta sources", () => {
 		]),
 	);
 });
+
+test("catalog contains the M2 suite-growth sources", () => {
+	// M2.12 (modern-API M2 mailbox-management milestone): RFC 3691 UNSELECT,
+	// promoted from the registry-coverage out-of-scope borderline list.
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(expect.arrayContaining(["RFC3691"]));
+});
+
+test("catalog contains the M5 suite-growth sources", () => {
+	// M5.14 (modern-API M5 extension-families milestone): RFC 9586 UIDONLY,
+	// promoted from the registry-coverage out-of-scope borderline list.
+	const sources = allCatalogModules.map((m) => m.source);
+	expect(sources).toEqual(expect.arrayContaining(["RFC9586"]));
+});

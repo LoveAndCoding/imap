@@ -31,7 +31,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -43,25 +43,35 @@ const cs = (name: string) => `(?:${name}|"${name}")`;
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises bare SORT but NOT SORT=DISPLAY. A conformant client
 // asked for a display ordering must not emit the ungated criteria (fall back
-// or fail locally — either way the atoms stay off the wire). driver.sort()
-// throws today → unimplemented; the negative transcript check is the
-// non-vacuous assertion once a SORT surface exists.
+// or fail locally — either way the atoms stay off the wire). `SortCommand`'s
+// constructor refuses locally (`CapabilityError`, zero bytes written, I-9) —
+// the same "compliant either way" posture `fuzzy-6203.test.ts`'s RFC6203-1-1
+// test uses for its own analogous ungated-criteria refusal.
 complianceTest(
 	{
 		reqs: ["RFC5957-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit DISPLAYFROM/DISPLAYTO when only bare SORT is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		// Bare SORT only — the display criteria are NOT available here.
-		server.arm([[...sessionPrelude(["IMAP4rev1", "SORT"])]]);
+		server.arm([
+			[
+				...sessionPrelude(["IMAP4rev1", "SORT"], { login: true }),
+				...selectExchange("INBOX"),
+			],
+		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["DISPLAYFROM"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// Refused locally (CapabilityError) before any bytes are written — no
+		// SORT/reply step is scripted at all, so this rejection is expected and
+		// swallowed here rather than awaited bare (same pattern as
+		// fuzzy-6203.test.ts's RFC6203-1-1 test).
+		await driver.sort(["DISPLAYFROM"], ["ALL"], "US-ASCII").catch(() => undefined);
 		await server.assertCompleted();
-		// When implemented: nothing carrying the ungated criteria reached the wire.
 		expect(
 			server.transcript.clientLines(),
 			"DISPLAYFROM/DISPLAYTO must not be emitted absent SORT=DISPLAY",
@@ -82,14 +92,14 @@ complianceTest(
 		reqs: ["RFC5957-4-1", "RFC5957-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SORT with the DISPLAYFROM criterion: bare atom inside the criteria list, charset follows",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT", "SORT=DISPLAY"]),
+				...sessionPrelude(["IMAP4rev1", "SORT", "SORT=DISPLAY"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("SORT", {
 						args: new RegExp(`^\\(DISPLAYFROM\\) ${cs("US-ASCII")} ALL$`, "i"),
@@ -99,7 +109,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["DISPLAYFROM"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["DISPLAYFROM"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();
@@ -118,14 +130,14 @@ complianceTest(
 		reqs: ["RFC5957-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SORT criteria grammar admits REVERSE DISPLAYTO (display key composes with REVERSE)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT", "SORT=DISPLAY"]),
+				...sessionPrelude(["IMAP4rev1", "SORT", "SORT=DISPLAY"], { login: true }),
+				...selectExchange("INBOX"),
 				expectLine(
 					command("SORT", {
 						args: new RegExp(`^\\(REVERSE DISPLAYTO\\) ${cs("US-ASCII")} ALL$`, "i"),
@@ -135,7 +147,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.sort(["REVERSE", "DISPLAYTO"], ["ALL"], "US-ASCII"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.sort(["REVERSE", "DISPLAYTO"], ["ALL"], "US-ASCII");
 		await server.assertCompleted();
 		const sort = server.commandLines.find((l) => l.verb === "SORT");
 		expect(sort, "SORT must have been emitted").toBeDefined();

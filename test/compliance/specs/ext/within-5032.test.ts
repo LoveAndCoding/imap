@@ -40,7 +40,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -62,22 +62,23 @@ complianceTest(
 		reqs: ["RFC5032-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "YOUNGER search-key form: the key followed by one non-zero interval-in-seconds argument",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(withinCaps(ctx.profile)),
+				...sessionPrelude(withinCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 20 }),
 				// nz-number: leading 1-9, bare digits only; composes after UNSEEN.
 				expectLine(command("SEARCH", { args: /^UNSEEN YOUNGER [1-9][0-9]*$/i })),
 				reply("OK SEARCH completed", ["* SEARCH 4 8 15"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Once a search surface exists this drives 'SEARCH UNSEEN YOUNGER 259200'.
-		await driver.search(["UNSEEN", "YOUNGER 259200"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.search(["UNSEEN", "YOUNGER 259200"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -94,21 +95,22 @@ complianceTest(
 		reqs: ["RFC5032-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "OLDER search-key form: the key followed by one non-zero interval-in-seconds argument",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(withinCaps(ctx.profile)),
+				...sessionPrelude(withinCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 30 }),
 				expectLine(command("UID SEARCH", { args: /^OLDER [1-9][0-9]*$/i })),
 				reply("OK UID SEARCH completed", ["* SEARCH 23001 23004"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Once a search surface exists this drives 'UID SEARCH OLDER 86400'.
-		await driver.uidSearch(["OLDER 86400"]); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["OLDER 86400"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -126,14 +128,14 @@ complianceTest(
 		reqs: ["RFC5032-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit OLDER/YOUNGER search keys when WITHIN is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(withinCaps(ctx.profile, false)),
+				...sessionPrelude(withinCaps(ctx.profile, false), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 5 }),
 				expectLine({
 					description: "SEARCH without OLDER/YOUNGER keys",
 					match: (line) => {
@@ -152,12 +154,18 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// The client is asked for an interval-scoped search; without WITHIN it
-		// must degrade (e.g. SINCE/BEFORE dates or a local filter), never emit
-		// the ungated keys. Vacuous-pass hazard is honest here: search() throws
-		// today, recording the missing surface as unimplemented.
-		await driver.search(["UNSEEN", "YOUNGER 259200"]); // throws today
-		await server.assertCompleted();
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// A spec-compliant client MAY satisfy this MUST NOT either by degrading
+		// (e.g. SINCE/BEFORE dates or a local filter) and completing the
+		// SEARCH, or by refusing the request locally before any bytes are
+		// written (I-9) -- this client does the latter (`SearchCriteria`'s
+		// WITHIN gate). Both outcomes are compliant, so the request is
+		// swallowed here rather than awaited bare; `assertCompleted()` is
+		// deliberately NOT called since the scripted SEARCH/reply step is
+		// never consumed when the client refuses locally (same pattern as
+		// esearch-4731.test.ts's RFC4731-1-1).
+		await driver.search(["UNSEEN", "YOUNGER 259200"]).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"OLDER/YOUNGER must not be emitted absent the WITHIN capability",

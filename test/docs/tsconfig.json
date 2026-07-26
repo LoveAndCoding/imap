@@ -1,0 +1,15 @@
+{
+	// Compile-only check for docs/MIGRATION.md's embedded samples (task
+	// M6.5). Isolated from the root build tsconfig (which pins
+	// rootDir:"src" for `tsc -d`'s dist/ layout) the same way
+	// test/compliance/tsconfig.json is isolated from it -- this directory's
+	// files live outside src/, so rootDir must be left for TypeScript to
+	// infer rather than inherited.
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"outDir": null,
+		"rootDir": null,
+		"types": ["node"]
+	},
+	"include": ["./**/*"]
+}

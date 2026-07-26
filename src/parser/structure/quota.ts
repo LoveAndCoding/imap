@@ -5,15 +5,35 @@ import { matchesFormat, splitSpaceSeparatedList } from "../utility";
 class Quota {
 	constructor(
 		public readonly resource: string,
-		public readonly current: number,
-		public readonly limit: number,
+		// RFC 9051 Appendix D (formal syntax: number64) / RFC 9208 (QUOTA
+		// extension): quota usage and limits are number64 quantities. The
+		// lexer promotes values above MAX_ALLOWED_NUMBER (2^32)
+		// to a BigIntToken, so these surface as bigint only once they exceed
+		// the 32-bit range — matching the number-or-bigint pattern used for
+		// MODSEQ (src/parser/structure/fetch/modseq.ts).
+		public readonly current: number | bigint,
+		public readonly limit: number | bigint,
 	) {}
 }
 
+/**
+ * `QUOTA` response (RFC 9208 §5) -- reports the resource usage/limit
+ * pairs for a single quota root.
+ */
 export class QuotaResponse {
+	/** The quota root name this response describes. */
 	public readonly rootName: string;
+	/** The resource usage/limit triplets carried on this quota root. */
 	public readonly quotas: Quota[];
 
+	/**
+	 * Tests whether `tokens` is an untagged QUOTA response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link QuotaResponse}, or `null` if `tokens` is not a
+	 * QUOTA response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "QUOTA" },
@@ -27,8 +47,17 @@ export class QuotaResponse {
 	}
 
 	constructor(tokens: LexerTokenList) {
+		// LOW review finding: `tokens` here is the QUOTA response's content
+		// AFTER "QUOTA" SP was already sliced off by `match()` below -- a
+		// truncated line (e.g. a bare "QUOTA" with nothing after it) makes
+		// `tokens` (and so `nameToken`) empty/`undefined`, and the pre-fix
+		// code called `.isType(...)` on it unconditionally, raising a raw
+		// `TypeError` instead of this module's own `ParsingError` idiom
+		// (masked today only by `UntaggedResponse`'s blanket per-checker
+		// try/catch, per that class's own tolerance-backstop comment).
 		const [nameToken] = tokens;
 		if (
+			!nameToken ||
 			!(
 				nameToken.isType(TokenTypes.atom) ||
 				nameToken.isType(TokenTypes.string)
@@ -50,6 +79,7 @@ export class QuotaResponse {
 			const limitToken = tripletTokens[t + 4];
 
 			if (
+				!resourceToken ||
 				!(
 					resourceToken.isType(TokenTypes.atom) ||
 					resourceToken.isType(TokenTypes.string)
@@ -57,8 +87,16 @@ export class QuotaResponse {
 			) {
 				throw new ParsingError("Invalid QUOTA resource name", tokens);
 			} else if (
-				!currentToken.isType(TokenTypes.number) ||
-				!limitToken.isType(TokenTypes.number)
+				!currentToken ||
+				!limitToken ||
+				!(
+					currentToken.isType(TokenTypes.number) ||
+					currentToken.isType(TokenTypes.bigint)
+				) ||
+				!(
+					limitToken.isType(TokenTypes.number) ||
+					limitToken.isType(TokenTypes.bigint)
+				)
 			) {
 				throw new ParsingError("Invalid QUOTA resource values", tokens);
 			}
@@ -66,17 +104,31 @@ export class QuotaResponse {
 			this.quotas.push(
 				new Quota(
 					resourceToken.getTrueValue(),
-					currentToken.getTrueValue(),
-					limitToken.getTrueValue(),
+					currentToken.getTrueValue() as number | bigint,
+					limitToken.getTrueValue() as number | bigint,
 				),
 			);
 		}
 	}
 }
 
+/**
+ * `QUOTAROOT` response (RFC 9208 §5) -- names the quota root(s) that
+ * apply to a mailbox given in a preceding GETQUOTAROOT command.
+ */
 export class QuotaRootResponse {
+	/** The quota root names that apply to the requested mailbox, in wire
+	 *  order. */
 	public readonly rootNames: string[];
 
+	/**
+	 * Tests whether `tokens` is an untagged QUOTAROOT response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link QuotaRootResponse}, or `null` if `tokens` is not
+	 * a QUOTAROOT response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "QUOTAROOT" },

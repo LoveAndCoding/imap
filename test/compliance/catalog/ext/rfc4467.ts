@@ -163,7 +163,7 @@ const rfc4467: CatalogModule = {
 				"RFC4467-3-3..5 are cataloged as testable CONSTRUCTION-FORM entries (the literal " +
 				"syntax the client must emit for the form it picked); this entry captures only the " +
 				"untestable CHOICE-of-which-form. Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-3-2",
@@ -184,7 +184,7 @@ const rfc4467: CatalogModule = {
 				"addressing a specific message or message part. The reciprocal server enforcement " +
 				"('The server MUST return NIL for any IMAP URL that references' one of those forms, " +
 				"§7 BASE.6.3.URLFETCH) is excluded as server-only. Conditional; standalone in rev2, " +
-				'so [\"rev1\",\"rev2\"].',
+				'so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-3-3",
@@ -208,7 +208,7 @@ const rfc4467: CatalogModule = {
 				"access identifier MUST match the authorization identifier') binds the client to use " +
 				"the SASL-negotiated authorization identifier, not an arbitrary userid, for that " +
 				'prefix — folded into this entry as it governs the same construction act. ' +
-				'Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'Conditional; standalone in rev2, so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-3-4",
@@ -226,7 +226,7 @@ const rfc4467: CatalogModule = {
 				"the optional access-identifier forms. Testable black-box CONSTRUCTION shape: a " +
 				"client choosing this form emits exactly the bare literal token 'authuser' (no " +
 				"userid suffix) as the access identifier. Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-3-5",
@@ -244,7 +244,7 @@ const rfc4467: CatalogModule = {
 				"the optional access-identifier forms. Testable black-box CONSTRUCTION shape: a " +
 				"client choosing this form emits exactly the bare literal token 'anonymous' (no " +
 				"userid suffix) as the access identifier. Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-3-6",
@@ -279,7 +279,7 @@ const rfc4467: CatalogModule = {
 				"server that returns the worked-example BAD failure for a missing access identifier " +
 				"is treated as a graceful, expected failure rather than a protocol error). " +
 				"Conditional on the client using GENURLAUTH; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 
 		// ── §7 Additional Commands ───────────────────────────────────────────────
@@ -326,7 +326,7 @@ const rfc4467: CatalogModule = {
 				"paired with its own mechanism name (not one shared mechanism for a list of bare " +
 				"URLs). Testable black-box: a compliant client's GENURLAUTH always alternates url / " +
 				"mechanism tokens, never a bare URL without a following mechanism. Conditional; " +
-				'standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'standalone in rev2, so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-7-3",
@@ -351,7 +351,7 @@ const rfc4467: CatalogModule = {
 				"compliant client may issue URLFETCH in authenticated state without a prior SELECT. " +
 				"Testable black-box: script a URLFETCH with 1+ url-full arguments and with no prior " +
 				"SELECT and assert the client accepts the exchange. Conditional; standalone in rev2, " +
-				'so [\"rev1\",\"rev2\"].',
+				'so ["rev1","rev2"].',
 		},
 
 		// ── §8 Additional Responses ───────────────────────────────────────────────
@@ -373,10 +373,10 @@ const rfc4467: CatalogModule = {
 				"obligation: a client using URLAUTH must accept '[URLMECH <mechanism> ...]' inside " +
 				"an OK response — untagged OR tagged — to RESETKEY, and inside an untagged OK to " +
 				"SELECT/EXAMINE, without erroring, per ABNF 'resp-text-code =/ \"URLMECH\" SP " +
-				'"INTERNAL" *(SP mechanism [\"=\" base64])\'. Testable black-box: script each of the ' +
+				'"INTERNAL" *(SP mechanism ["=" base64])\'. Testable black-box: script each of the ' +
 				"three command completions carrying the resp-code (e.g. 'a33 OK [URLMECH INTERNAL " +
 				'XSAMPLE=P34OKhO7VEkCbsiYY8rGEg==] done\') and assert the client completes without ' +
-				'error. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'error. Conditional; standalone in rev2, so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-8-2",
@@ -399,7 +399,7 @@ const rfc4467: CatalogModule = {
 				"now-authorized URL string(s) from this response rather than erroring or discarding " +
 				"them. Testable black-box: script the untagged GENURLAUTH response before the tagged " +
 				"OK and assert the client surfaces the returned URL(s). Conditional; standalone in " +
-				'rev2, so [\"rev1\",\"rev2\"].',
+				'rev2, so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-8-3",
@@ -423,7 +423,7 @@ const rfc4467: CatalogModule = {
 				"assumes the fetched item is always a non-NIL string would mishandle the documented " +
 				"invalid-URL case. Testable black-box: script both a successful URLFETCH (literal " +
 				"body) and a NIL-body URLFETCH exchange and assert the client accepts both without " +
-				'error. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'error. Conditional; standalone in rev2, so ["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-8-4",
@@ -446,7 +446,7 @@ const rfc4467: CatalogModule = {
 				"regardless of selection state. Testable black-box: script a URLFETCH in " +
 				"authenticated (not-selected) state, and again with an unrelated mailbox selected, " +
 				"and assert the client accepts the untagged URLFETCH response identically in both " +
-				'cases. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'cases. Conditional; standalone in rev2, so ["rev1","rev2"].',
 		},
 
 		// ── §9 Formal Syntax (client-binding wire shapes not otherwise pinned) ──
@@ -467,7 +467,7 @@ const rfc4467: CatalogModule = {
 				"is no '[SP mechanism]'-without-mailbox alternative). Companion to RFC4467-7-1's " +
 				"prose-level command-shape entry. Judgment level MUST (grammar-fixed structure, no " +
 				'inline 2119 keyword). Testable black-box. Conditional; standalone in rev2, so ' +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-9-2",
@@ -493,7 +493,7 @@ const rfc4467: CatalogModule = {
 				"confirming a client requesting authorization sends the not-yet-authorized rump URL, " +
 				"not a pre-existing authorized one. Companion to RFC4467-7-2's prose-level entry. " +
 				"Judgment level MUST. Testable black-box. Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC4467-9-3",
@@ -515,7 +515,7 @@ const rfc4467: CatalogModule = {
 				"this document defines; RFC 5524 extends it with an optional parenthesized " +
 				"url-fetch-ext form carrying per-URL parameters (cross-referenced in rfc5524.ts, " +
 				"not duplicated here). Companion to RFC4467-7-3's prose-level entry. Judgment level " +
-				'MUST. Testable black-box. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].',
+				'MUST. Testable black-box. Conditional; standalone in rev2, so ["rev1","rev2"].',
 		},
 	],
 };

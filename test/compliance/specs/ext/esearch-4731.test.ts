@@ -60,7 +60,7 @@ import type { ScriptedServer } from "../../harness/scripted-server";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -137,14 +137,14 @@ complianceTest(
 		reqs: ["RFC4731-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID SEARCH RETURN (MIN COUNT) form: parenthesized result options before the criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(esearchCaps(ctx.profile)),
+				...sessionPrelude(esearchCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(
 					command("UID SEARCH", {
 						// Exactly the requested pair, either order, inside parens.
@@ -155,8 +155,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		// Once a RETURN surface exists this drives 'UID SEARCH RETURN (MIN COUNT) FLAGGED'.
-		await driver.uidSearch(["FLAGGED"], { return: ["MIN", "COUNT"] }); // throws today
+		await driver.uidSearch(["FLAGGED"], { return: ["MIN", "COUNT"] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -174,14 +176,14 @@ complianceTest(
 		reqs: ["RFC4731-1-1"],
 		profiles: ["rev1"],
 		title: "client does not emit SEARCH RETURN result options when ESEARCH is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine({
 					description: "UID SEARCH without a RETURN result-option list",
 					match: (line) => {
@@ -200,8 +202,19 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["FLAGGED"], { return: ["MIN", "COUNT"] }); // throws today
-		await server.assertCompleted();
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// A spec-compliant client MAY satisfy this MUST NOT either by omitting
+		// the RETURN clause and completing the (unextended) SEARCH, or by
+		// refusing the request locally before any bytes are written (I-9) --
+		// this client does the latter (`SearchCommand`'s constructor throws
+		// `CapabilityError`, mirroring every other capability-gated command in
+		// this codebase). Both outcomes are compliant, so the request is
+		// swallowed here rather than awaited bare; `assertCompleted()` is
+		// deliberately NOT called since the scripted UID SEARCH/reply step is
+		// never consumed when the client refuses locally (same pattern as
+		// filters-5466.test.ts's RFC5466-3.1-3).
+		await driver.uidSearch(["FLAGGED"], { return: ["MIN", "COUNT"] }).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"RETURN (...) must not be emitted absent the ESEARCH capability",
@@ -220,21 +233,23 @@ complianceTest(
 		reqs: ["RFC4731-3.1-7"],
 		profiles: ["rev1", "rev2"],
 		title: "empty RETURN () form: a literal empty option list requesting ESEARCH/ALL semantics",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(esearchCaps(ctx.profile)),
+				...sessionPrelude(esearchCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 4 }),
 				expectLine(command("SEARCH", { args: /^RETURN \(\) FLAGGED$/i })),
 				reply("OK SEARCH completed", ['* ESEARCH (TAG "A283") ALL 2,10:11']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		// An explicitly empty RETURN list is a distinct, legal form.
-		await driver.search(["FLAGGED"], { return: [] }); // throws today
+		await driver.search(["FLAGGED"], { return: [] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();

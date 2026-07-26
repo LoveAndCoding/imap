@@ -1,0 +1,340 @@
+# Modern API — Continuation Runbook (handoff for successor sessions)
+
+**Purpose:** everything a fresh session (Opus/Sonnet-driven) needs to carry
+the modern-API implementation from its current state to the 1.0 close-out,
+surviving spend-limit interruptions. Read this FIRST, then the two
+authorities it defers to:
+
+- **Spec (normative):** `docs/superpowers/specs/2026-07-12-modern-api-spec.md`
+  — on conflict the spec wins and gets amended, not ignored.
+- **Top-level plan:** `docs/superpowers/plans/2026-07-12-modern-api-implementation-plan.md`
+  — milestones M0–M6, ground rules, exit criteria.
+- **M2 detail plan:** `docs/superpowers/plans/2026-07-12-modern-api-m2-mailbox-management.md`.
+
+User-approved session decisions (do not re-ask): implement ALL of M0–M6;
+all work on branch `claude/modern-api-implementation-x3r57j`, commit per
+task-cluster, push after every commit; ONE PR into `modern-api` at the very
+end (M6), not before; per-milestone kickoff plan docs for M3–M6 authored at
+each kickoff; exit criteria are HARD gates (iterate until met, except rows
+demonstrably blocked-on-later-milestone or adjudicated — itemize those);
+commit titles start with a related emoji; prefer cheaper-model subagents
+(Sonnet implementation, Haiku exploration) with the main loop doing
+orchestration, adjudication, and diff review.
+
+---
+
+## 1. State at handoff
+
+*(Living section — update at every milestone close AND whenever tasks land
+between closes; last updated: M3 CLOSED.)*
+
+- **M0–M4: CLOSED** (snapshots + notes in `docs/compliance-history/M0/`–
+  `M4/`). M4 close: **882 pass / 6 adjudicated violations / problems []**
+  at `933cc92` — +102 rows vs M3, zero regressions (kind-aware diffing);
+  ten of twelve exit families at 100%, RFC 5267 87.5% (bar: ≥85%),
+  RFC 5466 adjudicated-blocked on M5's METADATA facet; 1465 unit tests;
+  eleven phase-review findings fixed with revert verification; legacy
+  regression scenario 3 (IDLE ordering) closed. Full ledger +
+  carry-forwards in `docs/compliance-history/M4/NOTES.md`. NEXT: M5 per
+  `docs/superpowers/plans/2026-07-12-modern-api-m5-extension-families.md`
+  (validate kickoff assumptions against the real tree first; M5 owns
+  METADATA+FILTERS, CONTEXT machinery, UIDONLY, the pure-rev2 codec
+  revisit, UID FETCH PARTIAL, and the long tail).
+- **M3: IN PROGRESS** per
+  `docs/superpowers/plans/2026-07-12-modern-api-m3-message-operations.md`.
+  - M3.1 DONE — literal-streaming design decision recorded in the M3 plan
+    doc ("M3.1 RESOLUTION"), spike-proof outcomes recorded beneath it
+    ("M3.1 PROOF ADDENDUM", commit `dbc8ee7`): all three acceptance claims
+    PROVEN; the addendum's encoding correction (pipeline is UTF-8-decoded
+    and ALREADY corrupts non-ASCII literals) and the mandatory opaque-guard
+    are binding obligations on M3.2. Proof artifacts were throwaway
+    (session scratchpad only, not committed).
+  - M3.3 DONE — `SequenceSet` landed (`src/protocol/sequence-set.ts`,
+    commit `8d590b4`), zero compliance-row changes (unwired until the verb
+    tasks).
+  - M3.2 (literal streaming implementation) IN FLIGHT — main tree
+    (lexer/newline/parser/connection files).
+  - VERB WAVE LANDED: M3.2 (`3265172`), M3.7 (`0aa5810`, +60 rows),
+    M3.6 (`85a4e48`, +4 rows incl. the adjudicated \Recent refusal),
+    M3.8 (`2549b99`, +9 rows). Cumulative vs the M2 snapshot: 73 flips,
+    all unimplemented→pass, zero regressions; 675 pass / 2 adjudicated
+    violations / problems []. Merge lesson recorded: the three
+    independently-created seq facets were unified into one `SeqFacet`
+    delegator class behind the `SequenceFacet` INTERFACE (type-only
+    export), with `async` statics (`runSearch`/`runStore`/
+    `runCopyOrMove`) so facet methods reject rather than throw (§5b) —
+    follow that settled pattern for every later facet verb.
+  - SECOND WAVE IN FLIGHT (three worktrees, all instructed to verify
+    their base is `2549b99`+): M3.4 (collector streaming bridge — flips
+    nothing, prerequisite for M3.5), M3.9 (EXPUNGE — authors fresh bare-
+    EXPUNGE compliance coverage), M3.10 (MULTIAPPEND/CATENATE).
+  - LANDMINE: freshly-created agent worktrees have been handed out
+    checked out at WRONG BASE commits (`origin/main` or an ancient
+    dependabot commit `0d68600`), not this branch's tip. All three verb
+    agents detected and fast-forwarded/reset themselves, but every future
+    worktree dispatch must instruct the agent to VERIFY
+    `git log --oneline -1` matches the current branch tip before starting
+    (and the orchestrator should verify at merge time that the diff bases
+    on the right lineage).
+  - LANDMINE (M4): `refs/stash` is SHARED across all git worktrees of
+    this repo. Two concurrent agents' `git stash pop` calls swapped
+    stash entries mid-M4 (both recovered via `git fsck --unreachable`
+    — stash commits stay reachable as dangling objects). `git stash` is
+    BANNED in agent instructions; use `git diff`/`git show HEAD:<path>`
+    or /tmp copies for before/after comparisons.
+  - LESSON (M4): the compliance report's per-row failure detail field is
+    `failureKind`, NOT `failureMode` — orchestrator diff scripts using
+    the wrong name silently compare status only and MISS
+    unimplemented→violation kind-shifts (this hid 18 such shifts at the
+    M4.9 merge until a kind-aware re-diff caught them). Always diff
+    `status + failureKind` per row.
+  - Remaining: M3.4 (collector FETCH bridge, needs M3.2), M3.5 FETCH,
+    M3.9 EXPUNGE, M3.10 MULTIAPPEND/CATENATE (needs M3.2),
+    M3.11 response-code sweep + milestone close.
+- **Compliance right now:** 602 pass / 2 violations (both adjudicated,
+  `docs/compliance-adjudications.md`) / problems []. Checked-in reports
+  (`test/compliance/reports/`) match the M2 snapshot byte-for-byte. The
+  ratchet baseline is ALWAYS the last committed milestone
+  snapshot plus deltas noted in commit messages; measure per-row, never by
+  totals (totals mask offsetting flips — this bit us once in M0.5).
+- **Spend-limit kills:** recurring and ESCALATED mid-M5: an entire
+  8-agent wave (M5.7/M5.8/M5.10/M5.11/M5.12/M5.13/M5.15/CONTEXT) was
+  killed simultaneously by the MONTHLY limit, and immediate resumes died
+  instantly with the same error (limit exhausted, not a rolling blip).
+  Raised to the user. Resume protocol once the limit clears: SendMessage
+  each agent id with its last-narration line (recorded in the session
+  task outputs); each worktree preserves partial work. Mid-M5 in-flight
+  inventory at the pause: M5.15 (was reading untagged.ts for the
+  off-by-one), M5.11 (had just reset its stale worktree), CONTEXT
+  carry-forward (reading contract sources), M5.7 (checking
+  buildFetchedMessage coverage), M5.8 (mid-edit inserting
+  addGmailLabels into mailbox.ts — its worktree has uncommitted partial
+  edits), M5.10 (reading client.ts disconnect handler), M5.12 (reading
+  the plan section), M5.13 (reading spec §5.2/§13). Landed and pushed
+  before the pause: M5.1/2/3/4/5/6/9/14 — live ledger 1054 pass / 6
+  adjudicated violations / problems [] at `d9b0046`. Remaining after
+  the in-flight eight: M5.16 close only.
+- **M5 progress update (post-resume, 2026-07-16):** the killed wave was
+  resumed and has largely LANDED. Merged since `d9b0046`: M5.7, M5.8,
+  M5.15 (+ the untagged.ts numbered-response off-by-one fix), M5.11,
+  M5.13 (`ae83c6b` — referrals + UTF8=ONLY hardening; pure-rev2 codec
+  question SETTLED permanently, no raw-UTF-8 arm), M5.12 (`83b8bb7` —
+  CONVERT both grains, +36 RFC5259 rows). Live ledger at `83b8bb7`:
+  **1112 pass / 6 adjudicated violations / 92 unimplemented / 429
+  untestable / problems []**; 1876 unit tests. CONTEXT-machinery
+  carry-forward MERGED (+10 rows — RFC5267-4.1-1/4.3-2/4.3.5-1,
+  RFC5465-7-1, RFC9394-3.3-1 both profiles; deferral adjudication
+  resolved). M5.10 UNAUTHENTICATE MERGED (`2e9c481`, +16 RFC8437 rows;
+  plan recommendation-(a) rejected-and-amended — RFC 8437 §6 extends
+  command-select too; harness gained real DEFLATE script steps).
+  Ledger at `2e9c481`: **1138 pass / 6 adjudicated violations / 24
+  unimplemented / 429 untestable / problems []**, 1921 unit tests.
+  ALL M5 implementation tasks merged.
+- **M5: CLOSED.** Snapshot + full notes in `docs/compliance-history/M5/`
+  (NOTES.md has the complete ledger, adjudication batch, review
+  findings, and M6 carry-forwards). Final: **1138 pass / 6 adjudicated
+  violations / 2 adjudicated-unimplemented (RFC9051-2.3.2-1/-2 rev2,
+  M3.5 permanent scope boundary re-ratified) / 451 untestable /
+  problems []**; 1928 unit tests; exit bar MET (all 121 source-profiles
+  ≥85% MUST; zero non-adjudicated unimplemented). M5.16 executed: the
+  22-row security-layer/channel-binding adjudication batch (completes
+  M6.3 early), 3-lens phase review (7 findings fixed with revert
+  verification — incl. a CRITICAL compress()/unauthenticate()
+  hold-before-dispatch queue deadlock, fixed via the `holdOnDispatch`
+  seam), the 33-file stale-annotation sweep, snapshot. **M6: CLOSED — version 1.0.0, PR #18 OPEN.**
+  All M6 tasks executed (living table in the M6 plan doc; full ledger in
+  `docs/compliance-history/M6/NOTES.md`): M6.1 sweep (zero unexplained
+  rows; 11 satisfied-by-mechanism ledger entries), M6.2 all five
+  follow-ups fixed zero deferrals (incl. the injection-window close at
+  all three topology switch points), M6.4 typedoc (1029→0 warnings),
+  M6.5 MIGRATION.md, M6.6 README, M6.7 CHANGELOG + 1.0.0 + snapshot
+  (nine byte-identical runs), M6.8 three-lens final review (zero
+  criticals; files-allowlist fix — tarball 708→344 files). THE PR:
+  https://github.com/LoveAndCoding/imap/pull/18 into `modern-api`,
+  opened per the session decision and NEVER merged by automation —
+  merge is the user's call. Post-1.0 carry-forwards are itemized in the
+  M6 NOTES (exit bar: every source family ≥85% MUST
+  AND zero unimplemented rows anywhere).
+- Every commit is pushed; the tree should be clean between tasks. If a
+  fresh session finds uncommitted work, `git status` + read the diff before
+  deciding: finished-and-verified → commit; half-done → usually keep and
+  finish (agents were killed mid-task), but verify against this runbook's
+  gates first.
+
+## 2. The per-task operating loop (unchanged from M0/M1, follow exactly)
+
+1. Pick the next task from the milestone plan doc. For M3–M6, FIRST write
+   the milestone kickoff plan doc (task granularity, files, flips,
+   dependency graph — mirror the M2 doc's format) and commit it.
+2. Dispatch a Sonnet subagent with: the plan-doc section, the spec sections,
+   the relevant compliance-test contracts (have a Haiku Explore agent
+   extract them first for big families — pattern: the
+   "contract inventory" notes), explicit file-ownership boundaries, and the
+   verification protocol below. Parallelize ONLY disjoint file sets; use
+   `isolation: "worktree"` for parser/protocol work running alongside
+   client/connection work. `client.ts` + `test/compliance/driver/driver.ts`
+   are the shared bottleneck — one owner at a time, merge-order per the M2
+   plan doc.
+3. Verification gates per task (ALL must pass before commit):
+   - `npm test` green (unit+integration; do NOT run `test:e2e` — real
+     servers, no credentials in this environment).
+   - `npm run typecheck` clean; `npm run lint` 0 errors (warnings exist,
+     ~230, don't grow them materially).
+   - Full `npm run test:compliance`; then a **per-row diff** against the
+     previous state (node script over
+     `test/compliance/reports/compliance.json`, key = `req.id|profile`):
+     expected flips only, ZERO pass→fail regressions, `problems: []`
+     (problems = stale annotations or suite integrity issues — fix, never
+     ignore).
+   - Remove `expectFailure` annotations ONLY for tests that genuinely pass.
+4. Commit (emoji-prefixed title, body explains what+why+flip summary,
+   Co-Authored-By + Claude-Session trailers as in `git log`), push
+   `git push -u origin claude/modern-api-implementation-x3r57j` immediately.
+5. Milestone close (every milestone): stale-annotation sweep to
+   `problems: []`; exit-criteria measurement (MUST+MUST NOT, pass/testable,
+   per family named in the plan); snapshot `compliance.json` + `COMPLIANCE.md`
+   to `docs/compliance-history/M<N>/` + a `NOTES.md` (exit table, itemized
+   blocked rows, flakes, follow-ups — mirror M0/M1 notes); phase-boundary
+   review (below); fix criticals before the snapshot commit if possible,
+   else immediately after with the notes amended.
+
+## 3. Phase-boundary reviews (mandatory, they keep finding criticals)
+
+**Orchestration in THIS environment (learned at M2):** `TaskOutput` is not
+exposed inside subagents, so a sub-orchestrator (review-runner) can never
+retrieve its own children's results — its multi-lens pipeline cannot work
+here. The working pattern: the MAIN loop dispatches 3-5 lens agents
+directly (state/correctness/spec-compliance/security/error-handling as the
+milestone warrants) with a shared context packet + diff path, receives
+their reports via completion notifications, verifies the key findings
+itself, dispatches one fix agent for the confirmed batch, and writes the
+verdict. review-runner remains usable only as a single-reviewer deep pass
+(the M1 fallback mode). Both review agent definitions carry notes to this
+effect.
+
+Every milestone close dispatches a review over the milestone's `src/` diff
+(export it to a file; give the reviewer the final-state file list too).
+Use the `review-runner` agent (definitions in `.claude/agents/` — they were
+hardened with TaskOutput + anti-stall rules for this environment's
+forced-async spawns; M2's close is the first run on the hardened defs).
+Track record: M0 review found 3 criticals + 1 empirically-confirmed
+security gap (Node CN fallback); M1 review found 2 criticals (cleartext
+gate bypass via `run()`, router-state leak on disconnect). Treat "not
+sound to close" verdicts as blocking; fix with revert-verified regression
+tests (make the agent PROVE each test fails without its fix).
+
+## 4. Environment landmines (all encountered; all have procedures)
+
+- **Spend-limit kills (rolling window):** subagents die mid-task with
+  "monthly spend limit". Work is rarely lost (check `git status` in main
+  tree AND `.claude/worktrees/*`). Recovery: `SendMessage` to the same
+  agentId with "resume where you left off" + its last narration line —
+  resumes with context. If sends also fail, the window hasn't reset; do
+  small main-loop work (adjudications, docs, review reading) or wait.
+- **Forced-async agent spawns:** `run_in_background: false` is ignored;
+  every spawn is background + completion notification. Handle via
+  notifications; never poll with sleep. Agent-definition workaround already
+  committed for the review agents.
+- **Suite flakes (NOT regressions — re-run once before investigating):**
+  `ext/tls-8314` rows, `RFC9051-11.2-1` (multi-TLS-handshake tests under
+  full-suite load; pass in isolation), one driver.test.ts connect+login
+  env flake. Two pre-existing `typecheck:compliance` errors
+  (`src/errors.ts`, `scripted-server.ts`) — known, don't fix blindly, they
+  predate everything.
+- **Compliance test-fix rules:** NEVER widen a harness matcher; a test
+  SCRIPT may be corrected only when it cannot be satisfied by a
+  spec-compliant client (document why, cite the catalog entry — precedents:
+  RFC3501-11.1-8, RFC9051-7.1.4-2, the greeting-code stall batch, the
+  AUTHENTICATE-cancel rescripts). Recurring script-fix patterns:
+  (a) greeting with `[CAPABILITY]` code + scripted CAPABILITY round trip
+  stalls — bare-greet or witness via `hasCapability`; (b) tests calling
+  verbs without connecting; (c) auth scripts need `NO [AUTHENTICATIONFAILED]`
+  (bare NO/BAD falls through to an unscripted LOGIN and hangs);
+  (d) tagged-OK needs `[CAPABILITY ...]` folded in or the client's
+  mandatory post-auth refresh adds an unscripted round trip.
+  `classifyFailure`: `NotImplementedError` → unimplemented; ANYTHING else
+  (incl. CapabilityError) → violation. Driver stubs for unimplemented
+  features must throw NotImplementedError, zero protocol logic.
+
+## 5. Remaining work, in order
+
+### M2 (finish)
+- Land/merge the three in-flight waves (verify each per §2; worktree
+  branches merge into the main branch — commit inside the worktree first,
+  then `git merge` from the main tree; resolve `client.ts`/`driver.ts`/
+  `src/index.ts` add-add conflicts by keeping both additions).
+- M2.11 APPEND single (flags/date/literal8 `~{n}`/APPENDUID/TOOBIG;
+  MULTIAPPEND+CATENATE are M3). M2.13 UNSELECT/CLOSE (MailboxSession
+  deselection; flips the RFC3691 unimplemented rows + closed-reason
+  refinement — see M2.2 commit's "reselected" judgment call). M2.14 close
+  per §2/§3. Exit: rfc3501/rfc9051 §6.3 + RFC 2342/3691/5258/5819/6154/
+  3348/8438/7889 MUST ≥90%; expect SELECT-adjacent leftovers to be
+  APPEND/LIST-dependent rows — they must flip within M2, not defer.
+
+### M3 (message operations) — write kickoff plan doc first
+Scope per top-level plan: FETCH engine with **streaming literals**
+(spec §11.4 — do the lexer spike PR first per the plan's risk table; the
+parser currently buffers literal bodies as strings), FetchedMessage/parts
+(§5.4 buffering rules, maxInlineSize config), STORE, SEARCH criteria
+compiler (§5.3; DELETE `src/connection/search.ts` — nothing may call it),
+ESEARCH, COPY/MOVE+UIDPLUS, EXPUNGE/UID EXPUNGE, MULTIAPPEND+CATENATE,
+seq facet (spec §5b), §7 response sweep. MUST also add the three legacy
+regression scenarios from
+`docs/superpowers/specs/2026-07-12-legacy-regression-scenarios-to-reverify.md`
+(literal fragmentation/backpressure — note M2.2 already fixed one parser
+backpressure deadlock, the `.resume()` in connection.ts; quoted-string
+FETCH bodies; scenario 3 is M4's). Exit: §6.4+§7 + RFC 4731/4315/3502/
+3516/6851 MUST ≥90%; README examples rewritten.
+
+### M4 (live mail/sync) — kickoff doc first
+IDLE (IdleController, renew < 29min, DONE interleaving, NOOP fallback,
+legacy scenario 3 ordering races), CONDSTORE (un-stub SelectOptions
+condstore — M2.2 left it type-complete/inert), QRESYNC, SEARCHRES, WITHIN,
+SORT/THREAD (+ESORT/CONTEXT/DISPLAY), PARTIAL, FUZZY, NOTIFY, `updates()`
+iterator. AUTO_ENABLE_SET grows: QRESYNC, CONDSTORE. Exit: RFC 2177/7162/
+5182/5032/5256/5957/5267/9394/6203/5465/5466/9585 MUST ≥85%.
+
+### M5 (extension families; parallelizable) — kickoff doc first
+ACL/QUOTA/METADATA facets (§3.6 — facets appear on ImapClient now, NOT
+before), SAVEDATE, PREVIEW, OBJECTID, REPLACE, URLAUTH, COMPRESS=DEFLATE
+(isolated switch like STARTTLS; then config default flips to "auto" per
+spec §2), UNAUTHENTICATE, LANGUAGE, CONVERT, referrals, UTF8=ACCEPT/ONLY
+behaviors, UIDONLY (+RFC 9586 catalog extraction like M2.12's RFC 3691),
+SCRAM-SHA-1/-256 + ANONYMOUS (CRAM-MD5/EXTERNAL already landed in M1;
+SCRAM: `finish()` MUST verify the server signature — the accept() path
+already supports async rejection post-OK, built for this), X-GM-EXT-1.
+Exit: every source MUST ≥85%; ZERO unimplemented annotations remain;
+all driver stubs wired.
+
+### M6 (1.0 close-out)
+- SHOULD/MAY sweep: implement or adjudicate in
+  `docs/compliance-adjudications.md` (3 entries exist; the 6 RFC4422
+  security-layer rows are pre-identified vacuous-by-design candidates —
+  see `docs/compliance-history/M1/NOTES.md`).
+- Targets: violations 0 (excluding adjudicated), MUST/MUST NOT = 100% of
+  testable both profiles, SHOULD ≥95%.
+- Docs: TSDoc-generated site (typedoc is the obvious choice),
+  `docs/MIGRATION.md` (node-imap → 1.0 mapping table), README rewritten
+  around ImapClient, CHANGELOG, `package.json` version → 1.0.0.
+- Final snapshot to `docs/compliance-history/M6/` + final review.
+- **THEN open the single PR into `modern-api`** (check for a PR template
+  first; title + body summarize the whole M0–M6 arc, compliance
+  before/after, adjudications, breaking changes vs 0.9).
+
+## 6. Standing adjudications & deferred rows (do not re-litigate)
+
+| Row | Status |
+|---|---|
+| RFC9051-7.1-1 | Permanent SHOULD deviation (ALERT display-with-marking) |
+| RFC9051-A-1 | Permanent MUST deviation (no auto ENABLE IMAP4rev2; profile:"rev2" post-1.0) |
+| RFC4422-3.6-1/3.7-1/3.7-2 (×2) | Vacuous (no security-layer mechanism); adjudicate at M6 |
+| StartTLSCommand.states dead declaration; logout()-during-connect error shape | Tracked follow-ups (M1 NOTES) |
+
+## 7. Success criteria for the whole effort
+
+1.0.0 committed on the branch with: compliance MUST/MUST NOT 100% of
+testable (both profiles) excluding the adjudicated table above, SHOULD
+≥95%, violations otherwise 0, `problems: []` reproducibly; unit+integration
+green; docs complete; the single PR into `modern-api` opened with the
+compliance matrix linked. Every milestone boundary has a committed
+snapshot + notes + review with criticals resolved.

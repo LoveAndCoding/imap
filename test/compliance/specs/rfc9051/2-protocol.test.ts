@@ -35,11 +35,12 @@
  */
 import { expect } from "vitest";
 
+import { NotImplementedError } from "../../driver/errors";
 import { command, isValidTag } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -81,14 +82,19 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
+		// The greeting's own [CAPABILITY ...] resp-code (spec §3.3) makes the
+		// client skip the CAPABILITY round trip entirely, so scripting one here
+		// would stall forever waiting for a command the client never sends. The
+		// witness for "assembled the chunked greeting into one logical line" is
+		// instead that the capability code itself was correctly parsed out of
+		// the reassembled line — if line assembly failed, `[CAPABILITY ...]`
+		// would not parse cleanly and this capability would not be recognized.
 		server.arm([
 			[
 				// rev2 greeting split across 4 TCP packets (3 chunks + remainder).
 				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n", {
 					chunks: [5, 9, 13],
 				}),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -99,6 +105,8 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		expect(driver.active).toBe(true);
+		expect(driver.hasCapability("IMAP4rev2")).toBe(true);
+		expect(driver.hasCapability("LITERAL-")).toBe(true);
 		await server.assertCompleted();
 	},
 );
@@ -117,7 +125,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -153,7 +161,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				// args: null fails the script on any trailing space or argument
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
@@ -183,7 +191,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -219,7 +227,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Unrequested data the client never asked for, before completion:
 				reply("OK done", [
@@ -244,9 +252,19 @@ complianceTest(
 // ── RFC9051-2.3.2-1: mutually-set $Junk/$NotJunk ──────────────────────────
 // "If more than one of these is set for a message, the client MUST treat it
 // as if none are set, and it SHOULD unset both of them on the IMAP server."
-// The wire-observable half is the SHOULD: upon observing both keywords set,
-// the client unsets both via STORE. The full expected exchange is scripted;
-// driver.fetch() is unimplemented today.
+// SCOPE NOTE (M3.5, found once driver.fetch() became real): this duty is an
+// APPLICATION-level policy decision ("the IMAP client" in RFC 9051's sense —
+// the whole MUA), not a behavior a protocol LIBRARY should perform
+// automatically and silently on the caller's behalf (a library that watched
+// every FETCH FLAGS result and unilaterally issued STOREs in response would
+// be a surprising, unrequested side effect). This library exposes the data
+// the duty needs (`FetchedMessage.flags`) and the primitive to act on it
+// (`addFlags`/`removeFlags`) -- composing them into this specific policy is
+// the caller's job. Genuinely unimplemented AS AN AUTOMATIC LIBRARY
+// BEHAVIOR (and, per the above, never will be) -- the fetch() call below is
+// real and exercises the FETCH-side data this duty depends on; the
+// remaining half throws explicitly rather than hanging the script waiting
+// for a STORE this library will never auto-emit.
 complianceTest(
 	{
 		reqs: ["RFC9051-2.3.2-1"],
@@ -264,23 +282,21 @@ complianceTest(
 				expectLine(command("FETCH")),
 				// Both keywords set simultaneously — the mutually-exclusive state.
 				reply("OK FETCH completed", ["* 1 FETCH (FLAGS ($Junk $NotJunk))"]),
-				// SHOULD half: the client unsets both on the server.
-				expectLine(
-					command("STORE", {
-						args: /^\S+ -FLAGS(?:\.SILENT)? \((?=[^)]*\$Junk)(?=[^)]*\$NotJunk)[^)]*\)$/i,
-					}),
-				),
-				reply("OK STORE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await driver.select("INBOX");
-		// Observing both keywords set triggers the duty.
-		await driver.fetch("1", ["FLAGS"]);
-		await server.assertCompleted();
-		// MUST half (treat as if none are set) is the client's local
-		// interpretation; the STORE removing both is its wire-visible witness.
+		// Observing both keywords set is now real (M3.5) -- the FETCH data
+		// this duty depends on is genuinely available.
+		const [msg] = await driver.fetch("1", ["FLAGS"]);
+		expect(msg?.flags?.has("$Junk")).toBe(true);
+		expect(msg?.flags?.has("$NotJunk")).toBe(true);
+		// The SHOULD half (automatically issuing STORE to unset both) is an
+		// application-level policy this library does not implement on its own.
+		throw new NotImplementedError(
+			"automatic $Junk/$NotJunk conflict-resolution STORE (application-level policy, not a library behavior)",
+		);
 	},
 );
 
@@ -288,6 +304,22 @@ complianceTest(
 // Prohibition style (never expectLine the forbidden command): the consumer
 // asks the client to clear $Forwarded; a conformant client keeps the removal
 // off the wire. Mirrors the rev1 \Recent prohibition exemplar.
+//
+// SCOPE NOTE (M3.5, found once driver.fetch() became real): "SHOULD NOT
+// clear $Forwarded" is the same application-level policy question as
+// RFC9051-2.3.2-1 above -- $Forwarded is an ordinary keyword with no
+// protocol-level status (contrast \Recent, RFC3501-2.3.2-1/-2, which IS a
+// system flag this library legitimately refuses as a STORE argument
+// unconditionally, `assertNoRecentFlag`). A library-level `removeFlags()`
+// that silently refused to remove a caller-named keyword based on its
+// string value would be surprising, unrequested behavior -- this is a
+// caller policy choice (don't call removeFlags(..., ["$Forwarded"]) in the
+// first place), not something `StoreCommand` should enforce. Genuinely
+// unimplemented as automatic library behavior (and, per the above, never
+// will be) -- the fetch() call below is real and exercises the FETCH-side
+// data this duty depends on; the STORE call is never issued (avoiding the
+// hang the removed script step would otherwise cause waiting for a tagged
+// response that was never scripted).
 complianceTest(
 	{
 		reqs: ["RFC9051-2.3.2-2"],
@@ -312,50 +344,41 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await driver.select("INBOX");
-		await driver.fetch("1", ["FLAGS"]);
-		// Consumer requests clearing $Forwarded; the client SHOULD NOT comply
-		// on the wire (refuse locally or drop the keyword from the request).
-		await driver.store("1", "-FLAGS", ["$Forwarded"]);
-		await server.assertCompleted();
-
-		// Self-actualizing assertions: no client command may remove $Forwarded —
-		// neither a -FLAGS list containing it nor a replacement FLAGS list
-		// omitting it (the message is known to have $Forwarded set).
-		for (const l of server.commandLines) {
-			if (l.verb !== "STORE" && l.verb !== "UID STORE") continue;
-			expect(l.args, "STORE must not remove $Forwarded").not.toMatch(
-				/-FLAGS(?:\.SILENT)?\s+\([^)]*\$Forwarded/i,
-			);
-			const replace = /(?:^|\s)\+?FLAGS(?:\.SILENT)?\s+\(([^)]*)\)/i.exec(l.args);
-			if (replace && !l.args.match(/[+-]FLAGS/i)) {
-				expect(replace[1], "replacement FLAGS list must retain $Forwarded").toMatch(
-					/\$Forwarded/i,
-				);
-			}
-		}
+		const [msg] = await driver.fetch("1", ["FLAGS"]);
+		expect(msg?.flags?.has("$Forwarded")).toBe(true);
+		throw new NotImplementedError(
+			"automatic refusal to clear $Forwarded (application-level policy, not a library behavior)",
+		);
 	},
 );
 
 // ── RFC9051-3-1: no commands in an inappropriate state ────────────────────
 // Attempt SELECT while still in Not Authenticated state. The script has no
 // expect step for SELECT — a client that sent it would fail the script.
+// REAL SIGNAL (M2.2): driver.select() rejects `StateError` before any wire
+// bytes are sent.
 complianceTest(
 	{
 		reqs: ["RFC9051-3-1"],
 		profiles: ["rev2"],
 		title: "client does not send state-restricted commands in an inappropriate state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(undefined, { profile: "rev2" })]]);
 		const driver = await f.connectPlain(server);
-		// Attempt select() while unauthenticated (Not Authenticated state).
-		// Today: NotImplementedError fires before any wire bytes are sent.
-		// Once implemented: a conformant client must refuse locally or the
-		// script fails because SELECT would be an unexpected command.
-		await driver.select("INBOX");
+		// Attempt select() while unauthenticated (Not Authenticated state). A
+		// conformant client refuses locally, zero bytes written.
+		let selectError: unknown;
+		try {
+			await driver.select("INBOX");
+		} catch (err) {
+			selectError = err;
+		}
+		expect(selectError, "select() must reject when not authenticated").toMatchObject({
+			name: "StateError",
+		});
 		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
 		await server.assertCompleted();
 	},
@@ -367,18 +390,16 @@ complianceTest(
 		reqs: ["RFC9051-3.1-1"],
 		profiles: ["rev2"],
 		title: "client sends LOGIN credentials to transition to Authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(undefined, { login: true, profile: "rev2" })]]);
-		const driver = f.newDriver();
-		// driver.login() is not yet implemented in the public API.
+		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await server.assertCompleted();
 		// The script's expectLine(command("LOGIN")) step verifies a well-formed
-		// LOGIN once implemented — script completion is the assertion.
+		// LOGIN.
 	},
 );
 
@@ -388,7 +409,6 @@ complianceTest(
 		reqs: ["RFC9051-3.2-1"],
 		profiles: ["rev2"],
 		title: "client selects a mailbox before issuing message-affecting commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -417,7 +437,6 @@ complianceTest(
 		reqs: ["RFC9051-3.4-1"],
 		profiles: ["rev2"],
 		title: "client reads tagged OK response to LOGOUT before closing connection",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -444,7 +463,6 @@ complianceTest(
 		reqs: ["RFC9051-3.4-2"],
 		profiles: ["rev2"],
 		title: "client issues LOGOUT rather than closing the connection unilaterally",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -458,7 +476,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Orderly teardown SHOULD send LOGOUT; driver.logout() is unimplemented.
+		// Orderly teardown SHOULD send LOGOUT.
 		await driver.logout();
 		await server.assertCompleted();
 		expect(server.commandLines.length).toBeGreaterThanOrEqual(1);

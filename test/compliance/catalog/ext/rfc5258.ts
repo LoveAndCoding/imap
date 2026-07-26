@@ -182,9 +182,7 @@ const rfc5258: CatalogModule = {
 				"all. REV2-CORE: RFC 9051 §6.3.9 restates this WORD-FOR-WORD and it is cataloged as " +
 				"RFC9051-6.3.9-5, so this entry is tagged rev1-only to avoid double-scoring the " +
 				"identical duty against two sources for a rev2 client (rev2 scores it via core). " +
-				"Currently self-actualizing fail: driver.list() throws NotImplementedError('LIST'), so " +
-				"the client has no extended-LIST surface capable of emitting (or wrongly emitting) an " +
-				"unadvertised option.",
+				"driver.list() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5258-3-2",
@@ -291,9 +289,8 @@ const rfc5258: CatalogModule = {
 				"keeping [rev1,rev2] does not double-score (nothing in rfc9051.ts to double against) " +
 				"and is the only way a rev2 client is held to it. If rfc9051.ts later adds an entry " +
 				"for the RECURSIVEMATCH-alone rule, this entry should be re-tagged rev1-only and " +
-				"cross-referenced to that id. Currently self-actualizing fail: driver.list() throws " +
-				"NotImplementedError('LIST'), so the client cannot emit a RECURSIVEMATCH selection " +
-				"option list at all.",
+				"cross-referenced to that id. driver.list() is genuinely real, so this row passes " +
+				"for real.",
 		},
 		{
 			id: "RFC5258-3.1-3",

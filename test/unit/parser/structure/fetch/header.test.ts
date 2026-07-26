@@ -165,3 +165,72 @@ describe("MessageHeader", () => {
 		expect(header.fields).toEqual(expected);
 	});
 });
+
+// H13 fix: `mergeIn` used to do
+// `withHeader.fields.forEach(([key, val]) => this.fields.set(key, val))`.
+// `Map.prototype.forEach`'s callback signature is `(value, key, map)`, NOT
+// `([key, value])`, so the destructuring above pulled the FIELD NAME out of
+// the VALUE (array-destructuring a string spreads its characters; for a
+// >1-value array field, it grabbed the first two array entries instead of
+// the real key), discarding the actual field name entirely. Direct
+// `mergeIn` coverage in both directions, independent of the higher
+// FETCH/Fetch-merge call sites.
+describe("MessageHeader.mergeIn", () => {
+	test("merges a single-valued field from another header, preserving the real field name", () => {
+		const target = new MessageHeader();
+		const incoming = new MessageHeader("Subject: hello world\r\n");
+
+		target.mergeIn(incoming);
+
+		expect(target.fields.get("Subject")).toBe("hello world");
+		expect(target.fields.size).toBe(1);
+	});
+
+	test("merges a multi-valued (repeated) field from another header intact", () => {
+		const target = new MessageHeader();
+		const incoming = new MessageHeader(
+			"Received: first\r\nReceived: second\r\n",
+		);
+
+		target.mergeIn(incoming);
+
+		expect(target.fields.get("Received")).toEqual(["first", "second"]);
+	});
+
+	test("merges several distinct fields from another header without dropping any names", () => {
+		const target = new MessageHeader();
+		const incoming = new MessageHeader(
+			"Subject: hi\r\nFrom: a@b.com\r\nTo: c@d.com\r\n",
+		);
+
+		target.mergeIn(incoming);
+
+		expect(target.fields.get("Subject")).toBe("hi");
+		expect(target.fields.get("From")).toBe("a@b.com");
+		expect(target.fields.get("To")).toBe("c@d.com");
+		expect(target.fields.size).toBe(3);
+	});
+
+	test("a later mergeIn overrides an earlier value for the same field name (last wins)", () => {
+		const target = new MessageHeader("Subject: original\r\n");
+		const incoming = new MessageHeader("Subject: replaced\r\n");
+
+		target.mergeIn(incoming);
+
+		expect(target.fields.get("Subject")).toBe("replaced");
+	});
+
+	test("merging in both directions preserves every field from both sides", () => {
+		const a = new MessageHeader("Subject: hi\r\n");
+		const b = new MessageHeader("From: a@b.com\r\n");
+
+		a.mergeIn(b);
+		expect(a.fields.get("Subject")).toBe("hi");
+		expect(a.fields.get("From")).toBe("a@b.com");
+
+		const c = new MessageHeader("Subject: hi\r\n");
+		b.mergeIn(c);
+		expect(b.fields.get("From")).toBe("a@b.com");
+		expect(b.fields.get("Subject")).toBe("hi");
+	});
+});

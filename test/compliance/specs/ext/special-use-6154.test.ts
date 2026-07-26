@@ -32,13 +32,17 @@
  * deduped) against the GENERAL option gate RFC9051-6.3.9-5, which is a distinct
  * duty (LIST options vs the CREATE-side USE parameter). See the module extractionNote.
  *
- * SELF-ACTUALIZING (unimplemented). driver.list() (widened with selectOptions/
- * returnOptions) and driver.create() (widened with useAttributes) both throw
- * NotImplementedError: the client has no special-use LIST or CREATE-USE surface.
- * Every test drives the relevant verb → the call rejects → "unimplemented", while
- * the script encodes the exact RFC-conformant wire form (and a tight matcher, for
- * the emit-form tests, that rejects a plausible wrong emission). expectFailure:
- * "unimplemented" is declared on every test.
+ * driver.create() (widened with useAttributes) is wired as of M2.3: the
+ * three CREATE-side tests (RFC6154-3-1/-3-2/-3-3) are REAL SIGNAL — the
+ * capability gate rejects `CapabilityError` with zero bytes (3-1), the
+ * `CREATE mailbox (USE (...))` wire form is pinned by a tight matcher
+ * (3-2), and the tagged `NO [USEATTR]` refusal surfaces as a ServerNoError
+ * carrying the typed USEATTR code (3-3). driver.list() (widened with
+ * selectOptions/returnOptions) is wired as of M2.7: it delegates to
+ * ImapClient.list(), so the LIST-side tests (RFC6154-2-1/-2-2/-6-1/-6-2)
+ * are also REAL SIGNAL — the 2-1/2-2 emit-form tests and the 6-1/6-2
+ * acceptance tests drive the real wire exchange end-to-end and assert on
+ * the typed MailboxInfo[] results. All seven rows are genuine passes.
  */
 import { expect } from "vitest";
 
@@ -63,14 +67,13 @@ function suCaps(profile: "rev1" | "rev2", extra: string[] = ["SPECIAL-USE"]): st
 // parenthesized selection-option list, immediately after LIST and before the
 // reference/pattern. The matcher requires the parenthesized `(SPECIAL-USE)` list
 // preceding the reference and pattern, rejecting a bare `LIST "" "*"` with no
-// selection option, or the atom placed outside the parentheses. list() is
-// unimplemented → the call rejects first.
+// selection option, or the atom placed outside the parentheses. REAL SIGNAL
+// (M2.7): the exchange runs end-to-end.
 complianceTest(
 	{
 		reqs: ["RFC6154-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits LIST (SPECIAL-USE) selection option to list only special-use mailboxes",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -89,23 +92,19 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		let err: unknown;
-		try {
-			await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a SPECIAL-USE selection option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When implemented: SPECIAL-USE appears inside a parenthesized selection list.
+		await driver.login("user", "pass");
+		const listing = await driver.list("", "*", { selectOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
+		// SPECIAL-USE appears inside a parenthesized selection list.
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
-		if (listLine) {
-			expect(listLine.args, "SPECIAL-USE must be a parenthesized selection option").toMatch(
-				/^\([^)]*SPECIAL-USE[^)]*\)/,
-			);
-		}
+		expect(listLine, "a LIST command must have been sent").toBeDefined();
+		expect(listLine!.args, "SPECIAL-USE must be a parenthesized selection option").toMatch(
+			/^\([^)]*SPECIAL-USE[^)]*\)/,
+		);
+		// The typed result carries the special-use annotation.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("Sent Items");
+		expect(listing[0].specialUse).toBe("\\Sent");
 	},
 );
 
@@ -113,13 +112,12 @@ complianceTest(
 // `C: t2 LIST "" "%" RETURN (SPECIAL-USE)` (§5.2) — the option appears inside the
 // trailing RETURN parenthesized list. The matcher requires the RETURN keyword and
 // the parenthesized SPECIAL-USE after the reference/pattern, rejecting a missing
-// RETURN keyword or the atom outside the parentheses. list() rejects first.
+// RETURN keyword or the atom outside the parentheses. REAL SIGNAL (M2.7).
 complianceTest(
 	{
 		reqs: ["RFC6154-2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits LIST ... RETURN (SPECIAL-USE) to request special-use attributes",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -136,22 +134,18 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		let err: unknown;
-		try {
-			await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() with a SPECIAL-USE return option must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
+		await driver.login("user", "pass");
+		const listing = await driver.list("", "%", { returnOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
 		const listLine = server.commandLines.find((l) => l.verb === "LIST");
-		if (listLine) {
-			expect(listLine.args, "SPECIAL-USE must appear inside the RETURN parentheses").toMatch(
-				/RETURN \([^)]*SPECIAL-USE[^)]*\)/,
-			);
-		}
+		expect(listLine, "a LIST command must have been sent").toBeDefined();
+		expect(listLine!.args, "SPECIAL-USE must appear inside the RETURN parentheses").toMatch(
+			/RETURN \([^)]*SPECIAL-USE[^)]*\)/,
+		);
+		// The typed result carries the returned special-use attribute.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].specialUse).toBe("\\Sent");
+		expect(listing[0].attributes.has("\\Marked")).toBe(true);
 	},
 );
 
@@ -160,15 +154,15 @@ complianceTest(
 // CAPABILITY advertises SPECIAL-USE (the LIST-side capability) but NOT
 // CREATE-SPECIAL-USE (the distinct CREATE-side capability). Drive create() with a
 // USE attribute; a conformant client must not emit a CREATE carrying `(USE (...))`
-// when CREATE-SPECIAL-USE was never advertised. create() is unimplemented → the
-// call rejects (unimplemented); the transcript guard proves no USE parameter
-// reached the wire.
+// when CREATE-SPECIAL-USE was never advertised. REAL SIGNAL (M2.3): the client
+// gates the option on the live capability registry and rejects CapabilityError
+// with ZERO bytes written (spec I-9); the transcript guard proves no USE
+// parameter reached the wire.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client MUST NOT emit CREATE (USE (...)) unless CREATE-SPECIAL-USE is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -184,16 +178,21 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.create("Archive", { useAttributes: ["\\Archive"] });
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.create() with a USE attribute must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
+		expect(
+			err,
+			"create() with a USE attribute must reject when CREATE-SPECIAL-USE is unadvertised",
+		).toBeInstanceOf(Error);
+		expect(
+			(err as Error).name,
+			"the rejection must be a CapabilityError (client-side gate, zero bytes)",
+		).toBe("CapabilityError");
 		await server.assertCompleted();
 		// Transcript guard: no CREATE carrying a USE parameter reached the wire.
 		expect(
@@ -208,13 +207,12 @@ complianceTest(
 // space, then a parenthesized space-separated list of use-attr tokens. The matcher
 // requires the mailbox name followed by `(USE (<attrs>))`, rejecting attributes
 // that are not parenthesized, a missing USE keyword, or attributes passed as a bare
-// flag list. create() is unimplemented → the call rejects first.
+// flag list. REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client emits CREATE <mailbox> (USE (<attrs>)) to designate special uses at creation",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -235,24 +233,17 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		let err: unknown;
-		try {
-			await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
-			NotImplementedError,
-		);
-		// When implemented: the attributes appear inside a (USE (...)) parameter,
-		// never as a bare flag list.
+		await driver.login("user", "pass");
+		await driver.create("MySpecial", { useAttributes: ["\\Drafts", "\\Sent"] });
+		await server.assertCompleted();
+		// The attributes appear inside a (USE (...)) parameter, never as a
+		// bare flag list (the tight matcher above already enforced the full
+		// §5.3 shape; this re-verifies the recorded form).
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
-		if (createLine) {
-			expect(createLine.args, "special uses must be inside a (USE (...)) parameter").toMatch(
-				/\(USE \(/,
-			);
-		}
+		expect(createLine, "a CREATE command must have been sent").toBeDefined();
+		expect(createLine!.args, "special uses must be inside a (USE (...)) parameter").toMatch(
+			/\(USE \(/,
+		);
 	},
 );
 
@@ -261,14 +252,13 @@ complianceTest(
 // (§5.3). A client that emitted a special-use CREATE MUST accept a tagged
 // `NO [USEATTR] ...` as a well-formed, per-spec refusal — surfacing the CREATE as
 // failed, not treating the [USEATTR] resp-text-code as a protocol/parse error.
-// create() is unimplemented → the call rejects first; the script documents the
-// exact refusal the client must accept once it can drive the CREATE.
+// REAL SIGNAL (M2.3): driver.create() is wired; the refusal surfaces as a
+// ServerNoError carrying the typed { name: "USEATTR" } response code.
 complianceTest(
 	{
 		reqs: ["RFC6154-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a tagged NO [USEATTR] as a well-formed CREATE-special-use refusal",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -285,18 +275,27 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		let err: unknown;
 		try {
 			await driver.create("Everything", { useAttributes: ["\\All"] });
 		} catch (e) {
 			err = e;
 		}
-		expect(err, "driver.create() with USE attributes must throw today").toBeInstanceOf(
-			NotImplementedError,
+		await server.assertCompleted();
+		// The client surfaces the CREATE as failed — an ordinary tagged-NO
+		// rejection carrying the typed USEATTR code, never a protocol/parse
+		// error…
+		expect(err, "create() must reject on the NO [USEATTR] refusal").toBeInstanceOf(Error);
+		expect((err as Error).name, "the rejection must be a ServerNoError").toBe(
+			"ServerNoError",
 		);
-		// When implemented: the client surfaces the CREATE as failed (the NO) and does
-		// NOT choke on the [USEATTR] code — the connection remains usable.
+		expect(
+			(err as { code?: { name?: string } }).code?.name,
+			"the rejection must carry the typed USEATTR response code",
+		).toBe("USEATTR");
+		// …and does NOT choke on the [USEATTR] code — the connection remains
+		// usable.
 		expect(driver.active, "client stays active after a NO [USEATTR] refusal").toBe(true);
 	},
 );
@@ -306,14 +305,13 @@ complianceTest(
 // mbx-list-oflag: a client parsing LIST responses MUST accept any of them wherever
 // a mailbox-list flag may appear, interleaved with existing flags (\Marked,
 // \HasNoChildren, ...). Script a LIST response carrying all seven across several
-// mailboxes; the client must parse them without error. list() is unimplemented →
-// the call rejects (unimplemented); the script documents the acceptance duty.
+// mailboxes; the client must parse them without error. REAL SIGNAL (M2.7): the
+// typed results carry every entry with its special-use annotation.
 complianceTest(
 	{
 		reqs: ["RFC6154-6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts the seven special-use name-attributes in LIST responses",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -335,16 +333,24 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		let err: unknown;
-		try {
-			await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
-		} catch (e) {
-			err = e;
+		await driver.login("user", "pass");
+		const listing = await driver.list("", "*", { returnOptions: ["SPECIAL-USE"] });
+		await server.assertCompleted();
+		// The client parses all seven special-use attributes without error…
+		expect(listing).toHaveLength(7);
+		const bySpecialUse = new Map(listing.map((mb) => [mb.specialUse, mb.name]));
+		for (const attr of [
+			"\\All",
+			"\\Archive",
+			"\\Drafts",
+			"\\Flagged",
+			"\\Junk",
+			"\\Sent",
+			"\\Trash",
+		]) {
+			expect(bySpecialUse.has(attr), `${attr} must be accepted and surfaced`).toBe(true);
 		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// When implemented: the client parses all seven special-use attributes without
-		// error and stays connected.
+		// …and stays connected.
 		expect(
 			driver.active,
 			"client must parse LIST responses carrying special-use attributes",
@@ -357,14 +363,14 @@ complianceTest(
 // understand. A client MUST NOT choke on an unrecognized "\"-prefixed atom (e.g. a
 // future "\Xyzzy" special use) in a LIST response — it parses the base response and
 // skips the unknown attribute. Script a LIST entry mixing a known flag with an
-// unknown "\Xyzzy" attribute. list() is unimplemented → the call rejects
-// (unimplemented). applicability "always" per the catalog (baseline robustness).
+// unknown "\Xyzzy" attribute. REAL SIGNAL (M2.7): the unknown attribute is data
+// (preserved in `attributes`, not detected as a special use), never an error.
+// applicability "always" per the catalog (baseline robustness).
 complianceTest(
 	{
 		reqs: ["RFC6154-6-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client ignores an unrecognized list attribute and parses the base LIST response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -379,16 +385,16 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		let err: unknown;
-		try {
-			await driver.list("", "*");
-		} catch (e) {
-			err = e;
-		}
-		expect(err, "driver.list() must throw today").toBeInstanceOf(NotImplementedError);
-		// When implemented: the client survives the unknown attribute (no parse abort /
-		// disconnect) and treats the base LIST entry normally.
+		await driver.login("user", "pass");
+		const listing = await driver.list("", "*");
+		await server.assertCompleted();
+		// The client survives the unknown attribute (no parse abort / disconnect)
+		// and treats the base LIST entry normally: the entry parses, the unknown
+		// attribute rides along as data, and it is NOT mistaken for a special use.
+		expect(listing).toHaveLength(1);
+		expect(listing[0].name).toBe("INBOX");
+		expect(listing[0].attributes.has("\\HasNoChildren")).toBe(true);
+		expect(listing[0].specialUse).toBeUndefined();
 		expect(
 			driver.active,
 			"client must remain connected after ignoring an unknown list attribute",

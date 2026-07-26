@@ -25,12 +25,10 @@
  *
  * RFC9051-7.2.1-1 (ENABLED authoritative set):
  *   The ENABLED response only occurs as a result of an ENABLE command.
- *   driver.enable() is unimplemented today (throws NotImplementedError) →
- *   annotated unimplemented. The script sends ENABLE for two capabilities and
- *   answers with an ENABLED response listing only ONE; a conformant client must
- *   treat the response as authoritative (not behave as though the unlisted
- *   capability were active). When enable() lands, the scripted exchange plus a
- *   capability-state accessor self-actualize the authoritative-set check.
+ *   driver.enable() is implemented, so the script (which sends ENABLE for two
+ *   capabilities and answers with an ENABLED response listing only ONE) now
+ *   drives the real exchange; a conformant client must treat the response as
+ *   authoritative (not behave as though the unlisted capability were active).
  *
  * RFC9051-7.2.2-1 (IMAP4rev2 recognised regardless of position):
  *   Observable NOW via connect(): the CAPABILITY response places IMAP4rev2 in a
@@ -59,7 +57,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { capabilityExchange, greet, sessionPrelude } from "../../runner/state";
+import { capabilityExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -176,7 +174,11 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code): an inline rev2 greeting
+				// capability (which never includes LOGINDISABLED) would let
+				// `connect()` skip the round trip below, so the client would never
+				// learn LOGINDISABLED and this prohibition would be vacuous.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "LOGINDISABLED"]),
 				// No LOGIN expectation — the session ends after CAPABILITY.
 				close(),
@@ -214,15 +216,11 @@ complianceTest(
 // capabilities (CONDSTORE QRESYNC) and answer with an ENABLED response listing
 // only ONE (CONDSTORE). A conformant client must treat the response as
 // authoritative — it must not behave as though QRESYNC were enabled.
-// driver.enable() is unimplemented today (throws NotImplementedError) →
-// annotated unimplemented. When enable() lands the scripted exchange plus a
-// capability-state accessor self-actualize the authoritative-set check.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.2.1-1"],
 		profiles: ["rev2"],
 		title: "client treats the ENABLED response as the authoritative set of enabled extensions",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -240,8 +238,8 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// Unimplemented today — enable() rejects here. When implemented, the client
-		// must record that only CONDSTORE (not QRESYNC) was successfully enabled.
+		// The client must record that only CONDSTORE (not QRESYNC) was
+		// successfully enabled.
 		await driver.enable(["CONDSTORE", "QRESYNC"]);
 		await server.assertCompleted();
 		const enableLine = server.commandLines.find((l) => l.verb === "ENABLE");

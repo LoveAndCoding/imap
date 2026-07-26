@@ -44,15 +44,18 @@
  *    unsolicited "* OK [MAILBOXID (objectid)]" delivered via connectLow() surfaces
  *    as a parsed serverStatus carrying the code AND the objectid — a genuine
  *    pass/violation test with tight assertions (not self-actualizing).
- *  - Every other cited duty has NO driver surface: driver.create()/status()/
+ *  - RFC8474-4.3-1/-4.3-2 are REAL as of M2.9: driver.status() is wired to
+ *    ImapClient.status() (MAILBOXID gated on OBJECTID), and the extended
+ *    mailbox-status parser accepts the parenthesized-objectid response item.
+ *    The script authenticates first — STATUS is an authenticated-state command.
+ *  - Every other cited duty has NO driver surface: driver.create()/
  *    fetch()/uidFetch() throw NotImplementedError → unimplemented. The scripted
- *    servers pin the exact command/response wire shapes (STATUS (MAILBOXID),
- *    FETCH (EMAILID)/(THREADID), the (objectid)/NIL response items) so the matchers
+ *    servers pin the exact command/response wire shapes (FETCH (EMAILID)/
+ *    (THREADID), the (objectid)/NIL response items) so the matchers
  *    reject a wrong impl once a surface exists. NOTE: the tagged-OK MAILBOXID
- *    (4.1-1) and the STATUS MAILBOXID item (4.3-2) do NOT parse today via connectLow
- *    (a tagged OK with no pending command surfaces as an unknownResponse; the base
- *    STATUS parser rejects a parenthesized-objectid value), so those are driven via
- *    the (throwing) CREATE/STATUS verbs and self-actualize as unimplemented.
+ *    (4.1-1) does NOT parse today via connectLow (a tagged OK with no pending
+ *    command surfaces as an unknownResponse), so it is driven via the
+ *    (throwing) CREATE verb and self-actualizes as unimplemented.
  */
 import { expect } from "vitest";
 
@@ -61,7 +64,7 @@ import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -139,53 +142,60 @@ complianceTest(
 // RFC8474-4.1-1 — accept the MAILBOXID resp-code in a tagged OK for CREATE
 // ═════════════════════════════════════════════════════════════════════════════
 // A CREATE completing with 'OK [MAILBOXID (objectid)]' must not derail the client.
-// driver.create() throws today → unimplemented. The scripted server pins the CREATE
-// command and replies with the MAILBOXID-bearing tagged OK.
+// REAL SIGNAL (M2.3): driver.create() is wired. The scripted server pins the
+// CREATE command and replies with the MAILBOXID-bearing tagged OK, which the
+// client must accept as an ordinary success. (M2.3 also added the missing
+// LOGIN step: CREATE is an authenticated-state command, so the original
+// login-less script could never complete once the verb was real.)
 complianceTest(
 	{
 		reqs: ["RFC8474-4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CREATE completes with a tagged OK [MAILBOXID (objectid)]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
 				expectLine(command("CREATE", { args: /^"?INBOX\/saved-messages"?$/i })),
 				// resp-text-code = "MAILBOXID" SP "(" objectid ")".
 				reply("OK [MAILBOXID (F2212ea87d47b8ad)] CREATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.create("INBOX/saved-messages"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.create("INBOX/saved-messages");
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "CREATE")).toBeDefined();
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8474-4.3-1 / -4.3-2 — STATUS (MAILBOXID) request + response item
+// RFC8474-4.3-1 / -4.3-2 — STATUS (MAILBOXID) request + response item (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // The client MAY request a mailbox's ObjectID via STATUS (MAILBOXID) and must
-// parse the 'MAILBOXID (objectid)' STATUS response item. driver.status() throws
-// today → unimplemented. The scripted server pins the STATUS attribute list and
-// the parenthesized-objectid response item.
+// parse the 'MAILBOXID (objectid)' STATUS response item. REAL as of M2.9:
+// driver.status() is wired to `ImapClient.status()` (the MAILBOXID item is
+// capability-gated on OBJECTID, advertised here), and the extended
+// mailbox-status parser accepts the parenthesized-objectid value. STATUS is
+// an authenticated-state command (client-enforced, spec I-11), so the script
+// authenticates first (the test predates state enforcement and originally
+// drove STATUS pre-auth). The scripted server pins the STATUS attribute list
+// and the parenthesized-objectid response item.
 complianceTest(
 	{
 		reqs: ["RFC8474-4.3-1", "RFC8474-4.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "STATUS <mbox> (MAILBOXID) request and MAILBOXID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
 				// status-att =/ "MAILBOXID" inside the STATUS request-item list.
 				expectLine(command("STATUS", { args: /^"?INBOX"? \(MAILBOXID\)$/i })),
 				// status-att-resp =/ "MAILBOXID" SP "(" objectid ")".
@@ -193,7 +203,11 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.status("INBOX", ["MAILBOXID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.status("INBOX", ["MAILBOXID"]);
+		// The ObjectID is parsed out of the response item, case preserved
+		// (ObjectIDs are case-sensitive, RFC 8474 §7).
+		expect(result.mailboxId).toBe("F2212ea87d47b8ad");
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS must have been emitted").toBeDefined();
@@ -214,14 +228,14 @@ complianceTest(
 		reqs: ["RFC8474-5.1-1", "RFC8474-5.3-1", "RFC8474-5.3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (EMAILID) request and EMAILID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				// fetch-att =/ "EMAILID".
 				expectLine(command("FETCH", { args: /^1 \(EMAILID\)$/i })),
 				// fetch-emailid-resp = "EMAILID" SP "(" objectid ")".
@@ -229,7 +243,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["EMAILID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["EMAILID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -247,21 +263,23 @@ complianceTest(
 		reqs: ["RFC8474-5.3-2", "RFC8474-5.3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (THREADID) request and THREADID (objectid) response item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(THREADID\)$/i })),
 				// fetch-threadid-resp = "THREADID" SP ( "(" objectid ")" / nil ) — id branch.
 				reply("OK FETCH completed", ["* 1 FETCH (THREADID (T64b478a75b7ea9))"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["THREADID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["THREADID"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -281,21 +299,23 @@ complianceTest(
 		reqs: ["RFC8474-1-1", "RFC8474-5.2-1", "RFC8474-5.3-5"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH (THREADID) accepts a NIL value (server without threading)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(THREADID\)$/i })),
 				// fetch-threadid-resp second branch: "THREADID" SP nil.
 				reply("OK FETCH completed", ["* 1 FETCH (THREADID NIL)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["THREADID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["THREADID"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},
@@ -316,14 +336,14 @@ complianceTest(
 		reqs: ["RFC8474-8.4-1", "RFC8474-8.4-2", "RFC8474-8.4-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles inconsistent ObjectIDs (RFC 3501 fallback / bounded resync)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "OBJECTID"]),
+				...sessionPrelude(["IMAP4rev1", "OBJECTID"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
 				expectLine(command("FETCH", { args: /^1 \(EMAILID\)$/i })),
 				// Two different EMAILIDs reported for the same message — an inconsistency
 				// the client must detect and respond to per §8.4, without looping forever.
@@ -334,7 +354,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("1", ["EMAILID"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("1", ["EMAILID"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},

@@ -30,16 +30,16 @@
  *   RFC9051-6.3.9.5-1 (internal-decision — \HasChildren-with-no-child-listed
  *                      race, same robustness shape as 6.3.9.1-1).
  *
- * Genuineness note: driver.list(ref, pattern) exposes only the reference and
- * mailbox-pattern arguments — it has no API surface for extended selection/
- * return options. A client driven through this verb never emits an extended
- * LIST option, so the 6.3.9-5 (unadvertised option) and 6.3.9-6 (duplicate
- * option) prohibitions would pass VACUOUSLY on the current wire behavior.
- * driver.list() is additionally unimplemented today (throws
- * NotImplementedError), so those two tests are annotated `unimplemented` — an
- * honest annotation that also defers the vacuity: no `expectFailure` is claimed
- * for a genuinely-exercised prohibition. When list() lands (and if an options
- * API is added), the missing expectLine + transcript guards catch a violation.
+ * Genuineness note (updated at M2.7, when list() landed): driver.list() now
+ * delegates to ImapClient.list(), whose ListOptions surface CAN express
+ * extended selection/return options — so the 6.3.9-5/-6 prohibitions are no
+ * longer vacuous by construction. This file's four tests drive the plain
+ * two-argument form; the option-bearing arms of the same prohibitions are
+ * exercised in ext/list-extended-5258.test.ts (RFC5258-3-1/-3-2, the rev1
+ * siblings of these ids). 6.3.9-6 (duplicate option) is satisfied
+ * structurally: every ListOptions option is a boolean field, so "the same
+ * option twice" cannot even be requested; the transcript guard here keeps
+ * the wire honest regardless.
  */
 import { expect } from "vitest";
 
@@ -55,15 +55,13 @@ const f = useComplianceFixture();
 // A conformant client's ordinary LIST commands pass an empty reference argument
 // (the mailbox pattern carries the full path). Script a LIST exchange and assert
 // the reference argument the client actually sent is the empty string "" (the
-// mailbox pattern being the second argument). driver.list() is unimplemented
-// today → annotated unimplemented; the self-actualizing assertion inspects the
-// recorded LIST args once list() lands.
+// mailbox pattern being the second argument). REAL SIGNAL (M2.7): driver.list()
+// delegates to ImapClient.list().
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.9-1"],
 		profiles: ["rev2"],
 		title: "client uses the empty reference argument in an ordinary LIST command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -98,16 +96,15 @@ complianceTest(
 // option). A conformant client must not send an unadvertised LIST option. The
 // script's LIST expectation matches ONLY a plain LIST (no RETURN/selection
 // options); any option token is an unscripted-command failure, and the
-// transcript guard independently rejects RETURN/SPECIAL-USE. driver.list() is
-// unimplemented today → annotated unimplemented (and, per the file header, the
-// current list() API cannot emit options, so this would otherwise pass
-// vacuously).
+// transcript guard independently rejects RETURN/SPECIAL-USE. REAL SIGNAL
+// (M2.7): a plain list() emits the plain form; the option-BEARING arm of this
+// prohibition (an option requested against a server that never advertised its
+// capability → CapabilityError, zero bytes) is exercised by RFC5258-3-1.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.9-5"],
 		profiles: ["rev2"],
 		title: "client MUST NOT send a LIST return/selection option the server has not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -143,15 +140,15 @@ complianceTest(
 // PROHIBITION test on duplicate options. Even in an extended LIST, a client
 // should not repeat the same selection/return option. The script matches a LIST
 // whose args contain no repeated parenthesised option token; the transcript
-// guard rejects an obvious duplicate (e.g. two RETURN groups). With the current
-// options-free list() API this is vacuously satisfied — annotated unimplemented,
-// no expectFailure claimed for a genuinely-exercised guard.
+// guard rejects an obvious duplicate (e.g. two RETURN groups). REAL SIGNAL
+// (M2.7): the ListOptions surface makes a duplicate structurally inexpressible
+// (boolean fields), and the duplicate-shaped driver request is exercised in
+// RFC5258-3-2 — this test proves the ordinary path never emits one.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.9-6"],
 		profiles: ["rev2"],
 		title: "client SHOULD NOT specify the same LIST option more than once",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -183,16 +180,15 @@ complianceTest(
 // and \NonExistent implies \NoSelect. Script a LIST response carrying
 // \NoInferiors WITHOUT the implied \HasNoChildren; the client must behave as
 // though \HasNoChildren were also present (it must not attempt to expand the
-// children of a \NoInferiors mailbox). driver.list() is unimplemented today →
-// annotated unimplemented. The minimum observable: the client accepts the
-// response without erroring and does not follow up with a child-listing LIST
-// for the \NoInferiors mailbox (no such follow-up is scripted).
+// children of a \NoInferiors mailbox). REAL SIGNAL (M2.7): list() resolves a
+// typed MailboxInfo[] whose attribute set applies the inference
+// (\NoInferiors ⇒ \HasNoChildren), and the observable below — no follow-up
+// child-listing LIST — is genuinely exercised.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.3.9.4-1"],
 		profiles: ["rev2"],
 		title: "client treats \\NoInferiors as implying \\HasNoChildren (no child expansion)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

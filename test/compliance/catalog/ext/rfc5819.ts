@@ -88,9 +88,8 @@ const rfc5819: CatalogModule = {
 				"is not double-scored (see this module's extractionNote rev2-core adjudication). The nearest " +
 				"rev2 client entry, RFC9051-6.3.9-5 (MUST NOT send an option the server has not advertised), " +
 				"is a distinct prohibition gating WHEN this option may be sent, not a restatement of the " +
-				"command form, so no rev1-only dedupe applies. Currently self-actualizing fail: driver.list() " +
-				"invoked with a returnOptions payload throws NotImplementedError, so the client has no LIST-" +
-				"STATUS surface to emit this form.",
+				"command form, so no rev1-only dedupe applies. driver.list() invoked with a " +
+				"returnOptions payload is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5819-2-2",
@@ -155,9 +154,8 @@ const rfc5819: CatalogModule = {
 				"binding entry for accepting a STATUS-less \\NoSelect LIST entry, so this is not double-scored " +
 				"(see extractionNote). Testable: script the §3 example exchange — a '* LIST (\\NoSelect) ... " +
 				"\"bar\"' with no following '* STATUS', then a tagged OK — and assert the client completes the " +
-				"command successfully without erroring on the absent STATUS. Currently self-actualizing fail: " +
-				"driver.list() with returnOptions throws NotImplementedError, so the client cannot drive a " +
-				"LIST-STATUS exchange to completion at all.",
+				"command successfully without erroring on the absent STATUS. driver.list() with " +
+				"returnOptions is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC5819-2-4",
@@ -188,8 +186,7 @@ const rfc5819: CatalogModule = {
 				"can't-select (\\NoSelect) path, -4 is the server's optional best-effort drop on unexpected " +
 				"error. Testable: script a LIST-STATUS exchange in which a listed selectable mailbox receives " +
 				"no '* STATUS' reply before the tagged OK, and assert the client completes successfully. " +
-				"Currently self-actualizing fail: driver.list() with returnOptions throws " +
-				"NotImplementedError.",
+				"driver.list() with returnOptions is genuinely real, so this row passes for real.",
 		},
 	],
 };

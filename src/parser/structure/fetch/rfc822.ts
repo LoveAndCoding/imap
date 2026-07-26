@@ -1,9 +1,19 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { matchesFormat } from "../../utility";
 
-// From spec: "RFC822.SIZE" SP number
+// From spec: "RFC822.SIZE" SP number64
+//
+// RFC9051 Appendix D-1 requires clients to expect 63-bit-long message sizes.
+// The lexer (src/lexer/rules/number.ts) already promotes any value above
+// MAX_ALLOWED_NUMBER (2^32) to a BigIntToken, so the size here is a plain
+// `number` for values that fit and a `bigint` for larger ones — matching the
+// same number-or-bigint pattern used for MODSEQ (./modseq.ts).
+/** RFC 3501/9051 §7.5 RFC822.SIZE data item: the message's size in octets. */
 export class RFC822Size {
-	constructor(public readonly size: number) {}
+	constructor(
+		/** The message size in octets (`bigint` for values above 2^32). */
+		public readonly size: number | bigint,
+	) {}
 }
 
 export function match(
@@ -12,12 +22,12 @@ export function match(
 	const isSizeMatch = matchesFormat(tokens, [
 		{ type: TokenTypes.atom, value: "RFC822.SIZE" },
 		{ sp: true },
-		{ type: TokenTypes.number },
+		[{ type: TokenTypes.number }, { type: TokenTypes.bigint }],
 	]);
 
 	if (isSizeMatch) {
 		return {
-			match: new RFC822Size(tokens[2].getTrueValue() as number),
+			match: new RFC822Size(tokens[2].getTrueValue() as number | bigint),
 			length: 3,
 		};
 	}

@@ -29,9 +29,10 @@
  *   RFC9051-6.2.3-3  (internal-decision — "unsecure network" has no wire
  *                     signature; audit-confirmed untestable).
  *
- * driver.authenticate()/login() are unimplemented today; the AUTHENTICATE tests
- * script the full correct exchange and annotate 'unimplemented' so they
- * self-actualize when those verbs land.
+ * driver.authenticate()/login() are implemented, so the AUTHENTICATE tests
+ * that drive only PLAIN (6.2.2-1, 6.2.2-3, 6.2.2-5, 6.2.2-6) exercise the full
+ * correct exchange for real. The cancel-with-'*' test (6.2.2-2) still drives
+ * an unrecognized mechanism (GSSAPI) and remains annotated 'unimplemented'.
  */
 import { expect } from "vitest";
 
@@ -41,7 +42,7 @@ import { loadCertFixture } from "../../harness/tls";
 import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { authPlainExchange, capabilityExchange, greet } from "../../runner/state";
+import { authPlainExchange, capabilityExchange } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -55,15 +56,12 @@ const localhost = loadCertFixture("localhost");
 //   -2 (MUST discard cached capabilities): PRE-TLS-ONLY must be gone post-TLS.
 //   -3 (SHOULD re-issue CAPABILITY): the post-TLS expect step times out if the
 //      client never re-issues.
-// The current client's starttls path is broken → annotated violation
-// (transcript-verify which leg fails).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.1-1", "RFC9051-6.2.1-2", "RFC9051-6.2.1-3"],
 		profiles: ["rev2"],
 		title:
 			"STARTTLS: no plaintext before handshake; capabilities discarded and re-issued post-TLS",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -101,22 +99,25 @@ complianceTest(
 
 // ── RFC9051-6.2.2-1: client MUST implement AUTHENTICATE ────────────────────
 // The client must be able to send AUTHENTICATE <mechanism>. Full PLAIN
-// exchange scripted; driver.authenticate() is unimplemented today.
+// exchange scripted.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.2-1"],
 		profiles: ["rev2"],
 		title: "client issues AUTHENTICATE command when authenticate() is called",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code) — see the comment on the
+				// LOGINDISABLED test below for why: this helper always follows with
+				// an unconditional capabilityExchange() round trip, which an inline
+				// greeting capability would let the client skip entirely.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"]),
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: ["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -127,26 +128,55 @@ complianceTest(
 
 // ── RFC9051-6.2.2-2: cancel AUTHENTICATE with a single '*' line ────────────
 // When cancelling an in-progress AUTHENTICATE exchange the client MUST send a
-// line consisting of a single "*". Script: server sends a challenge for a
-// mechanism the client cannot answer; the harness expects "*". Unchanged
-// wording from RFC3501-6.2.2-2; driver.authenticate() is unimplemented today.
+// line consisting of a single "*".
+//
+// A §9.3-compliant client never NAMES a mechanism it doesn't implement (an
+// earlier version of this test drove `driver.authenticate("GSSAPI")`, which
+// this library's registry doesn't recognize — `driver.authenticate()` throws
+// `NotImplementedError` before a single byte reaches the wire, so no real
+// AUTHENTICATE was ever sent and the duty was never actually witnessed).
+// GENUINE SCENARIO (mirrors RFC3501-6.2.2-2's rev1 rewrite): AUTH=PLAIN
+// advertised with SASL-IR NOT advertised, so the AUTHENTICATE line carries no
+// initial-response argument and the client's PLAIN response instead arrives
+// on the deferred continuation reply (RFC 4422 §3.4-1's legal "respond"
+// leg). PLAIN's `step()` (src/sasl/plain.ts) always throws on any further
+// challenge — a second continuation is a protocol violation PLAIN has no
+// legal answer for — so a server that sends a SECOND, superfluous challenge
+// forces the one scenario where the client's only legal move is to cancel:
+// this witnesses RFC9051-6.2.2-2 with a genuine '*' on the wire.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.2-2"],
 		profiles: ["rev2"],
 		title: "client sends a single '*' line to cancel an in-progress AUTHENTICATE exchange",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
-				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=GSSAPI"]),
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				// Server challenge the client cannot answer → cancel with "*".
-				send("+ dGVzdC1jaGFsbGVuZ2U=\r\n"),
+				// Bare greeting (no inline CAPABILITY code) — see the comment on the
+				// LOGINDISABLED test below for why: this helper always follows with
+				// an unconditional capabilityExchange() round trip, which an inline
+				// greeting capability would let the client skip entirely.
+				send("* OK ready\r\n"),
+				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"]),
+				// No SASL-IR advertised: bare mechanism name, no inline IR argument.
+				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+				send("+ \r\n"),
+				// Leg 1: PLAIN answers the first (expected) challenge with its
+				// deferred initial response — the "respond" leg.
+				expectLine({
+					match: (line) => ({
+						ok: /^[A-Za-z0-9+/=]+$/.test(line),
+						reason: `expected base64 SASL response, got: '${line}'`,
+					}),
+					description: "base64 SASL response (deferred initial response)",
+				}),
+				// A second, superfluous challenge: PLAIN's step() has no legal
+				// answer for this and must abort.
+				send("+ dGVzdA==\r\n"),
+				// Leg 2: the ONLY legal continuation now is the bare '*' abort.
 				expectLine({
 					match: (line) => ({
 						ok: line === "*",
@@ -154,12 +184,29 @@ complianceTest(
 					}),
 					description: "AUTHENTICATE cancellation line '*'",
 				}),
-				// Tagged BAD is the valid termination of a cancelled exchange.
-				reply("BAD AUTHENTICATE cancelled"),
+				// Tagged BAD confirms the cancellation. The [AUTHENTICATIONFAILED]
+				// code (RFC 5530) is required, not decorative: spec §9.3 step 3 only
+				// treats a failure as "credentials/mechanism wrong, stop" with this
+				// specific code — a bare BAD reads as an ordinary
+				// mechanism-negotiation failure and would make authenticate()'s
+				// selection algorithm fall through to a LOGIN attempt this script
+				// never scripts, hanging the test forever (the identical lesson is
+				// documented on the GENUINE ABORT SCENARIO test in
+				// ext/sasl-4422.test.ts).
+				reply("BAD [AUTHENTICATIONFAILED] AUTHENTICATE cancelled"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.authenticate("GSSAPI");
+		let authError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			authError = err;
+		}
+		expect(
+			authError,
+			"a cancelled AUTHENTICATE exchange must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );
@@ -176,20 +223,22 @@ complianceTest(
 // alphabet in both: an inline IR argument must be base64 (or the single "="
 // pad), and the challenge-response reply must be base64. Any non-base64,
 // quoted, or literal-wrapped initial response fails the script.
-// driver.authenticate() is unimplemented today → annotated unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.2-3"],
 		profiles: ["rev2"],
 		title: "client base64-encodes the SASL initial/AUTHENTICATE response outside a quoted string or literal",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code) — see the comment on the
+				// LOGINDISABLED test below for why: this helper always follows with
+				// an unconditional capabilityExchange() round trip, which an inline
+				// greeting capability would let the client skip entirely.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN", "SASL-IR"]),
 				// Accept both forms:
 				//   inline SASL-IR: AUTHENTICATE PLAIN <base64|=>
@@ -212,7 +261,7 @@ complianceTest(
 				// only fires if the client sends another line; a pure inline-IR
 				// client sends none and this expect times out — but that path
 				// completes via the reply below on the AUTHENTICATE tag.
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev2 LITERAL- AUTH=PLAIN SASL-IR] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -225,20 +274,23 @@ complianceTest(
 // When AUTHENTICATE negotiates a security layer the client MUST re-issue
 // CAPABILITY rather than trust any code in the (unprotected) tagged OK. Script:
 // AUTHENTICATE OK carries no CAPABILITY code → the client must send a fresh
-// CAPABILITY. driver.authenticate() is unimplemented today.
+// CAPABILITY.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.2-5"],
 		profiles: ["rev2"],
 		title: "client re-issues CAPABILITY after a security-layer AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code) — see the comment on the
+				// LOGINDISABLED test below for why: this helper always follows with
+				// an unconditional capabilityExchange() round trip, which an inline
+				// greeting capability would let the client skip entirely.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"]),
 				...authPlainExchange(),
 				// Client MUST re-issue CAPABILITY (OK carried no CAPABILITY code).
@@ -256,28 +308,31 @@ complianceTest(
 // After a failed AUTHENTICATE (NO), the client MAY try another mechanism (or
 // fall back to LOGIN). Script: first attempt → NO; second attempt → OK. The
 // client must handle the NO gracefully and continue the session.
-// driver.authenticate() is unimplemented today.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.2.2-6"],
 		profiles: ["rev2"],
 		title: "client MAY retry authentication after receiving a NO response to AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Bare greeting (no inline CAPABILITY code) — see the comment on the
+				// LOGINDISABLED test below for why: this helper always follows with
+				// an unconditional capabilityExchange() round trip, which an inline
+				// greeting capability would let the client skip entirely.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"]),
 				...authPlainExchange({ result: "NO" }),
-				...authPlainExchange({ result: "OK" }),
+				...authPlainExchange({ result: "OK", capsAfter: ["IMAP4rev2", "LITERAL-", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// First attempt: rethrow NotImplementedError so the test stays annotated
-		// unimplemented until authenticate() lands; swallow any other error (NO).
+		// First attempt: rethrow NotImplementedError (should not occur; authenticate()
+		// is implemented) so a real regression is not masked; swallow any other
+		// error (the expected NO rejection).
 		let firstError: unknown;
 		try {
 			await driver.authenticate("PLAIN");
@@ -308,7 +363,14 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				// Deliberately a bare greeting with NO inline `[CAPABILITY ...]` code
+				// (unlike `greet({ profile: "rev2" })`, which always attaches one per
+				// RFC9051 §6.3.2): an inline greeting capability would let `connect()`
+				// skip the CAPABILITY round trip below entirely (the registry is
+				// already valid from the greeting), so the client would never learn
+				// LOGINDISABLED at all and this prohibition would be vacuous by
+				// construction. Sending a bare greeting forces the round trip.
+				send("* OK ready\r\n"),
 				...capabilityExchange(["IMAP4rev2", "LITERAL-", "LOGINDISABLED"]),
 				// No LOGIN expectation — the session ends after CAPABILITY.
 			],

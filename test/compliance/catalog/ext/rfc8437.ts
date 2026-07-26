@@ -40,14 +40,16 @@ const rfc8437: CatalogModule = {
 		"bibliographic, skipped. Appendix A (Design Considerations): informative rationale for " +
 		"the design choice of a separate command, no new normative text — reviewed, no " +
 		"additional requirements. Acknowledgements/Author's Address: administrative, skipped. " +
-		"Testability: this client library has no public UNAUTHENTICATE verb — " +
-		"`ComplianceDriver.unauthenticate()` (test/compliance/driver/driver.ts) throws " +
+		"Testability: at catalog-authoring time this client library had no public UNAUTHENTICATE " +
+		"verb — `ComplianceDriver.unauthenticate()` (test/compliance/driver/driver.ts) threw " +
 		"NotImplementedError — so every duty whose observable core is 'what the client sends " +
-		"or does when it issues UNAUTHENTICATE' is scripted as a self-actualizing exchange and " +
-		"marked testable (failing 'unimplemented' today, becoming a real pass/fail once the " +
-		"verb ships) rather than untestable; only duties with no wire-observable core at all " +
+		"or does when it issues UNAUTHENTICATE' was scripted as a self-actualizing exchange and " +
+		"marked testable rather than untestable; only duties with no wire-observable core at all " +
 		"(the server-side state-machine bookkeeping consequence of transition 7, and internal " +
-		"credential-binding bookkeeping) are marked untestable, per the extraction brief.",
+		"credential-binding bookkeeping) are marked untestable, per the extraction brief. " +
+		"UPDATE: `unauthenticate()` has since shipped (driver.unauthenticate() now delegates to " +
+		"the real `ImapClient.unauthenticate()`) and every one of those self-actualizing rows " +
+		"genuinely passes today.",
 	requirements: [
 		// ── §3 UNAUTHENTICATE Command ────────────────────────────────────────────
 		{
@@ -73,11 +75,12 @@ const rfc8437: CatalogModule = {
 				"authenticated state) — issuing it otherwise is a client protocol violation the " +
 				"server is entitled to reject with BAD. Recorded as MUST (the strongest keyword " +
 				"consistent with 'only occurs if' as an exhaustive precondition list) per RFC " +
-				"8174 judgment. No public API surface issues UNAUTHENTICATE " +
-				"(`ComplianceDriver.unauthenticate()` throws NotImplementedError) — scripted as a " +
-				"self-actualizing exchange: arm a session advertising UNAUTHENTICATE, reach " +
-				"authenticated state, invoke the verb, and assert the client sends the command " +
-				"only from that state; fails unimplemented today.",
+				"8174 judgment. Scripted as a self-actualizing exchange: arm a session " +
+				"advertising UNAUTHENTICATE, reach authenticated state, invoke the verb, and " +
+				"assert the client sends the command only from that state. At catalog-authoring " +
+				"time no public API surface issued UNAUTHENTICATE " +
+				"(`ComplianceDriver.unauthenticate()` threw NotImplementedError); the verb has " +
+				"since shipped and this row genuinely passes.",
 		},
 		{
 			id: "RFC8437-3-2",
@@ -127,12 +130,12 @@ const rfc8437: CatalogModule = {
 				"assertion: the client must not expect (and a conformant client's state tracking " +
 				"must not require) an untagged EXPUNGE/VANISHED-style event to learn that its " +
 				"selected mailbox is gone — the tagged UNAUTHENTICATE OK itself is the only signal. " +
-				"No public API surface reaches selected state or issues UNAUTHENTICATE " +
-				"(`driver.select()` and `driver.unauthenticate()` both throw NotImplementedError) " +
-				"— scripted as a self-actualizing exchange: select a mailbox, issue UNAUTHENTICATE, " +
+				"Scripted as a self-actualizing exchange: select a mailbox, issue UNAUTHENTICATE, " +
 				"assert no untagged EXPUNGE arrives before the tagged OK and that the client's " +
-				"post-command state no longer reports a selected mailbox; fails unimplemented " +
-				"today.",
+				"post-command state no longer reports a selected mailbox. At catalog-authoring " +
+				"time no public API surface reached selected state or issued UNAUTHENTICATE " +
+				"(`driver.select()` and `driver.unauthenticate()` both threw NotImplementedError); " +
+				"both have since shipped and this row genuinely passes.",
 		},
 		{
 			id: "RFC8437-3-4",
@@ -154,12 +157,12 @@ const rfc8437: CatalogModule = {
 				"MUST per RFC 8174 — this is a cache/security-layer discard duty: once the client " +
 				"has sent the UNAUTHENTICATE command line, it MUST NOT continue to wrap subsequent " +
 				"octets in the (now-stale) SASL security layer. Conditional on a SASL layer having " +
-				"been active in the first place. No public API surface exposes SASL security-layer " +
-				"state or issues UNAUTHENTICATE (`driver.authenticate()` and " +
-				"`driver.unauthenticate()` both throw NotImplementedError) — scripted as a self-" +
-				"actualizing exchange: negotiate a SASL security layer, issue UNAUTHENTICATE, and " +
-				"assert the bytes following the command's terminating CRLF are sent unwrapped; " +
-				"fails unimplemented today.",
+				"been active in the first place. Scripted as a self-actualizing exchange: " +
+				"negotiate a SASL security layer, issue UNAUTHENTICATE, and assert the bytes " +
+				"following the command's terminating CRLF are sent unwrapped. At catalog-authoring " +
+				"time no public API surface exposed SASL security-layer state or issued " +
+				"UNAUTHENTICATE (`driver.authenticate()` and `driver.unauthenticate()` both threw " +
+				"NotImplementedError); both have since shipped and this row genuinely passes.",
 		},
 		{
 			id: "RFC8437-3-5",
@@ -179,11 +182,12 @@ const rfc8437: CatalogModule = {
 				"out in the extraction scope: after UNAUTHENTICATE, the client's path back to " +
 				"authenticated state is an ordinary AUTHENTICATE or LOGIN, gated by whatever the " +
 				"server's (possibly changed) capability list permits post-UNAUTHENTICATE, exactly " +
-				"as it would be on a fresh connection. No public API surface issues UNAUTHENTICATE " +
-				"followed by AUTHENTICATE/LOGIN (all three throw NotImplementedError) — scripted as " +
-				"a self-actualizing exchange: issue UNAUTHENTICATE, then issue AUTHENTICATE or " +
-				"LOGIN, and assert the server accepts the new authentication attempt on the same " +
-				"connection; fails unimplemented today.",
+				"as it would be on a fresh connection. Scripted as a self-actualizing exchange: " +
+				"issue UNAUTHENTICATE, then issue AUTHENTICATE or LOGIN, and assert the server " +
+				"accepts the new authentication attempt on the same connection. At " +
+				"catalog-authoring time no public API surface issued UNAUTHENTICATE followed by " +
+				"AUTHENTICATE/LOGIN (all three threw NotImplementedError); all three have since " +
+				"shipped and this row genuinely passes.",
 		},
 		{
 			id: "RFC8437-3-6",
@@ -205,11 +209,12 @@ const rfc8437: CatalogModule = {
 				"pipeline, and only available when no SASL security layer was active (a security-" +
 				"layer-terminated connection cannot safely pipeline past the boundary, per " +
 				"RFC8437-3-4). The SASL-IR cross-reference is informative context, not an " +
-				"independent duty. No public API surface exposes command pipelining or issues " +
-				"UNAUTHENTICATE/AUTHENTICATE (both throw NotImplementedError) — scripted as a self-" +
-				"actualizing exchange: with no SASL layer active, write UNAUTHENTICATE and " +
-				"AUTHENTICATE on the wire without waiting for the intervening tagged OK, and assert " +
-				"the server processes both; fails unimplemented today.",
+				"independent duty. Scripted as a self-actualizing exchange: with no SASL layer " +
+				"active, write UNAUTHENTICATE and AUTHENTICATE on the wire without waiting for the " +
+				"intervening tagged OK, and assert the server processes both. At catalog-authoring " +
+				"time no public API surface exposed command pipelining or issued " +
+				"UNAUTHENTICATE/AUTHENTICATE (both threw NotImplementedError); both have since " +
+				"shipped and this row genuinely passes.",
 		},
 		{
 			id: "RFC8437-3-7",
@@ -233,11 +238,12 @@ const rfc8437: CatalogModule = {
 				"unable to reliably determine UNAUTHENTICATE's availability before attempting it, " +
 				"so a conforming client SHOULD re-issue CAPABILITY (or consult a post-authentication " +
 				"CAPABILITY response code) after authenticating and before relying on " +
-				"UNAUTHENTICATE. No public API surface issues CAPABILITY post-authentication or " +
-				"UNAUTHENTICATE (both throw NotImplementedError) — scripted as a self-actualizing " +
-				"exchange: authenticate against a server that advertises UNAUTHENTICATE only post-" +
-				"auth, and assert the client re-issues CAPABILITY (or consults the post-auth " +
-				"capability list) before issuing UNAUTHENTICATE; fails unimplemented today.",
+				"UNAUTHENTICATE. Scripted as a self-actualizing exchange: authenticate against a " +
+				"server that advertises UNAUTHENTICATE only post-auth, and assert the client " +
+				"re-issues CAPABILITY (or consults the post-auth capability list) before issuing " +
+				"UNAUTHENTICATE. At catalog-authoring time no public API surface issued CAPABILITY " +
+				"post-authentication or UNAUTHENTICATE (both threw NotImplementedError); both have " +
+				"since shipped and this row genuinely passes.",
 		},
 		// ── §4.1 Stateful Extensions ──────────────────────────────────────────────
 		{
@@ -261,15 +267,16 @@ const rfc8437: CatalogModule = {
 				"descriptive, judged MUST per RFC 8174 — the sibling cache/layer-discard duty to " +
 				"RFC8437-3-4, for the COMPRESS=DEFLATE layer instead of the SASL layer, with an " +
 				"explicit ordering rule (compression terminates before SASL when both are active). " +
-				"Conditional on IMAP COMPRESS having been negotiated. No public API surface exposes " +
-				"a COMPRESS layer or issues UNAUTHENTICATE (`driver.compress()` and " +
-				"`driver.unauthenticate()` both throw NotImplementedError) — scripted as a self-" +
+				"Conditional on IMAP COMPRESS having been negotiated. Scripted as a self-" +
 				"actualizing exchange: negotiate COMPRESS=DEFLATE, issue UNAUTHENTICATE, and assert " +
 				"the bytes following the command's terminating CRLF are sent unwrapped by the " +
 				"compression layer (and, if a SASL layer was also active, that compression " +
-				"unwrapping precedes SASL unwrapping); fails unimplemented today. Cross-reference: " +
-				"sibling duty to RFC8437-3-4 (SASL layer termination) and RFC4978 (COMPRESS " +
-				"extension, catalogued separately).",
+				"unwrapping precedes SASL unwrapping). At catalog-authoring time no public API " +
+				"surface exposed a COMPRESS layer or issued UNAUTHENTICATE (`driver.compress()` " +
+				"and `driver.unauthenticate()` both threw NotImplementedError); both have since " +
+				"shipped and this row genuinely passes. Cross-reference: sibling duty to " +
+				"RFC8437-3-4 (SASL layer termination) and RFC4978 (COMPRESS extension, catalogued " +
+				"separately).",
 		},
 		// ── §4.2 Client Certificates, SASL EXTERNAL, and imaps ───────────────────
 		{
@@ -323,12 +330,12 @@ const rfc8437: CatalogModule = {
 				"leaves an administrative client stuck as that one identity unless UNAUTHENTICATE " +
 				"is advertised, in which case the client returns to not-authenticated state and " +
 				"re-authenticates via SASL EXTERNAL to act as a different identity on the same " +
-				"connection. No public API surface handles a PREAUTH greeting, issues " +
-				"UNAUTHENTICATE, or issues AUTHENTICATE EXTERNAL (all throw NotImplementedError or " +
-				"have no PREAUTH handling) — scripted as a self-actualizing exchange: connect to a " +
-				"server that sends a PREAUTH greeting and advertises UNAUTHENTICATE, issue " +
-				"UNAUTHENTICATE, then issue AUTHENTICATE EXTERNAL, and assert the server accepts " +
-				"the new identity; fails unimplemented today.",
+				"connection. Scripted as a self-actualizing exchange: connect to a server that " +
+				"sends a PREAUTH greeting and advertises UNAUTHENTICATE, issue UNAUTHENTICATE, " +
+				"then issue AUTHENTICATE EXTERNAL, and assert the server accepts the new identity. " +
+				"At catalog-authoring time no public API surface handled a PREAUTH greeting or " +
+				"issued UNAUTHENTICATE/AUTHENTICATE EXTERNAL (all threw NotImplementedError or had " +
+				"no PREAUTH handling); all have since shipped and this row genuinely passes.",
 		},
 	],
 };

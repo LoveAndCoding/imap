@@ -58,15 +58,23 @@
  *   server that advertises STARTTLS and offers NO expectation for any
  *   credential command; if the client sent LOGIN/AUTHENTICATE pre-TLS it would
  *   be an unscripted command (script failure) and the client transcript would
- *   carry it. We assert the pre-TLS client lines contain no LOGIN/AUTHENTICATE.
- *   The client's STARTTLS upgrade path is broken today (see RFC3501-6.2.1-* /
- *   RFC9051-11.1-7), so connect() fails — but the OBSERVABLE duty here is the
- *   NEGATIVE one (no credentials appear before TLS), which holds: the failing
- *   STARTTLS path never emits credentials in the clear. Annotated 'violation'
- *   because the client does not complete the confidentiality-first STARTTLS
- *   sequence the duty presumes (it aborts rather than reaching a protected
- *   channel); the genuine, non-vacuous witness is that no credential command
- *   ever reaches the wire in cleartext.
+ *   carry it. We assert the pre-TLS client lines contain no LOGIN/AUTHENTICATE
+ *   AND that the confidentiality-first STARTTLS sequence the duty presumes
+ *   actually completes (ok === true) — both hold: the client never emits
+ *   credentials in the clear, and it reaches the protected channel.
+ *
+ * M6.2 flake stabilization (M0 NOTES.md: "occasionally time out under
+ * full-suite parallel TLS load (driver default 3000 ms + backstop); each
+ * passes consistently in isolation"): every test here performs a REAL TLS
+ * handshake, and this environment's small core count (4) means full-suite
+ * parallel runs genuinely contend for CPU during the crypto handshake —
+ * `timeoutMs` (the driver's/client's own connect timeout) and each test's
+ * own vitest `timeout` (which must clear the driver's `timeoutMs + 1000`
+ * backstop window, see `driver.ts`'s `withConnectBackstop`) are raised
+ * uniformly here (2000-3000ms -> 6000ms; 5000ms -> 10000ms) to give a real
+ * handshake enough headroom under contention without masking a genuinely
+ * hung client (the backstop margin is preserved, just wider). This changes
+ * flake PROBABILITY, not any row's pass/violation outcome.
  */
 import { expect } from "vitest";
 
@@ -85,15 +93,14 @@ const expired = loadCertFixture("expired");
 // ── RFC8314-3.2-1: cert validation on the Implicit TLS (imaps) port ───────
 // Wrong-host cert over an Implicit TLS listener; CA trusted, so the only
 // failure mode is the identity mismatch. A conformant client refuses. The
-// current client performs no hostname verification → violation.
+// client performs hostname verification via connection/tls.ts → pass.
 complianceTest(
 	{
 		reqs: ["RFC8314-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title:
 			"Implicit TLS on imaps port: client rejects a certificate whose identity does not match the server",
-		expectFailure: "violation",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsImplicit: wrongHost });
@@ -104,7 +111,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: wrongHost.cert,
-			timeoutMs: 2000,
+			timeoutMs: 6000,
 		});
 		// A conformant client must refuse the connection.
 		expect(ok).toBe(false);
@@ -120,7 +127,7 @@ complianceTest(
 		reqs: ["RFC8314-5-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client completes a handshake with a TLS 1.2-only server (TLS 1.2+ MUST)",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({
@@ -140,7 +147,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		expect(ok).toBe(true);
 		await server.assertCompleted();
@@ -151,17 +158,15 @@ complianceTest(
 // PKIX (RFC 5280) certification-path validation includes the validity window.
 // The expired fixture has a MATCHING identity but an expired validity window;
 // even with the CA trusted, a conformant client MUST reject it — gracefully,
-// as a failed connect. OBSERVED: the client does not surface the rejection; it
-// hangs until the test-timeout fires (reporter counts this as a violation via
-// Fix 3). Annotated 'violation' — same shared TLS-rejection defect as the
-// hostname-mismatch/URI-ID hangs, isolated here to the expiry cause.
+// as a failed connect. The connection/tls.ts policy module's `rejectUnauthorized:
+// true` surfaces the expiry as a rejected promise (via the shared TLS-error
+// path) rather than hanging → pass.
 complianceTest(
 	{
 		reqs: ["RFC8314-5.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client rejects an expired server certificate (PKIX certification-path validation)",
-		expectFailure: "violation",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsImplicit: expired });
@@ -175,7 +180,7 @@ complianceTest(
 			port: server.port,
 			security: "implicit",
 			ca: expired.cert,
-			timeoutMs: 2000,
+			timeoutMs: 6000,
 		});
 		// A conformant client refuses an expired certificate.
 		expect(ok).toBe(false);
@@ -193,20 +198,17 @@ complianceTest(
 // (script failure) and its transcript would carry the credential line.
 //
 // Genuineness: the assertion is the NEGATIVE duty — no LOGIN/AUTHENTICATE
-// appears in the pre-TLS client transcript. The client's STARTTLS upgrade path
-// is broken today (connect() fails), but the failing path never emits
-// credentials in the clear, so the prohibition holds non-vacuously (the
-// transcript-scan sentinel would fire if a credential command ever appeared).
-// Annotated 'violation' because the client does not complete the
-// confidentiality-first STARTTLS sequence the duty presumes.
+// appears in the pre-TLS client transcript (the transcript-scan sentinel
+// would fire if a credential command ever appeared) — combined with the
+// POSITIVE duty that the confidentiality-first STARTTLS sequence the test
+// presumes actually completes (ok === true).
 complianceTest(
 	{
 		reqs: ["RFC8314-5.2-4", "RFC8314-5.1-7"],
 		profiles: ["rev1", "rev2"],
 		title:
 			"client sends no credential command before a minimum-confidentiality TLS session is established",
-		expectFailure: "violation",
-		timeout: 5000,
+		timeout: 10000,
 	},
 	async () => {
 		const server = await f.startServer({ tlsUpgrade: localhost });
@@ -232,7 +234,7 @@ complianceTest(
 			port: server.port,
 			security: "starttls",
 			ca: localhost.cert,
-			timeoutMs: 3000,
+			timeoutMs: 6000,
 		});
 		// Non-vacuous witness of the prohibition, asserted first so it runs
 		// regardless of the STARTTLS outcome: no credential command may appear in
@@ -247,8 +249,7 @@ complianceTest(
 			"no AUTHENTICATE command must appear before TLS",
 		).not.toMatch(/\bAUTHENTICATE\b/);
 		// The confidentiality-first STARTTLS sequence must complete for the client
-		// to legitimately proceed to any credentialed operation. STARTTLS is broken
-		// today → ok === false (honest violation).
+		// to legitimately proceed to any credentialed operation.
 		expect(ok).toBe(true);
 		await server.assertCompleted();
 	},

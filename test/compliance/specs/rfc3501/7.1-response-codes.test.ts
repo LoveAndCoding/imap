@@ -197,19 +197,17 @@ defineAcceptanceTable({
 // omits \Answered/\Flagged/\Draft, which appear in FLAGS. Per §7.1, those
 // omitted flags "can not be set permanently" — the client must record this.
 //
-// driver.select() is unimplemented today. When select() (and a flags-state
-// API) is implemented, this test's future observables are:
-//   1. the scripted exchange completes (the restricted list parses), AND
-//   2. the client records the permanent set {\Deleted, \Seen} — e.g. exposes
-//      it to consumers, and does not treat a STORE of \Flagged as durable
-//      (no \* means new keywords cannot be created either).
+// REAL SIGNAL (M2.2): driver.select() returns the real `MailboxSession`; this
+// test asserts its `permanentFlags` is EXACTLY {\Deleted, \Seen} (not the
+// full FLAGS set) and `canCreateKeywords` is `false` (no \*), so a client
+// that ignored PERMANENTFLAGS entirely (treating everything in FLAGS as
+// durable) would fail this assertion, not just complete the exchange.
 complianceTest(
 	{
 		reqs: ["RFC3501-7.1-2"],
 		profiles: ["rev1"],
 		title:
 			"client records the restricted PERMANENTFLAGS list from a SELECT response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -231,10 +229,17 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		// Unimplemented today; when implemented the client must parse and record
-		// the restricted permanent set without error.
-		await driver.select("INBOX");
+		const session = await driver.select("INBOX");
 		await server.assertCompleted();
+		// The restricted set, not the full FLAGS list.
+		expect(new Set(session.permanentFlags), "permanentFlags must be exactly {\\Deleted, \\Seen}").toEqual(
+			new Set(["\\Deleted", "\\Seen"]),
+		);
+		expect(
+			session.permanentFlags?.has("\\Flagged"),
+			"\\Flagged is in FLAGS but NOT in PERMANENTFLAGS -- must not be treated as durable",
+		).toBe(false);
+		expect(session.canCreateKeywords, "no \\* means new keywords cannot be created").toBe(false);
 	},
 );
 
@@ -249,7 +254,6 @@ complianceTest(
 		reqs: ["RFC3501-7.1-3"],
 		profiles: ["rev1"],
 		title: "client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -296,17 +300,14 @@ complianceTest(
 // user-facing notification channel is IMAPConfiguration.logger; compliance is
 // satisfied when the alert text is emitted through that channel.
 //
-// Expected honest outcome today: FAIL (violation). src/ contains no ALERT
-// handling; the only logger call is the connect-failure message. The exchange
-// itself completes (the CAPABILITY round-trip succeeds), but driver.logs will
-// not contain the alert text.  expectFailure: "violation" records that measurement.
+// M0.3: Connection now surfaces any ALERT response code through the configured
+// `logger` at "warn" (spec I-7/§10.6) — driver.logs carries the alert text.
 complianceTest(
 	{
 		reqs: ["RFC3501-7.1-1"],
 		profiles: ["rev1"],
 		title:
 			"client surfaces ALERT response-code text through its logger notification channel",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

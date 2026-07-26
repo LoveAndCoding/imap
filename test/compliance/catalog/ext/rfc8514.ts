@@ -24,9 +24,9 @@ const rfc8514: CatalogModule = {
 		"wants to search by it, MUST use exactly these atoms and MUST accept exactly this response " +
 		"shape, because the ABNF admits no alternative spelling; the notes on each entry record the " +
 		"no-keyword judgment call. All six are testable (a black-box scripted exchange can drive the " +
-		"exact command form and assert the client's parse/emit behavior; unimplemented today, so they " +
-		"self-actualize as failures against RFC8514 — the compliance suite scores absence of a " +
-		"conditional feature as non-compliance for that source). " +
+		"exact command form and assert the client's parse/emit behavior); all six now pass — the FETCH " +
+		"item and the three date-taking SEARCH keys landed at M3.5, and the argument-less " +
+		"SAVEDATESUPPORTED probe (`SearchCriteria.savedateSupported: true`) landed at M5.7. " +
 		"SKIPPED AS SERVER-ONLY (no client action to emit, observe, or enforce): §3's two MUSTs on " +
 		"the attribute's semantics — 'the current date and time at which the message is delivered to " +
 		"a mailbox MUST be used to set the save date attribute' and 'Once calculated, the save date " +
@@ -204,8 +204,8 @@ const rfc8514: CatalogModule = {
 				"other three it takes NO date argument (it is a boolean probe of whether the mailbox " +
 				"storage supports the save date attribute). A client using it must emit the bare atom " +
 				"SAVEDATESUPPORTED. Conditional on the client using SAVEDATE search. Standalone in " +
-				"rev2, profiles [\"rev1\",\"rev2\"]. Self-actualizing fail today: no SAVEDATE search " +
-				"surface.",
+				"rev2, profiles [\"rev1\",\"rev2\"]. `SearchCriteria.savedateSupported: true` (M5.7) " +
+				"compiles the bare atom.",
 		},
 	],
 };

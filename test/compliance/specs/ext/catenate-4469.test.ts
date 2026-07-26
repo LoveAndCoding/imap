@@ -32,16 +32,25 @@
  *   toobig-response-code = "TOOBIG"
  *
  * OBSERVATION SPLIT:
- *  - The command-emission duties (3-1..3-4) have NO driver surface — the catenate
- *    option of driver.append() throws NotImplementedError → unimplemented. The
- *    scripted server pins the exact CATENATE (TEXT {n} URL "…") wire shape so the
- *    matchers reject a bare single-literal APPEND masquerading as CATENATE.
+ *  - The command-emission duties (3-1..3-4): M3.10 wires `driver.append()`'s
+ *    `catenate` option straight through to `AppendCommand`'s own `catenate`
+ *    option (gated on the CATENATE capability), so these are now REAL passes
+ *    too, not self-actualizing. Each script needed a `sessionPrelude(...,
+ *    { login: true })` + `driver.login(...)` preamble added -- APPEND (base
+ *    or CATENATE-extended) is legal from "authenticated" state, and
+ *    `f.connectPlain()` alone only reaches "not-authenticated"; without the
+ *    added preamble the (now real) `append()` call rejects `StateError`
+ *    before a single byte reaches the wire, same known LOGIN-preamble gap
+ *    `ext/move-6851.test.ts` documented at M3.8. The scripted server pins
+ *    the exact CATENATE (TEXT {n} URL "…") wire shape so the matchers reject
+ *    a bare single-literal APPEND masquerading as CATENATE.
  *  - The response-acceptance duties (4.1-1, 4.2-1) ARE genuinely exercisable:
  *    the client's resp-text-code parser recognizes BADURL and TOOBIG as resp-codes
  *    (src/parser/structure/text.code.ts yields an AtomTextCode of that kind), and
  *    connectLow() surfaces a "* NO [BADURL …]" / "* NO [TOOBIG]" line as a parsed
  *    serverStatus event carrying the code — not a parse error. These run as REAL
- *    pass/violation tests, NOT self-actualizing.
+ *    pass/violation tests, NOT self-actualizing (unaffected by M3.10 -- they
+ *    already exercised the M2.11-era resp-code parser directly).
  */
 import { expect } from "vitest";
 
@@ -181,14 +190,13 @@ complianceTest(
 		reqs: ["RFC4469-3-1", "RFC4469-3-2", "RFC4469-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "CATENATE APPEND form: APPEND mbox CATENATE (TEXT {n} URL \"…\")",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "CATENATE"]),
+				...sessionPrelude(["IMAP4rev1", "CATENATE"], { login: true }),
 				// APPEND <mbox> CATENATE ( TEXT {n}[+] URL <astring> ). The TEXT literal
 				// stays a marker in the flat line; the URL astring is a quoted IMAP URL.
 				// A bare 'APPEND mbox {n}' (base form) would lack the CATENATE atom and
@@ -202,17 +210,18 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		await driver.append("Drafts", Buffer.alloc(0), {
 			catenate: [
 				{ type: "TEXT", message: Buffer.from("Fwd: see below\r\n\r\n") },
 				{ type: "URL", url: "/Sent;UIDVALIDITY=385759045/;UID=20/;section=1.MIME" },
 			],
-		}); // catenate option throws NotImplementedError today
+		});
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();
-		// When implemented: the args carry the CATENATE atom and a parenthesized
-		// list holding a TEXT literal and a URL astring — never a bare literal.
+		// The args carry the CATENATE atom and a parenthesized list holding a
+		// TEXT literal and a URL astring — never a bare literal.
 		expect(append!.args, "CATENATE part list with TEXT and URL cat-parts").toMatch(
 			/CATENATE \(TEXT \{\d+\}(\+)? URL "[^"]*"\)$/i,
 		);
@@ -232,14 +241,13 @@ complianceTest(
 		reqs: ["RFC4469-3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "CATENATE APPEND with a single (minimal) cat-part is well-formed",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "CATENATE"]),
+				...sessionPrelude(["IMAP4rev1", "CATENATE"], { login: true }),
 				// Exactly one cat-part (a TEXT literal); reject an empty '()' list.
 				expectLine(
 					command("APPEND", {
@@ -250,9 +258,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
+		await driver.login("user", "pass");
 		await driver.append("Drafts", Buffer.alloc(0), {
 			catenate: [{ type: "TEXT", message: Buffer.from("hello\r\n") }],
-		}); // catenate option throws NotImplementedError today
+		});
 		await server.assertCompleted();
 		const append = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(append, "APPEND must have been emitted").toBeDefined();

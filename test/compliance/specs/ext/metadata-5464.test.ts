@@ -43,18 +43,26 @@
  *   scope-opt = "DEPTH" SP ("0" / "1" / "infinity")
  *   maxsize-opt = "MAXSIZE" SP number
  *
- * SELF-ACTUALIZATION: no METADATA surface — driver.getmetadata()/setmetadata()
- * throw NotImplementedError, so every duty here fails 'unimplemented'. The
- * scripted server validates the exact command atoms, entry-name syntax, option
- * encodings, NIL-to-remove form, and "[METADATA ...]" resp-code framing against
- * the wire, so once a METADATA surface exists the matchers ARE the genuine,
- * non-vacuous assertions.
+ * M5.4: driver.getmetadata()/setmetadata() now delegate to the real
+ * `client.metadata` facet (`GetMetadataCommand`/`SetMetadataCommand`,
+ * `src/commands/metadata/`). Every row below is now a REAL matcher against
+ * the scripted server: the exact command atoms, entry-name syntax, option
+ * encodings, NIL-to-remove form, and "[METADATA ...]" resp-code framing.
+ * Wire-form tests add a `{ login: true }` prelude + `driver.login()` call
+ * (GETMETADATA/SETMETADATA are gated to authenticated/selected state, so a
+ * bare `connectPlain()` connection would reject locally with `StateError`
+ * before ever reaching the wire — same fix-up M5.2's QUOTA tests needed,
+ * `quota-9208.test.ts`'s own note). The two before-authentication tests
+ * (RFC5464-4.2-1/-4.3-1) deliberately keep the connection unauthenticated and
+ * catch the resulting `StateError` locally (same "swallow the client-side
+ * refusal, assert nothing reached the wire" convention `filters-5466.test.ts`'s
+ * RFC5466-3.1-3 test already uses) — the interesting assertion is that no
+ * bytes were ever written, not the shape of the local rejection.
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
+import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -70,21 +78,19 @@ function entryTokens(args: string): string[] {
 // The client constructs entry names as GETMETADATA/SETMETADATA arguments and
 // MUST NOT emit a name with "//" or a trailing "/" (3.2-1) or containing
 // "*"/"%"/non-ASCII/control octets (3.2-3). Driven with valid entry names; the
-// matcher asserts each emitted entry token is well-formed. driver.getmetadata()
-// throws today → unimplemented.
+// matcher asserts each emitted entry token is well-formed.
 complianceTest(
 	{
 		reqs: ["RFC5464-3.2-1", "RFC5464-3.2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "GETMETADATA entry names carry no //, trailing /, *, %, or control/non-ASCII octets",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				// GETMETADATA <mailbox> (<entry> ...) — entries are /private/... etc.
 				expectLine(command("GETMETADATA", { args: /^"?INBOX"? \(\/[^\s()]+\)$/i })),
 				reply("OK GETMETADATA completed", [
@@ -93,7 +99,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/private/comment"]); // throws today
+		await driver.login("user", "pass");
+		await driver.getmetadata("INBOX", ["/private/comment"]);
 		await server.assertCompleted();
 		const get = server.commandLines.find((l) => l.verb === "GETMETADATA");
 		expect(get, "GETMETADATA must have been emitted").toBeDefined();
@@ -108,21 +115,20 @@ complianceTest(
 
 // ── RFC5464-4.2.2-1: DEPTH option value is 0 / 1 / infinity ────────────────
 // When a client sends the DEPTH option, it uses exactly one of the three literal
-// values "0" / "1" / "infinity" (ABNF scope-opt). driver.getmetadata() throws
-// today → unimplemented; the matcher pins the DEPTH literal.
+// values "0" / "1" / "infinity" (ABNF scope-opt). The matcher pins the DEPTH
+// literal.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.2.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "GETMETADATA DEPTH option uses one of the literals 0 / 1 / infinity",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				// Options ride in a leading parenthesized list: (DEPTH infinity).
 				expectLine(
 					command("GETMETADATA", {
@@ -135,7 +141,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/private/comment"], { depth: "infinity" }); // throws today
+		await driver.login("user", "pass");
+		await driver.getmetadata("INBOX", ["/private/comment"], { depth: "infinity" });
 		await server.assertCompleted();
 		const get = server.commandLines.find((l) => l.verb === "GETMETADATA");
 		expect(get, "GETMETADATA must have been emitted").toBeDefined();
@@ -148,22 +155,19 @@ complianceTest(
 // ── RFC5464-4.2.1-1: parse the [METADATA LONGENTRIES n] tagged-OK code ─────
 // A GETMETADATA carrying a MAXSIZE option may complete with a tagged OK whose
 // resp-code is "[METADATA LONGENTRIES n]" (n = largest oversized value's octet
-// count). The client must accept it as a successful completion. driver
-// .getmetadata() throws today → unimplemented; the scripted OK+code exercises
-// the parse path once implemented.
+// count). The client must accept it as a successful completion and surface n.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.2.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client completes a MAXSIZE GETMETADATA whose tagged OK carries [METADATA LONGENTRIES n]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				// MAXSIZE option present in the leading parenthesized option list.
 				expectLine(
 					command("GETMETADATA", {
@@ -175,24 +179,28 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/private/comment"], { maxsize: 1024 }); // throws today
+		await driver.login("user", "pass");
+		const result = await driver.getmetadata("INBOX", ["/private/comment"], { maxsize: 1024 });
 		await server.assertCompleted();
 		const get = server.commandLines.find((l) => l.verb === "GETMETADATA");
 		expect(get, "GETMETADATA must have been emitted").toBeDefined();
 		expect(get!.args, "MAXSIZE option carried a number").toMatch(/MAXSIZE \d+/i);
+		expect(result.longEntries, "LONGENTRIES's octet count must be parsed and surfaced").toBe(2048);
 	},
 );
 
 // ── RFC5464-4.2-1: GETMETADATA only in authenticated / selected state ──────
-// A conformant client never emits GETMETADATA while not-authenticated. The
-// client has no GETMETADATA surface → unimplemented; the negative check asserts
-// no GETMETADATA leaked before authentication.
+// A conformant client never emits GETMETADATA while not-authenticated.
+// `GetMetadataCommand.states` (authenticated/selected only) rejects locally
+// with `StateError` before any bytes are written (I-9) — caught here (same
+// "swallow the client-side refusal, assert nothing reached the wire"
+// convention `filters-5466.test.ts`'s RFC5466-3.1-3 test uses) since the
+// interesting assertion is the empty transcript, not the rejection's shape.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit GETMETADATA before reaching authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -201,8 +209,7 @@ complianceTest(
 		// state must not issue GETMETADATA.
 		server.arm([[...sessionPrelude(["IMAP4rev1", "METADATA"])]]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/private/comment"]); // throws today
-		await server.assertCompleted();
+		await driver.getmetadata("INBOX", ["/private/comment"]).catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"GETMETADATA must not be issued before authentication",
@@ -216,15 +223,15 @@ complianceTest(
 		reqs: ["RFC5464-4.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SETMETADATA before reaching authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(["IMAP4rev1", "METADATA"])]]);
 		const driver = await f.connectPlain(server);
-		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "hi" }]); // throws today
-		await server.assertCompleted();
+		await driver
+			.setmetadata("INBOX", [{ entry: "/private/comment", value: "hi" }])
+			.catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"SETMETADATA must not be issued before authentication",
@@ -234,22 +241,20 @@ complianceTest(
 
 // ── RFC5464-4.3-2: NIL (not "") removes an entry ───────────────────────────
 // To remove an entry the client sends the bare atom NIL as its value — NOT an
-// empty quoted string "" (which would set a zero-length value). driver
-// .setmetadata() throws today → unimplemented; the matcher requires NIL and
-// rejects a "" value.
+// empty quoted string "" (which would set a zero-length value). The matcher
+// requires NIL and rejects a "" value.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "SETMETADATA removal encodes the value as the bare atom NIL, not an empty string",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				// SETMETADATA <mailbox> (<entry> NIL) — bare NIL value, not "".
 				expectLine(
 					command("SETMETADATA", {
@@ -260,7 +265,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: null }]); // throws today
+		await driver.login("user", "pass");
+		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: null }]);
 		await server.assertCompleted();
 		const set = server.commandLines.find((l) => l.verb === "SETMETADATA");
 		expect(set, "SETMETADATA must have been emitted").toBeDefined();
@@ -272,29 +278,45 @@ complianceTest(
 // ── RFC5464-4.3-4 / -4.3-5 / -4.3-6: SETMETADATA-failure NO resp-codes ─────
 // A SETMETADATA that fails carries a tagged NO with "[METADATA MAXSIZE NNN]",
 // "[METADATA TOOMANY]", or "[METADATA NOPRIVATE]"; the client must accept each
-// as a well-formed failure completion. driver.setmetadata() throws today →
-// unimplemented; each scripted NO+code exercises the parse path.
+// as a well-formed failure completion — surfacing as a `ServerNoError`
+// carrying the typed `METADATA` response code (`subKind`), same pattern
+// `special-use-6154.test.ts`'s RFC6154-3-3 [USEATTR] test uses.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO to SETMETADATA carrying [METADATA MAXSIZE NNN]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				expectLine(command("SETMETADATA", { args: /^"?INBOX"? \(.+\)$/i })),
 				reply("NO [METADATA MAXSIZE 1024] SETMETADATA value too big"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]); // throws today
+		await driver.login("user", "pass");
+		let err: unknown;
+		try {
+			await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]);
+		} catch (e) {
+			err = e;
+		}
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "SETMETADATA")).toBeDefined();
+		expect(err, "setmetadata() must reject on the NO [METADATA MAXSIZE ...] refusal").toBeInstanceOf(
+			Error,
+		);
+		expect((err as Error).name, "the rejection must be a ServerNoError").toBe("ServerNoError");
+		const code = (err as { code?: { name?: string; subKind?: string; value?: number } }).code;
+		expect(code?.name, "the rejection must carry the typed METADATA response code").toBe(
+			"METADATA",
+		);
+		expect(code?.subKind, "the sub-code must be MAXSIZE").toBe("MAXSIZE");
+		expect(code?.value, "MAXSIZE's numeric argument must be parsed").toBe(1024);
 	},
 );
 
@@ -303,22 +325,33 @@ complianceTest(
 		reqs: ["RFC5464-4.3-5"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO to SETMETADATA carrying [METADATA TOOMANY]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				expectLine(command("SETMETADATA", { args: /^"?INBOX"? \(.+\)$/i })),
 				reply("NO [METADATA TOOMANY] too many annotations"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]); // throws today
+		await driver.login("user", "pass");
+		let err: unknown;
+		try {
+			await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]);
+		} catch (e) {
+			err = e;
+		}
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "SETMETADATA")).toBeDefined();
+		expect((err as Error)?.name, "the rejection must be a ServerNoError").toBe("ServerNoError");
+		const code = (err as { code?: { name?: string; subKind?: string } }).code;
+		expect(code?.name, "the rejection must carry the typed METADATA response code").toBe(
+			"METADATA",
+		);
+		expect(code?.subKind, "the sub-code must be TOOMANY").toBe("TOOMANY");
 	},
 );
 
@@ -327,43 +360,51 @@ complianceTest(
 		reqs: ["RFC5464-4.3-6"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO to SETMETADATA carrying [METADATA NOPRIVATE]",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				expectLine(command("SETMETADATA", { args: /^"?INBOX"? \(.+\)$/i })),
 				reply("NO [METADATA NOPRIVATE] private annotations not supported"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]); // throws today
+		await driver.login("user", "pass");
+		let err: unknown;
+		try {
+			await driver.setmetadata("INBOX", [{ entry: "/private/comment", value: "x" }]);
+		} catch (e) {
+			err = e;
+		}
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "SETMETADATA")).toBeDefined();
+		expect((err as Error)?.name, "the rejection must be a ServerNoError").toBe("ServerNoError");
+		const code = (err as { code?: { name?: string; subKind?: string } }).code;
+		expect(code?.name, "the rejection must carry the typed METADATA response code").toBe(
+			"METADATA",
+		);
+		expect(code?.subKind, "the sub-code must be NOPRIVATE").toBe("NOPRIVATE");
 	},
 );
 
 // ── RFC5464-4.4-1: accept the untagged METADATA response (with values) ─────
 // A GETMETADATA result is the untagged "* METADATA <mailbox> (<entry> <value>
-// ...)" response; the client must accept it. driver.getmetadata() throws today →
-// unimplemented; the scripted response exercises the parse path once a surface
-// exists.
+// ...)" response; the client must accept it and surface the entry/value pair.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts the untagged METADATA response carrying entry-value pairs",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				expectLine(command("GETMETADATA", { args: /^"?INBOX"? \(\/[^\s()]+\)$/i })),
 				// metadata-resp with the entry-values branch: (entry value).
 				reply("OK GETMETADATA completed", [
@@ -372,9 +413,13 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/private/comment"]); // throws today
+		await driver.login("user", "pass");
+		const result = await driver.getmetadata("INBOX", ["/private/comment"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "GETMETADATA")).toBeDefined();
+		expect(result.entries, "the entry/value pair must be parsed and surfaced").toEqual([
+			{ entry: "/private/comment", value: "My comment" },
+		]);
 	},
 );
 
@@ -382,13 +427,12 @@ complianceTest(
 // The unsolicited "* METADATA <mailbox> <entry> <entry> ..." form carries entry
 // names only (no values). A parser handling only the "(entry value ...)" branch
 // would choke. Delivered as unsolicited data via a NOOP-adjacent stream; the
-// client must accept it. driver.noop() throws today → unimplemented.
+// client must accept it.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts a value-less unsolicited METADATA response (entry names only)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -403,7 +447,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.noop(); // throws NotImplementedError today
+		await driver.noop();
 		await server.assertCompleted();
 	},
 );
@@ -411,22 +455,20 @@ complianceTest(
 // ── RFC5464-4.4-3: refresh a cached value via a follow-up GETMETADATA ───────
 // A value-less notification carries no values, so a client wanting the changed
 // value must issue a follow-up GETMETADATA naming that entry (it cannot derive
-// the value from the notification). driver.getmetadata() throws today →
-// unimplemented; the matcher requires the refresh to be a GETMETADATA on the
-// changed entry.
+// the value from the notification). The matcher requires the refresh to be a
+// GETMETADATA on the changed entry.
 complianceTest(
 	{
 		reqs: ["RFC5464-4.4-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client refreshes a changed value with a GETMETADATA naming the notified entry",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "METADATA"]),
+				...sessionPrelude(["IMAP4rev1", "METADATA"], { login: true }),
 				// The refresh is a GETMETADATA naming the changed /shared/comment entry.
 				expectLine(
 					command("GETMETADATA", { args: /^"?INBOX"? \(\/shared\/comment\)$/i }),
@@ -437,7 +479,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getmetadata("INBOX", ["/shared/comment"]); // throws today
+		await driver.login("user", "pass");
+		await driver.getmetadata("INBOX", ["/shared/comment"]);
 		await server.assertCompleted();
 		const get = server.commandLines.find((l) => l.verb === "GETMETADATA");
 		expect(get, "refresh GETMETADATA must have been emitted").toBeDefined();

@@ -14,9 +14,8 @@
  * Design notes per requirement:
  *
  * RFC3501-6.2.2-1: The client must be able to issue the AUTHENTICATE command.
- *   driver.authenticate() is unimplemented; we script the complete PLAIN exchange
- *   and annotate unimplemented. Self-actualizing: when authenticate() is
- *   implemented, the expectLine steps enforce the correct wire form.
+ *   We script the complete PLAIN exchange and drive driver.authenticate() for
+ *   real; the expectLine steps enforce the correct wire form.
  *
  * RFC3501-6.2.2-2: Cancel protocol — "a line consisting of a single '*'".
  *   Script: server sends a base64 challenge; harness expects the client to send
@@ -27,12 +26,10 @@
  *   MUST re-issue CAPABILITY (SASL requirement, incorporated by reference).
  *   Script: AUTHENTICATE OK includes no CAPABILITY code (forcing a re-issue);
  *   harness expects a subsequent CAPABILITY command.
- *   driver.authenticate() is unimplemented; annotated unimplemented.
  *
  * RFC3501-6.2.2-5: After AUTHENTICATE NO, the client MAY retry with another
  *   mechanism or fall back to LOGIN. We script a two-attempt exchange to verify
  *   the client can handle a NO response and continue the session.
- *   driver.authenticate() is unimplemented; annotated unimplemented.
  *
  * RFC3501-6.2.3-1 / RFC3501-7.2.1-1: PROHIBITION test — the client MUST NOT
  *   send LOGIN when LOGINDISABLED is advertised.
@@ -64,14 +61,12 @@ const f = useComplianceFixture();
 // ── RFC3501-6.2.2-1: client MUST implement AUTHENTICATE ──────────────────
 // The client must be able to send AUTHENTICATE <mechanism>. We script the
 // full PLAIN exchange (capability advertisement → AUTHENTICATE PLAIN →
-// server challenge → client credentials → OK). driver.authenticate()
-// is unimplemented today; annotated unimplemented.
+// server challenge → client credentials → OK).
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-1"],
 		profiles: ["rev1"],
 		title: "client issues AUTHENTICATE command when authenticate() is called",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -81,11 +76,10 @@ complianceTest(
 				...greet(),
 				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
 				// Complete SASL PLAIN exchange: AUTHENTICATE PLAIN → challenge → credentials → OK.
-				...authPlainExchange(),
+				...authPlainExchange({ capsAfter: ["IMAP4rev1", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// driver.authenticate() is not yet implemented.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},
@@ -94,14 +88,27 @@ complianceTest(
 // ── RFC3501-6.2.2-2: cancel AUTHENTICATE with a single '*' line ──────────
 // When the client wishes to cancel an in-progress AUTHENTICATE exchange it
 // MUST send a line consisting of a single "*" (i.e., "*\r\n").
-// Script: server sends a challenge; harness expects the cancellation line.
-// driver.authenticate() is unimplemented today; annotated unimplemented.
+//
+// A §9.3-compliant client never NAMES a mechanism it doesn't implement (an
+// earlier version of this test drove `driver.authenticate("GSSAPI")`, which
+// this library's registry doesn't recognize — `driver.authenticate()` throws
+// `NotImplementedError` before a single byte reaches the wire, so no real
+// AUTHENTICATE was ever sent and the duty was never actually witnessed).
+// GENUINE SCENARIO: AUTH=PLAIN advertised with SASL-IR NOT advertised, so
+// the AUTHENTICATE line carries no initial-response argument and the
+// client's PLAIN response instead arrives on the deferred continuation reply
+// (RFC 4422 §3.4-1's legal "respond" leg). PLAIN's entire exchange is that
+// one deferred response — its `step()` (src/sasl/plain.ts) always throws on
+// any further challenge, since a second continuation is a protocol violation
+// PLAIN has no legal answer for — so a server that sends a SECOND,
+// superfluous challenge forces the one scenario where the client's only
+// legal move is to cancel: this witnesses RFC3501-6.2.2-2 with a genuine
+// '*' on the wire, not merely documenting that it would be legal.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-2"],
 		profiles: ["rev1"],
 		title: "client sends a single '*' line to cancel an in-progress AUTHENTICATE exchange",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -109,13 +116,24 @@ complianceTest(
 		server.arm([
 			[
 				...greet(),
-				...capabilityExchange(["IMAP4rev1", "AUTH=GSSAPI"]),
-				// Client sends AUTHENTICATE GSSAPI (or any mechanism that prompts a
-				// challenge before the client has credentials).
-				expectLine(command("AUTHENTICATE", { args: /^GSSAPI$/i })),
-				// Server sends a challenge. The client must respond with "*" to cancel.
-				send("+ dGVzdC1jaGFsbGVuZ2U=\r\n"),
-				// Cancellation line: exactly "*" (no tag, no other content).
+				...capabilityExchange(["IMAP4rev1", "AUTH=PLAIN"]),
+				// No SASL-IR advertised: bare mechanism name, no inline IR argument.
+				expectLine(command("AUTHENTICATE", { args: /^PLAIN$/i })),
+				send("+ \r\n"),
+				// Leg 1: PLAIN answers the first (expected) challenge with its
+				// deferred initial response — the "respond" leg.
+				expectLine({
+					match: (line) => ({
+						ok: /^[A-Za-z0-9+/=]+$/.test(line),
+						reason: `expected base64 SASL response, got: '${line}'`,
+					}),
+					description: "base64 SASL response (deferred initial response)",
+				}),
+				// A second, superfluous challenge: PLAIN's step() has no legal
+				// answer for this and must abort.
+				send("+ dGVzdA==\r\n"),
+				// Leg 2: the ONLY legal continuation now is the bare '*' abort —
+				// exactly "*" (no tag, no other content).
 				expectLine({
 					match: (line) => ({
 						ok: line === "*",
@@ -123,15 +141,29 @@ complianceTest(
 					}),
 					description: "AUTHENTICATE cancellation line '*'",
 				}),
-				// Server sends tagged BAD to confirm the cancellation (tagged response is
-				// the valid termination of a cancelled AUTHENTICATE exchange).
-				reply("BAD AUTHENTICATE cancelled"),
+				// Tagged BAD confirms the cancellation. The [AUTHENTICATIONFAILED]
+				// code (RFC 5530) is required here, not decorative: spec §9.3 step 3
+				// only treats a failure as "credentials/mechanism wrong, stop" with
+				// this specific code — a bare BAD reads as an ordinary
+				// mechanism-negotiation failure and would make authenticate()'s
+				// selection algorithm fall through to a LOGIN attempt this script
+				// never scripts, hanging the test forever (the identical lesson is
+				// documented on the GENUINE ABORT SCENARIO test in
+				// ext/sasl-4422.test.ts).
+				reply("BAD [AUTHENTICATIONFAILED] AUTHENTICATE cancelled"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Once implemented: driver.authenticate("GSSAPI") should send AUTHENTICATE
-		// and then, receiving a challenge it cannot answer, send "*" to cancel.
-		await driver.authenticate("GSSAPI");
+		let authError: unknown;
+		try {
+			await driver.authenticate("PLAIN");
+		} catch (err) {
+			authError = err;
+		}
+		expect(
+			authError,
+			"a cancelled AUTHENTICATE exchange must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );
@@ -141,13 +173,12 @@ complianceTest(
 // the CAPABILITY command rather than relying on any capability code in the
 // tagged OK response.
 // Script: AUTHENTICATE OK reply includes no CAPABILITY code → client must
-// issue a fresh CAPABILITY command. driver.authenticate() is unimplemented.
+// issue a fresh CAPABILITY command.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-4"],
 		profiles: ["rev1"],
 		title: "client re-issues CAPABILITY after a security-layer AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -165,8 +196,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: authenticate() must complete the PLAIN exchange and then
-		// re-issue CAPABILITY because the OK carried no CAPABILITY code.
+		// authenticate() must complete the PLAIN exchange and then re-issue
+		// CAPABILITY because the OK carried no CAPABILITY code.
 		await driver.authenticate("PLAIN");
 		await server.assertCompleted();
 	},
@@ -177,13 +208,11 @@ complianceTest(
 // mechanism or fall back to LOGIN. We script a two-attempt exchange:
 // first attempt → NO; second attempt → OK. The client must handle the NO
 // response gracefully and, when retrying, issue a new AUTHENTICATE command.
-// driver.authenticate() is unimplemented; annotated unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.2.2-5"],
 		profiles: ["rev1"],
 		title: "client MAY retry authentication after receiving a NO response to AUTHENTICATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -196,13 +225,13 @@ complianceTest(
 				// Session remains active after NO; client MAY retry.
 				...authPlainExchange({ result: "NO" }),
 				// Second AUTHENTICATE attempt — server accepts with OK.
-				...authPlainExchange({ result: "OK" }),
+				...authPlainExchange({ result: "OK", capsAfter: ["IMAP4rev1", "AUTH=PLAIN"] }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// First attempt: expected to fail with NO once implemented (today: NotImplementedError).
-		// Rethrow NotImplementedError so the test stays annotated unimplemented until
-		// authenticate() is implemented; swallow any other error (the NO rejection).
+		// First attempt: rejected with NO. Rethrow NotImplementedError (should not
+		// occur; authenticate() is implemented) so a real regression is not masked;
+		// swallow any other error (the expected NO rejection).
 		let firstError: unknown;
 		try {
 			await driver.authenticate("PLAIN");
@@ -210,7 +239,7 @@ complianceTest(
 			firstError = err;
 			if (err instanceof NotImplementedError) throw err;
 		}
-		// The first attempt must have thrown (NO rejection once implemented).
+		// The first attempt must have thrown (NO rejection).
 		expect(firstError).toBeDefined();
 		// Second attempt — client retries after the NO response.
 		await driver.authenticate("PLAIN");

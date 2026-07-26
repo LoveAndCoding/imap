@@ -1,35 +1,40 @@
-import {
-	CapabilityList,
-	CapabilityTextCode,
-	TaggedResponse,
-	UntaggedResponse,
-} from "../parser";
-import { Command, StandardResponseTypes } from "./base";
+import { ProtocolError } from "../errors";
+import { CapabilityList, CapabilityTextCode } from "../parser";
+import { Command } from "./base";
+import type { ResponseCollector } from "./collector";
+import type { CommandWriter } from "./writer";
 
+/**
+ * CAPABILITY (RFC 3501/9051 §6.1.1). No arguments; claims the untagged
+ * CAPABILITY response (default `claims()` — verb "CAPABILITY" claims type
+ * "CAPABILITY") as well as a `[CAPABILITY ...]` code the server may instead
+ * (or additionally) attach to its own tagged OK.
+ */
 export class CapabilityCommand extends Command<CapabilityList> {
-	constructor() {
-		super("CAPABILITY");
+	readonly verb = "CAPABILITY";
+	readonly queueMode = "pipeline" as const;
+
+	protected write(_w: CommandWriter): void {
+		// No arguments.
 	}
 
-	protected parseResponse(
-		responses: StandardResponseTypes[],
-	): CapabilityList | undefined {
-		for (const resp of responses) {
-			if (
-				resp instanceof UntaggedResponse &&
-				resp.content instanceof CapabilityList
-			) {
-				return resp.content;
-			}
-
-			// It's also possible the server will just return it as a part
-			// of the tag response text, which is technically valid
-			if (
-				resp instanceof TaggedResponse &&
-				resp.status.text?.code instanceof CapabilityTextCode
-			) {
-				return resp.status.text.code.capabilities;
-			}
+	protected accept(c: ResponseCollector): CapabilityList {
+		const untagged = c.first("CAPABILITY");
+		if (untagged && untagged.content instanceof CapabilityList) {
+			return untagged.content;
 		}
+
+		// A server MAY instead (or additionally) report capabilities via a
+		// `[CAPABILITY ...]` code on the tagged OK — technically valid, so
+		// check it before giving up.
+		const code = c.tagged().status.text?.code;
+		if (code instanceof CapabilityTextCode) {
+			return code.capabilities;
+		}
+
+		throw new ProtocolError(
+			"CAPABILITY completed OK without any capability data",
+			{ context: "CapabilityCommand" },
+		);
 	}
 }

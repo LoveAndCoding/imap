@@ -37,10 +37,10 @@ describe("NilRule", () => {
 		expect(NilTokenMock.mock.calls[0][0]).toBe("NIL");
 	});
 
-	// The spec doesn't quite specify it MUST be uppercase so far
-	// as I could find, but every instance and use of it is. If
-	// we discover that's wrong in practice, it's easy to change.
-	test("No match for a lowercase nil", () => {
+	// RFC3501-9-2/RFC9051-9-2: alphabetic tokens (including the special
+	// "NIL" atom) are case-insensitive, so a server sending "nil" MUST be
+	// accepted the same as "NIL".
+	test("Matches a lowercase nil", () => {
 		// Arrange
 		const str = "nil";
 		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
@@ -49,7 +49,65 @@ describe("NilRule", () => {
 		const match = rule.match(str);
 
 		// Assert
-		expect(NilTokenMock.mock.instances).toHaveLength(0);
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		// Original casing is preserved in the token value; only the *match*
+		// is case-insensitive.
+		expect(NilTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	test("Matches a mixed-case NiL", () => {
+		// Arrange
+		const str = "NiL";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		expect(NilTokenMock.mock.calls[0][0]).toBe(str);
+	});
+
+	// Regression coverage for MEDIUM-10: NilRule runs before AtomRule
+	// (order 40 vs 60), so without a word-boundary check an atom that
+	// merely *starts* with "nil" would be wrongly split into a NIL token
+	// followed by a fragment atom.
+	test("Does NOT match an atom that merely starts with 'NIL' (e.g. NILVANA)", () => {
+		// Arrange
+		const str = "NILVANA";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
 		expect(match).toBeNull();
+		expect(NilTokenMock.mock.instances).toHaveLength(0);
+	});
+
+	test("Does NOT match an atom that merely starts with 'nil' (e.g. Nilsson)", () => {
+		// Arrange
+		const str = "Nilsson";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(match).toBeNull();
+		expect(NilTokenMock.mock.instances).toHaveLength(0);
+	});
+
+	test("Still matches 'NIL' immediately followed by an operator (e.g. '(')", () => {
+		// Arrange
+		const str = "NIL(";
+		const NilTokenMock = NilToken as MockedClass<typeof NilToken>;
+
+		// Act
+		const match = rule.match(str);
+
+		// Assert
+		expect(NilTokenMock.mock.instances).toHaveLength(1);
+		expect(NilTokenMock.mock.calls[0][0]).toBe("NIL");
 	});
 });

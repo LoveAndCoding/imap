@@ -129,9 +129,9 @@ const rfc9394: CatalogModule = {
 				"'search-return-opt =/ modifier-partial' per RFC 4466. Trailing context: 'This " +
 				"intentionally mirrors message sequence numbers.' A matcher must require the " +
 				"PARTIAL atom inside the RETURN (...) list followed by SP and a colon-separated " +
-				"range, and reject a bare PARTIAL without a range. Currently self-actualizing " +
-				"FAIL: driver.search()/uidSearch() throw NotImplementedError (SearchOptions.return " +
-				"exists but no implementation), so the client cannot emit the form at all. The " +
+				"range, and reject a bare PARTIAL without a range. driver.search()/uidSearch() " +
+				"genuinely emit the PARTIAL return option for real (M5 CONTEXT-machinery " +
+				"carry-forward), so this row passes for real. The " +
 				"response side arrives as ESEARCH return data 'search-return-data =/ " +
 				"ret-data-partial' with 'ret-data-partial = \"PARTIAL\" SP \"(\" partial-range SP " +
 				"partial-results \")\"' — acceptance duties scored as 3.1-4/3.1-5.",
@@ -158,8 +158,8 @@ const rfc9394: CatalogModule = {
 				"context: 'Using this syntax helps server implementations to optimize their " +
 				"SEARCHes.' The RFC's own example emits 'UID SEARCH RETURN (PARTIAL -1:-100) " +
 				"UNDELETED UNKEYWORD $Junk'. Testable as a command-form duty (drive the client to " +
-				"page newest-first and assert the emitted range); currently self-actualizing FAIL " +
-				"(no SEARCH surface — driver.search()/uidSearch() throw NotImplementedError).",
+				"page newest-first and assert the emitted range); driver.search()/uidSearch() " +
+				"genuinely emit the minus-prefixed range for real, so this row passes for real.",
 		},
 		{
 			id: "RFC9394-3.1-3",
@@ -371,9 +371,9 @@ const rfc9394: CatalogModule = {
 				"modifier can be combined with the CHANGEDSINCE FETCH modifier [RFC7162].' and " +
 				"that modifier order 'is not important' — no separate scored entry. A matcher " +
 				"must require the modifier in the parenthesized modifier list after the fetch " +
-				"items, with a well-formed partial-range. Currently self-actualizing FAIL: " +
-				"driver.uidFetch() throws NotImplementedError and FetchOptions carries no partial " +
-				"field, so the client has no surface to emit the modifier.",
+				"items, with a well-formed partial-range. driver.uidFetch() and FetchOptions' " +
+				"`partial` field are both genuinely real (M5 CONTEXT-machinery carry-forward), so " +
+				"this row passes for real.",
 		},
 
 		// ── §4 Formal Syntax ─────────────────────────────────────────────────────

@@ -39,9 +39,14 @@ function splitNamespaceResponseLists(tokens: LexerTokenList) {
 	return blocks;
 }
 
+/** Which of the three NAMESPACE categories (RFC 2342 §5) a `Namespace`
+ *  (package-internal, not part of the documented surface) describes. */
 export enum NamespaceKind {
+	/** Mailboxes belonging to, and accessible by, the logged-in user. */
 	"Personal",
+	/** Other users' mailboxes that the logged-in user has access to. */
 	"Others",
+	/** Mailboxes shared between multiple users. */
 	"Shared",
 }
 
@@ -55,7 +60,10 @@ class NamespaceExtension {
 class NamespaceConfiguration {
 	constructor(
 		public readonly prefix: string,
-		public readonly delimeter: string,
+		/** `null` = the wire NIL (RFC 2342 §6's `Namespace` grammar allows
+		 *  `nil` in the delimiter position: a flat namespace that has no
+		 *  hierarchy). */
+		public readonly delimeter: string | null,
 		public readonly extensions: NamespaceExtension[],
 	) {}
 }
@@ -75,11 +83,17 @@ class Namespace {
 				...extensions
 			] = splitSpaceSeparatedList(list);
 
+			// Delimiter may be a quoted char OR nil (RFC 2342 §6:
+			// `... SP (<"> QUOTED_CHAR <"> / nil) ...`) — NIL = a flat,
+			// hierarchy-less namespace, surfaced as `null`.
 			if (
 				prefixTokens.length !== 1 ||
 				delimeterTokens.length !== 1 ||
 				!prefixTokens[0].isType(TokenTypes.string) ||
-				!delimeterTokens[0].isType(TokenTypes.string)
+				!(
+					delimeterTokens[0].isType(TokenTypes.string) ||
+					delimeterTokens[0].isType(TokenTypes.nil)
+				)
 			) {
 				throw new ParsingError(
 					"Invalid namespace prefix or delimeter values",
@@ -129,11 +143,27 @@ class Namespace {
 	}
 }
 
+/**
+ * `NAMESPACE` response (RFC 2342 §5) -- describes the personal,
+ * other-users', and shared mailbox namespaces the server exposes, each of
+ * which may be absent (wire `NIL`, surfaced here as `null`).
+ */
 export class NamespaceResponse {
+	/** The personal namespace(s), or `null` if the server has none. */
 	public readonly personal: null | Namespace;
+	/** The other-users' namespace(s), or `null` if the server has none. */
 	public readonly others: null | Namespace;
+	/** The shared namespace(s), or `null` if the server has none. */
 	public readonly shared: null | Namespace;
 
+	/**
+	 * Tests whether `tokens` is an untagged NAMESPACE response and, if so,
+	 * parses it.
+	 *
+	 * @param tokens - The content tokens following the untagged `"* "` prefix.
+	 * @returns A new {@link NamespaceResponse}, or `null` if `tokens` is not
+	 * a NAMESPACE response.
+	 */
 	public static match(tokens: LexerTokenList) {
 		const isMatch = matchesFormat(tokens, [
 			{ type: TokenTypes.atom, value: "NAMESPACE" },

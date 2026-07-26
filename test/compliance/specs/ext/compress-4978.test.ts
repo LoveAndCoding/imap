@@ -32,17 +32,17 @@
  * algorithm = "DEFLATE"): the only defined algorithm is DEFLATE, so the sole
  * legal COMPRESS command form a client emits is "<tag> COMPRESS DEFLATE".
  *
- * SELF-ACTUALIZATION: no COMPRESS surface — driver.compress() throws
- * NotImplementedError, so every duty here fails 'unimplemented'. The scripted
- * server validates the COMPRESS DEFLATE command form and the pipelining /
- * post-BAD-NO behavior against the wire, so once a COMPRESS surface exists the
- * matchers ARE the genuine, non-vacuous assertions.
+ * SELF-ACTUALIZATION (M5.9): `driver.compress()` now delegates to the real
+ * `ImapClient.compress()` (RFC 4978 COMPRESS=DEFLATE, `src/connection/
+ * compress.ts` + `src/commands/compress.ts`). The scripted server validates
+ * the COMPRESS DEFLATE command form and the pipelining/post-BAD-NO behavior
+ * against the wire, so these matchers are genuine, non-vacuous assertions,
+ * not the placeholder they were before this milestone.
  */
 import { expect } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
-import { NotImplementedError } from "../../driver/errors";
+import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
 import { sessionPrelude } from "../../runner/state";
@@ -58,13 +58,11 @@ const f = useComplianceFixture();
 // unscripted line (script failure) whose bytes the transcript would carry. The
 // post-OK compressed stream itself is out of reach (harness has no DEFLATE
 // codec — RFC4978-3-2 territory), so we assert only the pipelining prohibition.
-// driver.compress() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC4978-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "COMPRESS DEFLATE: client sends no further command before the COMPRESS result arrives",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -81,7 +79,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.compress(); // throws NotImplementedError today
+		await driver.compress();
 		await server.assertCompleted();
 		const compressLine = server.commandLines.find((l) => l.verb === "COMPRESS");
 		expect(compressLine).toBeDefined();
@@ -107,13 +105,12 @@ complianceTest(
 // compression that is asserted: a subsequent command (a NOOP probe) must arrive
 // as plain, parseable IMAP rather than opaque compressed bytes. The command()
 // matcher for NOOP parses only if the line is plaintext IMAP; opaque DEFLATE
-// octets would fail to match. driver.compress() throws today → unimplemented.
+// octets would fail to match.
 complianceTest(
 	{
 		reqs: ["RFC4978-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not turn on compression after a NO response to COMPRESS DEFLATE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -134,12 +131,13 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		// A conformant client, on the NO, leaves the connection uncompressed and a
-		// follow-up NOOP travels in the clear. The driver has no COMPRESS surface,
-		// so this throws before either command is sent → unimplemented.
-		await driver.compress(); // throws NotImplementedError today
+		// follow-up NOOP travels in the clear. `ImapClient.compress()` resolves
+		// (not rejects) on a NO/BAD result -- RFC4978-3-3 is about not turning on
+		// compression, not about surfacing an error to the caller.
+		await driver.compress();
 		await driver.noop();
 		await server.assertCompleted();
-		// When implemented: the NOOP after a NO must be a plaintext command line.
+		// The NOOP after a NO must be a plaintext command line.
 		const noopLine = server.commandLines.find((l) => l.verb === "NOOP");
 		expect(noopLine, "post-NO traffic must remain uncompressed, parseable IMAP").toBeDefined();
 	},
@@ -152,13 +150,12 @@ complianceTest(
 // resp-text-code. The server here advertises the capability in lowercase and
 // (on the COMPRESS BAD-already-active path) returns a mixed-case resp-text-code;
 // a conformant client still recognizes the extension and issues COMPRESS
-// DEFLATE. driver.compress() throws today → unimplemented.
+// DEFLATE.
 complianceTest(
 	{
 		reqs: ["RFC4978-5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts COMPRESS/DEFLATE/COMPRESSIONACTIVE tokens in non-canonical case",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -176,12 +173,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.compress(); // throws NotImplementedError today
+		await driver.compress();
 		await server.assertCompleted();
 		const compressLine = server.commandLines.find((l) => l.verb === "COMPRESS");
 		expect(compressLine).toBeDefined();
-		// When implemented: the client recognized the lowercase capability and
-		// still emitted a well-formed COMPRESS DEFLATE command.
+		// The client recognized the lowercase capability and still emitted a
+		// well-formed COMPRESS DEFLATE command.
 		expect(compressLine!.args).toMatch(/^DEFLATE$/i);
 	},
 );

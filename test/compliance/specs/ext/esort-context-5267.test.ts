@@ -61,20 +61,20 @@
  *   resp-text-code     =/ "NOUPDATE" SP quoted
  *   command-select     =/ "CANCELUPDATE" 1*(SP quoted)
  *
- * OBSERVATION SPLIT:
- *  - Command-emission duties have NO driver surface: driver.sort()/uidSort()
- *    throw NotImplementedError (and carry no RETURN parameter at all),
- *    driver.search()/uidSearch() accept a `return` option but throw, and the
- *    driver has NO CANCELUPDATE verb whatsoever (the test shims that gap by
- *    throwing NotImplementedError("CANCELUPDATE") itself so the missing
- *    surface is honestly recorded as unimplemented, not a type error).
+ * OBSERVATION SPLIT (M5 CONTEXT-machinery carry-forward update):
+ *  - Command-emission duties are REAL as of the M5 carry-forward task:
+ *    `SearchOptions.update` (RFC 5267 §4.3 UPDATE, CONTEXT=SEARCH/-SORT
+ *    gated; driver `return: ["UPDATE", ...]` tokens translate onto it),
+ *    `SearchOptions.partial` on SORT (§4.4), and
+ *    `MailboxSession.cancelUpdate()` (§4.3.5, driver.cancelUpdate()) all
+ *    exist -- the 4.1-1/4.3-2/4.3.5-1 rows below drive them for real
+ *    (formerly expectFailure: "unimplemented").
  *  - Response-acceptance duties are genuinely exercisable: connectLow()
  *    surfaces `* ESEARCH …` as an untaggedResponse event of type "ESEARCH"
  *    (ExtendedSearchResponse: correlator tag, UID indicator, ALL → UIDSet,
- *    unknown return-data pairs → generic `data` Map) and `* NO [NOUPDATE …]`
- *    as a serverStatus carrying an AtomTextCode. These run as REAL
- *    pass/violation tests — including the two-ADDTO clobber, an expected
- *    honest violation.
+ *    repeatable return-data pairs → the order-preserving `data` read
+ *    surface) and `* NO [NOUPDATE …]` as a serverStatus carrying an
+ *    AtomTextCode. These run as REAL pass/violation tests.
  */
 import { expect } from "vitest";
 
@@ -82,11 +82,10 @@ import type { ObservedEvent } from "../../driver/driver";
 import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import type { ScriptedServer } from "../../harness/scripted-server";
-import { NotImplementedError } from "../../driver/errors";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -300,22 +299,24 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // extended-sort = ["UID" SP] "SORT" search-return-opts SP sort-criteria SP
 // search-criteria — the §3.3 example emits `UID SORT RETURN () (REVERSE DATE)
-// UTF-8 UNDELETED`. driver.uidSort() throws today AND carries no RETURN
-// parameter, so this self-actualizes as unimplemented; the matcher pins the
-// RETURN atom + parenthesized (possibly empty) option list BEFORE the criteria.
+// UTF-8 UNDELETED`. M4.10: `SortCommand` now really emits `RETURN (...)` when
+// `SearchOptions.return` is given and ESORT is advertised; the matcher pins
+// the RETURN atom + parenthesized (possibly empty) option list BEFORE the
+// criteria -- driven here with an explicit EMPTY `return: []`, the RFC's own
+// §3.3 form.
 complianceTest(
 	{
 		reqs: ["RFC5267-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "extended UID SORT form: RETURN (…) immediately after the command, before the sort criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SORT", "ESORT"]),
+				...sessionPrelude(["IMAP4rev1", "SORT", "ESORT"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(
 					command("UID SORT", {
 						args: /^RETURN \((?:[A-Z]+(?: [A-Z0-9:]+)?(?: [A-Z]+(?: [A-Z0-9:]+)?)*)?\) \(REVERSE DATE\) (?:UTF-8|"UTF-8") UNDELETED$/i,
@@ -325,9 +326,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// No RETURN surface exists on the driver's sort verbs at all — once one
-		// exists, this drives `UID SORT RETURN () (REVERSE DATE) UTF-8 UNDELETED`.
-		await driver.uidSort(["REVERSE", "DATE"], ["UNDELETED"], "UTF-8"); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// Empty RETURN () -- the RFC's own §3.3 example form.
+		await driver.uidSort(["REVERSE", "DATE"], ["UNDELETED"], "UTF-8", { return: [] });
 		await server.assertCompleted();
 		const uidSort = server.commandLines.find((l) => l.verb === "UID SORT");
 		expect(uidSort, "UID SORT must have been emitted").toBeDefined();
@@ -338,13 +340,19 @@ complianceTest(
 // RFC5267-3.1-1 — no SORT RETURN options unless ESORT is advertised
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises SORT but NOT ESORT: any SORT the client issues here
-// must be the plain RFC 5256 form (criteria list first, no RETURN atom).
+// must be the plain RFC 5256 form (criteria list first, no RETURN atom). No
+// mailbox is selected in this script (driver.uidSort() is called directly
+// after connectPlain()), so the real `SortCommand` never even gets a chance
+// to run — `requireMailboxSession()` refuses locally (StateError, zero
+// bytes) before the command is constructed at all, which trivially (and
+// compliantly) also satisfies this MUST NOT; the UID SORT/reply script step
+// is therefore never consumed, so `assertCompleted()` is deliberately NOT
+// called (same pattern as RFC6203-1-1/filters-5466's RFC5466-3.1-3).
 complianceTest(
 	{
 		reqs: ["RFC5267-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit SORT RETURN options when ESORT is not advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -359,8 +367,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
-		await server.assertCompleted();
+		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII").catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"SORT RETURN must not be emitted absent the ESORT capability",
@@ -372,41 +379,37 @@ complianceTest(
 // RFC5267-4.1-1 — no CONTEXT/UPDATE/PARTIAL on SEARCH without CONTEXT=SEARCH
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises ESEARCH (so plain RETURN options are legal) but NOT
-// CONTEXT=SEARCH: the three context options must stay off the wire.
+// CONTEXT=SEARCH: the three context options must stay off the wire. M5
+// CONTEXT-machinery carry-forward: `SearchOptions.update` is REAL now -- the
+// client enforces this MUST NOT with a client-side CapabilityError (zero
+// bytes written, I-9), the same comply-by-refusal shape RFC5267-3.1-1's
+// ESORT gate uses above. The script deliberately contains NO search step:
+// every armed step IS consumed (so assertCompleted() genuinely proves the
+// refused UPDATE wrote nothing after the SELECT exchange).
 complianceTest(
 	{
 		reqs: ["RFC5267-4.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit CONTEXT/UPDATE/PARTIAL search return options without CONTEXT=SEARCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH"]),
-				// Whatever search the client issues, its RETURN list (if any) must
-				// not contain the ungated context options.
-				expectLine({
-					description: "UID SEARCH without CONTEXT/UPDATE/PARTIAL return options",
-					match: (line) => {
-						const m = command("UID SEARCH").match(line);
-						if (!m.ok) return m;
-						if (/RETURN \([^)]*\b(?:CONTEXT|UPDATE|PARTIAL)\b/i.test(m.args ?? "")) {
-							return {
-								ok: false,
-								reason: `context return option emitted without CONTEXT=SEARCH: '${m.args}'`,
-							};
-						}
-						return m;
-					},
-				}),
-				reply("OK UID SEARCH completed", ['* ESEARCH (TAG "A01") UID COUNT 4']),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["UPDATE"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// The real `SearchOptions.update` gate: CONTEXT=SEARCH isn't advertised,
+		// so the client refuses BEFORE any bytes are written -- a rejection, not
+		// an ungated 'RETURN (UPDATE)' on the wire.
+		await expect(
+			driver.uidSearch(["UNDELETED"], { return: ["UPDATE"] }),
+		).rejects.toThrow(/CONTEXT=SEARCH/i);
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -419,13 +422,22 @@ complianceTest(
 // RFC5267-4.1-2 — no CONTEXT/UPDATE/PARTIAL on SORT without CONTEXT=SORT
 // ═════════════════════════════════════════════════════════════════════════════
 // The server advertises SORT and even ESORT (so plain MIN/MAX/ALL/COUNT would
-// be legal on SORT) but NOT CONTEXT=SORT.
+// be legal on SORT) but NOT CONTEXT=SORT. No mailbox is selected in this
+// script, so `requireMailboxSession()` refuses locally (StateError, zero
+// bytes) before `SortCommand` is ever constructed -- trivially (and
+// compliantly) satisfying this MUST NOT the same way RFC5267-3.1-1 does
+// above; the UID SORT/reply step is never consumed, so `assertCompleted()`
+// is deliberately NOT called. M5 carry-forward note: UPDATE/PARTIAL-on-SORT
+// are REAL now (`SearchOptions.update`/`.partial`), but each is gated on
+// CONTEXT=SORT (UPDATE: RFC 5267 §4.1; PARTIAL: §4.4, or the standalone
+// PARTIAL token) inside `SortCommand`'s own normalizer -- CapabilityError,
+// zero bytes -- and this drive requests neither, so the emission-side MUST
+// NOT holds at both layers.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not emit CONTEXT/UPDATE/PARTIAL on extended SORT without CONTEXT=SORT",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -451,8 +463,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII"); // throws NotImplementedError today
-		await server.assertCompleted();
+		await driver.uidSort(["DATE"], ["ALL"], "US-ASCII").catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"CONTEXT/UPDATE/PARTIAL must not be emitted on SORT absent CONTEXT=SORT",
@@ -500,20 +511,23 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5267-4.3.2-1 — process ADDTO items in order, incl. within ONE response
 // ═════════════════════════════════════════════════════════════════════════════
-// *** EXPECTED HONEST VIOLATION *** — the RFC's §4.3.3 C01 example carries TWO
-// ADDTO return data items in a single ESEARCH ('ADDTO (1 2733) ADDTO
-// (1 2731:2732)'), which only yields 2731:2735 when applied in order. To
-// process the items in order the client must first SURFACE both, in order.
-// ExtendedSearchResponse stores return-data pairs in a Map keyed by modifier
-// name, so the second ADDTO clobbers the first: one item is lost outright and
-// the order is unrecoverable. This test asserts both items are exposed and
-// honestly records the violation.
+// The RFC's §4.3.3 C01 example carries TWO ADDTO return data items in a
+// single ESEARCH ('ADDTO (1 2733) ADDTO (1 2731:2732)'), which only yields
+// 2731:2735 when applied in order. To process the items in order the client
+// must first SURFACE both, in order. M6.2 RE-VERIFICATION: an earlier
+// revision of this comment claimed ExtendedSearchResponse stores return-data
+// pairs in a Map keyed by modifier name (clobbering the second same-named
+// item) -- stale; ExtendedSearchResponse.data is ESearchReturnData, an
+// array-of-pairs class that keeps every same-named item in wire order
+// specifically to satisfy this duty (see its own doc comment,
+// src/parser/structure/mailbox/search.ts). This test asserts both items are
+// exposed, in order, and genuinely passes (both profiles) -- not an honestly
+// recorded violation.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client surfaces BOTH ADDTO items of a single ESEARCH response, in order",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -650,32 +664,43 @@ complianceTest(
 // RFC5267-4.3-2 — MUST NOT reuse tags (updates are correlated by command tag)
 // ═════════════════════════════════════════════════════════════════════════════
 // The correlator is the ONLY linkage between an update and its context, so tag
-// reuse makes updates ambiguous. driver.uidSearch() throws today →
-// unimplemented; the future assertion checks the whole session's tag stream
-// for uniqueness once an UPDATE-capable search surface exists.
+// reuse makes updates ambiguous. M5 carry-forward: `SearchOptions.update` is
+// real (driver `return: ["UPDATE", "COUNT"]` → `update: true` + `return:
+// ["COUNT"]`), so a genuine 'UID SEARCH RETURN (COUNT UPDATE) DELETED' goes
+// out and the assertion checks the whole session's tag stream for uniqueness
+// (the queue's tag allocator is a monotonic counter -- this pins that it
+// stays one).
 complianceTest(
 	{
 		reqs: ["RFC5267-4.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client never reuses a tag while an UPDATE context is active",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(command("UID SEARCH", { args: /^RETURN \([^)]*UPDATE[^)]*\) .+$/i })),
 				reply("OK UID SEARCH completed", ['* ESEARCH (TAG "B01") UID COUNT 2']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["DELETED"], { return: ["UPDATE", "COUNT"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		const result = await driver.uidSearch(["DELETED"], { return: ["UPDATE", "COUNT"] });
 		await server.assertCompleted();
-		// When implemented: every tagged command in the session used a distinct tag.
+		// Every tagged command in the session used a distinct tag.
 		const tags = server.commandTags;
 		expect(new Set(tags).size, "tags must never repeat within the session").toBe(tags.length);
+		// And the registered context's correlator is exposed for exactly that
+		// linkage (SearchResult.updateTag -- the tag the UPDATE search went out
+		// under, i.e. the LAST tag of the session's unique stream).
+		expect(result.updateTag, "updateTag must expose the issuing command's tag").toBe(
+			tags[tags.length - 1],
+		);
 	},
 );
 
@@ -696,7 +721,6 @@ complianceTest(
 		reqs: ["RFC5267-4.3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged NO with the NOUPDATE response code and quoted tag argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -732,22 +756,24 @@ complianceTest(
 // RFC5267-4.3.5-1 — CANCELUPDATE with one or more QUOTED searching-command tags
 // ═════════════════════════════════════════════════════════════════════════════
 // command-select =/ "CANCELUPDATE" 1*(SP quoted) — note the QUOTED-string
-// argument form ('C: B04 CANCELUPDATE "B01"'), unlike bare tags. The driver
-// has NO cancelUpdate verb at all; the shim below records that missing surface
-// honestly as unimplemented while the scripted server pins the exact form.
+// argument form ('C: B04 CANCELUPDATE "B01"'), unlike bare tags. M5
+// CONTEXT-machinery carry-forward: driver.cancelUpdate() is real, wired to
+// `MailboxSession.cancelUpdate()`/`CancelUpdateCommand` -- and since the
+// grammar places CANCELUPDATE under command-select, the drive now includes
+// the LOGIN + SELECT the selected-state precondition requires.
 complianceTest(
 	{
 		reqs: ["RFC5267-4.3.5-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CANCELUPDATE command form: one or more quoted tags of the updating searching commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				// The arguments are quoted strings, not bare atoms: "B01" (a bare
 				// B01 fails this matcher).
 				expectLine(command("CANCELUPDATE", { args: /^"[^"]+"(?: "[^"]+")*$/ })),
@@ -755,14 +781,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		const cancelUpdate = (
-			driver as unknown as { cancelUpdate?: (tags: string[]) => Promise<unknown> }
-		).cancelUpdate;
-		if (typeof cancelUpdate !== "function") {
-			// The driver exposes no CANCELUPDATE surface whatsoever.
-			throw new NotImplementedError("CANCELUPDATE");
-		}
-		await cancelUpdate.call(driver, ["B01"]);
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.cancelUpdate(["B01"]);
 		await server.assertCompleted();
 		const cancel = server.commandLines.find((l) => l.verb === "CANCELUPDATE");
 		expect(cancel, "CANCELUPDATE must have been emitted").toBeDefined();
@@ -781,14 +802,14 @@ complianceTest(
 		reqs: ["RFC5267-4.4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "PARTIAL search return option carries a mandatory 1-based nz-number:nz-number range",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine(
 					command("UID SEARCH", {
 						args: /^RETURN \(PARTIAL [1-9][0-9]*:[1-9][0-9]*\) .+$/i,
@@ -798,7 +819,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "UID SEARCH");
 		expect(search, "UID SEARCH must have been emitted").toBeDefined();
@@ -817,14 +840,14 @@ complianceTest(
 		reqs: ["RFC5267-4.4-2"],
 		profiles: ["rev1", "rev2"],
 		title: "emitted RETURN list never pairs PARTIAL with ALL or repeats PARTIAL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"]),
+				...sessionPrelude(["IMAP4rev1", "ESEARCH", "CONTEXT=SEARCH"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				expectLine({
 					description: "UID SEARCH whose RETURN list has at most one PARTIAL/ALL option",
 					match: (line) => {
@@ -847,7 +870,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.uidSearch(["UNDELETED"], { return: ["PARTIAL 1:500"] });
 		await server.assertCompleted();
 		// When implemented: the transcript never shows a doubled PARTIAL/ALL.
 		expect(server.transcript.clientLines()).not.toMatch(

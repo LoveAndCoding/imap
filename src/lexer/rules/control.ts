@@ -3,7 +3,8 @@ import { ILexerRule } from "../types";
 
 // For operators, we are mostly doing the opposite of what
 // an atom token looks for, with some minor changes
-const RE_MATCH_OPERATORS = /^[\*\+\-=\(\)\{\}\[\]<>\/\x00-\x1F%:,\."\\]/;
+// eslint-disable-next-line no-control-regex -- \x00-\x1F control range is intentional (IMAP operator char validation)
+const RE_MATCH_OPERATORS = /^[*+\-=(){}[\]<>/\x00-\x1F%:,."\\]/;
 
 export class OperatorRule implements ILexerRule<string> {
 	public match(content: string): null | OperatorToken {

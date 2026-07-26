@@ -73,6 +73,14 @@ import rfc8440 from "./ext/rfc8440";
 import rfc8970 from "./ext/rfc8970";
 import rfc9585 from "./ext/rfc9585";
 
+// M2 (modern-API milestone 2) — suite growth: RFC 3691 UNSELECT (M2.12),
+// promoted from the registry-coverage out-of-scope borderline list (Phase 6).
+import rfc3691 from "./ext/rfc3691";
+
+// M5 (modern-API milestone 5) — suite growth: RFC 9586 UIDONLY (M5.14),
+// promoted from the registry-coverage out-of-scope borderline list (Phase 6).
+import rfc9586 from "./ext/rfc9586";
+
 export const allCatalogModules: CatalogModule[] = [
 	rfc3501,
 	rfc2971,
@@ -140,6 +148,10 @@ export const allCatalogModules: CatalogModule[] = [
 	rfc8440,
 	rfc8970,
 	rfc9585,
+	// M2 — suite growth (M2.12)
+	rfc3691,
+	// M5 — suite growth (M5.14)
+	rfc9586,
 ];
 
 export function findRequirement(id: string) {

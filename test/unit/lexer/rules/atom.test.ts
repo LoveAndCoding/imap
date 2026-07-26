@@ -77,4 +77,38 @@ describe("AtomRule", () => {
 		expect(AtomTokenMock.mock.instances).toHaveLength(0);
 		expect(match).toBeNull();
 	});
+
+	// LOW: `RE_BEGIN_LINE_CONTROL`'s line-start guard used to list both "+"
+	// and "*", but "*" was already excluded from `RE_ATOM_MATCH`'s character
+	// class (list-wildcards), so `matched` could never begin with "*" in the
+	// first place -- the "*" alternative was dead code, unreachable
+	// regardless of `originalPos`. Locks in that "*" still never matches as
+	// an atom at line-start (or anywhere else) now that the dead branch is
+	// gone, since the real reason ("*" isn't an atom char at all) still
+	// applies independent of position.
+	test("No match for '*' at the start of the line (still excluded by the atom char-class, not the now-removed line-start guard)", () => {
+		// Arrange
+		const str = "* OK";
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
+
+		// Act
+		const matchAtStart = rule.match(str, 0);
+
+		// Assert
+		expect(matchAtStart).toBeNull();
+		expect(AtomTokenMock.mock.instances).toHaveLength(0);
+	});
+
+	test("No match for '*' even NOT at the start of the line (char-class exclusion applies everywhere)", () => {
+		// Arrange
+		const str = "*";
+		const AtomTokenMock = AtomToken as MockedClass<typeof AtomToken>;
+
+		// Act
+		const matchNotAtStart = rule.match(str, 1);
+
+		// Assert
+		expect(matchNotAtStart).toBeNull();
+		expect(AtomTokenMock.mock.instances).toHaveLength(0);
+	});
 });

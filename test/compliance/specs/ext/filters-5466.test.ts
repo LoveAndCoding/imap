@@ -11,17 +11,21 @@
  * Testable catalog ids covered here (catalog/ext/rfc5466.ts; all dual-profile —
  * FILTERS is standalone in rev2):
  *
- *   RFC5466-3.1-1   FILTER <filter_name> search-key wire form (self-act.)
+ *   RFC5466-3.1-1   FILTER <filter_name> search-key wire form.
+ *                     *** REAL as of M5.4 (SearchCriteria.filter) — PASS ***
  *   RFC5466-3.1-2   Accept tagged NO [UNDEFINED-FILTER <name>].
- *                     *** REAL — split legs; probed (see PROBE OUTCOME) ***
+ *                     *** REAL — split legs; both PASS (see PROBE OUTCOME) ***
  *   RFC5466-3.1-3   MUST NOT pair FILTER with an explicit CHARSET other than
- *                   UTF-8/US-ASCII (self-act. negative guard)
- *   RFC5466-3.2-1   Stored filter search-key values MUST be UTF-8 (self-act.)
+ *                   UTF-8/US-ASCII (negative guard; enforced client-side by
+ *                   `assertFilterCharsetCompatible()` as of M5.4)
+ *   RFC5466-3.2-1   Stored filter search-key values MUST be UTF-8.
+ *                     *** REAL as of M5.4 (metadata.set()) — PASS ***
  *   RFC5466-3.2-2   Define/modify a filter via SETMETADATA "" on the reserved
- *                   /private|/shared/filters/values/<name> entries (self-act.)
+ *                   /private|/shared/filters/values/<name> entries.
+ *                     *** REAL as of M5.4 (metadata.set()) — PASS ***
  *   RFC5466-4-1     filter-name grammar (1*ATOM-CHAR except "/") at BOTH
- *                   emission sites: FILTER argument + entry-name segment
- *                   (self-act.)
+ *                   emission sites: FILTER argument + entry-name segment.
+ *                     *** REAL as of M5.4 — PASS ***
  *
  * Untestable ids NOT cited (per catalog testability tags):
  *   RFC5466-3-1 (capability-inventory: FILTERS gate), RFC5466-3.2-3
@@ -51,18 +55,35 @@
  *    the OperatorRule only fires when a token STARTS at the hyphen, so
  *    'UNDEFINED-FILTER' lexes as a single atom and the resp-code surfaces on
  *    the taggedResponse event with kind === "UNDEFINED-FILTER" intact, as an
- *    orderly NO; a trailing '* 7 EXISTS' still parses (stream survives).
- *    HOWEVER the mandated filter-name argument is DROPPED: code.contents is []
- *    because AtomTextCode hands its argument tokens to splitSpaceSeparatedList
- *    with the default '(' start-token, and a BARE (unparenthesized) argument
- *    never "enters the list" — every non-parenthesized resp-code argument is
- *    silently discarded (same mechanics for a name with digits: '2nd-try' also
- *    surfaced as contents []). The acceptance leg is therefore a genuine PASS
- *    and the name-exposure leg an honest violation (expectFailure annotated).
- *  - Command-emission duties have no implemented surface: driver.search()/
- *    setmetadata() throw NotImplementedError → honest "unimplemented" with the
- *    exact wire form pinned. driver.login()/select() are deliberately un-caught
- *    in the negative-guard test so it cannot pass vacuously on inability.
+ *    orderly NO; a trailing '* 7 EXISTS' still parses (stream survives). The
+ *    mandated filter-name argument is ALSO preserved: `AtomTextCode`
+ *    (`parser/structure/text.code.ts`) picks its split mode by the leading
+ *    token — a bare (unparenthesized) argument list uses the null/null form
+ *    that treats the whole token list as already "in" the list, rather than
+ *    the default '(' start-token that would never "enter" on a bare argument
+ *    (same mechanics cover a name with digits, e.g. '2nd-try', and
+ *    REFERRAL/NOUPDATE/MAXCONVERTMESSAGES's own bare arguments). This fix
+ *    predates M4.14 (landed as a general AtomTextCode bare-vs-parenthesized
+ *    split, `test/unit/parser/tolerance.test.ts`'s
+ *    "Bare (unparenthesized) resp-code arguments" suite already pins the
+ *    UNDEFINED-FILTER case directly) — BOTH legs below are therefore genuine
+ *    PASSes at the raw-parser layer, not `expectFailure`-annotated. M4.14's
+ *    own scoped fix is a layer up: `src/protocol/response-codes.ts` +
+ *    `src/commands/collector.ts`'s `toTypedResponseCode()` now give
+ *    UNDEFINED-FILTER a dedicated typed variant (`{name: "UNDEFINED-FILTER",
+ *    filterName}`) instead of the generic `{name, args}` fallback the public
+ *    SDK surface used to render it through — registry-coverage.ts's note is
+ *    updated to match (see `docs/guides/compliance-adjudications.md` for the
+ *    SearchCriteria.filter deferral this milestone also records, option (b)).
+ *  - Command-emission duties: REAL as of M5.4. `SearchCriteria.filter`
+ *    (`commands/search-criteria.ts`, gated on `FILTERS`) and the METADATA
+ *    facet's real `setmetadata()` land together, closing the four rows this
+ *    milestone carried forward from M4.14 (RFC5466-3.1-1, RFC5466-3.2-1,
+ *    RFC5466-3.2-2, RFC5466-4-1) — see docs/guides/compliance-adjudications.md for
+ *    the M4.14/M5.4 scope history. Each test below now drives the real
+ *    `search()`/`setmetadata()` wire exchange and asserts on the exact
+ *    scripted wire form, rather than catching an expected
+ *    `NotImplementedError`.
  */
 import { expect } from "vitest";
 
@@ -181,25 +202,26 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-3.1-2 — the offending filter-name argument surfaces (REAL — HONEST
-// VIOLATION)
+// RFC5466-3.1-2 — the offending filter-name argument surfaces (REAL — PASS)
 // ═════════════════════════════════════════════════════════════════════════════
 // §4 ABNF: resp-text-code =/ "UNDEFINED-FILTER" SP filter-name — the code the
 // client must accept CARRIES the name of the nonexistent/unaccessible filter,
 // and a client that discards it cannot tell its caller WHICH filter failed.
-// PROBED BEFORE WRITING: the argument is dropped — AtomTextCode passes its
-// argument tokens to splitSpaceSeparatedList with the default "(" start-token,
-// so a bare (unparenthesized) argument never "starts the list" and
-// code.contents comes back [] (parenthesized resp-code arguments like
-// BADEVENT's event list DO survive; bare ones like this filter-name are
-// silently discarded). The assertion encodes the SPEC, so this test fails
-// today as an honest violation.
+// M4.14 RE-PROBE: an earlier probe (before AtomTextCode's bare-vs-parenthesized
+// split landed) found this argument dropped; that fix predates this milestone's
+// dispatch (`test/unit/parser/tolerance.test.ts`'s "Bare (unparenthesized)
+// resp-code arguments" suite pins the UNDEFINED-FILTER case directly), so
+// code.contents already comes back ["on-vacation"] here — a genuine pass, not
+// `expectFailure`-annotated. M4.14's own scoped fix is the layer above this
+// raw-parser check: `toTypedResponseCode()` (src/commands/collector.ts) now
+// renders UNDEFINED-FILTER through a dedicated typed `{name, filterName}`
+// variant (src/protocol/response-codes.ts) instead of the generic
+// `{name, args}` fallback — see test/unit/commands/collector.test.ts.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "the UNDEFINED-FILTER resp-code exposes the offending filter-name argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -214,55 +236,62 @@ complianceTest(
 		expect(no?.status?.status).toBe("NO");
 		expect(no?.status?.text?.code?.kind).toBe("UNDEFINED-FILTER");
 		// SPEC: the resp-code is "UNDEFINED-FILTER" SP filter-name — the parsed
-		// code must carry the name, not discard it. Probed: contents is []
-		// (splitSpaceSeparatedList's default "(" start-token drops bare args).
+		// code must carry the name, not discard it. AtomTextCode's
+		// bare-vs-parenthesized split (predates M4.14) preserves it.
 		expect(
 			no?.status?.text?.code?.contents,
-			"the filter-name following UNDEFINED-FILTER must be exposed (RFC 5466 §3.1/§4) — " +
-				"the client currently discards every non-parenthesized resp-code argument",
+			"the filter-name following UNDEFINED-FILTER must be exposed (RFC 5466 §3.1/§4)",
 		).toEqual(["on-vacation"]);
 		await waitForUntagged(driver, "EXISTS");
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-3.1-1 — FILTER <filter_name> search-key wire form (self-actualizing)
+// RFC5466-3.1-1 — FILTER <filter_name> search-key wire form
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.1 Syntax: FILTER <filter_name>; §4: search-key =/ "FILTER" SP filter-name.
 // The anchored matcher pins the SOLE legal form — the atom FILTER, one space,
 // the bare filter-name atom; a quoted name, parenthesized decoration, or any
-// other criterion alongside is rejected. search() throws → unimplemented.
+// other criterion alongside is rejected. REAL as of M5.4: driver.search()
+// delegates through `SearchCriteria.filter`.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH FILTER <filter_name> command form",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(filtersCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(filtersCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
-				expectLine(command("SEARCH", { args: /^FILTER on-vacation$/i })),
+				expectLine(
+					command("SEARCH", { args: /^FILTER on-vacation$/i }),
+				),
 				reply(
 					"OK SEARCH completed",
-					ctx.profile === "rev2" ? ['* ESEARCH (TAG "a3") ALL 2,10'] : ["* SEARCH 2 10"],
+					ctx.profile === "rev2"
+						? ['* ESEARCH (TAG "a3") ALL 2,10']
+						: ["* SEARCH 2 10"],
 				),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search(["FILTER on-vacation"]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
-		expect(search!.args, "the sole legal form is 'FILTER' SP filter-name").toMatch(
-			/^FILTER on-vacation$/i,
-		);
+		expect(
+			search!.args,
+			"the sole legal form is 'FILTER' SP filter-name",
+		).toMatch(/^FILTER on-vacation$/i);
 	},
 );
 
@@ -274,21 +303,25 @@ complianceTest(
 // tagged BAD [BADCHARSET], so the client MUST NOT emit the combination. The
 // caller asks for FILTER with CHARSET ISO-8859-1; the client must refuse
 // locally, drop, or correct the charset — the forbidden pairing may never hit
-// the wire. login()/select() are un-caught so this cannot pass vacuously on
-// inability today.
+// the wire. REAL SIGNAL for the SELECT half (M2.2): driver.select() now
+// really selects the mailbox; driver.search() itself still throws
+// NotImplementedError (M3, swallowed below) -- the transcript guard is what
+// actually proves the prohibition once SEARCH lands.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client never pairs the FILTER key with an explicit non-UTF-8/US-ASCII CHARSET",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(filtersCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(filtersCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
 				// If the client (compliantly) proceeds with a corrected SEARCH, accept it.
 				expectLine(command(/^(SEARCH|UID|NOOP)$/)),
@@ -296,7 +329,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		// The caller asks for the forbidden combination; a compliant client may
 		// throw locally instead of emitting it, so the call itself is caught.
@@ -321,14 +354,13 @@ complianceTest(
 // §3.2: a filter is created/modified by storing a NON-NIL value in the
 // "/private/filters/values/<filter_name>" (or /shared/...) SERVER entry — the
 // mailbox argument is the empty string "". The anchored matcher rejects a
-// non-empty mailbox, a wrong hierarchy, or a NIL "definition". setmetadata()
-// throws → unimplemented.
+// non-empty mailbox, a wrong hierarchy, or a NIL "definition". REAL as of
+// M5.4: driver.setmetadata() delegates through the real METADATA facet.
 complianceTest(
 	{
 		reqs: ["RFC5466-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'filter definition is SETMETADATA "" (/private/filters/values/<name> <non-NIL value>)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -350,9 +382,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.setmetadata("", [
-			{ entry: "/private/filters/values/on-vacation", value: "FLAGGED UNDELETED" },
+			{
+				entry: "/private/filters/values/on-vacation",
+				value: "FLAGGED UNDELETED",
+			},
 		]);
 		await server.assertCompleted();
 		const set = server.commandLines.find((l) => l.verb === "SETMETADATA");
@@ -362,7 +397,9 @@ complianceTest(
 			"the mailbox argument is the empty string (server annotation) and the entry " +
 				"lives under the reserved /private/filters/values hierarchy",
 		).toMatch(/^"" \("?\/private\/filters\/values\/on-vacation"? /i);
-		expect(set!.args, "a definition stores a non-NIL value").not.toMatch(/\bNIL\)$/i);
+		expect(set!.args, "a definition stores a non-NIL value").not.toMatch(
+			/\bNIL\)$/i,
+		);
 	},
 );
 
@@ -372,14 +409,15 @@ complianceTest(
 // §3.2: 'values of all search keys stored in these entries MUST be encoded in
 // UTF-8.' The consumer supplies a JS string containing non-ASCII (a Cyrillic
 // FROM term); the client chooses the octets it serializes — the emitted value
-// (quoted or literal) must be exactly the UTF-8 encoding of that string.
-// setmetadata() throws → unimplemented.
+// (quoted or literal) must be exactly the UTF-8 encoding of that string. REAL
+// as of M5.4: driver.setmetadata() delegates through the real METADATA facet
+// (`SetMetadataCommand.write()` -> `CommandWriter.nstring()`, which always
+// takes the quoted/literal — never bare-atom — path for a `string` value).
 complianceTest(
 	{
 		reqs: ["RFC5466-3.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "stored filter value octets are the UTF-8 encoding of the search criterion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -404,7 +442,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.setmetadata("", [
 			{ entry: "/private/filters/values/otpusk", value: criterion },
 		]);
@@ -430,21 +468,21 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5466-4-1 — filter-name grammar at both emission sites (self-actualizing)
+// RFC5466-4-1 — filter-name grammar at both emission sites
 // ═════════════════════════════════════════════════════════════════════════════
 // §4: filter-name = 1*<any ATOM-CHAR except "/"> — no '/', no UTF-8, none of
 // '(' ')' '{' SP CTL '%' '*' '"' '\' ']'. The grammar governs the FILTER
 // search-key argument AND the <filter_name> segment of the reserved METADATA
 // entry names (the '/' exclusion keeps the name a single hierarchy segment).
 // Driven with a legal name exercising the edge ATOM-CHARs (digits, '-', '.');
-// both emitted sites must carry it verbatim and grammar-clean. search()/
-// setmetadata() throw → unimplemented.
+// both emitted sites must carry it verbatim and grammar-clean. REAL as of
+// M5.4: `SearchCriteria.filter` (search-side) and `metadata.set()` (entry-name
+// side) both delegate through the real wire.
 complianceTest(
 	{
 		reqs: ["RFC5466-4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "emitted filter-name conforms to the filter-name grammar at both emission sites",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -457,10 +495,14 @@ complianceTest(
 					login: true,
 				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
-				expectLine(command("SEARCH", { args: /^FILTER Q1-2024\.important$/i })),
+				expectLine(
+					command("SEARCH", { args: /^FILTER Q1-2024\.important$/i }),
+				),
 				reply(
 					"OK SEARCH completed",
-					ctx.profile === "rev2" ? ['* ESEARCH (TAG "a4") ALL 7'] : ["* SEARCH 7"],
+					ctx.profile === "rev2"
+						? ['* ESEARCH (TAG "a4") ALL 7']
+						: ["* SEARCH 7"],
 				),
 				expectLine(
 					command("SETMETADATA", {
@@ -471,18 +513,24 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search([`FILTER ${name}`]);
 		await driver.setmetadata("", [
-			{ entry: `/private/filters/values/${name}`, value: "SUBJECT quarterly" },
+			{
+				entry: `/private/filters/values/${name}`,
+				value: "SUBJECT quarterly",
+			},
 		]);
 		await server.assertCompleted();
 		// Site 1: the FILTER search-key argument.
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
 		const searchName = search!.args.replace(/^FILTER /i, "");
-		expect(searchName, "the FILTER argument carries the name verbatim").toBe(name);
+		expect(
+			searchName,
+			"the FILTER argument carries the name verbatim",
+		).toBe(name);
 		expect(
 			searchName,
 			"the FILTER argument must be 1*ATOM-CHAR excluding '/' (RFC 5466 §4)",
@@ -490,8 +538,13 @@ complianceTest(
 		// Site 2: the <filter_name> segment of the reserved entry name.
 		const set = server.commandLines.find((l) => l.verb === "SETMETADATA");
 		expect(set, "SETMETADATA must have been emitted").toBeDefined();
-		const segment = /\/private\/filters\/values\/([^ )"]+)/i.exec(set!.args)?.[1];
-		expect(segment, "the entry name carries the filter-name segment verbatim").toBe(name);
+		const segment = /\/private\/filters\/values\/([^ )"]+)/i.exec(
+			set!.args,
+		)?.[1];
+		expect(
+			segment,
+			"the entry name carries the filter-name segment verbatim",
+		).toBe(name);
 		expect(
 			segment,
 			"the entry's <filter_name> segment must be 1*ATOM-CHAR excluding '/' (RFC 5466 §4)",

@@ -38,11 +38,13 @@
  * fetch-att items, so a macro MUST NOT be parenthesised — that matcher stays
  * strict (see RFC9051-6.4.5-1).
  *
- * Genuineness note: driver.fetch() / driver.store() / driver.noop() are
- * unimplemented today (they throw NotImplementedError), so every test is
- * annotated `unimplemented`: the driver call rejects before the FETCH/STORE data
- * is emitted or the unsolicited FETCH is processed. The args matchers and
- * transcript guards are self-actualizing — they bind once the verbs land.
+ * Genuineness note: driver.fetch() is unimplemented today (it throws
+ * NotImplementedError, M3.5 pending), so every FETCH-dependent test here stays
+ * annotated `unimplemented`: the driver call rejects before the FETCH data is
+ * emitted. driver.store()/driver.noop() are wired (M3.6) -- the RFC9051-6.4.6-1
+ * test below no longer depends on FETCH and is annotated as a genuine pass. The
+ * args matchers and transcript guards are self-actualizing — they bind once the
+ * verbs land.
  */
 import { expect } from "vitest";
 
@@ -67,7 +69,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-1"],
 		profiles: ["rev2"],
 		title: "client uses FETCH macros (ALL/FAST/FULL) standalone, never inside a parenthesised item list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -117,7 +118,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-2"],
 		profiles: ["rev2"],
 		title: "client requests BINARY only for a leaf body part (numeric section), never the multipart root",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -171,7 +171,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-3"],
 		profiles: ["rev2"],
 		title: "client sends BODY[] (not BODY.PEEK) when the \\Seen side-effect is intended, and tolerates FLAGS in the response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -214,7 +213,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5-3"],
 		profiles: ["rev2"],
 		title: "client sends BODY.PEEK[] when fetching body without wanting to set \\Seen",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -253,7 +251,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5.1-1"],
 		profiles: ["rev2"],
 		title: "client references nested body parts with dotted numeric part paths (e.g. BODY[4.2.2.1])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -298,7 +295,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.5.1-2"],
 		profiles: ["rev2"],
 		title: "client prefixes the MIME part specifier with one or more numeric part specifiers (e.g. BODY[1.MIME])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -342,13 +338,15 @@ complianceTest(
 // STORE must still accept unsolicited untagged FETCH responses for externally
 // observed flag changes — .SILENT suppresses only the echo of the client's own
 // change. Script STORE +FLAGS.SILENT → OK + unsolicited "* 1 FETCH (FLAGS ...)"
-// → NOOP for liveness. driver.store() / driver.noop() unimplemented → unimplemented.
+// → NOOP for liveness. REAL SIGNAL (M3.6): driver.store()/driver.noop() are wired
+// to the public client; StoreCommand claims nothing (see its own doc comment),
+// so the unsolicited FETCH FLAGS response flows through ImapClient's generic
+// live-update lane untouched, same as a fully external change would.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.6-1"],
 		profiles: ["rev2"],
 		title: "client accepts an unsolicited untagged FETCH for an external flag change after a .SILENT STORE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

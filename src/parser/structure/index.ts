@@ -1,13 +1,17 @@
 export { default as ContinueResponse } from "./continue";
 export { default as TaggedResponse } from "./tagged";
-export { default as UnknownResponse } from "./unknown";
+export { default as UnknownResponse, UnknownContent } from "./unknown";
 export { default as UntaggedResponse } from "./untagged";
 
+export * from "./acl";
 export * from "./capability";
+export * from "./enabled";
 export * from "./expunge";
 export * from "./fetch";
 export * from "./flag";
 export * from "./id";
+export * from "./language";
+export * from "./metadata";
 export * from "./namespace";
 export * from "./quota";
 export * from "./sort";
@@ -16,6 +20,8 @@ export * from "./tag";
 export * from "./text.code";
 export * from "./text";
 export * from "./thread";
+export * from "./urlauth";
+export * from "./vanished";
 
 // Mailbox data is a bit messier due to Exists/Recent having
 // different formats and therefore being tested in a slightly
@@ -27,5 +33,6 @@ export {
 	MailboxListing,
 	SearchResponse,
 	ExtendedSearchResponse,
+	ESearchReturnData,
 	MailboxStatus,
 } from "./mailbox";

@@ -36,13 +36,17 @@
  * would double-count the rev2-core obligations. All tests here are rev1-only,
  * matching the catalog.
  *
- * SELF-ACTUALIZATION: every relevant verb throws NotImplementedError today —
- * enable() ('ENABLE'), search() ('SEARCH'), append() ('APPEND'), login()
- * ('LOGIN'), authenticate() ('AUTHENTICATE') — so each duty fails
- * 'unimplemented'. The scripted server validates the exact wire form (the
+ * SELF-ACTUALIZATION: login(), enable(), and authenticate() are implemented,
+ * so the duties driven purely by those verbs (3-1/3-3, 3-2, 5-1/5-2, 6-1/6-2)
+ * now exercise the real wire form. append() ('APPEND', M2.11) is implemented
+ * too, so 4-1/4-2 now pass for real (`AppendCommand` wraps the message
+ * literal in the RFC 6855 UTF8(...) data extension whenever UTF8=ACCEPT is
+ * enabled and the message carries 8-bit octets). search() ('SEARCH') still
+ * throws NotImplementedError today, so 3-4 remains 'unimplemented'. The
+ * scripted server validates the exact wire form (the
  * "ENABLE UTF8=ACCEPT" argument, the "UTF8 (" literal8 ")" APPEND syntax, the
- * absence of a SEARCH CHARSET, the ENABLE-argument-never-UTF8=ONLY rule) so the
- * matchers become the genuine assertions once the surfaces exist.
+ * absence of a SEARCH CHARSET, the ENABLE-argument-never-UTF8=ONLY rule) so
+ * the matchers become genuine assertions as each surface lands.
  */
 import { expect } from "vitest";
 
@@ -58,14 +62,12 @@ const f = useComplianceFixture();
 // A client that intends to use UTF-8 in quoted-strings MUST first send
 // "ENABLE UTF8=ACCEPT" (3-1); once enabled it MAY use extended quoted syntax
 // (3-3). The server advertises UTF8=ACCEPT; the matcher accepts the ENABLE line
-// ONLY when its argument list contains the exact UTF8=ACCEPT token. enable()
-// throws today → unimplemented.
+// ONLY when its argument list contains the exact UTF8=ACCEPT token.
 complianceTest(
 	{
 		reqs: ["RFC6855-3-1", "RFC6855-3-3"],
 		profiles: ["rev1"],
 		title: "client sends 'ENABLE UTF8=ACCEPT' before relying on UTF-8 in quoted-strings",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -85,11 +87,11 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		await driver.enable(["UTF8=ACCEPT"]); // throws NotImplementedError today
+		await driver.enable(["UTF8=ACCEPT"]);
 		await server.assertCompleted();
 		const enableLine = server.commandLines.find((l) => l.verb === "ENABLE");
 		expect(enableLine).toBeDefined();
-		// When implemented: the UTF8=ACCEPT token is present, never UTF8=ONLY.
+		// The UTF8=ACCEPT token is present, never UTF8=ONLY.
 		expect(enableLine!.args, "ENABLE must carry the UTF8=ACCEPT option").toMatch(/\bUTF8=ACCEPT\b/i);
 		expect(enableLine!.args, "client never enables UTF8=ONLY").not.toMatch(/\bUTF8=ONLY\b/i);
 	},
@@ -100,13 +102,11 @@ complianceTest(
 // The prelude logs in first; the client MUST NOT have sent ENABLE UTF8=ACCEPT
 // before the LOGIN completed. Asserted via command ordering: the ENABLE line
 // appears strictly after the LOGIN line in the recorded command stream.
-// enable() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC6855-3-2"],
 		profiles: ["rev1"],
 		title: "client does not send 'ENABLE UTF8=ACCEPT' before reaching the authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -120,9 +120,9 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		await driver.enable(["UTF8=ACCEPT"]); // throws NotImplementedError today
+		await driver.enable(["UTF8=ACCEPT"]);
 		await server.assertCompleted();
-		// When implemented: ENABLE UTF8=ACCEPT must be issued only after LOGIN.
+		// ENABLE UTF8=ACCEPT must be issued only after LOGIN.
 		const loginIdx = server.commandLines.findIndex((l) => l.verb === "LOGIN");
 		const enableIdx = server.commandLines.findIndex((l) => l.verb === "ENABLE");
 		expect(loginIdx, "a LOGIN must precede ENABLE").toBeGreaterThanOrEqual(0);
@@ -144,7 +144,6 @@ complianceTest(
 		reqs: ["RFC6855-3-4"],
 		profiles: ["rev1"],
 		title: "client omits a CHARSET specification from SEARCH after enabling UTF8=ACCEPT",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -182,13 +181,11 @@ complianceTest(
 // "UTF8 (" literal8 ")" data extension (4-1); it MAY reuse the same syntax in a
 // CATENATE part (4-2). The matcher accepts the APPEND line ONLY when the UTF8(
 // ...) wrapper is present around a literal8 ('~{n}' binary literal) announcement.
-// append() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC6855-4-1", "RFC6855-4-2"],
 		profiles: ["rev1"],
 		title: "APPEND of a UTF-8-header message uses the 'UTF8 (' literal8 ')' data extension",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -213,9 +210,9 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.enable(["UTF8=ACCEPT"]);
 		const utf8Headers = Buffer.from("Subject: café\r\nFrom: тест@example.com\r\n\r\nbody\r\n", "utf8");
-		await driver.append("INBOX", utf8Headers); // throws NotImplementedError today
+		await driver.append("INBOX", utf8Headers);
 		await server.assertCompleted();
-		// When implemented: the APPEND carried a UTF8( literal8 ) wrapper.
+		// The APPEND carried a UTF8( literal8 ) wrapper.
 		const appendLine = server.commandLines.find((l) => l.verb === "APPEND");
 		expect(appendLine).toBeDefined();
 		expect(
@@ -230,13 +227,12 @@ complianceTest(
 // needing UTF-8 credentials MUST use AUTHENTICATE instead (5-2). The scripted
 // server offers AUTH=PLAIN; a conformant client presenting a UTF-8 credential
 // authenticates via AUTHENTICATE and never puts the UTF-8 credential on a plain
-// LOGIN line. authenticate() throws today → unimplemented.
+// LOGIN line.
 complianceTest(
 	{
 		reqs: ["RFC6855-5-1", "RFC6855-5-2"],
 		profiles: ["rev1"],
 		title: "client uses AUTHENTICATE (not LOGIN) for UTF-8 usernames/passwords",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -255,15 +251,15 @@ complianceTest(
 					}),
 					description: "base64 SASL response carrying UTF-8 credentials",
 				}),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		// A UTF-8 username/password must be presented via AUTHENTICATE.
-		await driver.authenticate("PLAIN", "\x00usér@example.com\x00pásswörd"); // throws today
+		await driver.authenticate("PLAIN", "\x00usér@example.com\x00pásswörd");
 		await server.assertCompleted();
-		// When implemented: authentication went through AUTHENTICATE, and no LOGIN
-		// command carrying the UTF-8 credentials ever reached the wire.
+		// Authentication went through AUTHENTICATE, and no LOGIN command carrying
+		// the UTF-8 credentials ever reached the wire.
 		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
 		expect(authLine, "UTF-8 credentials must be presented via AUTHENTICATE").toBeDefined();
 		expect(
@@ -278,13 +274,11 @@ complianceTest(
 // it (6-1); the client always enables UTF8=ACCEPT and NEVER "ENABLE UTF8=ONLY"
 // (6-2). The server advertises UTF8=ONLY; the matcher accepts the ENABLE line
 // only when its argument is UTF8=ACCEPT and rejects any UTF8=ONLY token.
-// enable() throws today → unimplemented.
 complianceTest(
 	{
 		reqs: ["RFC6855-6-1", "RFC6855-6-2"],
 		profiles: ["rev1"],
 		title: "against a UTF8=ONLY server the client enables UTF8=ACCEPT, never UTF8=ONLY",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -304,12 +298,12 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		await driver.enable(["UTF8=ACCEPT"]); // throws NotImplementedError today
+		await driver.enable(["UTF8=ACCEPT"]);
 		await server.assertCompleted();
 		const enableLine = server.commandLines.find((l) => l.verb === "ENABLE");
 		expect(enableLine).toBeDefined();
-		// When implemented: even against a UTF8=ONLY server, the enabled token is
-		// UTF8=ACCEPT and the literal UTF8=ONLY token never appears in ENABLE.
+		// Even against a UTF8=ONLY server, the enabled token is UTF8=ACCEPT and
+		// the literal UTF8=ONLY token never appears in ENABLE.
 		expect(enableLine!.args, "client must enable UTF8=ACCEPT").toMatch(/\bUTF8=ACCEPT\b/i);
 		expect(enableLine!.args, "client must never send ENABLE UTF8=ONLY").not.toMatch(
 			/\bUTF8=ONLY\b/i,

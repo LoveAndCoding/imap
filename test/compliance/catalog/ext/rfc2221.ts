@@ -92,10 +92,11 @@ const rfc2221: CatalogModule = {
 				"consulting the user' clause is a UI/policy escape valid at any depth once the user " +
 				"is asked; the numeric ceiling on UNCONSULTED auto-following is the testable residue " +
 				"of this sentence. No driver surface exists today that follows a referral chain at " +
-				"all (LOGIN/AUTHENTICATE always throw NotImplementedError, and there is no follow-up-" +
-				"connection verb), so this is currently self-actualizing/out-of-band rather than a " +
-				"REAL probe: exercising it would require scripting 11 chained servers and a second-" +
-				"connection-per-hop client capability the harness does not have.",
+				"all (LOGIN/AUTHENTICATE are real, but there is no automatic follow-up-connection " +
+				"verb -- the library leaves referral-following to the caller), so this is currently " +
+				"self-actualizing/out-of-band rather than a REAL probe: exercising it would require " +
+				"scripting 11 chained servers and a second-connection-per-hop client capability the " +
+				"harness does not have.",
 		},
 
 		// ── §4.1 LOGIN and AUTHENTICATE Referrals ───────────────────────────────

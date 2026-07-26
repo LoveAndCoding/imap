@@ -21,8 +21,23 @@ import { ILexerRule } from "../types";
 // We also exclude "[" even though it is not on the atom-specials
 // list because most of the time this will be an operator, and it
 // is easy enough to merge back in in the cases it is not
-const RE_ATOM_MATCH = /^[^ \(\)\{\x00-\x1F%\*"\\\[\]]+/;
-const RE_BEGIN_LINE_CONTROL = /^[\+\*]/;
+// eslint-disable-next-line no-control-regex -- \x00-\x1F control range is intentional (IMAP atom char validation)
+const RE_ATOM_MATCH = /^[^ (){\x00-\x1F%*"\\[\]]+/;
+// Only "+" needs an explicit line-start guard below: "*" is already
+// excluded from RE_ATOM_MATCH's character class above (list-wildcards, per
+// the atom-specials grammar in the comment above), so `matched` can never
+// begin with "*" in the first place -- a "*" alternative here would be
+// dead code, unreachable regardless of `originalPos`.
+const RE_BEGIN_LINE_CONTROL = /^\+/;
+
+// A single atom-continuation character (i.e. the same character class as
+// RE_ATOM_MATCH above, but matching exactly one char rather than a run of
+// them). Exported so other lexer rules that match a fixed-length keyword
+// prefix (e.g. NilRule matching "NIL") can check whether the character right
+// after their match would still be part of the same atom -- without which
+// something like "NILVANA" would wrongly be split into "NIL" + "VANA".
+// eslint-disable-next-line no-control-regex -- \x00-\x1F control range is intentional (IMAP atom char validation)
+export const RE_ATOM_CHAR = /^[^ (){\x00-\x1F%*"\\[\]]$/;
 
 export class AtomRule implements ILexerRule<string> {
 	public match(content: string, originalPos: number): null | AtomToken {

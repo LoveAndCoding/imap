@@ -1,23 +1,46 @@
 {
 	"name": "@lovely-inbox/imap",
-	"version": "0.9.0",
+	"version": "1.0.0",
 	"author": "Alexis Hushbeck",
 	"contributors": [
 		"Brian White <mscdex@mscdex.net>"
 	],
-	"description": "A TypeScript port and modernization of the node IMAP module that makes communicating with IMAP servers easy",
+	"description": "A spec-compliant, fully typed IMAP client for Node.js — promise and async-iterable API, IMAP4rev1 + IMAP4rev2, with a per-RFC-requirement compliance suite",
 	"main": "./dist/index.js",
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE",
+		"docs/MIGRATION.md",
+		"docs/compliance-adjudications.md"
+	],
 	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./commands": {
+			"types": "./dist/commands/index.d.ts",
+			"default": "./dist/commands/index.js"
+		},
+		"./sasl": {
+			"types": "./dist/sasl/index.d.ts",
+			"default": "./dist/sasl/index.js"
+		}
+	},
 	"dependencies": {
 		"tiny-typed-emitter": "2.1.0",
 		"utf7": "git+https://github.com/LoveAndCoding/utf7.git"
 	},
 	"scripts": {
 		"build": "tsc -d",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc -p test/docs/tsconfig.json --noEmit",
 		"lint": "eslint .",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
+		"docs": "typedoc",
 		"test": "vitest run test/unit test/integration --coverage",
 		"test:all": "npm test && npm run test:e2e && npm run test:compliance",
 		"test:e2e": "vitest run test/e2e",
@@ -51,6 +74,7 @@
 		"eslint": "^10.7.0",
 		"eslint-config-prettier": "^10.1.8",
 		"prettier": "^3.9.5",
+		"typedoc": "0.28.20",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.63.0",
 		"vitest": "^4.1.10"

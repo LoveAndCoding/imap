@@ -11,14 +11,13 @@
  *
  * RFC3501-3-1: The client must never send a state-restricted command while in
  *   the wrong state.  The most accessible surface: try driver.select() while
- *   still in Not Authenticated state (no login yet). NotImplementedError fires
- *   first, but the assertion still documents the correct protocol expectation.
- *   Annotated unimplemented.
+ *   still in Not Authenticated state (no login yet). REAL SIGNAL (M2.2):
+ *   `SelectCommand.states = ["authenticated","selected"]` makes `run()`
+ *   reject with `StateError` before a single byte is written (spec I-9/I-11).
  *
- * RFC3501-3.1-1: The normal connect() path already exercises this — the client
- *   supplies credentials (via the Session.start() LOGIN sequence) before doing
- *   anything else. We assert that a successful connect() always triggered a
- *   LOGIN command, i.e., the client did supply credentials.
+ * RFC3501-3.1-1: connect() then driver.login() drives ImapClient.authenticate()
+ *   with an empty mechanisms list, which falls through to LOGIN (spec §9.3
+ *   step 4). We assert the scripted LOGIN exchange completes.
  *
  * RFC3501-3.2-1: The client must not issue message-affecting commands (FETCH,
  *   STORE, SEARCH, COPY …) while in Authenticated state (no mailbox selected).
@@ -26,13 +25,12 @@
  *   fires first, but we document the obligation.  Annotated unimplemented.
  *
  * RFC3501-3.4-1: Client must read tagged OK before closing after LOGOUT.
- *   Observable: driver.logout() → NotImplementedError today. Annotated.
+ *   Observable: driver.logout() sends LOGOUT and waits for the tagged OK.
  *
  * RFC3501-3.4-2: Client SHOULD NOT unilaterally close; SHOULD issue LOGOUT.
  *   The positive side is observable: when the client does an orderly teardown
  *   it SHOULD send LOGOUT. The driver's end() is the closest verb.  Drive
  *   a connect then end() and check whether LOGOUT was sent.
- *   Annotated unimplemented (driver.logout() not implemented).
  */
 import { expect } from "vitest";
 
@@ -56,7 +54,6 @@ complianceTest(
 		reqs: ["RFC3501-3.1-1"],
 		profiles: ["rev1"],
 		title: "client sends LOGIN credentials to transition to Authenticated state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -66,14 +63,11 @@ complianceTest(
 				...sessionPrelude(["IMAP4rev1"], { login: true }),
 			],
 		]);
-		const driver = f.newDriver();
-		// driver.login() is not yet implemented in the public API.
-		// Session.start() only runs CAPABILITY (and ID) — it does not login.
-		// When login() is implemented, the test verifies it sends credentials.
+		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		await server.assertCompleted();
-		// The script's expectLine(command("LOGIN")) + loginExchange() steps already
-		// verify that a well-formed LOGIN was sent once implemented.
+		// The script's expectLine(command("LOGIN")) + loginExchange() steps
+		// verify that a well-formed LOGIN was sent.
 		// No additional assertions needed here — script completion is the assertion.
 	},
 );
@@ -81,15 +75,13 @@ complianceTest(
 // ── RFC3501-3-1: client does not attempt commands in an inappropriate state ─
 // Most accessible surface: attempt SELECT (a Selected-state command) while the
 // driver is only connected (Not Authenticated state, since Session.start()
-// doesn't login). driver.select() throws NotImplementedError before the wire.
-// The test documents the correct expectation: when select() is implemented,
-// it MUST NOT be called unless the client is in Authenticated state.
+// doesn't login). REAL SIGNAL (M2.2): driver.select() rejects `StateError`
+// before any wire bytes are sent.
 complianceTest(
 	{
 		reqs: ["RFC3501-3-1"],
 		profiles: ["rev1"],
 		title: "client does not send state-restricted commands in an inappropriate state",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -103,16 +95,19 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Attempt select() while unauthenticated (Not Authenticated state).
-		// Today: NotImplementedError fires before any wire bytes are sent (correct).
-		// Once implemented: a conformant client must refuse locally or the script
-		// will fail because SELECT would be an unexpected command.
-		await driver.select("INBOX");
-		// The assertions below are unreachable today (select() throws above),
-		// but become active once select() is implemented. Only the CAPABILITY
-		// command should have been sent (index 0); a SELECT would be index 1+.
-		// This assertion enforces the spec: only the scripted CAPABILITY exchange
-		// may have produced a command line.
+		// Attempt select() while unauthenticated (Not Authenticated state). A
+		// conformant client refuses locally, zero bytes written.
+		let selectError: unknown;
+		try {
+			await driver.select("INBOX");
+		} catch (err) {
+			selectError = err;
+		}
+		expect(selectError, "select() must reject when not authenticated").toMatchObject({
+			name: "StateError",
+		});
+		// Only the CAPABILITY command should have been sent (index 0); SELECT
+		// never reached the wire.
 		expect(server.commandLines.length).toBe(1); // only CAPABILITY, no SELECT
 		await server.assertCompleted();
 	},
@@ -120,23 +115,24 @@ complianceTest(
 
 // ── RFC3501-3.2-1: must SELECT mailbox before message commands ─────────────
 // Best observable surface: driver.fetch() in Authenticated state.
-// Both select() and fetch() are unimplemented; the test documents the correct
-// command sequence: SELECT must precede FETCH in the client's command stream.
+// REAL SIGNAL (M3.5): select()/fetch() are both wired to the public client
+// now -- the driver must actually SELECT before FETCH is legal (the real
+// `MailboxSession.fetch()`/`FetchCommand` reject `StateError` otherwise, spec
+// §5b's own "closed"/no-session precondition), so this test now drives the
+// correct sequence rather than merely documenting it.
 complianceTest(
 	{
 		reqs: ["RFC3501-3.2-1"],
 		profiles: ["rev1"],
 		title: "client selects a mailbox before issuing message-affecting commands",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1"]),
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
 				// The correct sequence: SELECT before FETCH.
-				// When both verbs are implemented, the driver must issue SELECT first.
 				expectLine(command("SELECT")),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 0 EXISTS",
@@ -148,16 +144,16 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented: driver must SELECT before FETCH is allowed.
-		// fetch() throws NotImplementedError; select() does too.
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.fetch("1:*", ["FLAGS"]);
 		await server.assertCompleted();
 	},
 );
 
 // ── RFC3501-3.4-1: client reads tagged OK after LOGOUT before closing ──────
-// driver.logout() is not yet implemented. The test encodes the correct
-// exchange: after LOGOUT, the server sends BYE + tagged OK, and the client
+// The test encodes the correct exchange: after LOGOUT, the server sends BYE
+// + tagged OK, and the client
 // MUST read the tagged OK before closing. No loginExchange needed —
 // LOGOUT can be tested from any connected state (including Not Authenticated
 // if the server accepts it, which it does in the scripted harness).
@@ -166,7 +162,6 @@ complianceTest(
 		reqs: ["RFC3501-3.4-1"],
 		profiles: ["rev1"],
 		title: "client reads tagged OK response to LOGOUT before closing connection",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -181,7 +176,7 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// When implemented, this sends LOGOUT and waits for the tagged OK.
+		// Sends LOGOUT and waits for the tagged OK.
 		await driver.logout();
 		await server.assertCompleted();
 	},
@@ -194,7 +189,6 @@ complianceTest(
 		reqs: ["RFC3501-3.4-2"],
 		profiles: ["rev1"],
 		title: "client issues LOGOUT rather than closing the connection unilaterally",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -209,10 +203,9 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		// Orderly teardown SHOULD send LOGOUT.
-		// driver.logout() is not yet implemented.
 		await driver.logout();
 		await server.assertCompleted();
-		// If logout() is implemented, the script completed means LOGOUT was sent.
+		// The script completed means LOGOUT was sent.
 		expect(server.commandLines.length).toBeGreaterThanOrEqual(1);
 	},
 );

@@ -38,7 +38,8 @@ export const RE_UIDCMD_HASRESULTS = /^UID (?:FETCH|SEARCH|SORT)/;
 export const RE_IDLENOOPRES = /^(IDLE|NOOP) /;
 export const RE_OPENBOX = /^EXAMINE|SELECT$/;
 export const RE_BODYPART = /^BODY\[/;
-export const RE_INVALID_KW_CHARS = /[\(\)\{\\\"\]\%\*\x00-\x20\x7F]/;
+// eslint-disable-next-line no-control-regex -- \x00-\x20 control range is intentional (IMAP keyword char validation)
+export const RE_INVALID_KW_CHARS = /[(){\\"\]%*\x00-\x20\x7F]/;
 export const RE_NUM_RANGE = /^(?:[\d]+|\*):(?:[\d]+|\*)$/;
 export const RE_BACKSLASH = /\\/g;
 export const RE_DBLQUOTE = /"/g;

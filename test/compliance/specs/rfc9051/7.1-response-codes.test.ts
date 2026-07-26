@@ -92,7 +92,8 @@ defineAcceptanceTable({
 	rows: [
 		{
 			req: "RFC9051-7-1",
-			variant: "untagged NO with a rev2 CLIENTBUG response code mid-command",
+			variant:
+				"untagged NO with a rev2 CLIENTBUG response code mid-command",
 			line: "* NO [CLIENTBUG] Command sequence error",
 		},
 		{
@@ -107,19 +108,28 @@ defineAcceptanceTable({
 		},
 		{
 			req: "RFC9051-7-1",
-			variant: "unsolicited ESEARCH response mid-command (rev2 search result form)",
+			variant:
+				"unsolicited ESEARCH response mid-command (rev2 search result form)",
 			line: '* ESEARCH (TAG "unsolicited") ALL 1:3',
 		},
 	],
 	async execute(row) {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): this test is about
+		// tolerating unsolicited data mid-command, not about greeting-code
+		// handling, so it needs the normal CAPABILITY round trip to happen — a
+		// greeting-carried capability code would make the client skip that round
+		// trip entirely (spec §3.3) and the scripted expectLine would stall forever.
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				// The unsolicited line arrives BEFORE the requested data — truly
 				// mid-command, never asked for by the client.
-				reply("OK CAPABILITY completed", [row.line, "* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					row.line,
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -158,7 +168,8 @@ defineAcceptanceTable({
 		},
 		{
 			req: "RFC9051-7.1-8",
-			variant: "unknown code with arguments on an untagged OK mid-command",
+			variant:
+				"unknown code with arguments on an untagged OK mid-command",
 			untagged: "* OK [XUNKNOWN 42 abc] informational",
 		},
 		{
@@ -183,10 +194,17 @@ defineAcceptanceTable({
 		const server = await f.startServer();
 		const untagged = ["* CAPABILITY IMAP4rev2 LITERAL-"];
 		if (row.untagged) untagged.unshift(row.untagged);
+		// Rows that don't script their own greeting default to a BARE greeting
+		// (not an inline [CAPABILITY ...] code): the two greeting-variant rows
+		// above script an unrecognized-code greeting directly (not a CAPABILITY
+		// code, so it never triggers the client's round-trip-skip path), but a
+		// CAPABILITY-carrying default here would make the client skip the
+		// CAPABILITY round trip entirely (spec §3.3) and stall the other rows'
+		// scripted expectLine forever.
 		server.arm([
 			[
 				send(
-					row.greeting ?? "* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n",
+					row.greeting ?? "* OK ready\r\n",
 					row.chunks ? { chunks: row.chunks } : {},
 				),
 				expectLine(command("CAPABILITY", { args: null })),
@@ -221,11 +239,15 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
+		// The greeting's own [CAPABILITY ...] resp-code (spec §3.3) makes the
+		// client skip the CAPABILITY round trip entirely, so scripting one here
+		// would stall forever. The witness for "accepted the greeting" is the
+		// consumed capability set plus the Not-Authenticated state below.
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n"),
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				send(
+					"* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n",
+				),
 			],
 		]);
 		const driver = f.newDriver();
@@ -236,6 +258,7 @@ complianceTest(
 		});
 		expect(ok).toBe(true);
 		expect(driver.active).toBe(true);
+		expect(driver.hasCapability("IMAP4rev2")).toBe(true);
 		// Not Authenticated: the OK greeting does not authenticate the session.
 		expect(
 			driver.authenticated,
@@ -247,23 +270,26 @@ complianceTest(
 
 // ── RFC9051-7.1.4-1: PREAUTH greeting puts the session in authenticated state ─
 // The PREAUTH greeting means the connection is already authenticated by external
-// means; no LOGIN/AUTHENTICATE is needed. Mirrors the rev1 §7.1.4-1 finding: the
-// current client does not enter authenticated state on PREAUTH → violation.
+// means; no LOGIN/AUTHENTICATE is needed. Mirrors the rev1 §7.1.4-1 finding.
+// M0.3: Connection now records PREAUTH and Session mirrors it into `authenticated`.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1.4-1"],
 		profiles: ["rev2"],
 		title: "PREAUTH greeting puts the session in authenticated state (no LOGIN needed)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in as user\r\n"),
+				send(
+					"* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in as user\r\n",
+				),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -284,48 +310,56 @@ complianceTest(
 // ── RFC9051-7.1.4-2: mandatory-TLS client MUST close on unprotected-port PREAUTH
 // A client configured to require mandatory TLS MUST close the connection when it
 // receives PREAUTH on a non-protected port (proceeding authenticated over
-// cleartext would defeat the TLS requirement). This library exposes no
-// "mandatory TLS" policy knob, so the duty cannot be met — but the failure must
-// be measured NON-vacuously.
+// cleartext would defeat the TLS requirement). The catalog entry is explicit
+// that the duty is CONDITIONAL on the client being "configured/policied to
+// require mandatory TLS" — so the faithful scenario configures the client with
+// security:"starttls" (the library's mandatory-TLS-before-auth mode). An earlier
+// revision of this test scripted security:"none" (TLS explicitly disabled by the
+// consumer), a configuration in which the catalog's condition cannot hold and no
+// client could ever satisfy the assertion; that was a mis-scripting, corrected
+// when the §10.5 PREAUTH policy landed (PREAUTH forecloses STARTTLS-before-auth,
+// so a starttls-configured client must close immediately).
 //
 // CONFOUND-AVOIDANCE NOTE: the distinguishing observable is that the client
 // itself CLOSES the connection. A server that closed after PREAUTH would leave
 // driver.active === false for a confounded reason (the socket closed
 // server-side, not by client mandatory-TLS enforcement) — a FALSE PASS. So the
-// server KEEPS the plaintext connection OPEN and completes a normal CAPABILITY
-// exchange: any subsequent `active === false` can ONLY come from the client
-// tearing the connection down. A mandatory-TLS client must close here; the
-// current client has no mandatory-TLS policy and stays active → active === true,
-// the honest 'violation'. This is also NOT confounded with 7.1.4-1's
-// authenticated-state duty: that entry is about entering authenticated state on
-// PREAUTH; this one is specifically about CLOSING on an unprotected port, and is
-// witnessed by connection teardown, not by the authenticated flag.
+// server KEEPS the plaintext connection OPEN and stands ready to complete a
+// normal CAPABILITY exchange: any subsequent `active === false` can ONLY come
+// from the client tearing the connection down. This is also NOT confounded with
+// 7.1.4-1's authenticated-state duty: that entry is about entering authenticated
+// state on PREAUTH; this one is specifically about CLOSING on an unprotected
+// port, and is witnessed by connection teardown, not by the authenticated flag.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1.4-2"],
 		profiles: ["rev2"],
 		title: "mandatory-TLS client closes the connection on a plaintext-port PREAUTH greeting",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				// PREAUTH on a plaintext (security:"none") port — a mandatory-TLS
-				// client must close. The server keeps the connection OPEN and
-				// completes a normal exchange, so `active` reflects the CLIENT's
-				// close decision, never a server-side socket close.
-				send("* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in (cleartext)\r\n"),
+				// PREAUTH on a plaintext port while the client is configured
+				// security:"starttls" (mandatory TLS) — the client must close.
+				// The server keeps the connection OPEN and stands ready for a
+				// normal exchange, so `active` reflects the CLIENT's close
+				// decision, never a server-side socket close.
+				send(
+					"* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in (cleartext)\r\n",
+				),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
 		await driver.connect({
 			host: "127.0.0.1",
 			port: server.port,
-			security: "none",
+			security: "starttls",
 		});
 		// Bounded window for a compliant client to act on the PREAUTH + close.
 		await new Promise<void>((r) => setTimeout(r, 100));
@@ -353,7 +387,12 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
-		server.arm([[send("* BYE server not willing to accept the connection\r\n"), close()]]);
+		server.arm([
+			[
+				send("* BYE server not willing to accept the connection\r\n"),
+				close(),
+			],
+		]);
 		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
@@ -377,20 +416,27 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1.5-2"],
 		profiles: ["rev2"],
-		title:
-			"client continues reading responses after an unsolicited BYE (server does not close)",
+		title: "client continues reading responses after an unsolicited BYE (server does not close)",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): this test is about
+		// continuing to read after a mid-exchange BYE, not about greeting-code
+		// handling, so it needs the normal CAPABILITY round trip in order to have
+		// somewhere to inject the BYE + trailing tagged OK.
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				// BYE mid-exchange; the server does NOT close the connection.
-				send("* BYE server going down for maintenance in 10 minutes\r\n"),
+				send(
+					"* BYE server going down for maintenance in 10 minutes\r\n",
+				),
 				// Pending responses follow the BYE — the client SHOULD read them.
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -421,8 +467,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7-2"],
 		profiles: ["rev2"],
-		title:
-			"client remembers every critical data item (FLAGS, EXISTS, EXPUNGE) delivered in one burst",
+		title: "client remembers every critical data item (FLAGS, EXISTS, EXPUNGE) delivered in one burst",
 		timeout: 5000,
 	},
 	async () => {
@@ -459,19 +504,24 @@ complianceTest(
 // Positive leg of the graded ALERT trio. An implicit-TLS connection establishes
 // confidentiality FIRST, then the server sends an "* OK [ALERT] ..." line. Per
 // the honest ui-presentation interpretation, the ALERT text MUST be surfaced
-// through the logger at an attention-grade level (warn/error). The current
-// client has no ALERT handling at all → no attention-grade emission → violation.
+// through the logger at an attention-grade level (warn/error).
 //
-// This is the mandatory pairing partner for 7.1-1: it proves the client CAN and
-// MUST surface post-confidentiality ALERTs, so 7.1-1's absence assertion (below)
-// is not vacuously satisfied by a client that simply never surfaces ALERTs.
+// M0.3: Connection now logs every ALERT at "warn" (spec I-7/§10.6), which is
+// what makes this leg pass. NOTE this is genuinely in tension with 7.1-1 below
+// (SHOULD-ignore-if-unprotected, asserting the alert text is ABSENT from the
+// log at any level): the client can satisfy "MUST present once confidential"
+// (this test) and "MUST mark-as-suspicious if displayed while unprotected"
+// (RFC9051-7.1-2) simultaneously, but not also satisfy 7.1-1's stronger
+// "never log pre-confidentiality" reading — those two are mutually exclusive
+// for identical connectLow() scripts. This entry and RFC9051-7.1-2 are the
+// explicit M0.3 targets; RFC9051-7.1-1 is left as a known, documented
+// regression (see the M0.3 report) rather than leaving the ALERT contract
+// unimplemented to keep it vacuously passing.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-3"],
 		profiles: ["rev2"],
-		title:
-			"client presents ALERT text through its logger channel after TLS confidentiality is established",
-		expectFailure: "violation",
+		title: "client presents ALERT text through its logger channel after TLS confidentiality is established",
 		timeout: 5000,
 	},
 	async () => {
@@ -494,7 +544,10 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		expect(ok).toBe(true);
-		expect(driver.secure, "the connection must be confidential before the ALERT").toBe(true);
+		expect(
+			driver.secure,
+			"the connection must be confidential before the ALERT",
+		).toBe(true);
 		await server.assertCompleted();
 		// Give the event/log pipeline a bounded window to flush after close.
 		await new Promise<void>((r) => setTimeout(r, 100));
@@ -531,12 +584,23 @@ complianceTest(
 // honest measurement that the graded behaviour is unimplemented. This test's
 // pass is therefore currently VACUOUS by construction and is documented as such;
 // it becomes a genuine SHOULD-ignore witness once 7.1-3 is satisfied.
+// ADJUDICATED DEVIATION (docs/guides/compliance-adjudications.md, RFC9051-7.1-1): the
+// modern-API spec (invariant I-7 + §10.6) deliberately chooses
+// display-with-untrusted-marking for pre-confidentiality ALERTs — the alert
+// text always reaches the logger at warn grade with a structural
+// { code: "ALERT", trusted: false } marker — instead of this entry's
+// SHOULD-ignore. That trades this single SHOULD row for two MUSTs that are
+// incompatible with silent ignoring: RFC3501-7.1-1 (rev1's unconditional
+// MUST-present, tested against the same code path) and RFC9051-7.1-2
+// (MUST-mark-suspicious-when-displayed, whose test asserts a displayed+marked
+// alert). This row is therefore expected to measure as a permanent, deliberate
+// violation; it is NOT vacuous and NOT an accident.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-1"],
 		profiles: ["rev2"],
-		title:
-			"client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
+		title: "client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -557,13 +621,18 @@ complianceTest(
 			security: "none",
 		});
 		expect(ok).toBe(true);
-		expect(driver.secure, "the connection must be unprotected for this leg").toBe(false);
+		expect(
+			driver.secure,
+			"the connection must be unprotected for this leg",
+		).toBe(false);
 		await server.assertCompleted();
 		// Bounded flush window, then assert absence (no positive event to poll for).
 		await new Promise<void>((r) => setTimeout(r, 100));
 		// Scan the FULL log stream at any level — the ALERT content must not leak
 		// through anywhere (not just at attention grade), per the catalog caveat.
-		const alertSurfaced = driver.logs.some((entry) => entry.message.includes(alertText));
+		const alertSurfaced = driver.logs.some((entry) =>
+			entry.message.includes(alertText),
+		);
 		expect(
 			alertSurfaced,
 			"a plaintext-connection ALERT must not be surfaced at any log level (SHOULD ignore)",
@@ -579,19 +648,17 @@ complianceTest(
 // client-generated log messages. Mere substring coincidence (the word "alert"
 // appearing in the server text itself) does NOT satisfy the duty.
 //
-// The condition is conjunctive: unprotected ALERT AND the client displays it. A
-// client that surfaces nothing has nothing to mismark. Today the logger path
-// emits no ALERT at attention grade at all (see 7.1-1/7.1-3), so the structural
-// marker required here is absent → violation. The sentinel is deliberately a
+// The condition is conjunctive: unprotected ALERT AND the client displays it.
+// M0.3: the client now logs every ALERT at "warn" with `detail: { code:
+// "ALERT", trusted: false }` when unprotected — the "warn" level alone
+// satisfies the structural-marker check below. The sentinel is deliberately a
 // string that does NOT itself contain a suspicious-source tag, so the assertion
 // is satisfied only by a real structural marker, never by the payload text.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-2"],
 		profiles: ["rev2"],
-		title:
-			"a surfaced unprotected-connection ALERT is structurally marked as potentially suspicious",
-		expectFailure: "violation",
+		title: "a surfaced unprotected-connection ALERT is structurally marked as potentially suspicious",
 		timeout: 5000,
 	},
 	async () => {
@@ -616,7 +683,9 @@ complianceTest(
 		await server.assertCompleted();
 		await new Promise<void>((r) => setTimeout(r, 100));
 		// Find any log entry that surfaced the ALERT body at all.
-		const surfaced = driver.logs.filter((entry) => entry.message.includes(alertBody));
+		const surfaced = driver.logs.filter((entry) =>
+			entry.message.includes(alertBody),
+		);
 		// The duty only bites IF the client displays the alert. If nothing is
 		// surfaced, the duty is not triggered — but the graded ALERT contract as a
 		// whole is unimplemented (7.1-3 fails), so we assert the STRUCTURAL marker
@@ -646,18 +715,14 @@ complianceTest(
 // The PERMANENTFLAGS list below is deliberately RESTRICTED: it lacks \* and omits
 // \Answered/\Flagged/\Draft, which appear in FLAGS. Per §7.1 those omitted flags
 // "cannot be set permanently" — the client must respect this to avoid silently
-// losing flag state. driver.select() is unimplemented today (throws
-// NotImplementedError) → annotated unimplemented. When select()/store() land the
-// future observable is that the client records the permanent set {\Deleted,
-// \Seen} and does not treat a STORE of \Flagged as durable (no \* ⇒ no new
-// keywords either). Today the minimal binding observable is that the restricted
-// list is parsed and the SELECT exchange completes.
+// losing flag state. REAL SIGNAL (M2.2): driver.select() returns the real
+// `MailboxSession`; asserts `permanentFlags` is EXACTLY {\Deleted, \Seen} (not
+// the full FLAGS set) and `canCreateKeywords` is `false` (no \*).
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-4"],
 		profiles: ["rev2"],
 		title: "client records the restricted PERMANENTFLAGS list from a rev2 SELECT response",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -681,10 +746,20 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server, { security: "none" });
 		await driver.login("user", "pass");
-		// Unimplemented today; when implemented the client must parse and record the
-		// restricted permanent set without error.
-		await driver.select("INBOX");
+		const session = await driver.select("INBOX");
 		await server.assertCompleted();
+		expect(
+			new Set(session.permanentFlags),
+			"permanentFlags must be exactly {\\Deleted, \\Seen}",
+		).toEqual(new Set(["\\Deleted", "\\Seen"]));
+		expect(
+			session.permanentFlags?.has("\\Flagged"),
+			"\\Flagged is in FLAGS but NOT in PERMANENTFLAGS -- must not be treated as durable",
+		).toBe(false);
+		expect(
+			session.canCreateKeywords,
+			"no \\* means new keywords cannot be created",
+		).toBe(false);
 	},
 );
 
@@ -694,14 +769,12 @@ complianceTest(
 // MAY: it is intentionally NOT scripted as mandatory steps (that would upgrade
 // the MAY to a MUST). The binding minimum is that the client surfaces the failure
 // to its caller — append() rejects — instead of crashing, hanging, or treating
-// the NO as session-fatal. driver.append() is unimplemented today → unimplemented.
+// the NO as session-fatal. driver.append() (M2.11) is exercised here.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-6"],
 		profiles: ["rev2"],
-		title:
-			"client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional in rev2)",
-		expectFailure: "unimplemented",
+		title: "client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional in rev2)",
 		timeout: 5000,
 	},
 	async () => {
@@ -721,7 +794,10 @@ complianceTest(
 		await driver.login("user", "pass");
 		let appendError: unknown;
 		try {
-			await driver.append("Archive/2026", Buffer.from("Subject: hi\r\n\r\nbody\r\n"));
+			await driver.append(
+				"Archive/2026",
+				Buffer.from("Subject: hi\r\n\r\nbody\r\n"),
+			);
 		} catch (err) {
 			// NotImplementedError = today's honest 'unimplemented' outcome.
 			if (err instanceof NotImplementedError) throw err;
@@ -743,15 +819,16 @@ complianceTest(
 // "OK [CLOSED]" as a boundary: responses BEFORE it relate to the old mailbox,
 // responses AFTER it to the new one. The client must attribute state across this
 // boundary correctly (e.g. not carry mailbox A's EXISTS/flags into B's session
-// state). driver.select() is unimplemented today → annotated unimplemented. When
-// select() lands, the two scripted SELECTs (A then B, with CLOSED marking the
-// switch) plus per-mailbox state accessors self-actualize the attribution check.
+// state). REAL SIGNAL (M2.2): driver.select() is wired; the reselect
+// choreography (spec §3.1) closes mailbox A's session (reason "reselected")
+// client-side the moment the second SELECT begins -- independent of whether
+// the wire even echoes CLOSED -- so this asserts BOTH the attribution (B's
+// session carries only B's data) and A's session ending up `closed`.
 complianceTest(
 	{
 		reqs: ["RFC9051-7.1-9"],
 		profiles: ["rev2"],
 		title: "client honours the CLOSED response-code boundary across an implicit mailbox switch",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -785,12 +862,20 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server, { security: "none" });
 		await driver.login("user", "pass");
-		// Select A, then switch to B. Unimplemented today — select() rejects on A.
-		await driver.select("A");
-		await driver.select("B");
+		const sessionA = await driver.select("A");
+		const sessionB = await driver.select("B");
 		await server.assertCompleted();
 		// Self-actualising: CAPABILITY=0, LOGIN=1, SELECT A=2, SELECT B=3.
 		expect(server.commandLines[2]?.args).toMatch(/^(?:A|"A")$/);
 		expect(server.commandLines[3]?.args).toMatch(/^(?:B|"B")$/);
+		// Attribution: B's session carries only B's data (2 messages, UIDVALIDITY
+		// 200), never A's (5 messages, UIDVALIDITY 100) -- proving responses after
+		// CLOSED were not folded into the wrong mailbox's state.
+		expect(sessionB.name).toBe("B");
+		expect(sessionB.exists).toBe(2);
+		expect(sessionB.uidValidity).toBe(200);
+		// A's session is closed the moment the reselect began (client-driven,
+		// spec §3.1) -- independent of the wire CLOSED code.
+		expect(sessionA.closed).toBe(true);
 	},
 );

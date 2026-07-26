@@ -1,0 +1,242 @@
+import { AuthError, ImapError } from "../errors";
+import type { ContinueResponse, TaggedResponse } from "../parser";
+import type { SaslContext, SaslMechanism } from "../sasl/mechanism";
+import { sanitizeForErrorMessage } from "../connection/utils";
+import { Command } from "./base";
+import { ResponseCollector, toTypedResponseCode } from "./collector";
+import type { CommandWriter } from "./writer";
+
+/**
+ * Constructor input for `AuthenticateCommand` (shape is this module's own —
+ * spec §9 leaves it to the implementer). `initialResponse` is precomputed by
+ * the CALLER (the selection algorithm, spec §9.3/`client/auth.ts`) via
+ * `await mechanism.start(ctx)` — `write()` is synchronous (spec §7.1), so a
+ * mechanism's (necessarily async) initial-response computation cannot happen
+ * inside this command at all; it must already be in hand before the command
+ * is ever submitted to a queue. `null` means "this mechanism sends nothing
+ * until the server's first real challenge" (distinct from an explicitly
+ * empty `Buffer.alloc(0)` initial response, e.g. a mechanism that legitimately
+ * wants to send zero bytes as its opening move).
+ */
+export interface AuthenticateCommandOptions {
+	/** The SASL mechanism driving this exchange (e.g. PLAIN, XOAUTH2, SCRAM). */
+	mechanism: SaslMechanism;
+	/** Context passed through to `mechanism.start()`/`.step()`/`.finish()` —
+	 *  typically carries credentials and any mechanism-specific state. */
+	ctx: SaslContext;
+	/** The mechanism's precomputed initial response, or `null` if this
+	 *  mechanism sends nothing until the server's first real challenge. See
+	 *  this interface's own doc comment for why this can never be computed
+	 *  lazily inside the command itself. */
+	initialResponse: Buffer | null;
+	/** Whether the server advertised SASL-IR (RFC 4959) — gates whether a
+	 *  non-null `initialResponse` is sent inline on the `AUTHENTICATE` line
+	 *  itself, vs. deferred to the first server continuation. */
+	saslIrAllowed: boolean;
+}
+
+/**
+ * Encodes one SASL response payload for the wire (spec §9.1's framing
+ * division of labor: "the AUTHENTICATE command owns ALL base64 framing in
+ * both directions"): an empty buffer becomes a bare empty line (just the
+ * CRLF `executeCommand`'s continuation handler already appends — see
+ * `XOAuth2Mechanism`'s doc comment for why this is the correct empty-
+ * response wire form for a CONTINUATION reply, as opposed to the "="
+ * shorthand, which is specific to the initial-response *argument position*
+ * on the `AUTHENTICATE` command line itself, RFC 4959 §3); anything else is
+ * base64-encoded.
+ */
+function encodeContinuationReply(data: Buffer): Buffer {
+	if (data.length === 0) {
+		return Buffer.alloc(0);
+	}
+	return Buffer.from(data.toString("base64"), "ascii");
+}
+
+/**
+ * AUTHENTICATE (RFC 3501/9051 §6.2.2, RFC 4422, RFC 4959). `isolated`:
+ * AUTHENTICATE owns the connection exclusively for its whole (potentially
+ * multi-round-trip) SASL exchange, including every continuation (spec
+ * §6.1) — no other command may be interleaved. Only legal in
+ * "not-authenticated" (PREAUTH already skips this entirely, spec §10.5).
+ *
+ * This command owns ALL base64/wire framing for the SASL exchange; the
+ * `SaslMechanism` it drives never sees base64 text or CRLFs (spec §9.1) —
+ * every `Buffer` crossing the `SaslMechanism` interface is raw, already-
+ * decoded protocol payload.
+ */
+export class AuthenticateCommand extends Command<void> {
+	readonly verb = "AUTHENTICATE";
+	readonly queueMode = "isolated" as const;
+	readonly states = ["not-authenticated"] as const;
+	/** The whole SASL exchange this command drives is credential-bearing
+	 *  (spec §10.3's gate treats an authentication ATTEMPT as a whole, not a
+	 *  per-mechanism filter — see `Command.sendsCredentials` and
+	 *  `performAuthSelection`'s matching top-of-function gate). */
+	readonly sendsCredentials = true;
+
+	private readonly mechanism: SaslMechanism;
+	private readonly ctx: SaslContext;
+	private readonly initialResponse: Buffer | null;
+	private readonly saslIrAllowed: boolean;
+
+	/** `true` once the initial response has actually been placed on the wire
+	 *  — either inline in `write()` (SASL-IR) or as the reply to the first
+	 *  continuation (deferred). Guards against ever sending it twice. */
+	private initialResponseSent = false;
+
+	constructor(opts: AuthenticateCommandOptions) {
+		super();
+		this.mechanism = opts.mechanism;
+		this.ctx = opts.ctx;
+		this.initialResponse = opts.initialResponse;
+		this.saslIrAllowed = opts.saslIrAllowed;
+	}
+
+	protected write(w: CommandWriter): void {
+		w.atom(this.mechanism.name.toUpperCase());
+		if (this.saslIrAllowed && this.initialResponse !== null) {
+			w.sp();
+			if (this.initialResponse.length === 0) {
+				// RFC 4959: an empty initial response, when sent inline as the
+				// command's own argument, is represented by a bare "=" — NOT an
+				// empty base64 atom (which would just be nothing at all, i.e.
+				// indistinguishable from "no initial response"). This is the one
+				// place "=" is legal; every other empty SASL response on this
+				// exchange (a later continuation reply) is a bare empty line
+				// instead (see `encodeContinuationReply`).
+				w.atom("=");
+			} else {
+				w.atom(this.initialResponse.toString("base64"));
+			}
+			this.initialResponseSent = true;
+		}
+	}
+
+	protected async onContinuation(resp: ContinueResponse): Promise<Buffer | "abort"> {
+		try {
+			if (!this.initialResponseSent && this.initialResponse !== null) {
+				// SASL-IR wasn't used (either not advertised, or this mechanism's
+				// initial response wasn't sent inline for some other reason): the
+				// server's first continuation is just a "go ahead" prompt for the
+				// initial response, not a real challenge — RFC 4959 §3. Deliver it
+				// now; this continuation's own (usually empty) challenge text is
+				// not fed into `step()`.
+				this.initialResponseSent = true;
+				return encodeContinuationReply(this.initialResponse);
+			}
+			// A real server challenge: base64-decode (this command owns ALL
+			// base64 framing, spec §9.1 — `resp.text.content` is always the raw
+			// wire text, empty string for a bare "+ " prompt) and hand the
+			// mechanism raw bytes.
+			const challenge = Buffer.from(resp.text.content, "base64");
+			const reply = await this.mechanism.step(challenge, this.ctx);
+			return encodeContinuationReply(reply);
+		} catch {
+			// spec §9.1: a mechanism's `step()` throw (or any failure preparing
+			// a reply) maps to `*` cancellation — the execute layer (spec §6.2)
+			// sends `*` CRLF for us; the eventual tagged NO/BAD is what actually
+			// settles this command's promise (via `onError` below), carrying an
+			// `AuthError`.
+			return "abort";
+		}
+	}
+
+	protected async accept(_c: ResponseCollector): Promise<void> {
+		// Some servers place final SASL data (e.g. a SCRAM server-signature) on
+		// the tagged OK itself instead of a last continuation — spec §9.1 asks
+		// `finish()` to be given that data when present. This command does NOT
+		// guess at it from the tagged OK's free TEXT, though: unlike a
+		// continuation's response line (which is ALWAYS base64 SASL payload,
+		// never human prose), a tagged OK's trailing text is ordinary
+		// human-readable success text ("done", "authenticated") far more often
+		// than it's smuggled SASL data, and the two are indistinguishable by
+		// shape alone (both are just runs of letters/digits) — guessing wrong
+		// would corrupt `finish()`'s input on the overwhelmingly common case to
+		// support an uncommon one. What IS reliably a structured signal is a
+		// resp-text-CODE (the bracketed `[...]` part) — but no code this
+		// library currently parses represents SASL success data, so `extraData`
+		// is always `null` today; a later milestone (SCRAM, once a concrete
+		// server convention needs it) is the right place to add a typed code
+		// for this rather than heuristically parsing free text now.
+		// PR #18 review fix (Critical #1): `extraData` being always `null`
+		// here is NOT a security gap by itself -- `ScramMechanism.finish()`
+		// (`sasl/scram.ts`) now fails CLOSED whenever it never independently
+		// verified a "v=" ServerSignature via `step()`, regardless of what
+		// (if anything) `extraData` carries. `null` genuinely is "no
+		// structured data available", which is exactly what a mechanism
+		// depending on this parameter as its ONLY source of verification
+		// data must treat as "nothing to verify" (i.e. fail closed), not
+		// "trust the tagged OK".
+		const extraData: Buffer | null = null;
+		try {
+			await this.mechanism.finish(extraData, this.ctx);
+		} catch (err) {
+			// spec §9.1/task brief: `finish()` MUST be able to reject the
+			// command's promise even though the server already said OK (the
+			// SCRAM server-signature case: the client verifies, not just trusts,
+			// server-claimed success).
+			//
+			// TERMINAL, always (M5.1 security fix): a `finish()` rejection means
+			// the CLIENT's own verification failed AFTER the server claimed
+			// success — the mechanism is saying "the server is lying", not the
+			// server saying "no". The peer may be a man-in-the-middle who
+			// couldn't forge the final proof; the §9.3 selection algorithm MUST
+			// stop dead on this error (see `AuthError.terminal`'s doc comment),
+			// never retrying a weaker mechanism or LOGIN against the same
+			// suspect peer. Every rejection out of this catch is therefore
+			// re-issued as a fresh `AuthError` with `terminal: true` — including
+			// one the mechanism raised as an `AuthError` itself (that instance
+			// can't carry the flag: `mechanismAuthError()` is also used by
+			// pre-tagged-OK failures where try-next is still correct; only THIS
+			// call site knows the failure happened post-success).
+			const detail = err instanceof Error ? err.message : String(err);
+			throw new AuthError(
+				`AUTHENTICATE ${this.mechanism.name}: finish() rejected authentication ` +
+					`despite a tagged OK (${detail})`,
+				{
+					mechanismsTried: [this.mechanism.name],
+					code: err instanceof AuthError ? err.code : null,
+					cause: err,
+					terminal: true,
+				},
+			);
+		}
+	}
+
+	/** Tagged NO/BAD -> `AuthError` (spec §9.3's selection algorithm needs to
+	 *  tell "credentials wrong" (AUTHENTICATIONFAILED) apart from "mechanism
+	 *  rejected/misnegotiated" (anything else) purely from `.code`, since
+	 *  `AuthError` doesn't carry the raw NO/BAD status — see `client/auth.ts`). */
+	protected onError(resp: TaggedResponse): ImapError {
+		const status = resp.status.status as "NO" | "BAD";
+		// M14 (log-injection defense, verified real): the server's free-text
+		// explanation used to be embedded verbatim, completely unsanitized,
+		// into this thrown error's `message` -- a malicious/misbehaving
+		// pre-auth peer could inject CR/LF (forging fake log lines once a
+		// caller's logger prints `err.message` verbatim) or other C0/DEL
+		// control bytes. Same escaping `commands/login.ts`/`connection.ts`'s
+		// BYE-greeting rejection already apply (shared helper, M14).
+		const text = sanitizeForErrorMessage(resp.status.text?.content ?? "");
+		const code = toTypedResponseCode(resp.status.text?.code);
+		// PR #18 review fix (Medium, report-or-fix — diagnostic dead code):
+		// `finish()` only ever runs after a tagged OK, so a mechanism whose
+		// realistic failure mode concludes via tagged NO/BAD (e.g. OAUTHBEARER/
+		// XOAUTH2's one-shot error-recovery round trip) has no other seam to
+		// surface a recorded diagnostic from — `describeFailure()` is that
+		// seam (`SaslMechanism`'s own doc comment). Optional and `undefined`
+		// for every mechanism that doesn't implement/need it. Sanitized the
+		// same way `text` is: a mechanism's diagnostic (e.g. OAUTHBEARER/
+		// XOAUTH2's `describeFailure()`) is itself built from a server-supplied
+		// error payload, so it carries the exact same untrusted-text risk.
+		const diagnostic = this.mechanism.describeFailure?.();
+		const sanitizedDiagnostic = diagnostic
+			? sanitizeForErrorMessage(diagnostic)
+			: diagnostic;
+		const message =
+			`AUTHENTICATE ${this.mechanism.name} failed with ${status}` +
+			(text ? `: ${text}` : "") +
+			(sanitizedDiagnostic ? ` (${sanitizedDiagnostic})` : "");
+		return new AuthError(message, { mechanismsTried: [this.mechanism.name], code });
+	}
+}

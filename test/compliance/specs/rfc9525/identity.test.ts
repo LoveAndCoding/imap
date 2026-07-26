@@ -12,7 +12,6 @@ complianceTest(
 		reqs: ["RFC9525-6.6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "implicit TLS: certificate for the wrong host is rejected",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

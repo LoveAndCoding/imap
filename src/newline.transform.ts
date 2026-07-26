@@ -1,14 +1,87 @@
 import { Transform } from "stream";
 
+import {
+	LiteralBodyStream,
+	NOOP_SOCKET_CONTROL,
+	SocketControl,
+} from "./literal-body-stream";
+
 // IMAP standard says newlines are always CRLF, so we can
 // safely split only on that.
 const CRLF = Buffer.from("\r\n");
 
 const DEFUALT_MAX_LINE_LENGTH = 2e6; // 2MB
 
+// §11.4 default: a literal at/above this many octets streams instead of
+// buffering. The M3.1 spike default (8 KiB) was confirmed as the shipped
+// value by measuring the small-consumer maxima (M3.2): the largest genuine
+// server literal anywhere in the test corpus is 7891 octets (a whole-message
+// BODY[] in test/integration/specs/fetch.spec.ts), headers top out at 342,
+// and every structurally-small literal consumer (ENVELOPE fields, addresses,
+// BODYSTRUCTURE metadata, ID pairs -- the fact-base inventory) is sub-KB.
+// At 8 KiB every existing corpus literal stays on the buffered path
+// (byte-identical tokenization, zero small-consumer changes), while
+// anything meaningfully larger than a header block streams.
+export const DEFAULT_STREAM_THRESHOLD = 8 * 1024;
+export const DEFAULT_STREAM_HIGH_WATER_MARK = 16 * 1024;
+
+// A completed line ending in a literal announcement: `{n}` / `{n+}`
+// (ordinary literal) or `~{n}` / `~{n+}` (RFC 3516 literal8). The `+`
+// non-sync marker only ever appears in CLIENT->SERVER literals, but is
+// tolerated here per the M3.1 resolution (harmless to recognize it in a
+// response we'd never expect it in).
+//
+// KNOWN AMBIGUITY (M3.1 proof addendum, obligation 2 -- noted, not solved):
+// a legitimate line whose human-readable resp-text happens to END with
+// "{n}" (e.g. `* OK disk usage at {90}\r\n`) is indistinguishable from a
+// literal announcement at this layer. The pre-M3.2 lexer had exactly the
+// same ambiguity (`StringRule.matchIncludingEOL` treats the same tail as a
+// pending literal), so this is parity, not a regression -- but the failure
+// mode is now opaque-mode desync (for n >= streamThreshold) rather than one
+// over-buffered line. Candidate mitigations if this ever bites in practice:
+// context gating (only lines whose prefix parses as a FETCH/APPEND-ish
+// shape can announce) or a sanity cap on `n` -- both deliberately deferred
+// (per the addendum, "note a mitigation") since real servers' resp-text
+// conventionally avoids a bare trailing {n} precisely because of this
+// grammar ambiguity.
+const ANNOUNCE_TAIL = /(~?\{(\d+)\+?\})\r\n$/;
+
+export type LiteralStreamMarker = {
+	literalStream: LiteralBodyStream;
+	byteLength: number;
+};
+
+export type EmittedChunk = Buffer | LiteralStreamMarker;
+
+/** Structural check for a `LiteralStreamMarker` pushed onto the pipeline in
+ *  place of a line `Buffer` -- used by the lexer to intercept it before the
+ *  `line.toString()` path (§11.4 proof addendum, "marker contract"). */
+export function isLiteralStreamMarker(
+	chunk: unknown,
+): chunk is LiteralStreamMarker {
+	return (
+		typeof chunk === "object" &&
+		chunk !== null &&
+		"literalStream" in chunk &&
+		(chunk as { literalStream: unknown }).literalStream instanceof
+			LiteralBodyStream
+	);
+}
+
 export type NewlineTranformOptions = Partial<{
 	maxLineLength: number;
 	allowHalfOpen: boolean;
+	/** Literals at/above this many octets stream instead of buffering
+	 *  (§11.4). Default `DEFAULT_STREAM_THRESHOLD` (8 KiB). */
+	streamThreshold: number;
+	/** `highWaterMark` for each `LiteralBodyStream` this transform creates. */
+	streamHighWaterMark: number;
+	/** Socket-level backpressure hooks (§5.4/M3.1 resolution): paused while
+	 *  a live literal stream is unconsumed above its `highWaterMark`, resumed
+	 *  on consumer demand. Defaults to a no-op (fine for tests/callers that
+	 *  don't need real backpressure -- e.g. anything not wired to a live
+	 *  socket). */
+	socketControl: SocketControl;
 }>;
 
 interface INewlineTranformEvents {
@@ -16,13 +89,14 @@ interface INewlineTranformEvents {
 
 	// Definitions from ReadableStream/WriteableStream
 	close: () => void;
-	data: (chunk: Buffer) => void;
+	data: (chunk: EmittedChunk) => void;
 	end: () => void;
 	finish: () => void;
 	readable: () => void;
 	error: (err: Error) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 declare interface NewlineTranform {
 	addListener<E extends keyof INewlineTranformEvents>(
 		event: E,
@@ -54,12 +128,89 @@ declare interface NewlineTranform {
 	): this;
 
 	// Other Overrides
-	push(chunk: Buffer): boolean;
+	push(chunk: EmittedChunk): boolean;
 }
 
+/**
+ * Splits the incoming byte stream into CRLF-terminated lines (objectMode:
+ * pushes `Buffer` lines), same as ever -- PLUS (§11.4, spec-mandated) is now
+ * literal-aware: it stops CRLF-scanning inside a server literal's declared
+ * `{n}` byte range instead of blindly splitting on every CRLF it contains.
+ *
+ * Two literal-size regimes (M3.1 resolution, spike default kept as final —
+ * see the spike proof's claim (a)/(b)/(c), `docs/superpowers/plans/
+ * 2026-07-12-modern-api-m3-message-operations.md`):
+ *  - BELOW `streamThreshold`: unchanged framing. The literal's bytes still
+ *    flow through as ordinary CRLF-split `line` pushes (multi-line for a
+ *    literal body containing embedded CRLFs, exactly as before) -- the only
+ *    change is the "opaque guard" below. This is deliberate: it's what lets
+ *    the lexer's existing string-accumulation contract keep working
+ *    unmodified for every small/structurally-tiny literal consumer
+ *    (ENVELOPE, ADDRESS, BODYSTRUCTURE metadata, ID pairs, small FETCH
+ *    bodies) with zero behavior change.
+ *  - AT/ABOVE `streamThreshold`: the announcement line is pushed as usual,
+ *    then a `LiteralStreamMarker` (carrying a fresh `LiteralBodyStream` +
+ *    declared length) is pushed in its place, and the next `n` wire bytes
+ *    are fed directly to that stream -- never scanned for CRLF, never
+ *    pushed as `line` data, never counted against `maxLineLength` (see
+ *    below).
+ *
+ * Opaque guard (§11.4 proof addendum, MANDATORY): a BELOW-threshold
+ * literal's body can itself end with something that looks exactly like a
+ * new announcement (e.g. a body ending in the bytes `...{999999}\r\n`).
+ * Matching announcements naively against every completed line would let
+ * such a body spoof a phantom literal and swallow the rest of the session
+ * as opaque bytes. `opaqueGuard` tracks how many of the *upconing* line's
+ * leading bytes still belong to an already-announced, not-yet-fully-passed
+ * small literal body; announcement matching is only ever attempted against
+ * the non-guarded suffix of a completed line.
+ *
+ * `maxLineLength` invariant: opaque (>= threshold, streamed) literal bytes
+ * are exempt from the guard -- they never touch `pending`/`currentLine` at
+ * all. Below-threshold literal bytes still count against it, same as every
+ * other byte, same as before this task (fine while `streamThreshold` stays
+ * far below the 2 MB default `maxLineLength`).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- intentional class+interface merge to give Transform's event emitter methods precise per-event typing
 class NewlineTranform extends Transform {
-	private currentLine: Buffer | undefined;
+	/** Bytes not yet resolved into a complete line (or fed to `active`). */
+	private pending: Buffer = Buffer.alloc(0);
+	/**
+	 * Bytes at the FRONT of `pending` that belong to an already-announced,
+	 * below-threshold literal body: still CRLF-split like anything else, but
+	 * never announcement-matched (the opaque guard, see class doc comment).
+	 */
+	private opaqueGuard = 0;
+	/** The live stream currently being fed, if a >=threshold literal is
+	 *  mid-flight. */
+	private active: LiteralBodyStream | null = null;
+	private activeRemaining = 0;
+
+	/**
+	 * M10 fix (COMPRESS/UNAUTHENTICATE topology-swap straddling): while
+	 * `true`, `_transform()` short-circuits entirely -- every incoming chunk
+	 * is appended to `pending` RAW, never CRLF-scanned, never split into a
+	 * `line`, never counted against `maxLineLength`. Armed by
+	 * `beginOpaqueCapture()` the instant a COMPRESS/UNAUTHENTICATE boundary
+	 * command's own tagged response routes (mirrors `armBoundaryInjectionGuard`'s
+	 * STARTTLS-side `forceNewLine(false)` call, but must NOT discard: unlike
+	 * STARTTLS (which replaces the socket -- any residual plaintext is
+	 * provably untrustworthy injection risk, safe to throw away), COMPRESS/
+	 * UNAUTHENTICATE swap a CODEC in place on the SAME byte stream, so bytes
+	 * arriving here are the genuine, in-order continuation of that stream
+	 * (very possibly the opening bytes of the server's newly-compressed
+	 * output, RFC 4978) -- discarding them (the bug this fixes) permanently
+	 * desyncs DEFLATE decompression from that point on. Ended by
+	 * `endOpaqueCapture()`, which hands the accumulated bytes back to the
+	 * caller for correct redelivery (into the new codec, or back through
+	 * ordinary line processing) instead of losing them.
+	 */
+	private opaqueCapture = false;
+
 	private maxLineLength: number;
+	private readonly streamThreshold: number;
+	private readonly streamHighWaterMark: number;
+	private readonly ctrl: SocketControl;
 
 	constructor(options?: NewlineTranformOptions) {
 		super({
@@ -72,19 +223,128 @@ class NewlineTranform extends Transform {
 			typeof options.maxLineLength === "number"
 				? options.maxLineLength
 				: DEFUALT_MAX_LINE_LENGTH;
+		this.streamThreshold =
+			typeof options.streamThreshold === "number"
+				? options.streamThreshold
+				: DEFAULT_STREAM_THRESHOLD;
+		this.streamHighWaterMark =
+			typeof options.streamHighWaterMark === "number"
+				? options.streamHighWaterMark
+				: DEFAULT_STREAM_HIGH_WATER_MARK;
+		this.ctrl = options.socketControl ?? NOOP_SOCKET_CONTROL;
 	}
 
 	public forceNewLine(emitData = true) {
-		if (emitData && this.currentLine && this.currentLine.length) {
-			this.push(this.currentLine);
-			this.emit("line", this.currentLine);
+		if (this.active) {
+			// The transport is going away (socket close / STARTTLS discard,
+			// per connection.ts's two call sites) with a literal stream still
+			// mid-flight: it will never receive its remaining declared bytes.
+			// "consumed or destroyed" (§5.4) -- destroy it now rather than
+			// leaving a consumer awaiting bytes that will never arrive.
+			this.destroyActive(
+				new Error(
+					`Literal stream discarded before completion (${this.activeRemaining} of ${this.active.byteLength} bytes never arrived)`,
+				),
+			);
 		}
-		this.currentLine = undefined;
+		if (emitData && this.pending.length) {
+			this.push(this.pending);
+			this.emit("line", this.pending);
+		}
+		this.pending = Buffer.alloc(0);
+		this.opaqueGuard = 0;
+		this.opaqueCapture = false;
 	}
 
-	_flush(done: () => void) {
+	/**
+	 * M10 fix: begins opaque capture (see `opaqueCapture`'s own doc comment)
+	 * -- from this call onward, every byte this transform receives (plus
+	 * whatever is ALREADY sitting in `pending` at this exact instant) is
+	 * accumulated verbatim rather than CRLF-split, until `endOpaqueCapture()`
+	 * is called. Idempotent-safe to call while already capturing (a no-op
+	 * re-arm, matching `forceNewLine`'s own tolerance).
+	 */
+	public beginOpaqueCapture(): void {
+		this.opaqueCapture = true;
+	}
+
+	/**
+	 * M10 fix: ends opaque capture and returns everything accumulated since
+	 * `beginOpaqueCapture()` (including whatever was already in `pending` at
+	 * that instant) as one buffer, for the caller to redeliver correctly
+	 * (see `injectBytes()` for the "route back through ordinary line
+	 * processing" case, and `wrapCompression()`'s `initialCompressedBytes`
+	 * parameter for the "feed into the new codec" case). A safe no-op
+	 * (returns an empty buffer, touches nothing) if capture was never begun
+	 * — this matters because a caller may not know in advance whether the
+	 * boundary command's tagged response ever actually routed (e.g. the
+	 * connection dropped first) before calling this defensively; only a
+	 * genuinely-armed capture may claim `pending` as its own.
+	 */
+	public endOpaqueCapture(): Buffer {
+		if (!this.opaqueCapture) {
+			return Buffer.alloc(0);
+		}
+		this.opaqueCapture = false;
+		const bytes = this.pending;
+		this.pending = Buffer.alloc(0);
+		this.opaqueGuard = 0;
+		return bytes;
+	}
+
+	/**
+	 * M10 fix: re-injects `buf` (typically bytes just returned by
+	 * `endOpaqueCapture()`) at the FRONT of ordinary processing, exactly as
+	 * if it had just arrived via a normal `_transform()` call -- used once
+	 * it's been determined captured bytes need ordinary (non-codec) line
+	 * processing after all (COMPRESS declining/failing before activation;
+	 * UNAUTHENTICATE, whether or not COMPRESS was active, since any bytes
+	 * captured during ITS boundary window are either already-decompressed
+	 * -- inflate was still live in the pipe the whole time -- or were never
+	 * compressed to begin with). A no-op for an empty/zero-length `buf`.
+	 * Calls `push()`/emits `line` directly, same as `forceNewLine(true)`
+	 * already does outside of `_transform()`'s own call context -- an
+	 * established-safe pattern for this class, not a new one.
+	 */
+	public injectBytes(buf: Buffer): void {
+		if (!buf.length) {
+			return;
+		}
+		this.pending = this.pending.length
+			? Buffer.concat([this.pending, buf])
+			: buf;
+		this.process();
+	}
+
+	_flush(done: (error?: Error) => void) {
+		if (this.active) {
+			const err = new Error(
+				`Stream closed mid-literal: ${this.activeRemaining} of ${this.active.byteLength} bytes missing`,
+			);
+			this.destroyActive(err);
+			return done(err);
+		}
 		this.forceNewLine();
 		done();
+	}
+
+	/** Destroys the mid-flight literal stream with `err`, guarding against
+	 *  Node's uncaught-exception behavior for an errored `Readable` with no
+	 *  'error' listener (common here: teardown destroying a stream no
+	 *  consumer ever got the chance to receive, e.g. a socket close halfway
+	 *  through a literal's line). A consumer that IS attached still observes
+	 *  the error normally -- every 'error' listener fires; the no-op only
+	 *  prevents the zero-listener case from crashing the process. */
+	private destroyActive(err: Error): void {
+		const stream = this.active!;
+		this.active = null;
+		this.activeRemaining = 0;
+		if (stream.listenerCount("error") === 0) {
+			stream.once("error", () => {
+				/* see doc comment: absorb the zero-listener teardown case */
+			});
+		}
+		stream.destroy(err);
 	}
 
 	_transform(
@@ -103,18 +363,57 @@ class NewlineTranform extends Transform {
 			);
 		}
 
-		const toConcat: Buffer[] = [chunk];
-		if (this.currentLine) {
-			toConcat.unshift(this.currentLine);
+		// M10 fix: while opaque capture is armed, every byte is accumulated
+		// raw -- never CRLF-scanned (a raw DEFLATE stream has no reason to
+		// respect line framing at all; treating it as text risks slicing off
+		// an accidental CRLF byte pair as a phantom "line", which would be
+		// unrecoverably lost from the bytes `endOpaqueCapture()` later
+		// returns) and never counted against `maxLineLength` (a length cap
+		// that makes no sense against an as-yet-undetermined amount of
+		// buffered ciphertext). See `opaqueCapture`'s own doc comment.
+		if (this.opaqueCapture) {
+			this.pending = this.pending.length
+				? Buffer.concat([this.pending, chunk])
+				: chunk;
+			return done();
 		}
-		this.currentLine = Buffer.concat(toConcat);
 
+		// Fast path: while a literal stream is active and nothing else is
+		// pending, feed straight through without ever touching `pending` --
+		// these bytes are opaque and must never count against
+		// `maxLineLength` (see class doc comment).
+		if (this.active && !this.pending.length) {
+			chunk = this.feedActive(chunk);
+			if (!chunk.length) {
+				return done();
+			}
+		}
+
+		this.pending = this.pending.length
+			? Buffer.concat([this.pending, chunk])
+			: chunk;
+
+		// Checked BEFORE `process()` splits/feeds `pending` -- matches the
+		// pre-existing (pre-§11.4) behavior of rejecting an over-long
+		// accumulation outright, even if it happens to already contain a
+		// complete, valid CRLF-terminated line. Residual edge case this
+		// ordering accepts: if a literal announcement AND (some of) its
+		// now-opaque body arrive in the SAME chunk, those not-yet-recognized
+		// opaque bytes are transiently counted here (this call hasn't run
+		// `process()` yet, so `this.active` doesn't reflect the transition
+		// about to happen) -- narrow in practice since `maxLineLength`
+		// defaults to 2 MB against typical multi-KB socket reads, and only
+		// bites a caller who sets a deliberately tiny `maxLineLength`. Once
+		// `this.active` is actually set (i.e. on every subsequent call while
+		// the literal is mid-flight), the fast path above skips `pending`
+		// entirely, so opaque bytes are fully exempt from then on.
 		if (
+			!this.active &&
 			this.maxLineLength > 0 &&
-			this.currentLine.length > this.maxLineLength
+			this.pending.length > this.maxLineLength
 		) {
-			const len = this.currentLine.length;
-			this.currentLine = Buffer.alloc(0);
+			const len = this.pending.length;
+			this.pending = Buffer.alloc(0);
 			return done(
 				new RangeError(
 					`Line exceeded maximum allowed length: ${len} > ${this.maxLineLength}`,
@@ -122,18 +421,94 @@ class NewlineTranform extends Transform {
 			);
 		}
 
-		let newlineLoc = this.currentLine.indexOf(CRLF);
-		while (newlineLoc >= 0) {
-			const nextLineIndex = newlineLoc + 2; // Include \r\n
-			const line = this.currentLine.slice(0, nextLineIndex);
+		this.process();
+		done();
+	}
+
+	private process(): void {
+		for (;;) {
+			// M10 fix (complete-line-in-same-segment gap): `beginOpaqueCapture()`
+			// can be called SYNCHRONOUSLY nested inside THIS loop's own
+			// `emit("line", line)` call a few lines below -- routing a
+			// COMPRESS/UNAUTHENTICATE boundary command's tagged response all
+			// the way through the router and back out to
+			// `armBoundaryInjectionGuard`'s listener happens within the same
+			// callstack. Setting the flag mid-loop does nothing on its own to
+			// stop THIS already-running loop from continuing to split
+			// whatever else is still sitting in `pending` (e.g. a SECOND
+			// complete line bundled into the same `data` event/write() as the
+			// tagged OK) -- checked at the top of every iteration so the loop
+			// bails the INSTANT the flag flips, leaving everything from that
+			// point on (already reflected in `this.pending` via the
+			// `subarray` reassignment above) untouched for `endOpaqueCapture()`
+			// to hand back intact, exactly like the STARTTLS-side
+			// `forceNewLine(false)` call already achieves for the "discard"
+			// case (see `armBoundaryInjectionGuard`'s own doc comment).
+			if (this.opaqueCapture) {
+				return;
+			}
+			if (this.active) {
+				if (!this.pending.length) {
+					return;
+				}
+				this.pending = this.feedActive(this.pending);
+				continue;
+			}
+
+			const idx = this.pending.indexOf(CRLF);
+			if (idx < 0) {
+				return;
+			}
+			const line = this.pending.subarray(0, idx + 2);
+			this.pending = this.pending.subarray(idx + 2);
+
+			// How much of THIS line is (guarded) below-threshold literal body
+			// -- announcement matching below must never see into it.
+			const lineGuard = Math.min(this.opaqueGuard, line.length);
+			this.opaqueGuard -= lineGuard;
+
 			this.push(line);
 			this.emit("line", line);
-			this.currentLine = this.currentLine.slice(nextLineIndex);
-			newlineLoc = this.currentLine.indexOf(CRLF);
-		}
 
-		done();
+			const m = ANNOUNCE_TAIL.exec(
+				line.subarray(lineGuard).toString("latin1"),
+			);
+			if (!m) {
+				continue;
+			}
+			const n = parseInt(m[2], 10);
+			if (!Number.isSafeInteger(n) || n === 0) {
+				// A `{0}` literal has no opaque bytes to guard/stream.
+				continue;
+			}
+			if (n >= this.streamThreshold) {
+				const literalStream = new LiteralBodyStream(
+					n,
+					this.ctrl,
+					this.streamHighWaterMark,
+				);
+				this.active = literalStream;
+				this.activeRemaining = n;
+				this.push({ literalStream, byteLength: n });
+			} else {
+				this.opaqueGuard = n;
+			}
+		}
+	}
+
+	/** Feeds up to `activeRemaining` bytes of `buf` to `this.active`; returns
+	 *  whatever's left over (bytes AFTER the literal ends, if any). */
+	private feedActive(buf: Buffer): Buffer {
+		const take = Math.min(this.activeRemaining, buf.length);
+		this.active!.feed(buf.subarray(0, take));
+		this.activeRemaining -= take;
+		if (this.activeRemaining === 0) {
+			this.active!.finish();
+			this.active = null;
+		}
+		return buf.subarray(take);
 	}
 }
 
 export default NewlineTranform;
+export { LiteralBodyStream, NOOP_SOCKET_CONTROL, SocketControl };

@@ -41,7 +41,7 @@
  *   only failure mode is the identity mismatch. A conformant client must refuse
  *   the connection. This mirrors the RFC9525-6.6-1 scenario but cites the
  *   RFC3501 §11.1 ids. Both specs apply — multi-req citation is correct.
- *   Current client: does not perform hostname verification → violation/timeout.
+ *   The client performs hostname verification via connection/tls.ts → pass.
  *
  * RFC3501-11.1-7 (SAN dNSName precedence): Two scenarios:
  *   A. cert has SAN dNSName=localhost/IP=127.0.0.1, CN=wrong.example.test.
@@ -49,16 +49,27 @@
  *   B. cert has SAN dNSName=wrong.example.test, CN=localhost.
  *      A conformant client should REJECT: SAN is present but mismatches.
  *      (CN match is irrelevant when SAN is present — SAN takes precedence.)
- *      Current client does not enforce SAN mismatch → connects (violation).
+ *      Node's default checkServerIdentity enforces SAN precedence → rejects (pass).
  *
  * RFC3501-11.1-8 (post-STARTTLS check): The client MUST check whether acceptable
  *   security was achieved after STARTTLS. Scenario: STARTTLS upgrade to a server
- *   presenting a wrong-host certificate — the TLS handshake will fail due to
- *   identity mismatch (or, if the client doesn't check, will proceed when it
- *   shouldn't). Current driver: the connect() call with 'starttls' and a wrong
- *   cert fails immediately at the STARTTLS exchange level (broken STARTTLS).
- *   The test expectation is honest: we check whether ok === false and driver
- *   is inactive, capturing whatever failure the client produces.
+ *   presenting a wrong-host certificate (chain trusted via the `ca` option, so
+ *   the only failure mode is the identity mismatch) — a REAL server-side TLS
+ *   handshake is attempted (`startTls({ expectAbort: true })`), and a conformant
+ *   client must check post-handshake identity and abort rather than complete
+ *   it. The client-side upgrade goes through connection/tls.ts and correctly
+ *   rejects the identity mismatch (connect() rejects, ok === false, driver
+ *   inactive) — genuine pass.
+ *
+ *   Discriminating power: this scenario only passes for a client that
+ *   actually performs the post-STARTTLS check. The `ca` fixture makes the
+ *   certificate chain trust itself unconditionally valid, so a hypothetical
+ *   client that skipped identity verification (or otherwise never checks the
+ *   negotiation's result) would complete the handshake — at which point the
+ *   `expectAbort: true` step itself fails the script (`assertCompleted()`
+ *   throws), and separately `ok` would be `true` instead of `false`. Only a
+ *   client that verifies identity and aborts makes both the script and the
+ *   assertions below pass simultaneously.
  *
  * RFC3501-11.1-9 (wildcard MAY, case-insensitive, multiple names): The client
  *   connects by IP address (127.0.0.1), not by DNS name. Wildcard certificate
@@ -76,7 +87,7 @@
 import { expect, test } from "vitest";
 
 import { command } from "../../harness/matchers";
-import { expectLine, reply, send } from "../../harness/script";
+import { expectLine, reply, send, startTls } from "../../harness/script";
 import { loadCertFixture } from "../../harness/tls";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
@@ -146,7 +157,6 @@ complianceTest(
 		reqs: ["RFC3501-11.1-3", "RFC3501-11.1-4", "RFC9525-6.6-1"],
 		profiles: ["rev1"],
 		title: "implicit TLS: client rejects certificate whose identity does not match the server hostname",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -228,7 +238,6 @@ complianceTest(
 		profiles: ["rev1"],
 		title:
 			"SAN precedence: client rejects connection when SAN dNSName mismatches, even if CN matches",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -255,27 +264,35 @@ complianceTest(
 // ── RFC3501-11.1-8: post-STARTTLS TLS result check ───────────────────────
 // Both the client and server MUST check the result of the STARTTLS command
 // and subsequent TLS negotiation to see whether acceptable authentication or
-// privacy was achieved. Observable: after STARTTLS OK, the server presents
-// a wrong-host certificate. The client must not proceed if the TLS result
-// is unacceptable.
+// privacy was achieved. Scenario: STARTTLS upgrade to a server presenting the
+// wrong-host certificate. The client trusts the CA (we pass wrongHost.cert as
+// `ca`), so chain validation succeeds and the ONLY failure mode is the
+// identity mismatch (cert says wrong.example.test; we connect to 127.0.0.1).
 //
-// Current driver: the 'starttls' security path is broken (see RFC3501-6.2.1-*
-// violation). The connect() call with starttls fails early. Either the
-// STARTTLS exchange itself fails, or the TLS negotiation fails. In either
-// case the client must not report ok=true.
-// Annotated 'violation' to capture the honest current outcome.
+// A REAL TLS handshake is attempted server-side via
+// `startTls({ expectAbort: true })`: a conformant client checks the
+// post-handshake identity, finds it unacceptable, and aborts the negotiation
+// instead of completing it — the server observes the abort (the underlying
+// transport closes before 'secure' fires) and, because this step declares
+// `expectAbort: true`, that is treated as the step's expected/successful
+// outcome, so `assertCompleted()` passes.
+//
+// Discriminating power: had the client skipped the post-STARTTLS identity
+// check (or any result check at all), it would have completed the handshake
+// against the (chain-trusted) wrong-host cert — at which point the
+// `expectAbort: true` step fails the script (a client that completes the
+// handshake when it was expected to abort is exactly the violation this
+// requirement guards against), and `ok` would be `true` rather than `false`.
+// Both the script assertion and the `ok`/`active` assertions below therefore
+// only pass together for a client that genuinely performs the check.
 complianceTest(
 	{
 		reqs: ["RFC3501-11.1-8"],
 		profiles: ["rev1"],
 		title: "client aborts session when post-STARTTLS TLS negotiation yields an unacceptable security outcome",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
-		// Use the wrong-host cert for the TLS upgrade so the TLS handshake
-		// fails the hostname check (cert says wrong.example.test, client
-		// connects to 127.0.0.1 — identity mismatch after STARTTLS).
 		const server = await f.startServer({ tlsUpgrade: wrongHost });
 		server.arm([
 			[
@@ -284,10 +301,7 @@ complianceTest(
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1 STARTTLS"]),
 				expectLine(command("STARTTLS", { args: null })),
 				reply("OK begin TLS negotiation"),
-				{ kind: "startTls" } as const,
-				// Post-TLS path — a client that proceeds here has failed the check.
-				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1"]),
+				startTls({ expectAbort: true }),
 			],
 		]);
 
@@ -299,8 +313,8 @@ complianceTest(
 			ca: wrongHost.cert,
 			timeoutMs: 3000,
 		});
-		// A conformant client must refuse the connection when the TLS result is
-		// unacceptable (identity mismatch after STARTTLS).
+		// A conformant client must refuse the connection when the post-STARTTLS
+		// identity check finds the negotiated security unacceptable.
 		expect(ok).toBe(false);
 		expect(driver.active).toBe(false);
 		await server.assertCompleted();

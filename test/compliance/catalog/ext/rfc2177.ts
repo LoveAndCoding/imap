@@ -91,10 +91,9 @@ const rfc2177: CatalogModule = {
 				"rev2 client. The gate remains meaningful for a rev2-capable client speaking to a " +
 				"server that advertises neither IDLE nor IMAP4rev2 (IMAP4rev2 advertisement itself " +
 				"conveys IDLE availability). Testable: script a capability response WITHOUT the IDLE " +
-				"token and verify the client never emits an IDLE command; guard against a vacuous pass " +
-				"(driver.idle() currently throws NotImplementedError, so the client can never emit " +
-				"IDLE — the spec test must pair the prohibition with the positive-capability case " +
-				"rather than passing on inability alone).",
+				"token and verify the client never emits an IDLE command; driver.idle() is genuinely " +
+				"real, so the spec test pairs this prohibition with the positive-capability case to " +
+				"guard against a vacuous pass rather than relying on inability alone.",
 		},
 		{
 			id: "RFC2177-3-2",
@@ -159,8 +158,7 @@ const rfc2177: CatalogModule = {
 				"flow entry, re-tag rev1-only and cross-reference it. Testable: script " +
 				"[expectLine(command(\"IDLE\")), send(\"+ idling\"), expectLine(bare DONE), reply OK] " +
 				"and assert the client emits IDLE with no arguments and nothing further until the '+' " +
-				"arrives; currently self-actualizing (driver.idle() throws NotImplementedError, so the " +
-				"exchange cannot complete).",
+				"arrives; driver.idle() is genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC2177-3-4",

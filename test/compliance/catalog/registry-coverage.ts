@@ -25,7 +25,11 @@
 export interface RegistryEntry {
 	/** IANA capability token, e.g. "STARTTLS", "AUTH=PLAIN", "UIDPLUS". */
 	capability: string;
-	status: "cataloged" | "no-client-requirements" | "obsoleted-by" | "out-of-scope";
+	status:
+		| "cataloged"
+		| "no-client-requirements"
+		| "obsoleted-by"
+		| "out-of-scope";
 	/** Catalog module source id backing a `cataloged` entry, e.g. "RFC3501". */
 	source?: string;
 	note?: string;
@@ -77,7 +81,12 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC4315",
 		note: "UID EXPUNGE; APPENDUID/COPYUID/UIDNOTSTICKY resp-codes (resp-codes parse for real via text.code.ts).",
 	},
-	{ capability: "MOVE", status: "cataloged", source: "RFC6851", note: "MOVE, UID MOVE." },
+	{
+		capability: "MOVE",
+		status: "cataloged",
+		source: "RFC6851",
+		note: "MOVE, UID MOVE.",
+	},
 	{
 		capability: "NAMESPACE",
 		status: "cataloged",
@@ -168,7 +177,12 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC3516",
 		note: "FETCH BINARY[]/BINARY.SIZE[]; APPEND ~{n} literal8; UNKNOWN-CTE resp-code parses for real. literal8 duties rev1-only (rev2 core).",
 	},
-	{ capability: "REPLACE", status: "cataloged", source: "RFC8508", note: "REPLACE, UID REPLACE." },
+	{
+		capability: "REPLACE",
+		status: "cataloged",
+		source: "RFC8508",
+		note: "REPLACE, UID REPLACE.",
+	},
 
 	// ---- Phase 5: search/sort/sync/events -----------------------------------
 	// Promoted from PENDING at the Phase 5 wrap: each module carries
@@ -215,12 +229,17 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC4731",
 		note: "SEARCH RETURN (MIN MAX ALL COUNT); * ESEARCH parses for real (mailbox/search.ts). rev2-core overlap: RFC 9051 uses the ESEARCH result format for core SEARCH — rev1-only tags adjudicated in-catalog.",
 	},
-	{ capability: "ESORT", status: "cataloged", source: "RFC5267", note: "SORT RETURN (...)." },
+	{
+		capability: "ESORT",
+		status: "cataloged",
+		source: "RFC5267",
+		note: "SORT RETURN (...).",
+	},
 	{
 		capability: "CONTEXT=SEARCH",
 		status: "cataloged",
 		source: "RFC5267",
-		note: "SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM (two-ADDTO Map-clobber measured as a violation).",
+		note: "SEARCH RETURN (UPDATE/CONTEXT); * ESEARCH ADDTO/REMOVEFROM (M6.2: both items of a two-ADDTO response measured as a genuine pass -- ESearchReturnData is array-of-pairs, not a clobbering Map; see RFC5267-4.3.2-1).",
 	},
 	{
 		capability: "CONTEXT=SORT",
@@ -262,7 +281,16 @@ export const registryCoverage: RegistryEntry[] = [
 		capability: "FILTERS",
 		status: "cataloged",
 		source: "RFC5466",
-		note: "FILTER search key + METADATA-stored definitions; [UNDEFINED-FILTER] kind accepted but its bare argument is dropped (measured violation).",
+		note:
+			"FILTER search key + METADATA-stored definitions; [UNDEFINED-FILTER] kind accepted and its " +
+			"bare filter-name argument is preserved (AtomTextCode's bare-vs-parenthesized split, fixed " +
+			"pre-M4.14, already covers this shape) -- M4.14 additionally gives it a dedicated typed " +
+			"TypedResponseCode variant (response-codes.ts/collector.ts) instead of the generic {name, " +
+			"args} fallback. SearchCriteria.filter (commands/search-criteria.ts, gated on FILTERS) and " +
+			"filter creation/management via the real METADATA facet's setmetadata() (RFC 5464 SETMETADATA " +
+			"under /private|/shared/filters/*) landed at M5.4 -- the option-(b) carry-forward from " +
+			"M4.14, docs/guides/compliance-adjudications.md, closing all four previously-unimplemented rows " +
+			"(RFC5466-3.1-1, -3.2-1, -3.2-2, -4-1).",
 	},
 	{
 		capability: "WITHIN",
@@ -418,28 +446,6 @@ export const registryCoverage: RegistryEntry[] = [
 
 	// ---- Phase 6 reconciliation: borderline (documented judgment, no catalog) -
 	{
-		capability: "UIDONLY",
-		status: "out-of-scope",
-		note:
-			"BORDERLINE JUDGMENT: RFC 9586 defines a genuine client-requested mode shift (ENABLE " +
-			"UIDONLY; thereafter the client MUST NOT use sequence numbers at all, and servers " +
-			"return UIDFETCH/VANISHED instead of FETCH/EXPUNGE) — real client-binding duties exist. " +
-			"Not among the Phase 6 plan's five named reconciliation-delta candidates (APPENDLIMIT/" +
-			"STATUS=SIZE/LIST-MYRIGHTS/PREVIEW/INPROGRESS); per the plan's instruction to default " +
-			"borderline tokens to a documented status rather than expand the bounded delta round, " +
-			"deferred rather than cataloged now. Strong candidate for a future phase's extraction.",
-	},
-	{
-		capability: "UNSELECT",
-		status: "out-of-scope",
-		note:
-			"BORDERLINE JUDGMENT: RFC 3691 defines a small, genuinely client-issuable UNSELECT " +
-			"command (close the selected mailbox without expunging \\Deleted messages) — real but " +
-			"narrow client-binding duties. Not among the plan's five named delta candidates; " +
-			"deferred per the same conservative default as UIDONLY rather than expanding this " +
-			"phase's bounded delta round. Straightforward candidate for a future phase.",
-	},
-	{
 		capability: "LIST-METADATA",
 		status: "out-of-scope",
 		note:
@@ -521,7 +527,7 @@ export const registryCoverage: RegistryEntry[] = [
 		capability: "URLAUTH",
 		status: "cataloged",
 		source: "RFC4467",
-		note: "GENURLAUTH/URLFETCH/RESETKEY; URLMECH resp-code parses for real. * GENURLAUTH/* URLFETCH untagged responses have no handler (stream-death).",
+		note: "GENURLAUTH/URLFETCH/RESETKEY; URLMECH resp-code parses for real. M5.5: * GENURLAUTH/* URLFETCH untagged responses now have a real parser handler (src/parser/structure/urlauth.ts) -- no longer a stream-death.",
 	},
 	{
 		capability: "URLAUTH=BINARY",
@@ -614,5 +620,39 @@ export const registryCoverage: RegistryEntry[] = [
 		status: "cataloged",
 		source: "RFC9585",
 		note: "* OK [INPROGRESS (tag current goal)] acceptance — parenthesized arg parses for real; resp-code kind is NOT case-folded (measured violation).",
+	},
+
+	// ---- M2 (modern-API milestone 2) suite growth ------------------------------
+	// Promoted from the Phase 6 out-of-scope borderline block above by M2.12.
+	{
+		capability: "UNSELECT",
+		status: "cataloged",
+		source: "RFC3691",
+		note:
+			"UNSELECT (deselect without expunging \\Deleted; contrast CLOSE). Promoted from this " +
+			"list's Phase 6 out-of-scope borderline judgment by M2.12 (modern-API M2 mailbox-" +
+			"management milestone): full extraction in catalog/ext/rfc3691.ts, spec coverage in " +
+			"specs/ext/unselect-3691.test.ts. rev2-core overlap: RFC 9051 §6.4.2 absorbs UNSELECT " +
+			"into the rev2 base spec — rev1-only tags adjudicated in-catalog.",
+	},
+
+	// ---- M5 (modern-API milestone 5) suite growth ------------------------------
+	// Promoted from the Phase 6 out-of-scope borderline block above by M5.14.
+	{
+		capability: "UIDONLY",
+		status: "cataloged",
+		source: "RFC9586",
+		note:
+			"UIDONLY (client-requested mode: ENABLE UIDONLY, then message sequence numbers are " +
+			"forbidden on the wire; UIDFETCH/VANISHED replace FETCH/EXPUNGE; BAD [UIDREQUIRED] " +
+			"on a sequence-numbered command post-enable). Promoted from this list's Phase 6 " +
+			"out-of-scope borderline judgment by M5.14 (modern-API M5 extension-families " +
+			"milestone's catalog-extraction task): full extraction in catalog/ext/rfc9586.ts, " +
+			"spec coverage in specs/ext/uidonly-9586.test.ts. Primary-source fetch was blocked " +
+			"this session (see catalog/ext/rfc9586.ts's extractionNote) — every requirement's " +
+			"quoted text is reconstructed from model training knowledge, NOT mechanically " +
+			"verified, and flagged accordingly; re-verify before M6. Both profiles: unlike " +
+			"UNSELECT/RFC 3691, this document is not absorbed into (and postdates) RFC 9051 " +
+			"core, so no rev1/rev2 split is adjudicated in-catalog — every row applies to both.",
 	},
 ];

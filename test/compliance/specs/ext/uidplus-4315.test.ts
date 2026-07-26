@@ -7,11 +7,14 @@
  *
  *   RFC4315-2.1-1  UID EXPUNGE <sequence-set> command form — only \Deleted
  *                  messages within the given UID set are removed.
- *                  SELF-ACTUALIZING (unimplemented): driver.uidExpunge() throws
- *                  NotImplementedError, so the client has no UID EXPUNGE surface;
- *                  the scripted server pins the exact 'UID EXPUNGE <seq>' form so
- *                  the matcher rejects a plausible wrong impl (plain EXPUNGE, a
- *                  missing/ill-formed sequence set) once the verb lands.
+ *                  *** REAL SIGNAL *** as of M3.9 — driver.uidExpunge() is wired
+ *                  to `MailboxSession.expunge(uids)`; the scripted server pins the
+ *                  exact 'UID EXPUNGE <seq>' form so the matcher rejects a
+ *                  plausible wrong impl (plain EXPUNGE, a missing/ill-formed
+ *                  sequence set), and the test additionally asserts the returned
+ *                  expunged-sequence-number array and the session's `exists`
+ *                  bookkeeping both reflect the scripted untagged EXPUNGE lines
+ *                  exactly once each.
  *   RFC4315-3-2    Client MUST accept the APPENDUID response code in a tagged OK
  *                  to APPEND.  *** REAL SIGNAL *** — src/parser/structure/
  *                  text.code.ts (AppendUIDTextCode) genuinely parses
@@ -35,9 +38,10 @@
  * (plain-EXPUNGE fallback), RFC4315-3-1 (SELECT/FETCH/SEARCH UID discovery).
  *
  * OBSERVATION SPLIT:
- *  - RFC4315-2.1-1 has NO driver surface — uidExpunge() throws → unimplemented.
- *    The scripted server validates the exact command atoms + sequence-set arg so
- *    the matcher is non-vacuous once implemented.
+ *  - RFC4315-2.1-1 is exercised end-to-end through a real LOGIN/SELECT/UID
+ *    EXPUNGE transcript (M3.9): the scripted server validates the exact command
+ *    atoms + sequence-set arg, and the test asserts on `driver.uidExpunge()`'s
+ *    own return value and the resulting `MailboxSession.exists` count.
  *  - RFC4315-3-2/-3-3/-3-4 are genuinely exercisable via connectLow(): the client
  *    parses the resp-codes as unsolicited server data and surfaces the parsed
  *    TextCode on the taggedResponse (3-2/3-3) or serverStatus (3-4) event. These
@@ -56,7 +60,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply, send, close } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -147,47 +151,69 @@ async function waitForUntaggedType(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC4315-2.1-1 — UID EXPUNGE <sequence-set> command form (SELF-ACTUALIZING)
+// RFC4315-2.1-1 — UID EXPUNGE <sequence-set> command form (REAL SIGNAL as of M3.9)
 // ═════════════════════════════════════════════════════════════════════════════
-// §4 ABNF: uid-expunge = "UID" SP "EXPUNGE" SP sequence-set. The client has no
-// UID EXPUNGE surface (driver.uidExpunge throws NotImplementedError), so this
-// self-actualizes as unimplemented. The scripted server pins the exact two-token
-// verb 'UID EXPUNGE' and a sequence-set argument so, once implemented, the
-// matcher REJECTS a plausible wrong impl: a plain 'EXPUNGE' (no UID prefix, no
-// argument) would not match the 'UID EXPUNGE' verb, and a missing/ill-formed
-// sequence set fails the args regex.
+// §4 ABNF: uid-expunge = "UID" SP "EXPUNGE" SP sequence-set. `driver.uidExpunge()`
+// is wired to `MailboxSession.expunge(uids)` (UID grain, M3.9) -- the scripted
+// server still pins the exact two-token verb 'UID EXPUNGE' and a sequence-set
+// argument, so the matcher REJECTS a plausible wrong impl: a plain 'EXPUNGE'
+// (no UID prefix, no argument) would not match the 'UID EXPUNGE' verb, and a
+// missing/ill-formed sequence set fails the args regex.
+//
+// M3.9 flip note (same shape as M3.8's MOVE flips in ext/move-6851.test.ts):
+// this test previously self-actualized as unimplemented and never scripted a
+// LOGIN/SELECT preamble -- `driver.uidExpunge()` threw `NotImplementedError`
+// before ever touching the client. A genuinely wired UID EXPUNGE is
+// selected-state-only, so flipping this row means landing the missing
+// `sessionPrelude(..., {login:true})` + `selectExchange(...)` preamble
+// alongside removing the `expectFailure: "unimplemented"` annotation -- not
+// just an annotation deletion.
 complianceTest(
 	{
 		reqs: ["RFC4315-2.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "UID EXPUNGE command form: UID EXPUNGE <sequence-set>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
+		const caps =
+			ctx.profile === "rev2"
+				? ["IMAP4rev2", "LITERAL-", "UIDPLUS"]
+				: ["IMAP4rev1", "UIDPLUS"];
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "UIDPLUS"], { profile: ctx.profile }),
+				...sessionPrelude(caps, { login: true, profile: ctx.profile }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 5 }),
 				// uid-expunge = "UID" SP "EXPUNGE" SP sequence-set. Accept a
 				// sequence-set: nz-numbers, ranges (a:b), '*', comma lists — reject
 				// a bare/absent argument (a plain EXPUNGE would carry none).
 				expectLine(
 					command("UID EXPUNGE", { args: /^[0-9][0-9,:*]*(?::[0-9*]+)?$|^[0-9,:*]+$/ }),
 				),
-				reply("OK UID EXPUNGE completed", ["* 3 EXPUNGE"]),
+				reply("OK UID EXPUNGE completed", ["* 3 EXPUNGE", "* 3 EXPUNGE"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.uidExpunge("3:5"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const session = await driver.select("INBOX");
+		const result = await driver.uidExpunge("3:5");
 		await server.assertCompleted();
 		const uidExpunge = server.commandLines.find((l) => l.verb === "UID EXPUNGE");
 		expect(uidExpunge, "UID EXPUNGE must have been emitted").toBeDefined();
-		// When implemented: the argument is a sequence-set, never empty (a plain
-		// EXPUNGE, which takes no argument, must not be substituted).
+		// The argument is a sequence-set, never empty (a plain EXPUNGE, which
+		// takes no argument, must not be substituted).
 		expect(uidExpunge!.args, "UID EXPUNGE carries a sequence-set argument").toMatch(
 			/^[0-9][0-9,:*]*$/,
 		);
+		// REAL SIGNAL beyond the wire form: the two scripted untagged EXPUNGE
+		// lines are both recovered as the command's own return value (in wire
+		// order) AND applied to the session's `exists` bookkeeping exactly
+		// once each (5 -> 3, never double-counted) -- see `ExpungeCommand`'s
+		// own doc comment (src/commands/expunge.ts) for why claiming these
+		// responses to build the return value does not also re-apply them.
+		expect(result).toEqual([3, 3]);
+		expect(session.exists).toBe(3);
 	},
 );
 

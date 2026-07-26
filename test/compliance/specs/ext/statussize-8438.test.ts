@@ -17,10 +17,11 @@
  *   RFC8438-3-3  Client (implicit) MAY combine SIZE with the LIST-STATUS
  *                return option to batch-query mailbox sizes.
  *
- * OBSERVATION: all three are self-actualizing — driver.status()/list()
- * throw NotImplementedError unconditionally, so the client has no
- * SIZE-aware surface at all today. Wire forms pinned to RFC 8438's own
- * worked examples (§3).
+ * OBSERVATION: RFC8438-3-1/-3-2 are REAL as of M2.9 (driver.status() is
+ * wired to ImapClient.status(); the script authenticates first since STATUS
+ * is an authenticated-state command). RFC8438-3-3 remains self-actualizing —
+ * driver.list() still throws NotImplementedError (M2.7). Wire forms pinned
+ * to RFC 8438's own worked examples (§3).
  */
 import { expect } from "vitest";
 
@@ -39,31 +40,41 @@ function sizeCaps(profile: string): string[] {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8438-3-1 / RFC8438-3-2 — STATUS (SIZE) command form + 63-bit value
+// RFC8438-3-1 / RFC8438-3-2 — STATUS (SIZE) command form + 63-bit value (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // §3 example: 'C: A01 STATUS frop (MESSAGES SIZE UIDNEXT)' /
 // 'S: * STATUS frop (MESSAGES 8 SIZE 44421 UIDNEXT 242344)'. This test uses
 // a value near 2^63-1 to probe the 63-bit-capable duty specifically.
+// REAL as of M2.9: driver.status() is wired to `ImapClient.status()`; STATUS
+// is an authenticated-state command (client-enforced, spec I-11), so the
+// script authenticates first (the test predates state enforcement and
+// originally drove STATUS pre-auth, which a conformant client must refuse).
 complianceTest(
 	{
 		reqs: ["RFC8438-3-1", "RFC8438-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "STATUS (SIZE) queries the mailbox's total octet size, accepting a 63-bit value",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(sizeCaps(ctx.profile), { profile: ctx.profile }),
+				...sessionPrelude(sizeCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("STATUS", { args: /^frop \(SIZE\)$/i })),
 				// 9223372036854775807 = 2^63-1 (RFC 8438 §4's number64 upper bound).
 				reply("OK STATUS completed", ["* STATUS frop (SIZE 9223372036854775807)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.status("frop", ["SIZE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		const result = await driver.status("frop", ["SIZE"]);
+		// The full 63-bit value round-trips EXACTLY as a bigint — a
+		// number-typed path would have rounded 2^63-1.
+		expect(result.size).toBe(9223372036854775807n);
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS must have been emitted").toBeDefined();
@@ -74,22 +85,28 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC8438-3-3 — LIST ... RETURN (STATUS (SIZE)) batch query (self-actualizing)
+// RFC8438-3-3 — LIST ... RETURN (STATUS (SIZE)) batch query
 // ═════════════════════════════════════════════════════════════════════════════
-// §3 example: 'C: A04 LIST "" % RETURN (STATUS (MESSAGES SIZE))'.
+// §3 example: 'C: A04 LIST "" % RETURN (STATUS (MESSAGES SIZE))'. REAL SIGNAL
+// (M2.7): the exchange runs end-to-end (LIST is an authenticated-state
+// command, so the prelude now logs in). The SIZE *value*'s typed surfacing on
+// MailboxInfo.status awaits M2.9's STATUS-item parser growth; this row pins
+// the command form and the tolerated exchange.
 complianceTest(
 	{
 		reqs: ["RFC8438-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: 'LIST "" % RETURN (STATUS (SIZE)) batch-queries mailbox sizes',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude([...sizeCaps(ctx.profile), "LIST-STATUS"], { profile: ctx.profile }),
+				...sessionPrelude([...sizeCaps(ctx.profile), "LIST-STATUS"], {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("LIST", { args: /^"" % RETURN \(STATUS \(SIZE\)\)$/i })),
 				reply("OK LIST completed", [
 					'* LIST () "." "INBOX"',
@@ -98,7 +115,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.list("", "%", { returnOptions: ["STATUS (SIZE)"] }); // throws today
+		await driver.login("user", "pass");
+		await driver.list("", "%", { returnOptions: ["STATUS (SIZE)"] });
 		await server.assertCompleted();
 		const list = server.commandLines.find((l) => l.verb === "LIST");
 		expect(list, "LIST must have been emitted").toBeDefined();

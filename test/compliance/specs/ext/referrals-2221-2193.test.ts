@@ -49,11 +49,11 @@
  *                    *** REAL — url-drop violation leg (pair) ***
  *   RFC2193-4.4-1  Accept [REFERRAL ...] on COPY. *** REAL — kind-pass ***
  *   RFC2193-5.1-1  Issue RLIST rather than LIST under MAILBOX-REFERRALS
- *                    (self-actualizing — driver.rlist() throws
- *                    NotImplementedError; command form pinned).
+ *                    (REAL as of M5.13 — driver.rlist() wired through
+ *                    list({ referrals: true }); command form pinned).
  *   RFC2193-5.2-1  Issue RLSUB rather than LSUB under MAILBOX-REFERRALS
- *                    (self-actualizing — driver.rlsub() throws
- *                    NotImplementedError; command form pinned).
+ *                    (REAL as of M5.13 — driver.rlsub() wired through
+ *                    lsub(ref, pattern, { referrals: true }); form pinned).
  *   RFC2221-3-1    Client MUST NOT follow more than 10 levels of referral
  *                    without consulting the user (self-actualizing — no
  *                    driver surface follows a referral chain at all today).
@@ -72,10 +72,16 @@
  *    are probed via connectLow()+scripted unsolicited data, mirroring the
  *    RFC5466 UNDEFINED-FILTER precedent: no command-emission surface is
  *    needed to observe how the client parses a resp-code it receives.
- *  - RLIST/RLSUB command-emission duties: driver.rlist()/rlsub() exist
- *    (added Phase 6 Task 1) and throw NotImplementedError → unimplemented;
- *    the scripted server pins the exact command form so the matcher is
- *    non-vacuous once implemented.
+ *  - RLIST/RLSUB command-emission duties: REAL as of M5.13 —
+ *    driver.rlist()/rlsub() are wired through the public fold-ins
+ *    (list({ referrals: true }) / lsub(ref, pattern, { referrals: true }));
+ *    the scripted server pins the exact command form.
+ *
+ * TYPED SURFACE NOTE (M5.13): beyond the parse-level acceptance probed
+ * here, the REFERRAL code now has a dedicated TypedResponseCode variant
+ * ({ name: "REFERRAL", urls: string[] }, src/protocol/response-codes.ts)
+ * carried on ServerNoError/ServerBadError/AuthError `.code` — surfaced as
+ * data only; the client never auto-follows a referral (spec §3.6's note).
  */
 import { expect } from "vitest";
 
@@ -191,7 +197,6 @@ complianceTest(
 		reqs: ["RFC2221-4.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO to LOGIN exposes the referral URL argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -332,7 +337,6 @@ complianceTest(
 		reqs: ["RFC2193-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO exposes every listed URL, in order, when multiple replicas are given",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -398,7 +402,6 @@ complianceTest(
 		reqs: ["RFC2193-4.3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "the REFERRAL resp-code on a tagged NO to RENAME exposes the old-name/new-name URL pair, positionally",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -448,80 +451,107 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC2193-5.1-1 — RLIST command form (self-actualizing)
+// RFC2193-5.1-1 — RLIST command form (REAL — M5.13)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.1: 'RLIST' takes the same reference-name/mailbox-pattern arguments as
 // LIST; §6 ABNF: 'rlist = "RLIST" SPACE mailbox SPACE list_mailbox'.
-// driver.rlist() throws NotImplementedError today.
+// driver.rlist() is wired (M5.13) through the public
+// `list({ referrals: true })` fold-in, which swaps the wire verb to RLIST.
+//
+// Matcher revised at M5.13 (when this row first ran for real): the original
+// pinned form `"" "*"` guessed a QUOTED pattern while the row was
+// unimplemented. §6's `list_mailbox` grammar ('1*list-char / string', with
+// list-wildcards among list-char) permits the bare-atom form, which is what
+// this client emits for a wildcard pattern (same bare convention every
+// passing LIST test pins, e.g. `LIST "" %` in appendlimit-7889) — the
+// matcher now pins the actual conformant emission and still accepts the
+// equally-legal quoted form.
 complianceTest(
 	{
 		reqs: ["RFC2193-5.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "RLIST command form: RLIST <reference> <mailbox-pattern>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
+				// login: true — RLIST is an authenticated-state verb (same
+				// states as LIST); the pre-M5.13 script omitted the login
+				// because the driver verb threw before any state check.
 				...sessionPrelude(
 					ctx.profile === "rev2"
 						? ["IMAP4rev2", "LITERAL-", "MAILBOX-REFERRALS"]
 						: ["IMAP4rev1", "MAILBOX-REFERRALS"],
-					{ profile: ctx.profile },
+					{ login: true, profile: ctx.profile },
 				),
-				expectLine(command("RLIST", { args: /^"" "\*"$/ })),
+				expectLine(command("RLIST", { args: /^"" (?:\*|"\*")$/ })),
 				reply("OK RLIST completed", ['* LIST (\\HasNoChildren) "/" "INBOX"']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.rlist("", "*"); // throws NotImplementedError today
+		await driver.login("user@example.com", "s3cret");
+		const infos = await driver.rlist("", "*");
 		await server.assertCompleted();
 		const rlist = server.commandLines.find((l) => l.verb === "RLIST");
 		expect(rlist, "RLIST must have been emitted").toBeDefined();
 		expect(rlist!.args, "RLIST takes reference SP mailbox-pattern, same shape as LIST").toMatch(
-			/^"" "\*"$/,
+			/^"" (?:\*|"\*")$/,
 		);
+		// Non-vacuous: the untagged LIST reply (RFC 2193 §5.1 Responses:
+		// untagged LIST) rides back through the same result surface as LIST.
+		expect(infos.map((i) => i.name)).toContain("INBOX");
 	},
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC2193-5.2-1 — RLSUB command form (self-actualizing)
+// RFC2193-5.2-1 — RLSUB command form (REAL — M5.13)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.2: 'RLSUB' takes the same arguments as LSUB; §6 ABNF: 'rlsub = "RLSUB"
-// SPACE mailbox SPACE list_mailbox'. driver.rlsub() throws
-// NotImplementedError today.
+// SPACE mailbox SPACE list_mailbox'. driver.rlsub() is wired (M5.13)
+// through `lsub(ref, pattern, { referrals: true })`, the LSUB sibling of
+// the RLIST fold-in; `LsubCommand` swaps the wire verb to RLSUB.
+//
+// Matcher revised at M5.13, same rationale as RFC2193-5.1-1's above: the
+// bare-atom wildcard pattern form is the conformant emission §6's
+// `list_mailbox` grammar permits; the quoted form stays accepted as
+// equally legal.
 complianceTest(
 	{
 		reqs: ["RFC2193-5.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "RLSUB command form: RLSUB <reference> <mailbox-pattern>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
+				// login: true — RLSUB is an authenticated-state verb (same
+				// states as LSUB); same pre-M5.13 script omission as RLIST's.
 				...sessionPrelude(
 					ctx.profile === "rev2"
 						? ["IMAP4rev2", "LITERAL-", "MAILBOX-REFERRALS"]
 						: ["IMAP4rev1", "MAILBOX-REFERRALS"],
-					{ profile: ctx.profile },
+					{ login: true, profile: ctx.profile },
 				),
-				expectLine(command("RLSUB", { args: /^"" "\*"$/ })),
+				expectLine(command("RLSUB", { args: /^"" (?:\*|"\*")$/ })),
 				reply("OK RLSUB completed", ['* LSUB () "/" "INBOX"']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.rlsub("", "*"); // throws NotImplementedError today
+		await driver.login("user@example.com", "s3cret");
+		const infos = await driver.rlsub("", "*");
 		await server.assertCompleted();
 		const rlsub = server.commandLines.find((l) => l.verb === "RLSUB");
 		expect(rlsub, "RLSUB must have been emitted").toBeDefined();
 		expect(rlsub!.args, "RLSUB takes reference SP mailbox-pattern, same shape as LSUB").toMatch(
-			/^"" "\*"$/,
+			/^"" (?:\*|"\*")$/,
 		);
+		// Non-vacuous: the untagged LSUB reply (RFC 2193 §5.2 Responses:
+		// untagged LSUB) rides back through the same result surface as LSUB.
+		expect(infos.map((i) => i.name)).toContain("INBOX");
 	},
 );
 
@@ -542,7 +572,6 @@ complianceTest(
 		reqs: ["RFC2221-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not auto-follow more than 10 levels of chained referral without consulting the user",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -550,8 +579,9 @@ complianceTest(
 		// 11 LOGIN attempts, each replying with a tagged NO [REFERRAL <urlN>]
 		// pointing at the next hop; assert the client stops auto-following
 		// after the 10th and does not itself issue an unconsulted 12th LOGIN.
-		// Today, LOGIN throws NotImplementedError on the very first attempt,
-		// before any referral URL is even recovered — self-actualizing.
+		// Today, driver.login() sends a real LOGIN and rejects on the tagged
+		// NO [REFERRAL ...] — no referral-following exists to recover and chase
+		// the URL, so there is only ever this one LOGIN attempt — self-actualizing.
 		const server = await f.startServer();
 		server.arm([
 			[
@@ -561,8 +591,21 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		let err: unknown;
+		try {
+			await driver.login("user", "pass");
+		} catch (e) {
+			err = e;
+		}
+		expect(err, "LOGIN rejected with a REFERRAL must surface as an error").toBeDefined();
 		await server.assertCompleted();
+		// No referral-following surface exists: only the single scripted LOGIN
+		// was ever sent — certainly not an unconsulted 12th attempt.
+		const loginCommands = server.commandLines.filter((l) => l.verb === "LOGIN");
+		expect(
+			loginCommands.length,
+			"no referral-following surface exists yet — exactly one LOGIN attempt",
+		).toBe(1);
 	},
 );
 

@@ -221,11 +221,9 @@ const rfc4314: CatalogModule = {
 				"'d'/'c' in received MYRIGHTS, ACL, and LISTRIGHTS responses and rely on the member " +
 				"rights ('e','t','x','k') instead. Testable black-box: script a MYRIGHTS/ACL/" +
 				"LISTRIGHTS response containing 'd'/'c' plus their members and assert the client's " +
-				"parsed rights model does not treat 'd'/'c' as additional distinct rights. Currently " +
-				"self-actualizing: the driver's myrights()/getacl()/listrights() verbs throw " +
-				"NotImplementedError, so the client has no ACL-response-parsing surface at all — the " +
-				"compliance suite records this as a failure for this entry (the client cannot " +
-				"demonstrate the required ignore behavior). ACL is standalone in rev2, so profiles " +
+				"parsed rights model does not treat 'd'/'c' as additional distinct rights. The " +
+				"driver's myrights()/getacl()/listrights() verbs are genuinely real, so this row " +
+				"passes for real. ACL is standalone in rev2, so profiles " +
 				"['rev1','rev2']. Conditional on the client using ACL.",
 		},
 
@@ -253,9 +251,8 @@ const rfc4314: CatalogModule = {
 				"to achieve add/remove/replace semantics — a client that emits the wrong prefix " +
 				"changes the operation). Client-binding: this is the rights-modification syntax the " +
 				"client constructs. Testable black-box: assert the client's setacl() emits '+rights' " +
-				"for add, '-rights' for remove, and bare 'rights' for replace. Currently self-" +
-				"actualizing: driver.setacl() throws NotImplementedError, so the client has no SETACL " +
-				"surface — recorded as a failure for this entry. ACL is standalone in rev2, so " +
+				"for add, '-rights' for remove, and bare 'rights' for replace. driver.setacl() is " +
+				"genuinely real, so this row passes for real. ACL is standalone in rev2, so " +
 				"profiles ['rev1','rev2']. Conditional on the client using ACL.",
 		},
 		{
@@ -280,9 +277,9 @@ const rfc4314: CatalogModule = {
 				"(RFC 2119-echoed by §2's 'uppercase rights are not allowed', RFC4314-2-1) and any " +
 				"rights the server advertised via RIGHTS= — because any unrecognized right will fail " +
 				"the whole SETACL with BAD. Testable black-box: assert setacl() does not upcase or " +
-				"inject non-advertised rights into the emitted rights argument. Currently self-" +
-				"actualizing: driver.setacl() throws NotImplementedError, so recorded as a failure " +
-				"for this entry. ACL is standalone in rev2, so profiles ['rev1','rev2']. Conditional " +
+				"inject non-advertised rights into the emitted rights argument. driver.setacl() is " +
+				"genuinely real, so this row passes for real. ACL is standalone in rev2, so " +
+				"profiles ['rev1','rev2']. Conditional " +
 				"on the client using ACL. NOTE: this entry is retained deliberately as the client-" +
 				"side reflection of the server BAD rule; the server's own MUST/MUST NOT enforcement " +
 				"is the skipped half (see extractionNote).",
@@ -346,9 +343,8 @@ const rfc4314: CatalogModule = {
 				"a right the client does not recognize, have the user change a right the client DOES " +
 				"expose, and assert the re-emitted SETACL still carries the unknown rights character " +
 				"(does not drop it). Observable on the wire as the exact rights atom in the emitted " +
-				"SETACL third argument. Currently self-actualizing: driver.getacl()/setacl() throw " +
-				"NotImplementedError, so the client has no ACL read/re-emit surface — recorded as a " +
-				"failure for this entry. ACL is standalone in rev2 (not folded into RFC 9051 core), " +
+				"SETACL third argument. driver.getacl()/setacl() are genuinely real, so this row " +
+				"passes for real. ACL is standalone in rev2 (not folded into RFC 9051 core), " +
 				"so profiles ['rev1','rev2']; see extractionNote rev2-core adjudication. Conditional " +
 				"on the client offering ACL read+update.",
 		},

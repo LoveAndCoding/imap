@@ -425,7 +425,22 @@ const rfc5802: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the client is using channel binding' — structurally unsatisfiable " +
+				"for this client: channel binding (and every -PLUS mechanism variant) is a permanent " +
+				"design non-goal (spec §13; §9.2 'no channel binding = -PLUS variants out of scope'). " +
+				"This client deliberately does not implement or advertise SCRAM-*-PLUS, which RFC 5802 " +
+				"explicitly permits for non-channel-binding clients (the RFC5802-6-3 branch this client " +
+				"always takes). No code path exists through this client's actual API in which the " +
+				"conditioned 'c=' cbind-data clause could ever be exercised — every 'c=' value this " +
+				"client emits is the n/y-flag, no-cbind-data shape, which is the OTHER half of this " +
+				"same source bullet (already covered by RFC5802-5.1-10), never the p-flag half this " +
+				"entry states. Same never-reachable-affordance reasoning as RFC5802-6-1. Reclassified " +
+				"from 'testable' at M5.16. Reactivation condition: implementing SCRAM-*-PLUS " +
+				"(tls-exporter per RFC 9266) is a legitimate potential post-1.0 feature; if it lands, " +
+				"this row must be reclassified testable again.",
 			notes:
 				"The second half of the 'c=' construction duty, paired with RFC5802-5.1-10 — " +
 				"split into its own entry because it is the distinct 'cbind-data' clause of " +
@@ -434,10 +449,7 @@ const rfc5802: CatalogModule = {
 				"conditional on the client supporting and using channel binding (the p-flag " +
 				"path) — this client has no TLS channel-binding (tls-unique/tls-server-end-" +
 				"point) implementation today, so testing this entry is additionally gated on " +
-				"that prerequisite beyond SCRAM itself. Testable once both exist: for a p-flag " +
-				"exchange, assert cbind-data (the channel's actual binding bytes) is appended " +
-				"after the gs2-header inside the base64-decoded 'c=' value; for n/y-flag " +
-				"exchanges, assert no such data is appended.",
+				"that prerequisite beyond SCRAM itself.",
 		},
 		{
 			id: "RFC5802-5.1-12",
@@ -566,17 +578,31 @@ const rfc5802: CatalogModule = {
 			level: "MUST NOT",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"The duty's own antecedent — 'if the client supports channel binding' — is " +
+				"structurally unsatisfiable for this client: channel binding (and with it every " +
+				"-PLUS mechanism variant) is a permanent design non-goal (spec §13; §9.2 'no " +
+				"channel binding = -PLUS variants out of scope'), so no code path exists through " +
+				"this client's actual API in which the conditioned prohibition could be either " +
+				"honored or violated. A wire exchange showing gs2-cbind-flag 'n' is fully " +
+				"compliant here via the RFC5802-6-3 branch ('if the client does not support " +
+				"channel binding, then it MUST use an \"n\" gs2-cbind-flag') and carries zero " +
+				"information about this entry's channel-binding-capable-client duty — the same " +
+				"never-reachable-affordance reasoning as the RFC9525 URI-ID/SRV-ID rows already " +
+				"classified under this theme. Reclassified from 'testable' at M5.1 " +
+				"(adjudicated): the original classification was written before SCRAM landed, " +
+				"against a hypothetical future client that might implement channel binding; " +
+				"this library's never will.",
 			notes:
 				"Applies only to a client that itself supports channel binding, connecting to " +
 				"a server whose CAPABILITY list advertises only the non-PLUS mechanism name " +
-				"(e.g. SCRAM-SHA-1 without SCRAM-SHA-1-PLUS). The correct flag in this case is " +
+				"(e.g. SCRAM-SHA-1 without SCRAM-SHA-1-PLUS). The correct flag in that case is " +
 				"'y' (the client believes the server lacks channel-binding support), reserving " +
 				"'n' exclusively for clients that do not support channel binding at all (entry " +
-				"RFC5802-6-3). Testable once SCRAM with channel-binding support is implemented: " +
-				"script a server CAPABILITY advertising AUTH=SCRAM-SHA-1 without the -PLUS " +
-				"variant, and assert a channel-binding-capable client's gs2-cbind-flag is 'y', " +
-				"never 'n'.",
+				"RFC5802-6-3 — the branch THIS client permanently takes, verified by the " +
+				"RFC5802-6-3-citing test asserting every SCRAM exchange uses flag 'n').",
 		},
 		{
 			id: "RFC5802-6-2",
@@ -590,13 +616,22 @@ const rfc5802: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'clients that support mechanism negotiation and channel binding' — " +
+				"this client permanently does not support channel binding (spec §13 non-goal) and never " +
+				"registers or selects a -PLUS mechanism name, which RFC 5802 explicitly permits for " +
+				"non-channel-binding clients (the RFC5802-6-3 'n'-flag branch this client always takes). " +
+				"No code path exists in which this client could see a server offer -PLUS and be asked to " +
+				"choose 'p' in response — the antecedent client capability this row quantifies over does " +
+				"not exist. Same never-reachable-affordance reasoning as RFC5802-6-1. Reclassified from " +
+				"'testable' at M5.16. Reactivation condition: implementing SCRAM-*-PLUS (tls-exporter per " +
+				"RFC 9266) is a legitimate potential post-1.0 feature; if it lands, this row must be " +
+				"reclassified testable again.",
 			notes:
 				"Applies to a channel-binding-capable client when the server's CAPABILITY list " +
-				"advertises the -PLUS mechanism name. Testable once SCRAM with channel-binding " +
-				"support is implemented: script a server CAPABILITY advertising AUTH=SCRAM-" +
-				"SHA-1-PLUS and assert the client's gs2-cbind-flag is 'p=<cb-name>', selecting " +
-				"the -PLUS mechanism rather than the bare variant when both are offered.",
+				"advertises the -PLUS mechanism name.",
 		},
 		{
 			id: "RFC5802-6-3",
@@ -635,15 +670,22 @@ const rfc5802: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the client uses channel binding without an application-specified " +
+				"override' — this client permanently implements no channel binding (spec §13 non-goal), " +
+				"so it never sends a 'p=' gs2-cbind-flag whose cb-name could be checked against this " +
+				"default at all; it always takes the RFC5802-6-3 'n'-flag branch, which RFC 5802 " +
+				"explicitly permits for non-channel-binding clients. No cb-name value of any kind is ever " +
+				"observable on this client's wire. Same never-reachable-affordance reasoning as " +
+				"RFC5802-6-1. Reclassified from 'testable' at M5.16. Reactivation condition: implementing " +
+				"SCRAM-*-PLUS (tls-exporter per RFC 9266) is a legitimate potential post-1.0 feature; if " +
+				"it lands, this row must be reclassified testable again.",
 			notes:
 				"No explicit RFC 2119 keyword ('is the default'); judgment call to implicit " +
 				"MUST as a definitional default that applies unless IMAP (the carrying " +
-				"protocol) specifies a different channel-binding type, which it does not. " +
-				"Applies whenever the client uses channel binding without an application-" +
-				"specified override. Testable once SCRAM with channel binding is implemented: " +
-				"assert the cb-name the client sends in a 'p=' gs2-cbind-flag is 'tls-unique' " +
-				"absent any other IMAP-specific channel-binding-type negotiation.",
+				"protocol) specifies a different channel-binding type, which it does not.",
 		},
 		{
 			id: "RFC5802-6.1-2",
@@ -658,13 +700,21 @@ const rfc5802: CatalogModule = {
 			level: "SHOULD",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'if they implement any channel binding' — this client's own text " +
+				"already records that it implements none today, and channel binding is a permanent " +
+				"design non-goal (spec §13), not merely a not-yet-implemented feature. The antecedent " +
+				"is structurally unsatisfiable for a conformant deployment of this client, so the " +
+				"which-channel-binding-type-to-implement SHOULD (and its 'innermost TLS channel' " +
+				"second clause) never binds. Same never-reachable-affordance reasoning as RFC5802-6-1. " +
+				"Reclassified from 'testable' at M5.16. Reactivation condition: implementing " +
+				"SCRAM-*-PLUS (tls-exporter per RFC 9266) is a legitimate potential post-1.0 feature; " +
+				"if it lands, this row must be reclassified testable again.",
 			notes:
 				"Conditional on the client implementing channel binding at all (this client " +
-				"implements none today). Testable once channel binding is implemented: assert " +
-				"'tls-unique' is among the cb-name values the client is capable of using, and " +
-				"that when multiple nested/renegotiated TLS layers exist the client binds to " +
-				"the innermost end-to-end one. The 'innermost TLS channel' half is bundled " +
+				"implements none today). The 'innermost TLS channel' half is bundled " +
 				"into this entry as it is the same sentence's second clause; both halves share " +
 				"the SHOULD strength and the channel-binding-implemented precondition.",
 		},

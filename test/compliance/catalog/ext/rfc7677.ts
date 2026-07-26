@@ -112,7 +112,19 @@ const rfc7677: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on the client 'using' SCRAM-SHA-256-PLUS/SCRAM-SHA-1-PLUS at all — " +
+				"deployment security guidance for a -PLUS mechanism this client permanently does not " +
+				"implement or advertise (spec §13 non-goal; §9.2 'no channel binding = -PLUS variants " +
+				"out of scope'), which RFC 5802 explicitly permits for non-channel-binding clients. No " +
+				"code path exists in which this client selects a -PLUS mechanism, so the TLS-session-" +
+				"hash/no-resumption precondition this row's disjunctive MUST checks can never be " +
+				"reached, let alone violated. Same never-reachable-affordance reasoning as RFC5802-6-1. " +
+				"Reclassified from 'testable' at M5.16. Reactivation condition: implementing " +
+				"SCRAM-*-PLUS (tls-exporter per RFC 9266) is a legitimate potential post-1.0 feature; " +
+				"if it lands, this row must be reclassified testable again.",
 			notes:
 				"The '-PLUS variant note' the task scope calls out by name — a genuine new " +
 				"client-binding duty introduced by this document, applying retroactively to " +
@@ -124,15 +136,7 @@ const rfc7677: CatalogModule = {
 				"secret extension before using a -PLUS channel-binding mechanism, or (b) the " +
 				"client confirms the TLS session in use is NOT a resumed session (since " +
 				"resumption without the extension is exactly the vulnerable configuration " +
-				"[RFC7627] identifies). Applicability conditional on the client both " +
-				"implementing TLS channel binding and selecting a -PLUS mechanism variant " +
-				"(neither implemented today). Testable once channel binding and TLS-session-" +
-				"introspection are implemented: script a TLS server/session that completed " +
-				"session resumption without extended-master-secret negotiation, and assert " +
-				"the client refuses to proceed with SCRAM-SHA-256-PLUS/SCRAM-SHA-1-PLUS over " +
-				"that connection (e.g. falls back to the non-PLUS variant or aborts) rather " +
-				"than trusting a channel-binding value derived from a TLS channel vulnerable " +
-				"to the RFC 7627 triple-handshake-class attack.",
+				"[RFC7627] identifies).",
 		},
 	],
 };

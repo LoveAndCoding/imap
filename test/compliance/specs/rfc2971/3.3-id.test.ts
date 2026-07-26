@@ -59,7 +59,6 @@ complianceTest(
 		reqs: ["RFC2971-3.3-2"],
 		profiles: ["rev1"],
 		title: "client enforces ID field (30) and value (1024) octet limits",
-		expectFailure: "violation",
 	},
 	async () => {
 		const oversized = {

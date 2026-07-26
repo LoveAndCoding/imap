@@ -75,11 +75,8 @@ const rfc5957: CatalogModule = {
 				"presupposes the SORT capability itself — the quoted sentence ties SORT=DISPLAY " +
 				"to a server supporting 'the full [SORT] extension as well as both' criteria, so " +
 				"the gate in practice requires both tokens (SORT=DISPLAY advertises full-SORT " +
-				"support by definition). Conditional on the client issuing SORT at all. Currently " +
-				"self-actualizing: driver.sort()/uidSort() throw NotImplementedError " +
-				"unconditionally, so the client has no SORT emission surface — it trivially " +
-				"cannot violate the gate, but it also cannot demonstrate gated use of the " +
-				"display criteria.",
+				"support by definition). Conditional on the client issuing SORT at all. " +
+				"driver.sort()/uidSort() are genuinely real, so this row passes for real.",
 		},
 
 		// ── §4 The DISPLAYFROM and DISPLAYTO Sort Criteria ──────────────────────
@@ -110,9 +107,8 @@ const rfc5957: CatalogModule = {
 				"§4's own MUST ('A message's sort value under these orderings MUST be derived as " +
 				"follows') is excluded as server-only: it binds the party computing the sort " +
 				"values (see extractionNote). Conditional on the client wanting display-based " +
-				"ordering and the server advertising SORT=DISPLAY (RFC5957-1-1). Currently " +
-				"self-actualizing unimplemented: driver.sort()/uidSort() throw " +
-				"NotImplementedError, so the client cannot exercise the permission.",
+				"ordering and the server advertising SORT=DISPLAY (RFC5957-1-1). " +
+				"driver.sort()/uidSort() are genuinely real, so this row passes for real.",
 		},
 
 		// ── §5 Formal Syntax (wire form / placement of the new sort-keys) ───────
@@ -143,8 +139,8 @@ const rfc5957: CatalogModule = {
 				"quoted strings. §5's companion production 'capability =/ \"SORT=DISPLAY\"' " +
 				"extends the capability token grammar (server-emitted; the client's side of that " +
 				"token is the RFC5957-1-1 gate). Conditional on the client emitting the display " +
-				"criteria at all. Currently self-actualizing unimplemented: " +
-				"driver.sort()/uidSort() throw NotImplementedError.",
+				"criteria at all. driver.sort()/uidSort() are genuinely real, so this row passes " +
+				"for real.",
 		},
 	],
 };

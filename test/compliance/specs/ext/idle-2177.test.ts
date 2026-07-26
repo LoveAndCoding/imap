@@ -8,19 +8,22 @@
  *                rev2 client facing a server advertising neither IDLE nor
  *                IMAP4rev2). Negative transcript guard; paired with the
  *                positive-capability flow test so it cannot pass on inability
- *                alone (login() throws first → honest unimplemented).
+ *                alone.                                             *** REAL ***
  *   RFC2177-3-2  MUST keep accepting unsolicited untagged responses (rev1
  *                ONLY — rev2 scores it via core RFC9051-7-1).
  *                                          *** REAL — connectLow parse path ***
  *   RFC2177-3-3  The IDLE → '+' continuation command flow (dual;
  *                gap-compensation — rfc9051 scores no IDLE flow entry).
+ *                                *** REAL (M4.1) — IdleController-mediated ***
  *   RFC2177-3-4  Accept untagged responses arriving while IDLE is active,
  *                including queued responses between DONE and the tagged
- *                completion (dual; gap-compensation).
+ *                completion (dual; gap-compensation).            *** REAL (M4.1) ***
  *   RFC2177-3-5  Terminate IDLE with the bare (tagless) DONE continuation
  *                (rev1 ONLY — rev2 scores it via core RFC9051-6.3.13-3).
+ *                                                                 *** REAL (M4.1) ***
  *   RFC2177-3-6  MUST NOT send a command while the server awaits DONE (rev1
  *                ONLY — rev2 scores it via core RFC9051-6.3.13-1).
+ *                                                                 *** REAL (M4.1) ***
  *
  * Untestable id NOT cited (per catalog testability tags):
  *   RFC2177-3-7  (performance-expectation: the 29-minute terminate-and-reissue
@@ -42,11 +45,16 @@
  *  - RFC2177-3-2's acceptance half has a REAL parse surface: unsolicited
  *    '* n EXISTS'/'* n EXPUNGE' delivered via connectLow() parse and surface
  *    as untaggedResponse events with exact values (probed — genuine pass).
- *  - Every IDLE-flow duty is self-actualizing: driver.idle() throws
- *    NotImplementedError, so no idle window can be opened; each scripted
- *    exchange pins the future wire form and fails honestly as unimplemented
- *    (driver.login() also throws, and is deliberately left un-caught so the
- *    negative-guard tests cannot pass vacuously on inability).
+ *  - M4.1 (`IdleController`, `MailboxSession.idle()`, `IdleCommand`) makes
+ *    every IDLE-flow duty REAL: `driver.idle()` opens an explicit idle
+ *    session and immediately signals `done()` — the actual DONE bytes still
+ *    only reach the wire once the server's own '+ idling' continuation
+ *    arrives (`IdleCommand.onContinuation` awaits it), so this compliance
+ *    probe genuinely exercises the wait-for-'+'/DONE/tagged-OK flow rather
+ *    than trivially completing. `driver.login()` no longer throws either
+ *    (implemented since M1/M2) — RFC2177-3-1's negative-transcript guard is
+ *    now a genuine non-vacuous check, not a fallback onto an unimplemented
+ *    login().
  */
 import { expect } from "vitest";
 
@@ -56,7 +64,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -126,7 +134,7 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC2177-3-3 — the IDLE → '+' continuation command flow (self-actualizing)
+// RFC2177-3-3 — the IDLE → '+' continuation command flow (M4.1 — REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // §3/§4: 'IDLE' CRLF with NO arguments; the client then waits for the server's
 // '+' continuation before sending anything further; the exchange ends with the
@@ -136,13 +144,15 @@ complianceTest(
 // premature DONE just waits in the buffer for the later expect step), so the
 // wait-for-'+' duty is enforced below by asserting transcript ordering: the
 // server's '+ idling' record must precede the first client record carrying
-// DONE. idle() throws → unimplemented today.
+// DONE. M4.1: driver.idle() opens a real IdleController-mediated IDLE round
+// and immediately signals done() -- IdleCommand.onContinuation only sends
+// DONE once the server's own '+ idling' line actually arrives, so this still
+// pins genuine wait-for-'+' behavior.
 complianceTest(
 	{
 		reqs: ["RFC2177-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: "IDLE command flow: argument-less IDLE, wait for '+', bare DONE, tagged OK",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -150,6 +160,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(idleCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("IDLE", { args: null })),
 				send("+ idling\r\n"),
 				expectLine(bareLine("DONE")),
@@ -157,7 +168,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.idle();
 		await server.assertCompleted();
 		const idle = server.commandLines.find((l) => l.verb === "IDLE");
@@ -185,13 +197,12 @@ complianceTest(
 // client's DONE, remaining queued untagged responses may still precede the
 // tagged completion (folded into this entry per the catalog notes). The script
 // delivers updates in BOTH windows; completing the exchange proves the client
-// parsed them and stayed in sync. idle() throws today → unimplemented.
+// parsed them and stayed in sync. M4.1: driver.idle() is real.
 complianceTest(
 	{
 		reqs: ["RFC2177-3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts EXISTS/EXPUNGE updates mid-idle and queued responses before the tagged completion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -199,6 +210,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(idleCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("IDLE", { args: null })),
 				send("+ idling\r\n"),
 				// Mid-idle window: updates at an arbitrary point after the '+'.
@@ -211,7 +223,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.idle();
 		// Completing the scripted exchange (DONE sent, queued EXISTS + tagged OK
 		// consumed without error) is the acceptance observable at this boundary.
@@ -231,7 +244,6 @@ complianceTest(
 		reqs: ["RFC2177-3-5"],
 		profiles: ["rev1"],
 		title: "IDLE is terminated by a bare tagless DONE line before the tagged completion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -239,6 +251,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(idleCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("IDLE", { args: null })),
 				send("+ idling\r\n"),
 				expectLine(bareLine("DONE")),
@@ -246,7 +259,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.idle();
 		await server.assertCompleted();
 		// The DONE reached the wire as a bare line (transcript escapes CRLF as
@@ -274,7 +288,6 @@ complianceTest(
 		reqs: ["RFC2177-3-6"],
 		profiles: ["rev1"],
 		title: "client defers a queued command until after DONE and the tagged IDLE completion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -282,6 +295,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(idleCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("IDLE", { args: null })),
 				send("+ idling\r\n"),
 				// A mid-idle update gives the client a natural moment to (wrongly)
@@ -295,7 +309,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		// Application work requested while the idle is (to be) active.
 		await driver.idle();
 		await driver.noop();
@@ -316,25 +331,32 @@ complianceTest(
 // conformant client asked to idle refuses locally: the transcript may never
 // contain an IDLE command. Dual-profile per the catalog (2177-only wording —
 // no rfc9051 entry exists to score the gate for a rev2-capable client facing
-// this pre-rev2 server). login() is deliberately un-caught so the test fails
-// honestly as unimplemented today instead of passing vacuously on the
-// client's inability to idle at all (catalog note); the positive-capability
-// counterpart is the RFC2177-3-3 flow test above.
+// this pre-rev2 server). A mailbox IS selected here (unlike a bare
+// login-only prelude) specifically so `driver.idle()` reaches
+// `MailboxSession.idle()`'s own capability check — `idle()`'s "requires a
+// selected mailbox" `StateError` guard fires first (and is also zero bytes)
+// if nothing is selected, which would make this assertion pass for the
+// WRONG reason (no session to gate on, not a working capability check).
 complianceTest(
 	{
 		reqs: ["RFC2177-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits IDLE when neither IDLE nor IMAP4rev2 is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		// Deliberately NOT profile-shaped: a rev2-capable client facing an old
 		// server that advertises only IMAP4rev1 (no IDLE, no IMAP4rev2).
-		server.arm([[...sessionPrelude(["IMAP4rev1"], { login: true })]]);
+		server.arm([
+			[
+				...sessionPrelude(["IMAP4rev1"], { login: true }),
+				...selectExchange("INBOX", { exists: 1 }),
+			],
+		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		// Caller asks for an idle against the non-advertising server — the client
 		// must refuse locally (poll instead), never emitting IDLE.
 		await driver.idle().catch(() => undefined);

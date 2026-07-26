@@ -1,7 +1,7 @@
 ---
 name: review-runner
 description: Reviews one already-scoped group of files/diffs to validate the change, identify issues, and build confidence it's correct and high quality. Normally invoked by review-orchestrator once per file group (never touching changeset files itself — it delegates that to sub-agents), but can be invoked directly for a smaller, pre-scoped changeset that's already known to fit in one review pass. For a full large/agentic PR, use review-orchestrator instead so the changeset is split into token-sized groups first.
-tools: Read, Agent
+tools: Read, Agent, TaskOutput
 model: sonnet
 ---
 
@@ -70,9 +70,31 @@ You will be given:
    impact, recommendation; title and numbering can be rough at this
    stage). Run all lenses in parallel; they are independent of each other.
    Parallel means multiple synchronous Agent calls batched into a single
-   message (`run_in_background: false` on every call) — never spawn a lens
-   (or any other sub-agent) in the background, where its completion isn't
-   awaited when you need its findings and the run can stall.
+   message (`run_in_background: false` on every call) — never deliberately
+   spawn a lens (or any other sub-agent) in the background, where its
+   completion isn't awaited when you need its findings and the run can
+   stall.
+
+   **KNOWN LIMITATION (verified):** in some environments `TaskOutput` is not
+exposed inside subagents at all ("No such tool available"). If your first
+`TaskOutput` call fails that way, do NOT dispatch sub-agents you cannot
+await: fall back to a SINGLE-REVIEWER DEEP PASS — read the scoped files
+yourself against the provided references and produce the findings/verdict
+directly (this fallback has a strong track record here). Report that the
+pipeline was skipped and why.
+
+**Forced-async environments.** Some environments force every Agent
+   spawn into the background even when `run_in_background: false` is
+   passed (the spawn result says "Async agent launched" / "working in the
+   background" and gives an agentId + output file path). When you see
+   that, do NOT end your turn to wait. Immediately call `TaskOutput` with
+   each spawned child's task/agent id and `block: true` (generous
+   timeout), one after another — this awaits each child's completion
+   inside your turn and returns its result, restoring synchronous
+   behavior. Only the final result text matters; ignore transcript noise.
+   If a `TaskOutput` call times out, call it again (the child is still
+   working); after two consecutive timeouts on the same child, proceed
+   without that child and note the gap in your report.
 4. **Collect and deduplicate.** Gather every lens sub-agent's candidate
    findings into one list. Merge findings that describe the same underlying
    issue (even if worded differently or found via different lenses) into a
@@ -106,8 +128,17 @@ You will be given:
   (`context-gathering`, `review-validator`, the predefined lenses listed
   in step 2).
 - Do invoke every sub-agent synchronously (`run_in_background: false`).
-  Never create a sub-agent in the background — for parallelism, batch
-  multiple synchronous Agent calls into a single message instead.
+  Never deliberately create a sub-agent in the background — for
+  parallelism, batch multiple synchronous Agent calls into a single
+  message instead.
+- ANTI-STALL RULE: never end a turn whose only content is a status note
+  ("waiting for lenses", "N of M complete"). Every turn must either
+  (a) dispatch remaining work, (b) await pending children via
+  `TaskOutput(block: true)`, or (c) deliver the final report. If your
+  turn is ever resumed after an interruption, treat whatever child
+  results now exist as your working set and drive straight through
+  steps 4–7 — proceed without stragglers rather than parking again,
+  and note any lens you proceeded without.
 - Do spin up custom lens sub-agents when a risk area isn't covered by any
   predefined lens — give them specific, self-contained instructions on
   exactly what to review and what "good" looks like for that lens.

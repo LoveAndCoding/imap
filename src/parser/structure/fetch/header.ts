@@ -1,16 +1,59 @@
 import { LexerTokenList, TokenTypes } from "../../../lexer/types";
 import { decodeWords } from "../../encoding";
 import { RE_ENCWORD_FOLDING_BOUNDARY } from "../../matchers";
-import { getNStringValue, matchesFormat } from "../../utility";
+import {
+	drainReadableSync,
+	getNStringValue,
+	matchesFormat,
+} from "../../utility";
 import { MessageBodySection } from "./body.section";
 
+/** A parsed RFC822/BODY[HEADER...] header block: field name -> value (or,
+ *  for a field repeated more than once, the array of its values in
+ *  encounter order). Populated eagerly from raw header text by
+ *  `parseHeaderBlock()` (called from the constructor when `header` is
+ *  given), and can be grown further via `mergeIn()` when a message's header
+ *  data arrives split across more than one FETCH response. */
 export class MessageHeader {
+	/** Parsed header fields, keyed by field name (case as the server sent
+	 *  it). */
 	public fields: Map<string, string | string[]>;
 
 	constructor(
 		header?: string,
+		/** The partial-fetch byte offset the server echoed for this header
+		 *  section (the `<N>` in `BODY[HEADER]<N>`), if any. */
 		public readonly offset?: number,
 		decode = true,
+		/**
+		 * C2 fix (M3-phase-boundary review): when this `MessageHeader` came
+		 * from a `BODY[HEADER]`/`BODY[HEADER.FIELDS...]`/
+		 * `BODY[HEADER.FIELDS.NOT...]` section match (as opposed to the
+		 * legacy top-level `RFC822.HEADER` form, which never sets these), the
+		 * exact section-type atom the server echoed -- "HEADER",
+		 * "HEADER.FIELDS", or "HEADER.FIELDS.NOT" (matching
+		 * `composeSectionSpecKey`'s key space exactly, per
+		 * `MessageBodySection.getBodySectionInfo`'s own `type` extraction,
+		 * which reads only the bare atom immediately after `[`, never the
+		 * parenthesized field-name list that may follow it). `undefined` for
+		 * every other construction path (the plain `RFC822.HEADER` form, and
+		 * every direct call in `header.test.ts`) -- `MessageBody.
+		 * addMessageBodyPiece` uses THIS field's presence to decide whether to
+		 * also materialize a `MessageBodySection` for `.sections` (so
+		 * `FetchedMessage.part()` can reach it), in addition to the ordinary
+		 * `header.mergeIn()` this class's fields have always driven.
+		 */
+		public readonly sectionKind?: string,
+		/** Raw (undecoded, pre-`parseHeaderBlock`) section content paired with
+		 *  `sectionKind` above -- exactly what the server sent for this
+		 *  section, the same "echoed back verbatim" contract every other
+		 *  `MessageBodySection.contents` value already carries. `""` (never
+		 *  `undefined`) whenever `sectionKind` is set, matching
+		 *  `MessageBodySection`'s own `contents: string | undefined` contract
+		 *  (`undefined` there is reserved for "streamed instead", which never
+		 *  applies here -- headers are always eagerly drained, see this
+		 *  file's `match()` below). */
+		public readonly rawContents?: string,
 	) {
 		this.fields = new Map();
 		if (header) {
@@ -18,6 +61,14 @@ export class MessageHeader {
 		}
 	}
 
+	/**
+	 * Splits raw header text (everything before the header/body-separating
+	 * blank line) into `fields`, undoing RFC 2047 encoded-word line-folding
+	 * artifacts and (when `decode` is true) MIME-decoding encoded-word
+	 * values. Returns the header block's length in characters (used by
+	 * callers that need to know how much of the original text this
+	 * consumed).
+	 */
 	public parseHeaderBlock(header: string, decode = true) {
 		// The header and body are separated by two CRLF, so grab
 		// just the header and throw away the body
@@ -51,7 +102,7 @@ export class MessageHeader {
 		}
 
 		for (const line of lines) {
-			let [field, ...contentsArr] = line.split(":");
+			const [field, ...contentsArr] = line.split(":");
 
 			let contents = contentsArr.join(":").trim();
 			if (decode) {
@@ -74,8 +125,22 @@ export class MessageHeader {
 		return headerLength;
 	}
 
+	/** Folds another `MessageHeader`'s fields into this one (last value for
+	 *  a given field name wins) -- used when a message's header data arrives
+	 *  split across more than one FETCH response. */
 	public mergeIn(withHeader: MessageHeader) {
-		withHeader.fields.forEach(([key, val]) => this.fields.set(key, val));
+		// H13 fix: `Map.prototype.forEach`'s callback signature is
+		// `(value, key, map)`, NOT `([key, value])` -- the previous
+		// `.forEach(([key, val]) => ...)` destructured the VALUE (a
+		// `string | string[]`) as if it were a `[key, value]` tuple, so the
+		// real field name was discarded entirely and `key`/`val` ended up
+		// holding pieces of the value instead (e.g. a string's first two
+		// characters, via array-destructuring a string's iterator). Iterate
+		// entries directly so both the field name and its value survive the
+		// merge intact.
+		for (const [key, val] of withHeader.fields.entries()) {
+			this.fields.set(key, val);
+		}
 	}
 }
 
@@ -92,12 +157,27 @@ export function match(
 			type,
 			offset,
 			text,
+			stream,
 			length,
 		} = MessageBodySection.getBodySectionInfo(tokens);
 
 		if (type?.startsWith("HEADER")) {
+			// §11.4: `MessageHeader` parses its content synchronously
+			// (line/field splitting via string ops) -- no lazy-stream
+			// surface for headers in M3.2, so a streamed HEADER section (a
+			// realistic, not just adversarial, case for a message with an
+			// unusually large header block) is eagerly drained via the
+			// shared defensive helper rather than losing its content.
+			const headerText = stream
+				? drainReadableSync(stream.stream).toString("utf8")
+				: text;
 			return {
-				match: new MessageHeader(text ?? undefined, offset),
+				// C2 fix: `type` ("HEADER"/"HEADER.FIELDS"/"HEADER.FIELDS.NOT")
+				// and the raw section content are threaded through so
+				// `MessageBody.addMessageBodyPiece` can ALSO materialize a
+				// `MessageBodySection` for this response -- see
+				// `MessageHeader`'s own constructor doc comment.
+				match: new MessageHeader(headerText ?? undefined, offset, true, type, headerText ?? ""),
 				length,
 			};
 		}
@@ -106,7 +186,14 @@ export function match(
 	const isRFCHeaderMatch = matchesFormat(tokens, [
 		{ type: TokenTypes.atom, value: "RFC822.HEADER" },
 		{ sp: true },
-		[{ type: TokenTypes.nil }, { type: TokenTypes.string }],
+		[
+			{ type: TokenTypes.nil },
+			{ type: TokenTypes.string },
+			// §11.4: a streamed header literal is eagerly drained inside
+			// `getNStringValue` (shared helper) below -- see the BODY[HEADER]
+			// branch above for the rationale.
+			{ type: TokenTypes.literalStream },
+		],
 	]);
 
 	if (isRFCHeaderMatch) {

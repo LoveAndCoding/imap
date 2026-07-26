@@ -8,6 +8,9 @@ module.exports = tseslint.config(
 			"dist/**",
 			"coverage/**",
 			"test/compliance/reports/**",
+			// M6.4: generated typedoc output (gitignored, see .gitignore) --
+			// same rationale as the other generated-artifact exclusions above.
+			"docs/api/**",
 			"eslint.config.js",
 		],
 	},

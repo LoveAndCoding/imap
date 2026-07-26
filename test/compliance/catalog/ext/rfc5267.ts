@@ -79,17 +79,27 @@ const rfc5267: CatalogModule = {
 		"SHOULD-unique-with-server-MUST-accept-reuse (RFC9051-2.2.1 entries), making 5267's MUST " +
 		"NOT the stricter, still-operative binding for a rev2 client that uses UPDATE. " +
 		"REAL PARSE SURFACE: src/parser/structure/mailbox/search.ts ExtendedSearchResponse " +
-		"already parses * ESEARCH responses and tolerates UNKNOWN return-data pairs via a generic " +
-		"data Map (parenthesized values parse as nested complex values per RFC 4466 " +
+		"already parses * ESEARCH responses and tolerates UNKNOWN return-data pairs via " +
+		"ESearchReturnData (parenthesized values parse as nested complex values per RFC 4466 " +
 		"tagged-ext-val), so ADDTO/REMOVEFROM/PARTIAL acceptance entries are REAL-signal " +
-		"candidates (connectLow + waitForUntagged probes) — with one flagged hazard: the data Map " +
-		"is keyed by modifier name, so an ESEARCH carrying TWO ADDTO pairs (the RFC's 'ADDTO (1 " +
-		"2733) ADDTO (1 2731:2732)' example) may clobber the first pair, a genuine violation " +
-		"candidate for RFC5267-4.3.2-1. NOUPDATE lands in the src/parser/structure/text.code.ts " +
+		"candidates (connectLow + waitForUntagged probes). M6.2 RE-VERIFICATION: an earlier " +
+		"revision of this note flagged a hazard here (\"the data Map is keyed by modifier name, " +
+		"so an ESEARCH carrying TWO ADDTO pairs may clobber the first\") — stale as of this " +
+		"catalog's own inspection of the current source: ExtendedSearchResponse.data is " +
+		"ESearchReturnData, an explicitly array-of-pairs class (never a keyed Map) whose own " +
+		"doc comment names this exact RFC5267-4.3.2-1 duty as the reason it exists (\"A plain " +
+		"Map<string, V> can only ever hold one entry per key, so a second same-named item would " +
+		"silently clobber the first. This keeps every pair, in wire order...\"); `.entries()` " +
+		"is the documented multi-value read surface, `.get()` is last-value-wins for genuinely " +
+		"single-valued keys only (confirmed by an audit of every `.get()` call site in src/ -- " +
+		"exactly one, PARTIAL, itself capped at one-per-command by RFC5267-4.4-2/RFC9394-3.1-3, " +
+		"where last-value-wins is correct because it coincides with \"the only value\"). " +
+		"RFC5267-4.3.2-1 below is a genuine, non-lucky pass, not a violation candidate. " +
+		"NOUPDATE lands in the src/parser/structure/text.code.ts " +
 		"AtomTextCode fallback (same path as the BADURL/TOOBIG precedents) — REAL-signal " +
-		"candidate for RFC5267-4.3.1-1. Command-emission entries are currently self-actualizing: " +
-		"driver.sort()/uidSort() throw NotImplementedError('SORT'/'UID SORT'), driver.search()/" +
-		"uidSearch() throw for RETURN options, and the driver has no CANCELUPDATE verb. " +
+		"candidate for RFC5267-4.3.1-1. UPDATE: command-emission entries are genuinely real as " +
+		"of M4.10 (driver.sort()/uidSort()) and M5 (CONTEXT-machinery carry-forward, " +
+		"driver.search()/uidSearch() RETURN options and driver.cancelUpdate()). " +
 		"UNTESTABLE: 6 of 24 — RFC5267-4.2-1 and RFC5267-4.3-3 (internal-decision); " +
 		"RFC5267-4.3.3-1, RFC5267-4.3.3-2, RFC5267-4.3.4-1, RFC5267-4.3.4-2 (internal-state: the " +
 		"client-maintained context result list is not wire-observable). Total: 24 entries " +
@@ -119,8 +129,8 @@ const rfc5267: CatalogModule = {
 				"sort-criteria SP search-criteria' (search-return-opts from RFC 4466). The RFC's " +
 				"§3.3 example emits 'C: E01 UID SORT RETURN () (REVERSE DATE) UTF-8 UNDELETED " +
 				"UNKEYWORD $Junk'. Mirrors RFC4731-3.1-1 for SEARCH. Testable as a command-form " +
-				"duty; currently self-actualizing FAIL — driver.sort()/uidSort() throw " +
-				"NotImplementedError('SORT'/'UID SORT'), so the client cannot emit the form at all.",
+				"duty; genuinely real as of M4.10 — SortCommand emits RETURN (...) for real when " +
+				"SearchOptions.return is given and ESORT is advertised, so this row passes.",
 		},
 		{
 			id: "RFC5267-3-2",
@@ -145,8 +155,8 @@ const rfc5267: CatalogModule = {
 				"expect a legacy '* SORT ...' response for that command. Testable REAL: " +
 				"src/parser/structure/mailbox/search.ts ExtendedSearchResponse parses the " +
 				"correlator, the UID indicator, and the ALL sequence-set — genuine pass/violation " +
-				"probe via connectLow + waitForUntagged. The emission half is self-actualizing " +
-				"today (no driver SORT surface).",
+				"probe via connectLow + waitForUntagged. The emission half is also real as of " +
+				"M4.10 (driver.sort()/uidSort() genuinely emit the RETURN (...) form).",
 		},
 
 		// ── §3.1 ESORT Extension ────────────────────────────────────────────────
@@ -176,8 +186,9 @@ const rfc5267: CatalogModule = {
 				"CONTEXT=SORT also implies extended-SORT-syntax support (§4.1), but the plain " +
 				"MIN/MAX/ALL/COUNT options are ESORT's; the three CONTEXT options are additionally " +
 				"gated by RFC5267-4.1-2. Testable: script a server NOT advertising ESORT and " +
-				"verify the client never emits 'SORT RETURN'; currently self-actualizing (no " +
-				"driver SORT surface — vacuous-pass hazard, as flagged on RFC4731-1-1).",
+				"verify the client never emits 'SORT RETURN'; genuinely real as of M4.10 — " +
+				"driver.sort()/uidSort() exist and the transcript guard is a real observation, not " +
+				"a vacuous one.",
 		},
 		{
 			id: "RFC5267-3.1-2",
@@ -305,8 +316,9 @@ const rfc5267: CatalogModule = {
 				"batch majority (RFC4731-1-1, RFC6203-1-1, RFC6203-6-3: testable emission " +
 				"prohibition) instead; flagged for reconciliation. Testable: script a server " +
 				"without CONTEXT=SEARCH and verify no CONTEXT/UPDATE/PARTIAL option is emitted in " +
-				"SEARCH RETURN lists; currently self-actualizing (driver.search()/uidSearch() " +
-				"throw NotImplementedError for RETURN options — vacuous-pass hazard).",
+				"SEARCH RETURN lists; genuinely real (M5 CONTEXT-machinery carry-forward) — " +
+				"driver.search()/uidSearch() emit RETURN options for real, so this is a real " +
+				"observation, not a vacuous one.",
 		},
 		{
 			id: "RFC5267-4.1-2",
@@ -332,7 +344,8 @@ const rfc5267: CatalogModule = {
 				"'C: B02 UID SORT RETURN (UPDATE COUNT) UTF-8 KEYWORD $Junk'); the plain ESORT " +
 				"options remain gated by RFC5267-3.1-1. Testable: script a server advertising " +
 				"SORT (and even ESORT) but not CONTEXT=SORT and verify no CONTEXT/UPDATE/PARTIAL " +
-				"option is emitted on SORT; currently self-actualizing (no driver SORT surface).",
+				"option is emitted on SORT; genuinely real as of M4.10/M5 — driver.sort()/" +
+				"uidSort() exist and emit RETURN options for real.",
 		},
 
 		// ── §4.2 Context Hint ───────────────────────────────────────────────────
@@ -543,11 +556,14 @@ const rfc5267: CatalogModule = {
 				"the requested order.') is skipped as server-only. Adjudicated TESTABLE at the " +
 				"library API boundary (not the internal result list, which is RFC5267-4.3.3-1/" +
 				"4.3.4-1 territory): to process items in order the client must first SURFACE all " +
-				"items in wire order, and the existing parse surface has a concrete hazard — " +
-				"ExtendedSearchResponse stores return-data pairs in a Map keyed by modifier name, " +
-				"so the second ADDTO in the C01 example likely clobbers the first (lost data, " +
-				"order unrecoverable). Genuine REAL violation candidate via connectLow + " +
-				"waitForUntagged with the RFC's own two-ADDTO response.",
+				"items in wire order. M6.2 RE-VERIFICATION (this row's own prior note claimed a " +
+				"hazard here -- stale): ExtendedSearchResponse.data is ESearchReturnData, an " +
+				"array-of-pairs class that keeps every same-named item in wire order (never a " +
+				"keyed Map that would clobber a repeat), with `.entries()` as the documented " +
+				"multi-value read surface -- exactly what this duty requires, and exactly why " +
+				"that class exists (see its own doc comment, src/parser/structure/mailbox/" +
+				"search.ts). Genuine, non-lucky REAL pass via connectLow + waitForUntagged with " +
+				"the RFC's own two-ADDTO response: both items surface, in wire order.",
 		},
 		{
 			id: "RFC5267-4.3.2-2",
@@ -797,7 +813,8 @@ const rfc5267: CatalogModule = {
 				"the client is free to issue further searching commands with the same criteria " +
 				"and requested order, including PARTIAL requests.' — server half skipped). " +
 				"Testable as a command-form duty (drive a cancel and assert the emitted form); " +
-				"currently self-actualizing FAIL — the driver has no CANCELUPDATE verb at all.",
+				"genuinely real (M5 CONTEXT-machinery carry-forward) — driver.cancelUpdate() is " +
+				"wired to MailboxSession.cancelUpdate(), so this row passes.",
 		},
 
 		// ── §4.4 Partial Results ────────────────────────────────────────────────
@@ -829,9 +846,9 @@ const rfc5267: CatalogModule = {
 				"(RFC9394-3.1-1/-2 catalog the revised form under the 'PARTIAL' capability; this " +
 				"entry is the scoring text when the client operates under the CONTEXT=SEARCH/" +
 				"CONTEXT=SORT gate). Under CONTEXT=SORT, PARTIAL windows apply to the requested " +
-				"SORT order. Testable as a command-form duty; currently self-actualizing FAIL " +
-				"(no RETURN surface — driver.search()/uidSearch() throw NotImplementedError, no " +
-				"driver SORT verb).",
+				"SORT order. Testable as a command-form duty; genuinely real — driver.search()/" +
+				"uidSearch()/sort()/uidSort() all emit the PARTIAL return option for real, so this " +
+				"row passes.",
 		},
 		{
 			id: "RFC5267-4.4-2",
@@ -856,9 +873,9 @@ const rfc5267: CatalogModule = {
 				"server is bound by this text alone), and spec tests may share coverage — " +
 				"flagged for the auditor rather than profile-split, since this is a " +
 				"5267-vs-9394 extension overlap, not a rev2-core absorption. Testable: assert no " +
-				"emitted RETURN list ever pairs PARTIAL with ALL or repeats PARTIAL; currently " +
-				"self-actualizing FAIL (no RETURN emission surface — trivially cannot violate, " +
-				"but cannot demonstrate the compliant single-PARTIAL form either).",
+				"emitted RETURN list ever pairs PARTIAL with ALL or repeats PARTIAL; genuinely " +
+				"real (M5 CONTEXT-machinery carry-forward) — the RETURN emission surface exists, " +
+				"so this demonstrates the compliant single-PARTIAL form for real.",
 		},
 		{
 			id: "RFC5267-4.4-3",

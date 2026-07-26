@@ -105,7 +105,7 @@ export interface ImapClientConfig {
 	                                         //   default "auto". Named `extensions`, not
 	                                         //   `enable`: "enable" reads as an on/off
 	                                         //   switch for the client itself.
-	compress?: "auto" | false;        // default false until M5, then "auto"
+	compress?: "auto" | false;        // default "auto" as of M5.9 (was false pre-M5)
 	maxInlineSize?: number;           // fetch part buffering cutoff, default 1 MiB (§5.4)
 	timeouts?: {
 		connect?: number;             // socket + TLS handshake, default 10_000
@@ -150,11 +150,24 @@ transition emits `stateChange` *before* the promise that caused it settles):
 | selected | `close()`/`unselect()` OK, or select of another mailbox begins | authenticated |
 | selected | untagged CLOSED resp-code (RFC 7162) | authenticated |
 | authenticated | `unauthenticate()` OK (RFC 8437) | not-authenticated |
+| selected | `unauthenticate()` OK (RFC 8437) | not-authenticated |
 | any | `logout()` called | logout → disconnected |
 | any | socket close / fatal error / server BYE | disconnected |
 
 Commands declare their legal states (§7.1); submitting a command in an
 illegal state rejects locally with `StateError` and writes no bytes.
+
+[Amended at M5.10: the original table carried only the
+authenticated → not-authenticated UNAUTHENTICATE row. RFC 8437 §6's grammar
+extends BOTH `command-auth` and `command-select` with UNAUTHENTICATE, and
+§3 states the from-selected outcome directly ("If a mailbox was selected,
+the mailbox ceases to be selected, but no expunge event is generated" —
+RFC8437-3-3), so a selected client lands in not-authenticated in ONE
+transition — there is no intermediate deselect on the wire, and no
+`selected → authenticated` hop is synthesized client-side. The
+`MailboxSession` is invalidated with `closed` reason `"unauthenticated"`
+(a new `MailboxClosedReason` member — no pre-existing reason states the
+true fact that the connection survives but the authentication didn't).]
 
 ### 3.2 Class surface
 
@@ -178,7 +191,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 
 	// -- mailbox management (authenticated state) ---------------------------
 	list(opts?: ListOptions): Promise<MailboxInfo[]>;
-	lsub(ref: string, pattern: string): Promise<MailboxInfo[]>;  // rev1 only
+	lsub(ref: string, pattern: string, opts?: { referrals?: boolean }): Promise<MailboxInfo[]>;  // rev1 only; opts.referrals → RLSUB (RFC 2193, added M5.13, additive)
 	status(mailbox: string, items: StatusItem[]): Promise<MailboxStatusResult>;
 	create(mailbox: string, opts?: { specialUse?: SpecialUse }): Promise<void>;
 	delete(mailbox: string): Promise<void>;
@@ -427,9 +440,31 @@ export interface MailboxStatusResult {
 ```
 
 Mailbox-name codec rules (protocol/): encode caller UTF-8 → modified UTF-7
-unless (`UTF8=ACCEPT` enabled ∨ server is rev2); decode symmetrically on all
-inbound names; `INBOX` is case-insensitive and always canonicalized to
-`"INBOX"`. 8-bit names are never sent unencoded on rev1 (RFC 6855 duties).
+unless `UTF8=ACCEPT` is ENABLEd by this client (advertisement alone never
+licenses UTF-8 wire forms — RFC 6855 §3's MUST binds the client's own
+ENABLE); decode symmetrically on all inbound names; `INBOX` is
+case-insensitive and always canonicalized to `"INBOX"`. 8-bit names are
+never sent unencoded on rev1 (RFC 6855 duties). [Amended at the M2 review:
+the original "∨ server is rev2" disjunct was wrong both ways — literal
+implementation would violate RFC 9051 A-2 against dual-advertising servers,
+while pure-rev2-only servers (no IMAP4rev1 token) genuinely fall outside
+Appendix A's apparatus; that narrower pure-rev2 case is adjudicated in
+docs/compliance-adjudications.md.] [Re-amended at M5.13, closing the M2
+revisit: the codec permanently does NOT gain a pure-rev2 raw-UTF-8 arm —
+one codec rule for every session, mUTF-7 until this client's own `ENABLE
+UTF8=ACCEPT` is confirmed. Rationale in the adjudication entry ("Pure-
+rev2-only mailbox-name codec direction"): the rev2 fixtures pin the mUTF-7
+forms (RFC9051-A-4/A-5/A-7/A-8), the client's permanent §3.4/§13 rev1-
+compatible-syntax posture makes a revision-keyed name arm incoherent, and
+RFC9051-5.1-1's create clause is a MAY. UTF8=ONLY (RFC 6855 §6): the
+client treats the announcement as advertising UTF8=ACCEPT for ENABLE
+purposes (auto-ENABLEd under the default `extensions:"auto"`), always
+sends `ENABLE UTF8=ACCEPT` — never `ENABLE UTF8=ONLY`, requests for which
+are canonicalized to UTF8=ACCEPT — and, when a caller-configured session
+leaves UTF8=ACCEPT un-enabled against a UTF8=ONLY server, detects the
+announcement and warns via the config logger (RFC6855-6-3) rather than
+refusing locally; the server's own `NO [CANNOT]` rejections then surface
+as typed errors per §7.1.]
 
 ### 5.3 Search criteria
 
@@ -592,6 +627,20 @@ export type SortBase =
 	| "DISPLAYFROM" | "DISPLAYTO";              // RFC 5957, gated
 export type SortKey = SortBase | `REVERSE ${SortBase}`;
 export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";
+
+// [Amended at M4.9: ThreadNode was referenced by §5b but never defined —
+// definition adopted from the implementation decision — see the M4 plan doc
+// M4.9.] Recursive shape adapted from the internal RFC 5256 §5 thread-list
+// parser (`parser/structure/thread.ts`'s `ThreadResponse`/`ThreadMessage`).
+// Exactly one of `uid`/`seq` is populated, per the grain of the facet call
+// that produced it (`thread()` → `uid`; `seq.thread()` → `seq`) — except the
+// RFC's own "missing-parent" orphan form (a `thread-nested` group with no
+// leading `nz-number`), where neither is populated.
+export interface ThreadNode {
+	uid?: number;
+	seq?: number;
+	children: ThreadNode[];
+}
 ```
 
 Applied through the surface: `create()`'s `specialUse` is strict
@@ -657,7 +706,10 @@ export interface MailboxSessionEvents {
 	vanished: (uids: number[], earlier: boolean) => void; // QRESYNC
 	flags: (update: { seq: number; uid?: number; flags: ReadonlySet<string>; modSeq?: bigint }) => void;
 	uidValidityChanged: (next: number, prev: number) => void;  // loud: also logs warn
-	closed: (reason: "closed" | "unselected" | "reselected" | "disconnected") => void;
+	closed: (reason: "closed" | "unselected" | "reselected" | "disconnected" | "unauthenticated") => void;
+	// "unauthenticated" amended at M5.10 (RFC 8437): UNAUTHENTICATE succeeded
+	// while this mailbox was selected — the connection survives, the mailbox
+	// ceases to be selected, and no expunge event accompanies it (RFC8437-3-3).
 }
 export type MailboxUpdate =
 	| { type: "exists"; count: number }
@@ -677,7 +729,17 @@ FETCHes) is delivered through the returned session's events/updates stream —
 subscribing immediately after `await select()` is guaranteed to miss nothing:
 the session buffers resync events until first consumer attach or first
 turn of the microtask queue after resolution (implementation: emit on
-next-tick after resolve).
+next-tick after resolve). [Amended at the M4 review: the implementation
+buffers until first consumer attach or session close — strictly stronger
+than the original microtask-turn bound, which was shown to drop events for
+ordinary async callers. A caller that does ordinary awaited work between
+`await select()` and attaching a listener (any work spanning more than one
+macrotask, not just one microtask turn) would have its resync buffer
+flushed to zero listeners under the original bound, silently losing the
+VANISHED/flag data the whole guarantee exists to protect. The stronger rule
+— buffer until attach or close, no timed fallback at all — closes that gap:
+a never-attaching caller simply never receives the (small, per-session-
+bounded) replay, freed at close instead of flushed to nobody.]
 
 ---
 
@@ -867,9 +929,13 @@ LOGIN-fallback (not SASL: the LOGIN command, used per §9.3).
   every TLS socket — implicit AND the STARTTLS upgrade — is created through
   `openTls(socket|target, policy)` in this module. It always sets
   `servername` to the configured reference identity (the config `host`;
-  never a CNAME/MX-resolved name — RFC 7817 §3), relies on Node's
-  `checkServerIdentity` (DNS-ID matching, no CN fallback, URI-ID never
-  consulted) and `rejectUnauthorized: true`. Handshake or identity failure
+  never a CNAME/MX-resolved name — RFC 7817 §3), wraps Node's
+  `checkServerIdentity` with a SAN-presence precondition (Node's built-in
+  matcher alone falls back to the Subject CN when a certificate carries no
+  subjectAltName — verified empirically; RFC 9525 §6.6 forbids CN as an
+  identity source, so SAN-less certificates are rejected before
+  delegation; DNS-ID/IP-ID matching and URI-ID exclusion then come from
+  the built-in matcher) and `rejectUnauthorized: true`. Handshake or identity failure
   → socket destroyed, `TlsError` with `reason` propagated to the awaiting
   promise — **rejection, never a hang** (fixes the driver-backstop findings).
 - **10.2 tlsOptions merge:** caller `tlsOptions` may add `ca`,

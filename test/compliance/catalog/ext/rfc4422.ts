@@ -359,7 +359,27 @@ const rfc4422: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"The duty's own antecedent — 'a security layer was negotiated' — is structurally " +
+				"unsatisfiable for this client: every SASL mechanism it implements (PLAIN, OAUTHBEARER, " +
+				"XOAUTH2, CRAM-MD5, EXTERNAL, SCRAM-SHA-1/SCRAM-SHA-256 without -PLUS, ANONYMOUS — the " +
+				"closed list at spec §9.2) negotiates no SASL security layer at all; RFC 5802 §5.2 states " +
+				"outright that SCRAM itself provides none, and none of the others offer one either. " +
+				"Confidentiality/integrity for this client come from TLS (spec §10), its supported " +
+				"security layer, not from a SASL layer. No code path exists through this client's actual " +
+				"API in which the install-on-success duty could be either honored or violated — a wire " +
+				"exchange showing a successful AUTHENTICATE outcome carries zero information about this " +
+				"entry's install-a-layer duty, the same never-reachable-affordance reasoning as " +
+				"RFC5802-6-1 (untestable/capability-inventory, reclassified at M5.1). Reclassified from " +
+				"'testable' at M5.16: the original classification's notes already flagged this as 'rare " +
+				"among mechanisms this client is likely to implement first' (naming GSSAPI/DIGEST-MD5 as " +
+				"the hypothetical trigger); M5.16 settles that neither is implemented or on this client's " +
+				"pre-1.0 roadmap (spec §9.2's mechanism list is closed), so the conditional cannot fire " +
+				"for any conformant deployment of this client. Reactivation condition: if this client " +
+				"ever adds a mechanism that negotiates a SASL security layer (e.g. GSSAPI, DIGEST-MD5) " +
+				"post-1.0, this row must be reclassified testable again.",
 			notes:
 				"Quoted verbatim from §3.6 (Authentication Outcome) itself, so the entry's section/id and " +
 				"text now match. §3.7 (Security Layers) restates and sharpens the same installation timing " +
@@ -368,13 +388,7 @@ const rfc4422: CatalogModule = {
 				"§3.7 entries (RFC4422-3.7-*) rather than borrowed here. The §3.6 sentence read together " +
 				"with §3.7's client-side assignment establishes the client's install-on-success duty. No " +
 				"RFC 2119 keyword, but the sentence states a mandatory causal sequence with no permitted " +
-				"alternative — judgment: implicit MUST. Applies " +
-				"only when the negotiated mechanism offers a security layer and negotiation succeeded " +
-				"(rare among mechanisms this client is likely to implement first, e.g. PLAIN/OAUTHBEARER " +
-				"offer none; a mechanism like GSSAPI or DIGEST-MD5 would trigger it). Testable once " +
-				"AUTHENTICATE with a security-layer-negotiating mechanism is implemented: assert that once " +
-				"a successful tagged OK arrives, subsequent client-sent octets on the connection are wrapped " +
-				"per the negotiated layer's framing rather than sent in the clear.",
+				"alternative — judgment: implicit MUST.",
 		},
 
 		// ── §3.7 Security Layers ─────────────────────────────────────────────────
@@ -391,17 +405,26 @@ const rfc4422: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the security layer' already existing and being active ('at any time the " +
+				"security layer is unable or unwilling...') — this client installs no SASL security layer " +
+				"under any mechanism it implements (spec §9.2's closed list; see RFC4422-3.6-1's rationale) " +
+				"and never will for those mechanisms (SCRAM without -PLUS negotiates none per RFC 5802 " +
+				"§5.2), so there is no active layer whose encode/decode faults this fault-handling duty " +
+				"could ever be asked to react to. TLS (spec §10) is this client's actual transport-security " +
+				"layer and its own failure handling is separately catalogued (RFC9051-11.1-* / TLS-specific " +
+				"rows), not this SASL-security-layer entry. Reclassified from 'testable' at M5.16, same " +
+				"never-reachable-affordance reasoning as RFC5802-6-1/RFC4422-3.6-1. Reactivation condition: " +
+				"if this client ever adds a security-layer-negotiating mechanism post-1.0, this row must be " +
+				"reclassified testable again.",
 			notes:
 				"Two MUST sentences (encode-failure, decode-failure) plus a graded SHOULD on close style; " +
 				"extracted as one entry because they form a single cohesive fault-handling duty for " +
 				"whichever side is operating the security layer, which includes the client once a layer " +
 				"is installed (RFC4422-3.6-1). Applies only when the client has an active SASL security " +
-				"layer and encounters an encode or decode failure in it. Testable once AUTHENTICATE with a " +
-				"security-layer mechanism is implemented: arm a scripted server that sends an undecodable " +
-				"protected buffer after layer installation; assert the client closes the connection (and, " +
-				"ideally, does so via a clean TCP close/shutdown rather than an abrupt reset, per the " +
-				"SHOULD-graceful clause).",
+				"layer and encounters an encode or decode failure in it.",
 		},
 		{
 			id: "RFC4422-3.7-2",
@@ -414,13 +437,21 @@ const rfc4422: CatalogModule = {
 			level: "MUST",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the protected data buffer' existing at all — i.e. a security layer with a " +
+				"negotiated maximum receive-buffer size is installed and the client is producing outgoing " +
+				"protected buffers. This client installs no SASL security layer under any mechanism it " +
+				"implements (spec §9.2's closed list) and TLS (spec §10), its actual security layer, has no " +
+				"'protected data buffer' of this SASL-framing shape. No client-produced buffer of this kind " +
+				"ever exists to measure, so the MUST NOT can be neither honored nor violated. Reclassified " +
+				"from 'testable' at M5.16, same reasoning as RFC4422-3.6-1/-3.7-1. Reactivation condition: " +
+				"if this client ever adds a security-layer-negotiating mechanism post-1.0, this row must be " +
+				"reclassified testable again.",
 			notes:
 				"Applies once a security layer with a negotiated (or mechanism-fixed) maximum receive " +
-				"buffer size is installed and the client is producing outgoing protected buffers. Testable " +
-				"once AUTHENTICATE with such a mechanism is implemented: assert every client-sent protected " +
-				"buffer's four-octet length prefix (per the surrounding, non-normative framing description " +
-				"in this section) is <= the size the server advertised/negotiated as its maximum.",
+				"buffer size is installed and the client is producing outgoing protected buffers.",
 		},
 		{
 			id: "RFC4422-3.7-3",
@@ -433,15 +464,23 @@ const rfc4422: CatalogModule = {
 			level: "SHOULD",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the receipt of a length field whose value is greater than the maximum " +
+				"size' — i.e. an active security layer with a negotiated maximum buffer size, decoding an " +
+				"inbound length-prefixed buffer. This client installs no SASL security layer under any " +
+				"mechanism it implements (spec §9.2's closed list), so no such length field is ever received " +
+				"or decoded by SASL-layer framing; TLS (spec §10) is this client's real security layer and " +
+				"has its own, separately-catalogued length/framing handling. Reclassified from 'testable' " +
+				"at M5.16, same reasoning as RFC4422-3.6-1/-3.7-1/-3.7-2. Reactivation condition: if this " +
+				"client ever adds a security-layer-negotiating mechanism post-1.0, this row must be " +
+				"reclassified testable again.",
 			notes:
 				"'The receiver' includes the client whenever it is the recipient of security-layer-" +
 				"protected data from the server. Applies once a security layer with a negotiated maximum " +
-				"buffer size is installed. Testable once AUTHENTICATE with such a mechanism is implemented: " +
-				"arm a scripted server that, after layer installation, sends a length-prefixed buffer whose " +
-				"declared length exceeds the negotiated maximum; assert the client closes the connection " +
-				"rather than attempting to read/allocate for it (see also RFC4422-6.1.5-1/-2, the parallel " +
-				"§6.1.5 statement of the same duty framed as active-attack defense).",
+				"buffer size is installed (see also RFC4422-6.1.5-1/-2, the parallel §6.1.5 statement of " +
+				"the same duty framed as active-attack defense).",
 		},
 
 		// ── §6.1.1 Hijack Attacks ────────────────────────────────────────────────
@@ -456,16 +495,24 @@ const rfc4422: CatalogModule = {
 			level: "SHOULD",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'the security services in a SASL security layer' existing and reporting an " +
+				"integrity failure — i.e. an installed SASL security layer with at least integrity " +
+				"protection. This client installs no SASL security layer under any mechanism it implements " +
+				"(spec §9.2's closed list; RFC 5802 §5.2 for SCRAM specifically), so no such report can ever " +
+				"arrive; TLS (spec §10) is this client's actual integrity-protecting layer, with its own " +
+				"separately-catalogued failure handling. Reclassified from 'testable' at M5.16, same " +
+				"never-reachable-affordance reasoning as RFC4422-3.6-1/-3.7-*. Reactivation condition: if " +
+				"this client ever adds a security-layer-negotiating mechanism post-1.0, this row must be " +
+				"reclassified testable again.",
 			notes:
 				"'Report protocol data report lack of data integrity' reproduces a minor duplication " +
 				"present in the RFC's own published text (verified verbatim against the fetched source; " +
 				"not a transcription error introduced here). 'Implementations' includes the client whenever " +
 				"it has negotiated a security layer with at least integrity protection. Applies only once " +
-				"such a layer is installed and its integrity check fails on inbound data. Testable once " +
-				"AUTHENTICATE with an integrity-protecting mechanism is implemented: arm a scripted server " +
-				"that sends a protected buffer with a corrupted integrity check after layer installation; " +
-				"assert the client closes the connection rather than processing the payload.",
+				"such a layer is installed and its integrity check fails on inbound data.",
 		},
 
 		// ── §6.1.2 Downgrade Attacks ─────────────────────────────────────────────
@@ -543,15 +590,24 @@ const rfc4422: CatalogModule = {
 			level: "SHOULD",
 			applicability: "conditional",
 			profiles: ["rev1", "rev2"],
-			testability: "testable",
+			testability: "untestable",
+			untestableTheme: "capability-inventory",
+			untestableRationale:
+				"Conditional on 'use of a security layer is negotiated by the authentication protocol " +
+				"exchange' — the row's own leading clause. This client negotiates no SASL security layer " +
+				"under any mechanism it implements (spec §9.2's closed list), so the antecedent is " +
+				"structurally unsatisfiable and the graceful-handling/close duty never binds; TLS (spec " +
+				"§10) is this client's real security layer and has its own, separately-catalogued oversized-" +
+				"input handling. Same never-reachable-affordance reasoning as RFC4422-3.7-3 (the duty this " +
+				"entry restates in active-attack framing) and RFC5802-6-1. Reclassified from 'testable' at " +
+				"M5.16. Reactivation condition: if this client ever adds a security-layer-negotiating " +
+				"mechanism post-1.0, this row must be reclassified testable again.",
 			notes:
 				"Elided middle sentence is RFC4422-6.1.5-1's MUST NOT (quoted in full as its own entry). " +
 				"'The receiver' includes the client under an installed security layer. Restates " +
 				"RFC4422-3.7-3's duty in the active-attack framing; kept as a separate entry because it is " +
 				"a textually distinct sentence in a distinct section with its own ordinal, per the id " +
-				"scheme's per-section numbering rule — a harness assertion satisfying one satisfies both. " +
-				"Testable once AUTHENTICATE with a security-layer mechanism is implemented, by the same " +
-				"oversized-buffer script described for RFC4422-3.7-3.",
+				"scheme's per-section numbering rule — a harness assertion satisfying one satisfies both.",
 		},
 
 		// ── Appendix A: The SASL EXTERNAL Mechanism ──────────────────────────────

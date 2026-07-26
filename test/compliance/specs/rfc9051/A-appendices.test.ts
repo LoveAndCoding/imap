@@ -17,26 +17,32 @@
  * RFC9051-D-1:  Client implementations have to expect 63-bit-long body part /
  *               message sizes.
  *
- * A-1 CLASSIFICATION (unimplemented, not violation): the client has no
- * ENABLE surface. Session.start issues only CAPABILITY + ID during connect(),
- * and driver.enable() throws NotImplementedError. CAPABILITY and ID are
- * revision-agnostic (valid in both rev1 and rev2), so the current wire trace
- * does not itself exercise any rev2-only behavior — the MUST's trigger ("wants
- * to use IMAP4rev2 ... before relying on rev2-only behavior") is not met by a
- * client that only speaks the revision-agnostic prelude. There is therefore no
- * wire-observable violation today; the honest classification, consistent with
- * every other absent-verb duty in this suite, is "unimplemented": the driver
- * cannot make the client enable. Once a rev2-only feature path exists, the
- * falsifiable assertion becomes "ENABLE IMAP4rev2 precedes the first rev2-only
- * command"; this test drives that path via driver.enable() and, as a
- * belt-and-braces observable, asserts no ENABLE has leaked onto the wire yet.
+ * A-1 CLASSIFICATION (ADJUDICATED DEVIATION, expectFailure: "violation" —
+ * see docs/guides/compliance-adjudications.md): `driver.enable()` IS implemented
+ * (`ImapClient.enableExtensions`), but the modern-API spec's §3.4 settled
+ * decision permanently excludes IMAP4rev2 from the `connect()` ritual's
+ * auto-ENABLE set (src/client/client.ts's `AUTO_ENABLE_SET` comment: "rev2
+ * enablement is a profile decision... deferred; not 1.0") — there is no
+ * "I want IMAP4rev2" signal the connect() ritual can act on today, so the
+ * client never auto-issues ENABLE IMAP4rev2 at the point this MUST cares
+ * about (before relying on rev2-only behavior). This is a deliberate,
+ * permanent deviation from the letter of RFC9051-A-1, not a gap that will
+ * close as more of the client lands — see the adjudications doc for the
+ * full rationale (the client speaks rev1-compatible syntax to rev2 servers,
+ * which RFC 9051 permits).
  *
  * A-4/A-5/A-7/A-8 are conditional on the client CONSTRUCTING an international
  * (or embedded-"&") mailbox name while intending IMAP4rev1-server
- * compatibility. driver.create() is unimplemented, so each fails
- * "unimplemented"; the armed script's expectLine encodes the exact modified
- * UTF-7 form the client would have to emit, and the post-connect assertions
- * re-verify that form (self-actualizing once CREATE exists).
+ * compatibility. REAL SIGNAL (M2.3): driver.create() is wired, and the
+ * client's settled posture — it speaks rev1-compatible syntax to rev2
+ * servers and never auto-ENABLEs IMAP4rev2 (spec §3.4; the adjudicated A-1
+ * deviation above) — means mod-UTF-7 name construction genuinely happens on
+ * these rev2 sessions (raw UTF-8 names would require UTF8=ACCEPT, which
+ * these scripts deliberately do not advertise). Each script's expectLine
+ * pins the exact modified UTF-7 wire form and the post-completion
+ * assertions re-verify it. A-7's assertion was revised at M2.3 — see that
+ * test's comment (the old "-&" substring check false-positived on the
+ * compliant '&'-escape correction).
  *
  * D-1 is observable NOW via connectLow() + an unsolicited FETCH carrying a
  * 63-bit RFC822.SIZE; it should pass (JS numbers are exact to 2^53, well above
@@ -44,6 +50,7 @@
  */
 import { expect } from "vitest";
 
+import type { ObservedEvent } from "../../driver/driver";
 import { command } from "../../harness/matchers";
 import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -53,40 +60,66 @@ import { sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
+interface ParsedFetchSize {
+	size?: number | bigint;
+}
+function contentOf<T>(ev: ObservedEvent): T {
+	return ((ev.detail as { content?: unknown } | undefined)?.content ??
+		{}) as T;
+}
+
 // ── RFC9051-A-1: ENABLE IMAP4rev2 when both revisions advertised ──────────
-// The server greeting advertises BOTH IMAP4rev1 and IMAP4rev2. A client that
-// "wants to use IMAP4rev2" MUST issue "ENABLE IMAP4rev2" before relying on
-// rev2-only behavior. The client has no enable path (Session.start does only
-// CAPABILITY + ID; driver.enable() throws NotImplementedError), so this fails
-// "unimplemented". See the file header for the full classification rationale.
+// The server greeting/CAPABILITY advertises BOTH IMAP4rev1 and IMAP4rev2. A
+// client that "wants to use IMAP4rev2" MUST issue "ENABLE IMAP4rev2" before
+// relying on rev2-only behavior. ADJUDICATED DEVIATION (see the file header
+// note and docs/guides/compliance-adjudications.md): the modern-API spec §3.4
+// deliberately excludes IMAP4rev2 from the client's auto-ENABLE set, so the
+// connect() ritual never issues it — a genuine, permanent violation of this
+// MUST, not an unimplemented gap.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-1"],
 		profiles: ["rev2"],
 		title: "client issues ENABLE IMAP4rev2 when both IMAP4rev1 and IMAP4rev2 are advertised",
-		expectFailure: "unimplemented",
+		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
+		// Bare greeting (no inline [CAPABILITY ...] code): a greeting-carried
+		// capability code would make the client skip the CAPABILITY round trip
+		// entirely (spec §3.3) and stall the scripted exchange below forever.
 		server.arm([
 			[
-				// Greeting advertises BOTH revisions (the conditional trigger).
-				send("* OK [CAPABILITY IMAP4rev1 IMAP4rev2] ready\r\n"),
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1 IMAP4rev2"]),
-				// A conformant client enables rev2 before relying on rev2-only behavior.
-				expectLine(command("ENABLE", { args: /^IMAP4rev2$/i })),
-				reply("OK ENABLE completed", ["* ENABLED IMAP4rev2"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev1 IMAP4rev2",
+				]),
+				// A conformant client would enable rev2 before relying on rev2-only
+				// behavior — but see the ADJUDICATED DEVIATION note above: this is
+				// deliberately never scripted as a requirement here.
 			],
 		]);
-		const driver = await f.connectPlain(server);
-		// driver.enable() is unimplemented (no ENABLE surface in the public API).
-		await driver.enable(["IMAP4rev2"]);
+		await f.connectPlain(server);
+		// driver.enable() IS implemented (ImapClient.enableExtensions), but the
+		// client's `connect()` ritual never calls it automatically for
+		// IMAP4rev2 (src/client/client.ts's AUTO_ENABLE_SET permanently
+		// excludes it — see the ADJUDICATED DEVIATION note above): there is no
+		// "I want IMAP4rev2" signal the connect() ritual can act on today,
+		// so no ENABLE IMAP4rev2 is ever issued at the point the catalog
+		// requirement cares about (before relying on rev2-only behavior).
 		await server.assertCompleted();
-		// Belt-and-braces observable: today the client proceeds with only the
-		// revision-agnostic prelude (CAPABILITY [+ ID]); no ENABLE has been sent.
-		expect(server.commandLines.some((l) => l.verb === "ENABLE")).toBe(false);
+		// The genuine catalog duty — the client MUST issue ENABLE IMAP4rev2 here —
+		// is asserted directly (the positive requirement, not its absence): this
+		// fails today, honestly recording the adjudicated deviation as a real
+		// violation rather than a vacuous "absence of the unimplemented verb" pass.
+		expect(
+			server.commandLines.some(
+				(l) => l.verb === "ENABLE" && /IMAP4rev2/i.test(l.args),
+			),
+			"the client MUST issue ENABLE IMAP4rev2 when both revisions are advertised — adjudicated deviation, see docs/guides/compliance-adjudications.md",
+		).toBe(true);
 	},
 );
 
@@ -97,12 +130,14 @@ complianceTest(
 //     "R&AOk-sum&AOk-"
 // — never base64-encoding an ASCII character that can represent itself, and
 // using only modified-base64-alphabet characters inside the shifted regions.
+// REAL SIGNAL (M2.3): driver.create() is wired; the client speaks
+// rev1-compatible syntax to rev2 servers (spec §3.4/adjudicated RFC9051-A-1
+// posture), so mod-UTF-7 name construction genuinely happens here.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-4"],
 		profiles: ["rev2"],
 		title: "client mod-UTF-7-encodes only non-ASCII, never representable US-ASCII",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -112,7 +147,9 @@ complianceTest(
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
 				// The exact conformant modified UTF-7 form (quoted or atom).
 				expectLine(
-					command("CREATE", { args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/ }),
+					command("CREATE", {
+						args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/,
+					}),
 				),
 				reply("OK CREATE completed"),
 			],
@@ -122,7 +159,7 @@ complianceTest(
 		// Intending IMAP4rev1-server compatibility → mod-UTF-7 name construction.
 		await driver.create("Résumé");
 		await server.assertCompleted();
-		// When implemented: verify the encoded name shifts ONLY around non-ASCII.
+		// Verify the encoded name shifts ONLY around non-ASCII.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
@@ -142,12 +179,12 @@ complianceTest(
 // modified UTF-7 form is "caf&AOk-": the trailing shift-back "-" makes the name
 // END in US-ASCII, rather than leaving it open in the shifted base64 state
 // ("caf&AOk", which would be non-conformant).
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-5"],
 		profiles: ["rev2"],
 		title: "client terminates a non-ASCII-ending name with a shift-back to US-ASCII",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -155,7 +192,9 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
-				expectLine(command("CREATE", { args: /^(?:caf&AOk-|"caf&AOk-")$/ })),
+				expectLine(
+					command("CREATE", { args: /^(?:caf&AOk-|"caf&AOk-")$/ }),
+				),
 				reply("OK CREATE completed"),
 			],
 		]);
@@ -163,8 +202,8 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("café");
 		await server.assertCompleted();
-		// When implemented: the wire name must END in US-ASCII (a "-" closing the
-		// final base64 shift), not trail off in the modified-base64 state.
+		// The wire name must END in US-ASCII (a "-" closing the final base64
+		// shift), not trail off in the modified-base64 state.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
@@ -180,15 +219,26 @@ complianceTest(
 // The consumer requests a name containing an embedded "&" that is NOT valid
 // modified UTF-7 (the RFC's own counter-example, a superfluous shift). A
 // conformant client SHOULD NOT transmit it verbatim — it must reject, correct,
-// or refuse. The armed script's matcher accepts ONLY a corrected/valid form
-// (never the raw non-conformant sequence); a client sending the bad name as-is
-// fails the script.
+// or refuse. REAL SIGNAL (M2.3): driver.create() is wired; the client
+// CORRECTS: it treats the caller's string as a plain Unicode name and
+// escapes each literal '&' per Appendix A.1 ('&' -> '&-'), producing the
+// fully conformant "&-U,BTFw-&-ZeVnLIqe-".
+//
+// Assertion revised at M2.3: the previous check was a bare
+// `not.toContain("-&")` over the whole wire name — an over-narrow matcher
+// that false-positives on the compliant correction above, where the "-&"
+// substring occurs at a literal-'-'/escape-open boundary, NOT "while in
+// base64" (the only place Appendix A.1's null-shift prohibition applies;
+// there is no base64 run at all in the corrected form — every '&' is
+// immediately closed by '-'). The revised assertions pin the actual duty:
+// the verbatim non-conformant sequence must not be transmitted, and every
+// '&' in what IS transmitted must open a well-formed, '-'-terminated
+// shift/escape.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-7"],
 		profiles: ["rev2"],
 		title: "client does not send a syntactically invalid embedded-'&' mailbox name verbatim",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -212,14 +262,23 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create(badName);
 		await server.assertCompleted();
-		// When implemented: whatever the client transmits, it MUST NOT be the raw
-		// non-conformant sequence containing a superfluous null shift "-&".
+		// Whatever the client transmits, it must not be the raw non-conformant
+		// sequence itself…
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
-		expect(name, "client must not transmit the non-conformant embedded-'&' name verbatim").not.toContain(
-			"-&",
-		);
+		expect(
+			name,
+			"client must not transmit the non-conformant embedded-'&' name verbatim",
+		).not.toBe(badName);
+		// …and every '&' in the corrected form must comply with the modified
+		// UTF-7 syntax: stripping each well-formed, '-'-terminated shift/escape
+		// ('&' + modified-BASE64 alphabet run + '-') must leave no '&' behind
+		// (a leftover '&' would be a bare/dangling shift).
+		expect(
+			name.replace(/&[A-Za-z0-9+,]*-/g, ""),
+			"every transmitted '&' must open a well-formed, '-'-terminated shift",
+		).not.toContain("&");
 	},
 );
 
@@ -229,12 +288,12 @@ complianceTest(
 // permitted. For the international name "Résumé" the conformant form
 // ("R&AOk-sum&AOk-") re-enters base64 with "&" only where real non-ASCII
 // content follows — never an empty "-&" pair.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-A-8"],
 		profiles: ["rev2"],
 		title: "client emits no null-shift '-&' sequence in a modified UTF-7 name",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -243,7 +302,9 @@ complianceTest(
 			[
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
 				expectLine(
-					command("CREATE", { args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/ }),
+					command("CREATE", {
+						args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/,
+					}),
 				),
 				reply("OK CREATE completed"),
 			],
@@ -252,13 +313,16 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("Résumé");
 		await server.assertCompleted();
-		// When implemented: the encoded name must contain no superfluous "-&"
-		// null-shift sequence (shifts back to base64 only where content requires).
+		// The encoded name must contain no superfluous "-&" null-shift
+		// sequence (shifts back to base64 only where content requires).
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
 		expect(name).toBe("R&AOk-sum&AOk-");
-		expect(name, "no null shift '-&' permitted in modified UTF-7").not.toContain("-&");
+		expect(
+			name,
+			"no null shift '-&' permitted in modified UTF-7",
+		).not.toContain("-&");
 	},
 );
 
@@ -268,23 +332,18 @@ complianceTest(
 // within a 63-bit range and exact as a JS number). The client MUST surface the
 // parsed FETCH event without truncating, overflowing, or erroring.
 //
-// HONEST OUTCOME — genuine VIOLATION (transcript-verified, not a pass):
-// the client's lexer (src/lexer/rules/number.ts) emits a BigIntToken
-// (TokenTypes.bigint) for any value above MAX_ALLOWED_NUMBER (2^32), but the
-// RFC822.SIZE msg-att matcher (src/parser/structure/fetch/rfc822.ts) only
-// accepts TokenTypes.number. So the 63-bit size fails to match, the FETCH
-// msg-att list does not parse, and no FETCH untaggedResponse is ever surfaced
-// — waitForUntagged times out. This is exactly the interoperability failure
-// D-1 warns about: the client does NOT expect 63-bit sizes today. Annotated
-// expectFailure: "violation" (client-side parse limitation, not a missing
-// verb). The test becomes a pass once the RFC822.SIZE matcher (and any other
-// size-bearing msg-att) accepts a bigint-typed count.
+// FIXED (M0.6, §11.3): the RFC822.SIZE msg-att matcher
+// (src/parser/structure/fetch/rfc822.ts) now accepts a TokenTypes.bigint
+// value in addition to TokenTypes.number — the lexer (src/lexer/rules/
+// number.ts) already emits a BigIntToken for any value above
+// MAX_ALLOWED_NUMBER (2^32), so the 63-bit size now matches, the FETCH
+// msg-att list parses, and the FETCH untaggedResponse is surfaced with the
+// exact size (as a bigint). Genuine pass, not self-actualizing.
 complianceTest(
 	{
 		reqs: ["RFC9051-D-1"],
 		profiles: ["rev2"],
 		title: "client surfaces an unsolicited FETCH with a 63-bit RFC822.SIZE without breaking",
-		expectFailure: "violation",
 	},
 	async () => {
 		const server = await f.startServer();
@@ -308,5 +367,9 @@ complianceTest(
 		// it processed the 63-bit size rather than choking on it.
 		const ev = await waitForUntagged(driver, "FETCH");
 		expect(ev).toBeDefined();
+		// Non-vacuous: the size must round-trip EXACTLY as a bigint, not be
+		// truncated, coerced through a lossy JS number, or dropped.
+		const content = contentOf<ParsedFetchSize>(ev);
+		expect(content.size).toBe(5000000000n);
 	},
 );

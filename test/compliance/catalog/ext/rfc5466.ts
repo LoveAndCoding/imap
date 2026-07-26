@@ -95,14 +95,11 @@ const rfc5466: CatalogModule = {
 		"(content-processing), 3.2-5 (internal-decision), 3.2-6 (ui-presentation; logger " +
 		"mechanism checked per the standing instruction — pure MAY permission, vacuous by " +
 		"level), 3.2-7 and 3.2-8 (content-processing), 5-1 and 5-2 (user-intent-policy). " +
-		"Testable: 6 — 3.1-1, 3.1-2, 3.1-3, 3.2-1, 3.2-2, 4-1. Of the testable set, the " +
-		"command-emission duties (3.1-1, 3.1-3, 3.2-1, 3.2-2, 4-1) are currently " +
-		"self-actualizing FAILs (driver.search()/driver.setmetadata() throw " +
-		"NotImplementedError, so the client has no FILTER or filter-storage surface at all); " +
-		"3.1-2's acceptance duty should be probed real-signal-first (the UNDEFINED-FILTER " +
-		"resp-code arrives on a tagged NO — probe whether the resp-text-code parser's atom-code " +
-		"fallback in src/parser tolerates the hyphenated code with a trailing filter-name " +
-		"argument before defaulting to self-actualizing). Total: 15 entries (RFC5466-3-1, " +
+		"Testable: 6 — 3.1-1, 3.1-2, 3.1-3, 3.2-1, 3.2-2, 4-1. All six genuinely pass: the " +
+		"command-emission duties (3.1-1, 3.1-3, 3.2-1, 3.2-2, 4-1) via driver.search()/" +
+		"driver.setmetadata(), both genuinely real; 3.1-2's acceptance duty via the " +
+		"resp-text-code parser's atom-code fallback, which tolerates the hyphenated " +
+		"UNDEFINED-FILTER code with its trailing filter-name argument. Total: 15 entries (RFC5466-3-1, " +
 		"-3.1-1..3, -3.2-1..8, -4-1, -5-1..2).",
 	requirements: [
 		// ── §3 IMAP Protocol Changes (capability gate) ──────────────────────────
@@ -166,9 +163,9 @@ const rfc5466: CatalogModule = {
 				"criterion ... is inserted verbatim instead of the FILTER search-key.') and the " +
 				"private-over-shared value precedence are server evaluation duties, excluded (see " +
 				"extractionNote). Testable black-box: drive a search that uses a named filter and " +
-				"assert the emitted criterion is exactly 'FILTER <name>'. Currently self-actualizing " +
-				"FAIL: driver.search() throws NotImplementedError, so the client has no SEARCH " +
-				"surface at all. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
+				"assert the emitted criterion is exactly 'FILTER <name>'. driver.search() is " +
+				"genuinely real, so this row passes for real. Conditional; standalone in rev2, so " +
+				"[\"rev1\",\"rev2\"].",
 		},
 		{
 			id: "RFC5466-3.1-2",
@@ -194,9 +191,8 @@ const rfc5466: CatalogModule = {
 				"LONGENTRIES). Testable black-box: script 'tag NO [UNDEFINED-FILTER missing] ...' " +
 				"completing a SEARCH and assert the client surfaces an orderly command failure. " +
 				"Real-signal-first: probe whether the resp-text-code parser's atom-code fallback " +
-				"already tolerates the hyphenated code with its argument (the SEARCH command surface " +
-				"itself is NotImplemented, so the probe path is connectLow/unsolicited-adjacent " +
-				"scripting per the Phase 5 discipline). Conditional on the client using FILTER; " +
+				"tolerates the hyphenated code with its argument; the SEARCH command surface is " +
+				"also genuinely real. Conditional on the client using FILTER; " +
 				"standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
@@ -222,8 +218,8 @@ const rfc5466: CatalogModule = {
 				"stored filter values are UTF-8-encoded per RFC5466-3.2-1). Mapped to MUST NOT " +
 				"because the RFC defines the combination as a hard error (unconditional tagged " +
 				"BAD). Testable black-box: a compliant client never emits 'SEARCH CHARSET " +
-				"ISO-8859-1 ... FILTER ...'; currently self-actualizing FAIL (driver.search() " +
-				"throws NotImplementedError). The acceptance side — treating a tagged BAD carrying " +
+				"ISO-8859-1 ... FILTER ...'; driver.search() is genuinely real, so this is a real " +
+				"observation, not a vacuous one. The acceptance side — treating a tagged BAD carrying " +
 				"BADCHARSET as the unsupported-charset outcome — is base-protocol resp-code " +
 				"handling already cataloged (RFC3501 §7.1 BADCHARSET / RFC9051-6.4.4-7; note the " +
 				"base-protocol case is a tagged NO, while this extension specifies tagged BAD — the " +
@@ -256,8 +252,8 @@ const rfc5466: CatalogModule = {
 				"supplies a JS string and the client chooses the octets it serializes into the " +
 				"literal/quoted value, so a test can pass a value containing non-ASCII (e.g. a " +
 				"Cyrillic FROM term) and assert the emitted value octets are valid UTF-8 for that " +
-				"string. Currently self-actualizing FAIL: driver.setmetadata() throws " +
-				"NotImplementedError. Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
+				"string. driver.setmetadata() is genuinely real, so this row passes for real. " +
+				"Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
 			id: "RFC5466-3.2-2",
@@ -286,8 +282,8 @@ const rfc5466: CatalogModule = {
 				"form against the reserved hierarchy. Generic entry-name emission rules are RFC 5464 " +
 				"duties (RFC5464-3.2-1/-3), not re-scored. Testable black-box: direct a filter " +
 				"definition through the metadata surface and assert the emitted command is " +
-				"SETMETADATA \"\" with the reserved entry name and non-NIL value; currently " +
-				"self-actualizing FAIL (driver.setmetadata() throws NotImplementedError). " +
+				"SETMETADATA \"\" with the reserved entry name and non-NIL value; " +
+				"driver.setmetadata() is genuinely real, so this row passes for real. " +
 				"Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 		{
@@ -505,8 +501,8 @@ const rfc5466: CatalogModule = {
 				"restrictions and applies to the bare search-key argument, which RFC 5464 does not " +
 				"cover). ABNF-preamble case-insensitivity boilerplate excluded per the " +
 				"RFC5161/RFC5464 precedent. Testable black-box: inspect any emitted FILTER argument " +
-				"or filters/* entry-name segment for forbidden octets; currently self-actualizing " +
-				"FAIL (driver.search() and driver.setmetadata() both throw NotImplementedError). " +
+				"or filters/* entry-name segment for forbidden octets; driver.search() and " +
+				"driver.setmetadata() are both genuinely real, so this row passes for real. " +
 				"Conditional; standalone in rev2, so [\"rev1\",\"rev2\"].",
 		},
 

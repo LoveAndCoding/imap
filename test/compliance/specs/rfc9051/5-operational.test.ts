@@ -47,11 +47,13 @@
  *
  * Observable NOW (passing candidates): 5.1-1 (8-bit LIST name acceptance via
  * the Session path), 5.2-1 (unsolicited EXISTS via connectLow — rev2
- * greeting, no RECENT), 5.5-1 (CAPABILITY+ID in one connect() call).
- * Everything else drives unimplemented driver verbs (login/select/create/
- * noop/append/copy/fetch/uidFetch/uidSearch) and scripts the full correct
- * exchange with self-actualizing assertions, annotated
- * expectFailure: "unimplemented". Per-test design notes inline below.
+ * greeting, no RECENT), 5.5-1 (CAPABILITY+ID in one connect() call), and —
+ * as of M2.3 — the CREATE-driven 5.1-5/5.1-6/5.1.1-1 (driver.create() is
+ * wired; 5.1-6's '&' assertion was revised at M2.3, see its comment).
+ * Everything else drives still-unimplemented driver verbs (append/copy/
+ * fetch/uidFetch/uidSearch) and scripts the full correct exchange with
+ * self-actualizing assertions, annotated expectFailure: "unimplemented".
+ * Per-test design notes inline below.
  */
 import { expect } from "vitest";
 
@@ -61,7 +63,7 @@ import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -82,7 +84,7 @@ complianceTest(
 		const mailboxWith8bit = "R\xc3\xa9"; // UTF-8 for "Ré" in latin1 notation
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Unsolicited LIST with an 8-bit Net-Unicode mailbox name.
 				reply("OK CAPABILITY completed", [
@@ -115,7 +117,6 @@ complianceTest(
 		reqs: ["RFC9051-5.1-2"],
 		profiles: ["rev2"],
 		title: "client treats 'inbox' (any case) as the reserved INBOX mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -130,8 +131,11 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
 		// Consumer-supplied lowercase name — same reserved mailbox.
-		await driver.select("inbox");
+		const session = await driver.select("inbox");
 		await server.assertCompleted();
+		// The session's own name is canonicalized to "INBOX", not echoed back
+		// as the lowercase spelling the caller happened to pass.
+		expect(session.name).toBe("INBOX");
 		const selectLine = server.commandLines.find((l) => l.verb === "SELECT");
 		expect(selectLine).toBeDefined();
 		expect(selectLine!.verb).toBe("SELECT");
@@ -146,12 +150,12 @@ complianceTest(
 // illegal. The matcher accepts ONLY the quoted form or a literal
 // announcement ({10} sync / {10+} LITERAL- non-sync; 10 = octet count of
 // "New Folder"); any bare-atom transmission fails the script.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-5.1-5"],
 		profiles: ["rev2"],
 		title: "mailbox name containing atom-specials is sent as quoted string or literal",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -168,8 +172,8 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("New Folder");
 		await server.assertCompleted();
-		// When implemented: the expectLine above is the primary assertion; the
-		// checks below re-verify whichever RFC-valid alternative was chosen.
+		// The expectLine above is the primary assertion; the checks below
+		// re-verify whichever RFC-valid alternative was chosen.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		if (createLine!.literals.length > 0) {
@@ -184,18 +188,29 @@ complianceTest(
 );
 
 // ── RFC9051-5.1-6: '#'/'&' avoided except in their conventions (SHOULD) ───
-// The consumer's chosen name "Résumé" contains neither '#' nor '&'. In a
-// rev2 session names are Net-Unicode, so a conformant client forwards the
-// UTF-8 name and never INTRODUCES '&' (a legacy mod-UTF-7 encoder would
-// emit "R&AOk-sum&AOk-" — '&' used outside its convention here, since the
-// Appendix A.1 escape convention is rev1-interop guidance, inapplicable to
-// this rev2 session) nor a conventional namespace '#' prefix.
+// The consumer's chosen name "Résumé" contains neither '#' nor '&'. REAL
+// SIGNAL (M2.3): driver.create() is wired.
+//
+// '&' assertion revised at M2.3 (this test previously asserted NO '&' at
+// all, on the reading that Appendix A.1 is "inapplicable to a rev2
+// session"). The catalog entry's own observability note frames the
+// violation as an embedded '&' "NOT intended as the Appendix A.1 escape
+// convention" — and this client deliberately speaks rev1-compatible syntax
+// to rev2 servers (spec §3.4: IMAP4rev2 is never auto-ENABLEd — the same
+// settled posture behind the adjudicated RFC9051-A-1 deviation), so every
+// rev2-server session IS the rev1-interop mode Appendix A.1 exists for.
+// Its mod-UTF-7 name encoding ("R&AOk-sum&AOk-", '&' as the shift/escape
+// character) is therefore '&' "used in that convention" — exactly the
+// requirement's exception clause. What the SHOULD forbids is '&' OUTSIDE
+// the convention: a bare, unshifted '&' or a malformed shift. The
+// assertion below accepts '&' only as a well-formed A.1 shift/escape
+// ('&' + modified-BASE64 run + '-') and still rejects any bare '&' and any
+// client-introduced '#'.
 complianceTest(
 	{
 		reqs: ["RFC9051-5.1-6"],
 		profiles: ["rev2"],
-		title: "client does not introduce '#' or '&' into a mailbox name that has neither",
-		expectFailure: "unimplemented",
+		title: "client does not introduce '#' or unconventional '&' into a mailbox name that has neither",
 		timeout: 5000,
 	},
 	async () => {
@@ -215,16 +230,26 @@ complianceTest(
 		// Logical name "Résumé" — no '#'/'&' anywhere in the consumer's name.
 		await driver.create("Résumé");
 		await server.assertCompleted();
-		// When implemented: no client-introduced '#' or '&' may appear in the
-		// transmitted name — neither on the command line nor in a literal
-		// payload.
+		// No client-introduced '#', and no '&' outside the Appendix A.1
+		// convention, may appear in the transmitted name — neither on the
+		// command line nor in a literal payload. Stripping every well-formed
+		// A.1 shift/escape ('&' + modified-BASE64 alphabet run + '-') must
+		// leave no '&' behind: a leftover '&' is a bare/unconventional one.
+		const stripConventionalShifts = (s: string): string =>
+			s.replace(/&[A-Za-z0-9+,]*-/g, "");
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
-		expect(createLine!.args, "no '&' may be introduced (e.g., mod-UTF-7)").not.toContain("&");
+		expect(
+			stripConventionalShifts(createLine!.args),
+			"no '&' outside the Appendix A.1 convention may be introduced",
+		).not.toContain("&");
 		expect(createLine!.args, "no conventional '#' may be introduced").not.toContain("#");
 		for (const literal of createLine!.literals) {
 			const payload = literal.toString("utf8");
-			expect(payload, "literal name must not gain '&'").not.toContain("&");
+			expect(
+				stripConventionalShifts(payload),
+				"literal name must not gain an unconventional '&'",
+			).not.toContain("&");
 			expect(payload, "literal name must not gain '#'").not.toContain("#");
 		}
 	},
@@ -236,12 +261,12 @@ complianceTest(
 // client transmits the hierarchical name "Parent/Child" (using the server's
 // '/' delimiter, as reported in the rev2 SELECT data set's LIST line), the
 // wire form is left-to-right with the single '/' separator at every level.
+// REAL SIGNAL (M2.3): driver.create() is wired.
 complianceTest(
 	{
 		reqs: ["RFC9051-5.1.1-1"],
 		profiles: ["rev2"],
 		title: "hierarchical mailbox name is emitted left-to-right with a single separator",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -258,7 +283,7 @@ complianceTest(
 		await driver.login("user@example.com", "s3cret");
 		await driver.create("Parent/Child");
 		await server.assertCompleted();
-		// When implemented: re-verify the single-distinct-separator property.
+		// Re-verify the single-distinct-separator property.
 		const createLine = server.commandLines.find((l) => l.verb === "CREATE");
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
@@ -311,7 +336,6 @@ complianceTest(
 		reqs: ["RFC9051-5.2-2"],
 		profiles: ["rev2"],
 		title: "client does not depend on NOOP (or any command) returning mailbox size",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -326,8 +350,8 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user@example.com", "s3cret");
-		// When noop() is implemented, the client must complete normally even
-		// though the server did not include a mailbox size (EXISTS) update.
+		// The client must complete normally even though the server did not
+		// include a mailbox size (EXISTS) update.
 		await driver.noop();
 		await server.assertCompleted();
 	},
@@ -351,7 +375,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -391,7 +415,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-2"],
 		profiles: ["rev2"],
 		title: "client completes continuation-request negotiation before sending the next command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -433,7 +456,6 @@ defineAcceptanceTable({
 	name: "client waits for completion before sending a sequence-number command after a non-FETCH/STORE/SEARCH",
 	profiles: ["rev2"],
 	timeout: 5000,
-	expectFailure: "unimplemented",
 	rows: [
 		{
 			req: "RFC9051-5.5-3",
@@ -480,7 +502,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-4"],
 		profiles: ["rev2"],
 		title: "client waits for UID command completion before sending a sequence-number command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -527,7 +548,6 @@ complianceTest(
 		reqs: ["RFC9051-5.5-5"],
 		profiles: ["rev2"],
 		title: "client keeps UID SEARCH sequence-number args bound to pre-EXPUNGE numbering",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -104,11 +104,8 @@ const rfc5161: CatalogModule = {
 				"as a complete, independently normative sentence. Conditional on the client using " +
 				"ENABLE at all. Word-for-word identical to RFC9051-6.3.1-2 (rev2's own baseline text " +
 				"for the same duty); tagged rev1-only here per this module's rev2-core cross-" +
-				"reference. Currently self-actualizing fail: driver.enable() throws " +
-				"NotImplementedError unconditionally, so the client has no ENABLE surface at all — " +
-				"trivially it cannot violate this ordering, but it also cannot exercise the " +
-				"authenticated-state ENABLE path the RFC anticipates, which the compliance suite " +
-				"records as a failure for this entry.",
+				"reference. driver.enable() is genuinely real, so the authenticated-state ENABLE " +
+				"path (and this ordering prohibition) is a real observation, not a vacuous one.",
 		},
 		{
 			id: "RFC5161-3.1-3",
@@ -167,10 +164,8 @@ const rfc5161: CatalogModule = {
 				"client must accept a tagged OK completing an ENABLE command whose ENABLED response " +
 				"names none of the requested extensions (or names fewer than requested) as a " +
 				"successful command completion, not a failure. Has no RFC 9051 §6.3.1 restatement, " +
-				"so it remains source-of-truth via this document alone for both profiles. Currently " +
-				"self-actualizing fail: driver.enable() throws NotImplementedError unconditionally, " +
-				"so the client has no ENABLE surface capable of completing (with an empty or non-" +
-				"empty ENABLED response) at all.",
+				"so it remains source-of-truth via this document alone for both profiles. " +
+				"driver.enable() is genuinely real, so this row passes for real.",
 		},
 	],
 };

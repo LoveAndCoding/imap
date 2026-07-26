@@ -18,7 +18,7 @@ const rfc5524: CatalogModule = {
 		"prose); §3 " +
 		"'This extension is available in any IMAP server implementation that includes " +
 		"URLAUTH=BINARY within its capability string' and §5 ABNF 'capability =/ " +
-		'\"URLAUTH=BINARY\"\' are the authoritative forms and are what this catalog\'s capability-' +
+		'"URLAUTH=BINARY"\' are the authoritative forms and are what this catalog\'s capability-' +
 		"gate entry cites). Per the task's reconciliation instruction, this file cross-references " +
 		"RFC4467 ids for duties already cataloged there (the unextended command/response shape, " +
 		"the base capability-gating pattern, the not-selected-mailbox-required behavior) rather " +
@@ -57,7 +57,7 @@ const rfc5524: CatalogModule = {
 		"notes rather than restating shared unextended-URLFETCH duties.\n\n" +
 		"RFC 8174 discipline: RFC 5524 predates RFC 8174 and cites RFC 2119 only (§2: 'The key " +
 		"words \"MUST\", \"MUST NOT\", \"REQUIRED\", \"SHALL\", \"SHALL NOT\", \"SHOULD\", \"SHOULD " +
-		'NOT\", \"RECOMMENDED\", \"MAY\", and \"OPTIONAL\" in this document are to be interpreted as ' +
+		'NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as ' +
 		"described in RFC 2119 [KEYWORDS]'), so lowercase 'must'/'should' were never normative " +
 		"here anyway; every extracted entry rests on an UPPERCASE RFC 2119 keyword in its source " +
 		"sentence EXCEPT the capability-gate entry (RFC5524-3-1, judgment call parallel to " +
@@ -125,7 +125,7 @@ const rfc5524: CatalogModule = {
 				"form from the unextended RFC4467-7-3/RFC4467-9-3 'URLFETCH 1*(SP url-full)' shape. " +
 				"Testable black-box: script an extended-parameter URLFETCH and assert the client " +
 				'emits the parenthesized grouping. Conditional; standalone in rev2, so ' +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC5524-3.1-2",
@@ -145,7 +145,7 @@ const rfc5524: CatalogModule = {
 				"client's per-URL parameter list in an extended URLFETCH never contains both the " +
 				'literal token \'BINARY\' and the literal token \'BODY\' together (BODYPARTSTRUCTURE ' +
 				"may still accompany either). Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC5524-3.1-3",
@@ -223,7 +223,7 @@ const rfc5524: CatalogModule = {
 				"nstring parse duty. Testable black-box: script an extended URLFETCH exchange whose " +
 				"response carries one or more parenthesized metadata groups and assert the client " +
 				"parses it without erroring. Conditional; standalone in rev2, so " +
-				'[\"rev1\",\"rev2\"].',
+				'["rev1","rev2"].',
 		},
 		{
 			id: "RFC5524-3.2-2",
@@ -254,7 +254,7 @@ const rfc5524: CatalogModule = {
 				"metadata ITEM within the parenthesized response is NIL because decoding failed. " +
 				"Testable black-box: script BINARY-as-literal8, BINARY-as-nstring, and BINARY-as-NIL " +
 				"response variants and assert the client accepts each. Conditional; standalone in " +
-				'rev2, so [\"rev1\",\"rev2\"].',
+				'rev2, so ["rev1","rev2"].',
 		},
 	],
 };

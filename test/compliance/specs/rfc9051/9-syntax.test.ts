@@ -28,7 +28,7 @@ import { expectLine, reply, send } from "../../harness/script";
 import { defineAcceptanceTable } from "../../runner/acceptance-table";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { greet, selectExchange, sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -72,7 +72,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Capability names all lowercase — client must accept them.
 				reply("OK done", ["* CAPABILITY imap4rev2 literal-"]),
@@ -94,27 +94,27 @@ complianceTest(
 );
 
 // Server status tokens ("ok") in lowercase are equally valid per §9-2.
-// The client's status-token dispatch is case-sensitive UNIFORMLY (a plain
-// case-sensitive includes() over ["OK","NO","BAD","PREAUTH","BYE"] shared by
-// the greeting and tagged/untagged response paths — src/parser/structure/
-// status.ts), so the lowercase "* ok" greeting itself never parses as a
-// status response and connect() hangs until the test timeout. Genuine
-// case-insensitivity violation (same parser defect class as the rev1
-// RFC3501-9-2 finding — uniform, not path-specific).
+// FIXED (M0.4): the status-token dispatch (src/parser/structure/status.ts,
+// shared by the greeting and tagged/untagged response paths) now compares
+// ["OK","NO","BAD","PREAUTH","BYE"] case-insensitively, so a lowercase
+// "* ok" greeting parses as a status response instead of hanging until the
+// test timeout (same fix as the rev1 RFC3501-9-2 case -- uniform, not
+// path-specific).
 complianceTest(
 	{
 		reqs: ["RFC9051-9-2"],
 		profiles: ["rev2"],
 		title: "client accepts response type tokens in mixed case",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				// "ok" (lowercase) is a valid greeting per RFC 9051 §9.
-				send("* ok [CAPABILITY IMAP4rev2 LITERAL-] ready\r\n"),
+				// "ok" (lowercase) is a valid greeting per RFC 9051 §9. Deliberately
+				// no inline CAPABILITY code — an inline greeting capability would
+				// let `connect()` skip the CAPABILITY round trip below entirely.
+				send("* ok ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("ok done", ["* capability imap4rev2 literal-"]),
 			],
@@ -141,7 +141,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -177,7 +177,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL- ID"]),
 				expectLine(command("ID")),
@@ -226,7 +226,7 @@ defineAcceptanceTable({
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				// Deliver the unsolicited FLAGS response alongside CAPABILITY.
 				reply("OK done", ["* CAPABILITY IMAP4rev2 LITERAL-", row.flagsLine]),
@@ -273,7 +273,7 @@ defineAcceptanceTable({
 		const server = await f.startServer();
 		server.arm([
 			[
-				...greet({ profile: "rev2" }),
+				send("* OK ready\r\n"), // bare greeting: forces the CAPABILITY round trip below
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", [
 					"* CAPABILITY IMAP4rev2 LITERAL-",
@@ -305,7 +305,6 @@ complianceTest(
 		reqs: ["RFC9051-9-7"],
 		profiles: ["rev2"],
 		title: "client accepts BODYSTRUCTURE responses with unknown body-extension fields",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

@@ -67,7 +67,11 @@
  * parameter list, BINARY+BODY together — is rejected, never vacuously
  * accepted.
  *
- * REAL-SIGNAL-FIRST — PROBED BEFORE WRITING (connectLow):
+ * REAL-SIGNAL-FIRST — PROBED BEFORE WRITING (connectLow), historical record
+ * of the pre-M5.5 defect these tests measured (FIXED as of M5.5 —
+ * `src/parser/structure/urlauth.ts`'s `GenUrlAuthResponse`/`UrlFetchResponse`
+ * are now registered in `UntaggedResponse`'s matcher checklist, see that
+ * module's own header comment):
  *  - `* GENURLAUTH <url-full>`, `* URLFETCH <url-full> <nstring>`, and the
  *    RFC 5524 extended `* URLFETCH <url-full> (<param> <value>) ...` form:
  *    grepped src/parser for "GENURLAUTH"/"URLFETCH" — zero hits. Neither
@@ -82,8 +86,8 @@
  *    `done(error)`, and Connection attaches no 'error' listener to
  *    `this.parser` — the parser stream dies silently mid-connection
  *    (identical failure shape to every other Phase 6 untagged-response
- *    finding in this batch: LANGUAGE, COMPARATOR, CONVERTED). Genuine,
- *    measured HONEST VIOLATIONS below (expectFailure: "violation").
+ *    finding in this batch: LANGUAGE, COMPARATOR, CONVERTED). Were genuine,
+ *    measured HONEST VIOLATIONS before M5.5; now real passes below.
  *  - `[URLMECH INTERNAL ...]` resp-code: text.code.ts's named-kind switch has
  *    no URLMECH entry, so it falls to the generic `default: new
  *    AtomTextCode(kind, contents)` branch — this DOES parse (no throw) and
@@ -154,7 +158,6 @@ complianceTest(
 		reqs: ["RFC4467-8-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* GENURLAUTH <url-full>' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -206,7 +209,6 @@ complianceTest(
 		reqs: ["RFC4467-8-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an untagged '* URLFETCH <url-full> <literal-body>' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -257,7 +259,6 @@ complianceTest(
 		reqs: ["RFC5524-3.2-1", "RFC5524-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client accepts an extended '* URLFETCH <url-full> (BINARY <literal8>)' response",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -383,15 +384,16 @@ complianceTest(
 // (self-actualizing prohibition)
 // ═════════════════════════════════════════════════════════════════════════════
 // A compliant client never emits GENURLAUTH/URLFETCH/RESETKEY against a
-// server that omitted URLAUTH from CAPABILITY. genurlauth()/urlfetch()/
-// resetkey() throw NotImplementedError today; the negative transcript guard
-// documents the duty. login() drives the honest 'unimplemented' outcome.
+// server that omitted URLAUTH from CAPABILITY. M5.5: all three are now
+// wired to `client.urlauth`'s facet methods, whose capability gate rejects
+// synchronously (zero bytes, I-9) before any of the three verbs would
+// reach the wire; the negative transcript guard documents the duty (none
+// of the three are called here, so it holds trivially).
 complianceTest(
 	{
 		reqs: ["RFC4467-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits GENURLAUTH/URLFETCH/RESETKEY without the URLAUTH capability",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -399,7 +401,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -413,13 +415,13 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §7/§9: 'RESETKEY' alone, 'RESETKEY <mailbox>', or 'RESETKEY <mailbox>
 // <mechanism> [<mechanism> ...]'. The ABNF proves a mechanism can never
-// appear without a preceding mailbox. resetkey() throws today.
+// appear without a preceding mailbox. M5.5: resetkey() is now wired to
+// `client.urlauth.resetKey(...)`.
 complianceTest(
 	{
 		reqs: ["RFC4467-7-1", "RFC4467-9-1"],
 		profiles: ["rev1", "rev2"],
 		title: "RESETKEY command form: bare, mailbox-only, and mailbox+mechanism(s)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -436,10 +438,10 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.resetkey(); // throws NotImplementedError today
-		await driver.resetkey("INBOX").catch(() => undefined);
-		await driver.resetkey("INBOX", ["XSAMPLE"]).catch(() => undefined);
+		await driver.login("user", "pass");
+		await driver.resetkey();
+		await driver.resetkey("INBOX");
+		await driver.resetkey("INBOX", ["XSAMPLE"]);
 		await server.assertCompleted();
 		const resets = server.commandLines.filter((l) => l.verb === "RESETKEY");
 		expect(resets.length, "RESETKEY must have been emitted").toBeGreaterThan(0);
@@ -454,14 +456,13 @@ complianceTest(
 // §5 worked example: 'a775 GENURLAUTH "imap://joe@example.com/INBOX/;uid=20/
 // ;section=1.2;urlauth=submit+fred" INTERNAL'. The matcher anchors the exact
 // url-rump + mechanism pairing (the url-rump itself carries the
-// ';urlauth=submit+fred' access identifier per RFC4467-3-6). genurlauth()
-// throws today.
+// ';urlauth=submit+fred' access identifier per RFC4467-3-6). M5.5:
+// genurlauth() is now wired to `client.urlauth.generate(...)`.
 complianceTest(
 	{
 		reqs: ["RFC4467-7-2", "RFC4467-9-2", "RFC4467-3-6"],
 		profiles: ["rev1", "rev2"],
 		title: "GENURLAUTH command form: url-rump (with access identifier) SP mechanism",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -477,8 +478,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]);
 		await server.assertCompleted();
 		const gen = server.commandLines.find((l) => l.verb === "GENURLAUTH");
 		expect(gen, "GENURLAUTH must have been emitted").toBeDefined();
@@ -498,14 +499,14 @@ function escapeRegExp(s: string): string {
 // ═════════════════════════════════════════════════════════════════════════════
 // §7 worked example: 'a205 URLFETCH "imap://joe@example.com/INBOX/;uid=20/
 // ;section=1.2;urlauth=submit+fred:internal:91354a...92038"'. §7/§8: this
-// command does not require any mailbox to be selected. urlfetch() throws
-// today; exercised in authenticated (not-selected) state.
+// command does not require any mailbox to be selected. M5.5: urlfetch() is
+// now wired to `client.urlauth.fetch(...)`; exercised in authenticated
+// (not-selected) state.
 complianceTest(
 	{
 		reqs: ["RFC4467-7-3", "RFC4467-9-3", "RFC4467-8-4"],
 		profiles: ["rev1", "rev2"],
 		title: "URLFETCH command form: one or more url-full arguments, no mailbox selected",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -522,8 +523,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.urlfetch([SAMPLE_AUTHORIZED_URL]); // throws NotImplementedError today — no SELECT preceded it
+		await driver.login("user", "pass");
+		await driver.urlfetch([SAMPLE_AUTHORIZED_URL]); // no SELECT preceded it
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "URLFETCH");
 		expect(fetch, "URLFETCH must have been emitted with no mailbox selected").toBeDefined();
@@ -543,14 +544,13 @@ complianceTest(
 		reqs: ["RFC4467-3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client never constructs a GENURLAUTH request for a whole-mailbox URL",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(urlauthCaps(ctx.profile), { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		// A whole-mailbox URL (no ;uid=/;section= component) — MUST NOT be used.
 		await driver
 			.genurlauth([
@@ -571,13 +571,12 @@ complianceTest(
 // Each form's literal wire shape is fixed: 'user+<userid>', the bare atom
 // 'authuser', and the bare atom 'anonymous' (no userid suffix on the latter
 // two). The matcher anchors the url-rump's trailing ';urlauth=' component
-// for each form. genurlauth() throws today.
+// for each form. M5.5: genurlauth() is now wired to `client.urlauth.generate(...)`.
 complianceTest(
 	{
 		reqs: ["RFC4467-3-3"],
 		profiles: ["rev1", "rev2"],
 		title: 'GENURLAUTH url-rump construction: ;urlauth=user+fred',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -593,8 +592,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]);
 		await server.assertCompleted();
 		const gen = server.commandLines.find((l) => l.verb === "GENURLAUTH");
 		expect(gen, "GENURLAUTH must have been emitted").toBeDefined();
@@ -607,7 +606,6 @@ complianceTest(
 		reqs: ["RFC4467-3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "GENURLAUTH url-rump construction: ;urlauth=authuser (bare atom, no userid)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -623,8 +621,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]);
 		await server.assertCompleted();
 		const gen = server.commandLines.find((l) => l.verb === "GENURLAUTH");
 		expect(gen, "GENURLAUTH must have been emitted").toBeDefined();
@@ -639,7 +637,6 @@ complianceTest(
 		reqs: ["RFC4467-3-5"],
 		profiles: ["rev1", "rev2"],
 		title: "GENURLAUTH url-rump construction: ;urlauth=anonymous (bare atom, no userid)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -655,8 +652,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.genurlauth([{ url: rump, mechanism: "INTERNAL" }]);
 		await server.assertCompleted();
 		const gen = server.commandLines.find((l) => l.verb === "GENURLAUTH");
 		expect(gen, "GENURLAUTH must have been emitted").toBeDefined();
@@ -678,7 +675,6 @@ complianceTest(
 		reqs: ["RFC5524-3-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits an extended (parameterized) URLFETCH without the URLAUTH=BINARY capability",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -687,7 +683,7 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(caps, { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
 		await server.assertCompleted();
 		expect(
 			server.transcript.clientLines(),
@@ -702,15 +698,14 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §3.1/§5 worked example: 'A001 URLFETCH ("imap://...BINARY" BINARY)'. The
 // matcher anchors the parenthesized grouping and the closed parameter
-// vocabulary. urlfetch() throws today (this driver's urlfetch() signature
-// takes only bare URLs — the extended per-URL parameter form is pinned on
-// the wire for the future via the scripted server).
+// vocabulary. M5.5: urlfetch() now accepts an `opts` argument
+// (`{ binary, body, bodyPartStructure }`) that selects the RFC 5524
+// extended, parenthesized wire form.
 complianceTest(
 	{
 		reqs: ["RFC5524-3.1-1", "RFC5524-3.1-4"],
 		profiles: ["rev1", "rev2"],
 		title: 'extended URLFETCH command form: URLFETCH ("<url-full>" BINARY)',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -729,11 +724,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		// This driver's urlfetch() takes bare URLs only; the extended per-URL
-		// parameter form is documented on the wire above for when a richer
-		// signature exists. Exercise the closest available surface.
-		await driver.urlfetch([SAMPLE_AUTHORIZED_URL]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.urlfetch([SAMPLE_AUTHORIZED_URL], { binary: true });
 		await server.assertCompleted();
 	},
 );
@@ -743,22 +735,23 @@ complianceTest(
 // MUST NOT repeat a metadata parameter (self-actualizing prohibitions)
 // ═════════════════════════════════════════════════════════════════════════════
 // A compliant client's per-URL parameter list never contains both BINARY and
-// BODY, and never repeats the same parameter token. Driven as a negative
-// transcript guard; urlfetch() throws today.
+// BODY, and never repeats the same parameter token. Driven: the caller
+// actually asks for BOTH BINARY and BODY together (the illegal combination)
+// -- `UrlFetchCommand`'s own constructor refuses locally (RangeError, zero
+// bytes, RFC5524-3.1-2) rather than let it reach the wire.
 complianceTest(
 	{
 		reqs: ["RFC5524-3.1-2", "RFC5524-3.1-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client never emits an extended URLFETCH with BINARY+BODY together, or a repeated parameter",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([[...sessionPrelude(urlauthCaps(ctx.profile), { profile: ctx.profile, login: true })]]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.urlfetch([SAMPLE_AUTHORIZED_URL]).catch(() => undefined);
+		await driver.login("user", "pass");
+		await driver.urlfetch([SAMPLE_AUTHORIZED_URL], { binary: true, body: true }).catch(() => undefined);
 		const clientLines = server.transcript.clientLines();
 		expect(
 			/URLFETCH \([^)]*\bBINARY\b[^)]*\bBODY\b/i.test(clientLines) ||

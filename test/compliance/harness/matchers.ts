@@ -22,7 +22,6 @@ export interface LineMatcher {
  */
 export function isValidTag(tag: string): boolean {
 	if (!tag.length) return false;
-	// eslint-disable-next-line no-control-regex
 	return /^[\x21-\x7e]+$/.test(tag) && !/[(){%*"\\+ ]/.test(tag);
 }
 

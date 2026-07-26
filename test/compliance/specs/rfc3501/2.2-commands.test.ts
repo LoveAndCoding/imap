@@ -158,7 +158,6 @@ complianceTest(
 		reqs: ["RFC3501-6.1.2-1"],
 		profiles: ["rev1"],
 		title: "client offers a way to issue NOOP",
-		expectFailure: "unimplemented",
 	},
 	async () => {
 		const server = await f.startServer();
@@ -172,7 +171,6 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		// Throws NotImplementedError today → annotated 'unimplemented'.
 		await driver.noop();
 		await server.assertCompleted();
 	},

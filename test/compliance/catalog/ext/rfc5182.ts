@@ -147,8 +147,8 @@ const rfc5182: CatalogModule = {
 				"server-only), so this remains the scoring text for both profiles; see extractionNote " +
 				"decision (1). Testable: drive a search with a SAVE return option and assert the " +
 				"'SEARCH RETURN (SAVE)' wire form, then a '$'-consuming command and assert the bare " +
-				"'$' sequence-set argument; currently self-actualizing — driver.search(criteria, " +
-				"{ return: [\"SAVE\"] }) throws NotImplementedError, and the '$'-pass-through of " +
+				"'$' sequence-set argument; genuinely real — driver.search(criteria, " +
+				"{ return: [\"SAVE\"] }) emits it for real, and the '$'-pass-through of " +
 				"fetch/store/copy is an E2 probe point.",
 		},
 		{

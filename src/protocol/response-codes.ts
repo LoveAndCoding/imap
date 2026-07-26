@@ -1,0 +1,310 @@
+/**
+ * Typed response codes (spec §5.5). The full discriminated union covering
+ * every RFC 3501/9051 §7.1 code plus every extension code the catalog cites
+ * accretes across M2/M3/M4 as each command needs its own codes -- this
+ * module does not try to pre-populate all of it at once. M2.2 (SELECT/
+ * EXAMINE) is the first consumer, so it adds exactly the variants that
+ * command's response family emits: CLOSED, PERMANENTFLAGS, UIDVALIDITY,
+ * UIDNEXT, HIGHESTMODSEQ, NOMODSEQ, UIDNOTSTICKY, MAILBOXID. M2.3 (CREATE)
+ * adds USEATTR -- the RFC 6154 §3 code a server puts on a tagged NO when it
+ * rejects an unsupported/duplicate special-use attribute; it carries no
+ * arguments, so the variant is a bare name. Everything else
+ * UIDNEXT, HIGHESTMODSEQ, NOMODSEQ, UIDNOTSTICKY, MAILBOXID. M2.9 (STATUS)
+ * adds APPENDLIMIT -- RFC 7889's atom also appears as a resp-code (e.g. on
+ * a tagged NO rejecting an over-limit APPEND, or an informational untagged
+ * OK), not only as a STATUS item; typed here since STATUS is where
+ * APPENDLIMIT-as-item is first built, and M2.11's APPEND reuses it for the
+ * resp-code form. M2.11 (APPEND) adds APPENDUID/TOOBIG/BADURL (RFC 4315/4469).
+ * M3.8 (COPY/MOVE) adds COPYUID (RFC 4315). M3.11's §7 resp-code sweep adds
+ * MODIFIED (RFC 7162 §3.2.5.1) -- STORE's own `ModifiedTextCode` handling
+ * (M3.6, `commands/store.ts`) predates this variant and reads the parser
+ * class directly off the tagged response, but the code went untyped in this
+ * module and in `toTypedResponseCode()`'s generic path (`ServerNoError`/
+ * `ServerBadError.code`, `ResponseCollector.codes()`) until now. The sweep
+ * also audited UNKNOWN-CTE (RFC 3516) and EXPUNGEISSUED (RFC 5530) and left
+ * both untyped ON PURPOSE: neither's catalog entry
+ * (`test/compliance/catalog/ext/rfc3516.ts`, `rfc9051/s7-responses-a.ts`)
+ * imposes a client-binding duty beyond tolerating/ignoring the code (RFC
+ * 3501/9051 §7.1's "ignore unrecognized response codes"), and both are
+ * argument-less on the wire -- the open fallback already renders them
+ * correctly, and a dedicated variant would carry no behavior a caller could
+ * distinguish from `{ name, args: null }`. M4.14 (FILTERS, RFC 5466) adds
+ * UNDEFINED-FILTER -- the parser's `AtomTextCode` already preserves this
+ * BARE resp-code argument (its bare-vs-parenthesized split, `parser/
+ * structure/text.code.ts`, predates this milestone), so this variant is a
+ * dedicated-shape upgrade over the open fallback rather than a data-loss
+ * fix: it gives callers a structured `filterName` field instead of parsing
+ * the generic `args` string themselves. Everything else
+ * -- known-but-not-yet-typed and genuinely unknown codes alike -- still
+ * surfaces through the open `{ name, args }` fallback member (never an
+ * error, per the tolerance invariant I-6): `commands/collector.ts`'s
+ * `toTypedResponseCode()` is the one place that builds these from the
+ * parser's internal `TextCode` variants.
+ */
+// M5.4 (METADATA, RFC 5464) adds the "METADATA" variant below -- LONGENTRIES/
+// MAXSIZE/TOOMANY/NOPRIVATE, the four sub-forms one wire keyword fronts.
+export type TypedResponseCode =
+	| {
+			/** Discriminant. CLOSED carries no arguments (RFC 3501/9051 §7.1). */
+			name: "CLOSED";
+	  }
+	| {
+			/** Discriminant. */
+			name: "PERMANENTFLAGS";
+			/** The permanent flags the client may set for this mailbox (`\*`
+			 *  included when new keywords may be created, RFC 3501/9051 §7.1). */
+			flags: string[];
+	  }
+	| {
+			/** Discriminant. */
+			name: "UIDVALIDITY";
+			/** The mailbox's current UIDVALIDITY value (RFC 3501/9051 §7.1). */
+			value: number;
+	  }
+	| {
+			/** Discriminant. */
+			name: "UIDNEXT";
+			/** The predicted next UID for this mailbox (RFC 3501/9051 §7.1). */
+			value: number;
+	  }
+	| {
+			/** Discriminant. */
+			name: "HIGHESTMODSEQ";
+			/** The mailbox's highest mod-sequence value (RFC 7162 §3.1.1/§3.1.2). */
+			value: bigint;
+	  }
+	| {
+			/** Discriminant. Signals the mailbox does not support persistent
+			 *  mod-sequences (RFC 7162 §3.1.2) -- carries no argument. */
+			name: "NOMODSEQ";
+	  }
+	| {
+			/** Discriminant. Signals UIDs assigned in this mailbox session are
+			 *  not permanent (RFC 3501/9051 §7.1) -- carries no argument. */
+			name: "UIDNOTSTICKY";
+	  }
+	| {
+			/** Discriminant. */
+			name: "MAILBOXID";
+			/** The mailbox's stable OBJECTID (RFC 8474 §4.3); `null` when the
+			 *  server sent no value. */
+			value: string | null;
+	  }
+	| {
+			/** Discriminant. USEATTR carries no arguments (RFC 6154 §3). */
+			name: "USEATTR";
+	  }
+	/** RFC 7889: `value` is the advertised limit; `null` when the code
+	 *  carried no (or a non-numeric) argument. */
+	| {
+			/** Discriminant. */
+			name: "APPENDLIMIT";
+			/** The advertised append size limit in octets; `null` when the code
+			 *  carried no (or a non-numeric) argument. */
+			value: bigint | null;
+	  }
+	/** RFC 4315 (UIDPLUS): tagged OK on a successful APPEND. `uid` is the
+	 *  FIRST assigned UID (correct, on its own, for the single-message APPEND
+	 *  case, M2.11). `uids` (M3.10) is the FULL, ascending expansion of the
+	 *  wire's `uid-set` -- for a single-message APPEND this is always the
+	 *  one-element array `[uid]`; for a MULTIAPPEND batch (RFC 3502) it
+	 *  carries one UID per appended message, in append order (RFC 4315 §3's
+	 *  `uid-set` widened to cover every message in the batch,
+	 *  RFC3502-uidplus-1) -- `commands/append.ts`'s `MultiAppendCommand`
+	 *  pairs this positionally onto its message array. */
+	| {
+			/** Discriminant. */
+			name: "APPENDUID";
+			/** UIDVALIDITY of the mailbox the message(s) were appended to
+			 *  (RFC 4315 §3). */
+			uidValidity: number;
+			/** The first assigned UID -- correct on its own for the
+			 *  single-message APPEND case (M2.11). */
+			uid: number;
+			/** Full ascending expansion of the appended UIDs, one per message,
+			 *  in append order (M3.10; RFC 3502 MULTIAPPEND). */
+			uids: number[];
+	  }
+	/** RFC 4469 (CATENATE) / RFC 7889 (APPENDLIMIT): tagged NO when an
+	 *  APPEND's resulting message would exceed a size limit. Carries no
+	 *  argument. */
+	| {
+			/** Discriminant. TOOBIG carries no argument. */
+			name: "TOOBIG";
+	  }
+	/** RFC 4469 (CATENATE): tagged NO when a CATENATE URL part could not be
+	 *  fetched/resolved. `url` is the offending IMAP URL, verbatim (quotes
+	 *  stripped if the server quoted it). */
+	| {
+			/** Discriminant. */
+			name: "BADURL";
+			/** The offending IMAP URL, verbatim (quotes stripped if the server
+			 *  quoted it). */
+			url: string;
+	  }
+	/** RFC 4315 (UIDPLUS): COPY's tagged OK, or MOVE's untagged OK arriving
+	 *  BEFORE the EXPUNGE responses (RFC9051-6.4.8-1) -- M3.8. `sourceUids`/
+	 *  `destUids` are position-paired (the i-th source UID landed at the
+	 *  i-th destination UID), expanded from the wire's `uid-set` ranges into
+	 *  individual numbers in ascending order. */
+	| {
+			/** Discriminant. */
+			name: "COPYUID";
+			/** UIDVALIDITY of the destination mailbox (RFC 4315 §3). */
+			uidValidity: number;
+			/** Ascending expansion of the source message UIDs, position-paired
+			 *  with `destUids` (the i-th source UID landed at the i-th dest
+			 *  UID). */
+			sourceUids: number[];
+			/** Ascending expansion of the destination UIDs assigned to each
+			 *  source message, position-paired with `sourceUids`. */
+			destUids: number[];
+	  }
+	/** RFC 7162 §3.2.5.1 (CONDSTORE): rides a STORE/UID STORE's TAGGED
+	 *  response when `UNCHANGEDSINCE` prevented the command from touching
+	 *  every requested message -- `uids` is the ascending expansion of the
+	 *  wire's sequence-set/uid-set of messages that were NOT modified (M3.6's
+	 *  `StoreResult.modified`, §5.5 M3.11 sweep). `unchangedSince` is
+	 *  CONDSTORE-inert this milestone (`StoreModifiers` throws before any
+	 *  `StoreCommand` is constructed, so no command this client sends can
+	 *  actually provoke a real server MODIFIED today) -- typed anyway so a
+	 *  non-conformant/defensive server's unprompted MODIFIED still renders
+	 *  structured data through `toTypedResponseCode`/`.codes()` and
+	 *  `ServerNoError`/`ServerBadError.code`, matching every other
+	 *  structured-payload code (APPENDUID/COPYUID/PERMANENTFLAGS) rather than
+	 *  silently falling back to the open `{name, args}` shape. */
+	| {
+			/** Discriminant. */
+			name: "MODIFIED";
+			/** Ascending expansion of the UIDs/sequence numbers that were NOT
+			 *  modified because UNCHANGEDSINCE excluded them (RFC 7162
+			 *  §3.2.5.1). */
+			uids: number[];
+	  }
+	/** RFC 5466 §3.1/§4 (FILTERS), M4.14: `"UNDEFINED-FILTER" SP filter-name`
+	 *  rides a tagged NO refusing a `SEARCH FILTER <name>` that names a
+	 *  nonexistent or inaccessible stored filter. `filterName` is the bare
+	 *  (unparenthesized) atom argument, verbatim; `null` when a
+	 *  non-conformant server omits it (I-6 tolerance -- never an error). This
+	 *  is the one client-observable duty RFC 5466 itself owns: filters are
+	 *  otherwise pure RFC 5464 SETMETADATA/GETMETADATA machinery -- M5.4 adds
+	 *  both the METADATA facet and `SearchCriteria.filter` together (see
+	 *  `docs/guides/compliance-adjudications.md`'s RFC5466 entry for the M4.14/M5.4
+	 *  scope history); this resp-code variant predates and never depended on
+	 *  that carry-forward landing. */
+	| {
+			/** Discriminant. */
+			name: "UNDEFINED-FILTER";
+			/** The bare (unparenthesized) filter-name atom the server rejected;
+			 *  `null` when a non-conformant server omitted it. */
+			filterName: string | null;
+	  }
+	/** RFC 5464 §4.2.1/§4.3 (M5.4): a SINGLE wire keyword ("METADATA") fronts
+	 *  four distinct resp-text-code sub-forms -- `"METADATA" SP "LONGENTRIES"
+	 *  SP number` (tagged OK, GETMETADATA's MAXSIZE-truncation signal: the
+	 *  octet count of the largest requested value that exceeded MAXSIZE and
+	 *  was therefore omitted) and `"METADATA" SP ("MAXSIZE" SP number /
+	 *  "TOOMANY" / "NOPRIVATE")` (tagged NO, SETMETADATA failure reasons --
+	 *  value too big / too many annotations / private annotations
+	 *  unsupported on this mailbox). `name` alone can't discriminate these
+	 *  (all four share it), so `subKind` is the real tag; `value` carries the
+	 *  numeric argument for LONGENTRIES/MAXSIZE and stays `null` for the
+	 *  argument-less TOOMANY/NOPRIVATE forms -- never fabricated (I-6). */
+	| {
+			/** Discriminant. A single wire keyword fronting four distinct
+			 *  resp-text-code sub-forms (RFC 5464 §4.2.1/§4.3) -- see
+			 *  `subKind`. */
+			name: "METADATA";
+			/** Which of the four METADATA sub-forms this is: LONGENTRIES
+			 *  (GETMETADATA truncation signal) or MAXSIZE/TOOMANY/NOPRIVATE
+			 *  (SETMETADATA failure reasons). */
+			subKind: "LONGENTRIES" | "MAXSIZE" | "TOOMANY" | "NOPRIVATE";
+			/** Numeric argument for LONGENTRIES/MAXSIZE; stays `null` for the
+			 *  argument-less TOOMANY/NOPRIVATE forms. */
+			value: number | null;
+	  }
+	/** RFC 5255 §4.9 (I18NLEVEL=2), M5.11: `"BADCOMPARATOR" [SP charset]`
+	 *  rides a tagged NO refusing a COMPARATOR change none of whose
+	 *  arguments matched an installed comparator ("NO - No matching
+	 *  comparator found", RFC5255-4.9-1) — surfaced on the `ServerNoError`
+	 *  `ComparatorCommand`'s rejection carries. `charset` is the optional
+	 *  bare (unparenthesized) trailing argument, verbatim; `null` when
+	 *  absent (the common argument-less `[BADCOMPARATOR]` form — never
+	 *  fabricated, I-6). Same dedicated-shape-upgrade rationale as
+	 *  UNDEFINED-FILTER above: `AtomTextCode`'s bare-argument path already
+	 *  preserved the data, this variant just gives callers a structured
+	 *  field instead of the open `args` string. */
+	| {
+			/** Discriminant. */
+			name: "BADCOMPARATOR";
+			/** Optional bare trailing argument naming the rejected comparator's
+			 *  charset (RFC 5255 §4.9); `null` when absent, the common
+			 *  argument-less form. */
+			charset: string | null;
+	  }
+	/** RFC 2193 (mailbox referrals) / RFC 2221 (login referrals), M5.13:
+	 *  `"REFERRAL" 1*(SP <url>)` rides a tagged NO (a referred SELECT/CREATE/
+	 *  RENAME/COPY/LOGIN/..., RFC 2193 §4 / RFC 2221 §4.1), a tagged OK (RFC
+	 *  2221 §4's "personal mailboxes are elsewhere" qualified success), or an
+	 *  untagged BYE (RFC 2221 §4.2's connection-startup redirection). `urls`
+	 *  preserves EVERY space-separated URL in the server's stated preference
+	 *  order (RFC 2193 §3: first = most preferred; on a RENAME referral the
+	 *  pair is positional -- urls[0] = old name, urls[1] = new name, RFC 2193
+	 *  §4.3); it is `[]` when a non-conformant server sent no argument (I-6,
+	 *  never fabricated). URLs may be of ANY scheme (RFC 2193 §3: the client
+	 *  must be prepared for a URL of any type) and are surfaced verbatim.
+	 *  This client surfaces referrals as data on the relevant errors/results
+	 *  (spec §3.6's note: referrals are NOT a facet) and NEVER auto-follows
+	 *  one -- following a referral means opening a new connection to another
+	 *  host (RFC 2193 §4.1/RFC 2221 §4), which is the consumer's decision,
+	 *  same "no auto-XYZ magic" posture as MOVE emulation and TRYCREATE. */
+	| {
+			/** Discriminant. */
+			name: "REFERRAL";
+			/** Every space-separated URL in the server's stated preference
+			 *  order (RFC 2193 §3: first = most preferred); `[]` when a
+			 *  non-conformant server sent no argument. */
+			urls: string[];
+	  }
+	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTMESSAGES" SP nz-number`
+	 *  rides a tagged NO refusing a CONVERT/UID CONVERT whose sequence set
+	 *  names more messages than the server will convert per request -- `value`
+	 *  is that per-request ceiling, which a caller uses to size a retry with
+	 *  fewer messages (RFC5259-9-2). The parser's `AtomTextCode` already
+	 *  preserves the BARE (unparenthesized) numeric argument (same
+	 *  bare-vs-parenthesized split UNDEFINED-FILTER above rides), so -- like
+	 *  UNDEFINED-FILTER -- this variant is a dedicated-shape upgrade over the
+	 *  open `{name, args}` fallback, giving `ServerNoError.code` consumers a
+	 *  structured number instead of a string to re-parse; `null` when a
+	 *  non-conformant server omits or garbles the argument (I-6 tolerance --
+	 *  never an error, never an invented number). Surfaces as a typed error
+	 *  through the ordinary tagged-NO path (`Command.defaultOnError` ->
+	 *  `ServerNoError.code`), never a silently-swallowed failure. */
+	| {
+			/** Discriminant. */
+			name: "MAXCONVERTMESSAGES";
+			/** Per-request ceiling on the number of messages CONVERT will
+			 *  process (RFC 5259 §9); `null` when a non-conformant server
+			 *  omits or garbles the argument. */
+			value: number | null;
+	  }
+	/** RFC 5259 §9/§8.5 (CONVERT, M5.12): `"MAXCONVERTPARTS" SP nz-number` --
+	 *  the body-parts-per-message counterpart of MAXCONVERTMESSAGES above
+	 *  (RFC5259-9-3); identical shape/tolerance rationale. */
+	| {
+			/** Discriminant. */
+			name: "MAXCONVERTPARTS";
+			/** Per-request ceiling on the number of body parts CONVERT will
+			 *  process per message (RFC 5259 §9); `null` when a non-conformant
+			 *  server omits or garbles the argument. */
+			value: number | null;
+	  }
+	| {
+			/** The response code's wire name, verbatim -- this open fallback
+			 *  shape carries every known-but-not-yet-typed or genuinely unknown
+			 *  code (spec tolerance invariant I-6: never an error). */
+			name: string;
+			/** The code's raw argument text, verbatim; `null` when the code
+			 *  carried no argument. */
+			args: string | null;
+	  };

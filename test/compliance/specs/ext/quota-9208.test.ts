@@ -217,30 +217,36 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC9208-4.1.1-1 — GETQUOTA / GETQUOTAROOT / SETQUOTA command forms
 // ═════════════════════════════════════════════════════════════════════════════
-// driver.getquota/getquotaroot/setquota() throw today → unimplemented. The
-// scripted server pins the exact command atom and argument shape so, once
-// implemented, the matcher rejects a malformed command (wrong verb, missing
-// parenthesized resource list, etc.).
+// M5.2: driver.getquota/getquotaroot/setquota() now delegate to the real
+// `client.quota` facet. The scripted server pins the exact command atom and
+// argument shape so the matcher genuinely rejects a malformed command (wrong
+// verb, missing parenthesized resource list, etc.) rather than passing
+// vacuously. (Preludes below add `{ login: true }` + a `driver.login()` call —
+// missing from the original authoring pass, per the established
+// "add missing LOGIN preludes" precedent — GETQUOTA/GETQUOTAROOT/SETQUOTA are
+// gated to the authenticated/selected states, so issuing them from
+// `connectPlain()`'s bare not-authenticated connection would reject locally
+// with `StateError` before ever reaching the wire.)
 complianceTest(
 	{
 		reqs: ["RFC9208-4.1.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "GETQUOTA command form: GETQUOTA <quota-root-name>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE"]),
+				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE"], { login: true }),
 				// GETQUOTA takes exactly one quota-root-name argument.
 				expectLine(command("GETQUOTA", { args: /^"?"?$|^"[^"]*"$|^\S+$/ })),
 				reply("OK GETQUOTA completed", ['* QUOTA "" (STORAGE 10 512)']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getquota(""); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.getquota("");
 		await server.assertCompleted();
 		const getquota = server.commandLines.find((l) => l.verb === "GETQUOTA");
 		expect(getquota, "GETQUOTA must have been emitted").toBeDefined();
@@ -252,14 +258,13 @@ complianceTest(
 		reqs: ["RFC9208-4.1.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "GETQUOTAROOT command form: GETQUOTAROOT <mailbox>",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE"]),
+				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE"], { login: true }),
 				expectLine(command("GETQUOTAROOT", { args: /^"?INBOX"?$/i })),
 				reply("OK GETQUOTAROOT completed", [
 					'* QUOTAROOT INBOX ""',
@@ -268,7 +273,8 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.getquotaroot("INBOX"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.getquotaroot("INBOX");
 		await server.assertCompleted();
 		const getquotaroot = server.commandLines.find((l) => l.verb === "GETQUOTAROOT");
 		expect(getquotaroot, "GETQUOTAROOT must have been emitted").toBeDefined();
@@ -280,14 +286,15 @@ complianceTest(
 		reqs: ["RFC9208-4.1.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "SETQUOTA command form: SETQUOTA <root> (<resource> <limit> ...)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE", "QUOTASET"]),
+				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE", "QUOTASET"], {
+					login: true,
+				}),
 				// setquota-list is a parenthesized (resource-name SP limit) list.
 				expectLine(
 					command("SETQUOTA", {
@@ -298,11 +305,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setquota("", [{ resource: "STORAGE", limit: 512 }]); // throws today
+		await driver.login("user", "pass");
+		await driver.setquota("", [{ resource: "STORAGE", limit: 512 }]);
 		await server.assertCompleted();
 		const setquota = server.commandLines.find((l) => l.verb === "SETQUOTA");
 		expect(setquota, "SETQUOTA must have been emitted").toBeDefined();
-		// When implemented: the resource list is a parenthesized (name limit) pair.
+		// The resource list is a parenthesized (name limit) pair.
 		expect(setquota!.args, "SETQUOTA carries a parenthesized resource list").toMatch(
 			/\(STORAGE 512\)$/i,
 		);
@@ -313,29 +321,32 @@ complianceTest(
 // RFC9208-3.2-2 — client MUST be prepared for a SETQUOTA to fail
 // ═════════════════════════════════════════════════════════════════════════════
 // A SETQUOTA whose tagged response is NO ("can't set that data") must be
-// surfaced gracefully, not treated as a protocol error / crash. driver.setquota()
-// throws today → unimplemented; the scripted NO exercises the failure path once
-// a SETQUOTA surface exists.
+// surfaced gracefully, not treated as a protocol error / crash.
 complianceTest(
 	{
 		reqs: ["RFC9208-3.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client handles a tagged NO to SETQUOTA as a graceful failure",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE", "QUOTASET"]),
+				...sessionPrelude(["IMAP4rev1", "QUOTA", "QUOTA=RES-STORAGE", "QUOTASET"], {
+					login: true,
+				}),
 				expectLine(command("SETQUOTA", { args: /\(STORAGE 512\)$/i })),
 				// Server refuses to set the limit.
 				reply("NO [CANNOT] setquota error: can't set that data"),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.setquota("", [{ resource: "STORAGE", limit: 512 }]); // throws today
+		await driver.login("user", "pass");
+		await expect(
+			driver.setquota("", [{ resource: "STORAGE", limit: 512 }]),
+			"a tagged NO must reject the promise gracefully (typed error), not throw/crash the client",
+		).rejects.toThrow();
 		await server.assertCompleted();
 		const setquota = server.commandLines.find((l) => l.verb === "SETQUOTA");
 		expect(setquota, "SETQUOTA must have been emitted").toBeDefined();
@@ -349,28 +360,33 @@ complianceTest(
 // QUOTASET surface: a client MUST NOT assume the newer resource/response-code
 // surface without a "QUOTA="-prefixed token. Observable as: on a server offering
 // only "QUOTA", a conformant client that wants quota info still issues GETQUOTA
-// (RFC 2087 compatible) but must not depend on QUOTA=RES-* semantics. The client
-// has no GETQUOTA surface → unimplemented; the negative check asserts no reliance
-// leaked onto the wire.
+// (RFC 2087 compatible) but must not depend on QUOTA=RES-* semantics -- the
+// facet's own capability gate (`client/facets/quota.ts`) checks bare `QUOTA`
+// only, never a `QUOTA=RES-*` token, so the call proceeds and the negative
+// transcript check is genuinely exercised (not vacuous).
 complianceTest(
 	{
 		reqs: ["RFC9208-1-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not assume the QUOTA=RES-* surface when only bare QUOTA is advertised",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		// Only the legacy bare "QUOTA" capability — no "QUOTA=" token at all.
-		server.arm([[...sessionPrelude(["IMAP4rev1", "QUOTA"])]]);
+		server.arm([
+			[
+				...sessionPrelude(["IMAP4rev1", "QUOTA"], { login: true }),
+				expectLine(command("GETQUOTA")),
+				reply("OK GETQUOTA completed", ['* QUOTA "" (STORAGE 10 512)']),
+			],
+		]);
 		const driver = await f.connectPlain(server);
-		await driver.getquota("").catch((e) => {
-			throw e;
-		}); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.getquota("");
 		await server.assertCompleted();
-		// When implemented: nothing relying on the newer QUOTA=RES- surface was
-		// emitted (the client had no "QUOTA=" capability to justify it).
+		// Nothing relying on the newer QUOTA=RES- surface was emitted (the
+		// client had no "QUOTA=" capability to justify it).
 		expect(
 			server.transcript.clientLines(),
 			"no reliance on the QUOTA= surface may be emitted absent a QUOTA= capability",

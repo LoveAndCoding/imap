@@ -10,6 +10,18 @@ export enum TokenTypes {
 	operator,
 	space,
 	string,
+	// §11.4 literal streaming: a distinct type (not `string`) for a literal
+	// whose body arrived as a live `Readable` instead of being buffered in
+	// the token -- see `src/lexer/tokens/literal-stream.ts`. Keeping this
+	// separate from `TokenTypes.string` means every existing structure
+	// parser's `token.isType(TokenTypes.string)` check naturally rejects a
+	// streamed literal wherever it wasn't explicitly opted into (I-6: a
+	// stream token showing up somewhere only a small nstring is expected
+	// becomes a normal "invalid format" parse error, not a silent
+	// mis-decode) -- see `getNStringValue`/`drainReadableSync` in
+	// `src/parser/utility.ts` for the one place that opts back in
+	// defensively.
+	literalStream,
 }
 
 export type TokenTypeTrueValueMap = {
@@ -21,7 +33,15 @@ export type TokenTypeTrueValueMap = {
 	[TokenTypes.operator]: string;
 	[TokenTypes.space]: " ";
 	[TokenTypes.string]: string;
+	[TokenTypes.literalStream]: LiteralStreamPayload;
 };
+
+export interface LiteralStreamPayload {
+	/** Node `Readable` carrying exactly `length` bytes, then ending. */
+	readonly stream: import("../literal-body-stream").LiteralBodyStream;
+	/** Declared literal octet count, as sent by the server (`{n}`). */
+	readonly length: number;
+}
 
 export interface ILexerRule<T> {
 	match(content: string, originalPosition: number): null | ILexerToken<T>;

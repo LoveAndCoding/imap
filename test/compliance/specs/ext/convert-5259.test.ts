@@ -63,50 +63,58 @@
  *   conversions-cmd = "CONVERSIONS" SP from-mime-type-req SP to-mime-type-req
  *                                                → CONVERSIONS text/* text/plain
  *   convert-cmd     = "CONVERT" SP sequence-set SP section SP convert-params
- *                                                → CONVERT 1:3 TEXT (text/plain)
+ *                                                → CONVERT 1:3 TEXT ("text/plain")
  *   uid-convert     = "UID CONVERT" SP uid-set SP section SP convert-params
- *                                                → UID CONVERT 4,8 TEXT (text/html (CHARSET UTF-8))
+ *                                                → UID CONVERT 4,8 TEXT ("text/html" (CHARSET UTF-8))
  *   default-conversion = "NIL"                  → CONVERT 1 TEXT (NIL)
+ * convert-params = "(" (quoted-to-mime-type / default-conversion) ... — the
+ * destination MIME type is QUOTED (`quoted-to-mime-type`); only the NIL
+ * default-conversion marker is a bare atom. M5.16 (Finding 3) corrected every
+ * matcher below that previously pinned the (non-compliant) unquoted
+ * `(text/plain)` form the pre-fix `ConvertCommand` emitted — a matcher
+ * CORRECTION, not a widening: it now pins the ABNF-required quoted form.
  * Each matcher anchors the FULL argument string so a plausible wrong impl —
  * unparenthesized convert-params, a destination type paired with BODY[HEADER],
  * a message-number sequence-set on UID CONVERT — is rejected, never
  * vacuously accepted.
  *
- * REAL-SIGNAL-FIRST — PROBED BEFORE WRITING (connectLow):
+ * REAL-SIGNAL-FIRST — PROBED AT AUTHORING TIME (connectLow), findings since
+ * FIXED by later-landed shared repairs (both re-verified as REAL passes, not
+ * annotation flips — the assertions never changed):
  *  - `* CONVERTED (TAG "a1") TEXT (...)` and `* CONVERSION "..." "..." (...)`:
- *    grepped src/parser for "CONVERTED"/"CONVERSION" — zero hits (RFC 5259
- *    defines no capability or response type known to this parser).
- *    UntaggedResponse's fixed matcher checklist (StatusResponse,
- *    CapabilityList, IDResponse, NamespaceResponse, QuotaRootResponse,
- *    QuotaResponse, SortResponse, ThreadResponse, MailboxData) has neither
- *    entry, so the constructor falls through to
- *    `throw new ParsingError("Parsing for response is not yet supported", ...)`
- *    (src/parser/structure/untagged.ts). This is NOT the "unknown line" path
- *    (UnknownResponse only fires for lines whose first token isn't '*'/'+'/
- *    tag — both lines' first token IS '*'). The thrown ParsingError
- *    propagates via the Parser Transform's `done(error)`, and Connection
- *    attaches no 'error' listener to `this.parser` — the parser stream dies
- *    silently mid-connection (identical failure shape to the Phase 5
- *    QRESYNC VANISHED finding and this batch's LANGUAGE/COMPARATOR finding):
- *    no CONVERTED/CONVERSION event, and everything after the line on the
- *    wire is lost too. Genuine, measured HONEST VIOLATIONS below
- *    (expectFailure: "violation").
- *  - TEMPFAIL / MAXCONVERTMESSAGES / MAXCONVERTPARTS resp-codes: none of
- *    these are named in text.code.ts's switch (only APPENDUID/BADCHARSET/
- *    CAPABILITIES/COPYUID/MODIFIED/PERMENANTFLAGS/HIGHESTMODSEQ/UIDNEXT/
- *    UIDVALIDITY/UNSEEN are), so each falls to the generic
- *    `default: new AtomTextCode(kind, contents)` branch — this DOES parse
- *    (no throw) and DOES expose `kind` correctly. The numeric argument
- *    (e.g. MAXCONVERTMESSAGES's <number>) is a BARE, unparenthesized token —
- *    confirmed defect (shared with this batch's BADCOMPARATOR finding):
- *    AtomTextCode's constructor calls splitSpaceSeparatedList(tokens) with
- *    the function's DEFAULT "(" / ")" delimiters (not `null, null`), so a
- *    bare trailing number never finds an opening '(' token and the argument
- *    is silently dropped (contents ends up []). Measured as an honest
- *    violation for the argument-carrying MAXCONVERTMESSAGES/MAXCONVERTPARTS
- *    codes; the bare '[TEMPFAIL]' form (no argument) is a clean REAL pass.
- *    All three are exercised below as tagged-NO-completion probes via
- *    connectLow (no pending command needed to observe the parse).
+ *    at authoring time UntaggedResponse's fixed matcher checklist had neither
+ *    entry and the constructor THREW a ParsingError that silently killed the
+ *    parser Transform stream (the Phase 5 QRESYNC VANISHED failure shape) —
+ *    measured then as honest violations. The tolerance backstop that landed
+ *    with that finding class (src/parser/structure/untagged.ts's
+ *    `UnknownContent` fallthrough, spec §11.2/I-6) now accepts BOTH lines:
+ *    `.type` carries the canonicalized "CONVERTED"/"CONVERSION" keyword, the
+ *    content is tolerated raw, and the stream survives — RFC5259-8.1-1/-5.1-2
+ *    pass for real.
+ *  - TEMPFAIL / MAXCONVERTMESSAGES / MAXCONVERTPARTS resp-codes: all three
+ *    fall to text.code.ts's generic `AtomTextCode` branch, which parses and
+ *    exposes `kind` correctly. At authoring time the BARE (unparenthesized)
+ *    numeric argument was silently dropped (the shared BADCOMPARATOR-batch
+ *    finding: splitSpaceSeparatedList's default "(" / ")" delimiters) —
+ *    AtomTextCode's bare-vs-parenthesized split has since fixed that, so the
+ *    MAXCONVERT* arguments survive into `contents` and RFC5259-9-2/-9-3 pass
+ *    for real; bare '[TEMPFAIL]' (no argument) was always a clean pass.
+ *
+ * M5.12: driver.convert() is now real (`MailboxSession.convert()`/
+ * `SeqFacet.convert()`, src/client/mailbox.ts, backed by `ConvertCommand`,
+ * src/commands/convert.ts — gated on the CONVERT capability, RFC5259-3.1-1/
+ * I-9) — every driven test below now exercises the genuine wire form;
+ * `expectFailure: "unimplemented"` is removed from all of them (their
+ * matchers already rejected a plausible wrong implementation while
+ * self-actualizing, so removing the annotation is a pure flip, no matcher
+ * was widened). CONVERT addresses messages in the selected mailbox, so
+ * `ConvertCommand.states = ["selected"]` and each driven script now runs
+ * `selectExchange("INBOX", ...)` + `driver.select("INBOX")` between login
+ * and the CONVERT itself — the pinned CONVERT/UID CONVERT matchers are
+ * byte-identical to the pre-M5.12 versions. M5.12 also lands the typed
+ * `MAXCONVERTMESSAGES`/`MAXCONVERTPARTS` resp-code variants
+ * (src/protocol/response-codes.ts) on top of the parser-level argument
+ * preservation the probes above pin.
  */
 import { expect } from "vitest";
 
@@ -116,7 +124,7 @@ import { close, expectLine, reply, send } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { waitForUntagged } from "../../runner/events";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -154,21 +162,19 @@ function convertCaps(profile: string): string[] {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5259-8.1-1 — untagged CONVERTED response acceptance (REAL — HONEST
-// VIOLATION)
+// RFC5259-8.1-1 — untagged CONVERTED response acceptance (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
-// §8.1 worked shape: '* CONVERTED (TAG "a1") TEXT ("Hello, World")'. PROBED:
-// no CONVERTED matcher exists in UntaggedResponse's checklist — the line
-// throws ParsingError and the parser Transform dies silently (no CONVERTED
-// event, and the stream goes deaf for the rest of the connection). The
-// assertions below encode the SPEC (accept + survive), so this fails today as
-// an honest, measured violation.
+// §8.1 worked shape: '* CONVERTED (TAG "a1") TEXT ("Hello, World")'. At
+// authoring time this was an honest, measured violation (no CONVERTED
+// matcher; the line threw ParsingError and the parser Transform died
+// silently) — UntaggedResponse's UnknownContent tolerance backstop has since
+// landed, so the assertions below (accept + survive, unchanged) pass for
+// real. See the header's REAL-SIGNAL-FIRST note.
 complianceTest(
 	{
 		reqs: ["RFC5259-8.1-1"],
 		profiles: ["rev1", "rev2"],
 		title: 'client accepts an untagged \'* CONVERTED (TAG "a1") TEXT ("Hello, World")\' response',
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -191,8 +197,8 @@ complianceTest(
 		expect(
 			convertedEvent,
 			"a '* CONVERTED ...' response must be accepted (RFC 5259 §8.1) — " +
-				"the client has no CONVERTED parse path in UntaggedResponse and throws " +
-				"a ParsingError that silently kills the parser stream",
+				"an unrecognized untagged keyword must ride UntaggedResponse's tolerance " +
+				"backstop (type 'CONVERTED', raw content), never a stream-killing ParsingError",
 		).toBeDefined();
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
 			() => undefined,
@@ -205,22 +211,18 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5259-5.1-2 — untagged CONVERSION response acceptance (REAL — HONEST
-// VIOLATION)
+// RFC5259-5.1-2 — untagged CONVERSION response acceptance (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.1 worked shape: '* CONVERSION "text/plain" "text/html" ("CHARSET")' — the
 // CONVERSIONS discovery command's untagged response, zero-or-more per
-// exchange. PROBED: identical fate to CONVERTED above — no CONVERSION
-// matcher in UntaggedResponse's checklist, so the line throws ParsingError
-// and the parser Transform dies silently (no CONVERSION event, and the
-// stream goes deaf for the rest of the connection). Genuine, measured
-// HONEST VIOLATION.
+// exchange. Identical history to CONVERTED above: an honest violation at
+// authoring time (ParsingError killed the parser stream), a REAL pass since
+// the UnknownContent tolerance backstop landed — assertions unchanged.
 complianceTest(
 	{
 		reqs: ["RFC5259-5.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: 'client accepts an untagged \'* CONVERSION "text/plain" "text/html" ("CHARSET")\' response',
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -243,8 +245,8 @@ complianceTest(
 		expect(
 			conversionEvent,
 			"a '* CONVERSION ...' response must be accepted (RFC 5259 §5.1) — " +
-				"the client has no CONVERSION parse path in UntaggedResponse and throws " +
-				"a ParsingError that silently kills the parser stream",
+				"an unrecognized untagged keyword must ride UntaggedResponse's tolerance " +
+				"backstop (type 'CONVERSION', raw content), never a stream-killing ParsingError",
 		).toBeDefined();
 		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
 			() => undefined,
@@ -301,24 +303,25 @@ complianceTest(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RFC5259-9-2 / RFC5259-9-3 — MAXCONVERTMESSAGES/MAXCONVERTPARTS <n>
-// argument-drop defect (REAL — HONEST VIOLATION, shared finding)
+// RFC5259-9-2 / RFC5259-9-3 — MAXCONVERTMESSAGES/MAXCONVERTPARTS <n> WITH the
+// numeric argument (REAL)
 // ═════════════════════════════════════════════════════════════════════════════
-// CONFIRMED DEFECT (same mechanism as this batch's BADCOMPARATOR finding):
-// AtomTextCode calls splitSpaceSeparatedList(tokens) with the function's
-// DEFAULT "(" / ")" delimiters (not `null, null`, unlike AppendUIDTextCode/
-// CopyUIDTextCode). A bare unparenthesized trailing number never finds an
-// opening '(' token, so splitSpaceSeparatedList's scan never leaves its "not
-// started" state and returns an empty blocks array — `contents` ends up `[]`,
-// silently dropping the retry-sizing number. The client MUST parse the
-// number to usefully retry with fewer messages/parts (§9), so the test pins
-// the argument's presence and fails today as an honest violation.
+// At authoring time this was a confirmed argument-drop defect (the shared
+// BADCOMPARATOR-batch finding: AtomTextCode's splitSpaceSeparatedList call
+// used the default "(" / ")" delimiters, so a bare unparenthesized trailing
+// number was silently dropped — `contents` ended up `[]`). AtomTextCode's
+// bare-vs-parenthesized split has since fixed that, so these tests pass for
+// real: the client MUST parse the number to usefully retry with fewer
+// messages/parts (§9), and the pinned argument-presence assertions are
+// unchanged. M5.12 additionally surfaces both codes as dedicated
+// `TypedResponseCode` variants (src/protocol/response-codes.ts) through the
+// tagged-NO error path — the parser-level duty pinned HERE is the
+// prerequisite that typing rides on.
 complianceTest(
 	{
 		reqs: ["RFC5259-9-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client parses a tagged NO [MAXCONVERTMESSAGES 5] response code WITH its numeric argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -351,8 +354,8 @@ complianceTest(
 		expect(
 			found,
 			"a tagged NO [MAXCONVERTMESSAGES 5] completion must surface the numeric argument — " +
-				"the client's AtomTextCode fallback silently drops a bare (unparenthesized) trailing " +
-				"argument (contents ends up [])",
+				"AtomTextCode's bare-vs-parenthesized split must preserve a bare (unparenthesized) " +
+				"trailing argument in contents, never drop it",
 		).toBe(true);
 	},
 );
@@ -362,7 +365,6 @@ complianceTest(
 		reqs: ["RFC5259-9-3"],
 		profiles: ["rev1", "rev2"],
 		title: "client parses a tagged NO [MAXCONVERTPARTS 3] response code WITH its numeric argument",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -395,7 +397,8 @@ complianceTest(
 		expect(
 			found,
 			"a tagged NO [MAXCONVERTPARTS 3] completion must surface the numeric argument — " +
-				"the client's AtomTextCode fallback silently drops a bare (unparenthesized) trailing argument",
+				"AtomTextCode's bare-vs-parenthesized split must preserve a bare (unparenthesized) " +
+				"trailing argument in contents, never drop it",
 		).toBe(true);
 	},
 );
@@ -406,16 +409,15 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.1 worked example: 'a441 CONVERSIONS text/* text/plain'. The matcher
 // anchors the full argument string so a wrong impl (missing wildcard support,
-// swapped source/target order) is rejected. convert() throws today; there is
-// no separate conversions()-style verb, so the capability-gate + command-form
-// duty is exercised via the CONVERT verb itself (the closest driven surface),
+// swapped source/target order) is rejected. There is no separate
+// conversions()-style verb, so the capability-gate + command-form duty is
+// exercised via the CONVERT verb itself (the closest driven surface),
 // documented explicitly.
 complianceTest(
 	{
 		reqs: ["RFC5259-3.1-1", "RFC5259-5.1-1"],
 		profiles: ["rev1", "rev2"],
-		title: "CONVERT command form is gated on the CONVERT capability; CONVERT 1:3 TEXT (text/plain)",
-		expectFailure: "unimplemented",
+		title: 'CONVERT command form is gated on the CONVERT capability; CONVERT 1:3 TEXT ("text/plain")',
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -423,17 +425,23 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1:3 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 3 }),
+				// M5.16 (Finding 3): the destination MIME type is QUOTED on the
+				// wire (RFC 5259 §10's `quoted-to-mime-type` ABNF production) --
+				// this matcher was corrected from the unquoted `(text/plain)` form
+				// it previously (incorrectly) pinned.
+				expectLine(command("CONVERT", { args: /^1:3 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("converted body")']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1:3", "TEXT", "text/plain"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1:3", "TEXT", "text/plain");
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
-		expect(convert!.args).toMatch(/^1:3 TEXT \(text\/plain\)$/i);
+		expect(convert!.args).toMatch(/^1:3 TEXT \("text\/plain"\)$/i);
 	},
 );
 
@@ -442,13 +450,12 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // §6 worked shape: 'CONVERT 1 TEXT (NIL)' — the literal atom NIL in place of
 // a concrete destination MIME type, requesting the server pick one. Matcher
-// anchors the exact NIL placement; convert() throws today.
+// anchors the exact NIL placement.
 complianceTest(
 	{
 		reqs: ["RFC5259-6-2"],
 		profiles: ["rev1", "rev2"],
 		title: "CONVERT command form: CONVERT 1 TEXT (NIL) requests default conversion",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -456,6 +463,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(command("CONVERT", { args: /^1 TEXT \(NIL\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") AVAILABLECONVERSIONS ("text/plain")',
@@ -463,8 +471,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "TEXT", null); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "TEXT", null);
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -481,17 +490,14 @@ complianceTest(
 // UID CONVERT's first argument denotes UIDs (not message sequence numbers),
 // and every CONVERTED response to it MUST include the UID data item. The
 // matcher anchors both the "UID CONVERT" verb tokens and the argument
-// string; uidConvert-equivalent surface is convert() itself here since the
-// driver models UID-ness via a distinct verb signature per the plan (there is
-// no separate uidConvert() on this driver yet — CONVERT's own wire form is
-// pinned via the two-token command matcher against a UID-shaped sequence set,
-// annotated honestly as unimplemented since convert() throws regardless).
+// string; UID-ness rides the driver's own "UID "-prefixed seq convention
+// (there is no separate uidConvert() on this driver — driver.convert("UID
+// 4,8", ...) routes to the UID-grain MailboxSession.convert()).
 complianceTest(
 	{
 		reqs: ["RFC5259-6-5"],
 		profiles: ["rev1", "rev2"],
-		title: "UID CONVERT command form: UID CONVERT 4,8 TEXT (text/html) with UID sequence-set argument",
-		expectFailure: "unimplemented",
+		title: 'UID CONVERT command form: UID CONVERT 4,8 TEXT ("text/html") with UID sequence-set argument',
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -499,7 +505,11 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("UID CONVERT", { args: /^4,8 TEXT \(text\/html\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 8 }),
+				// M5.16 (Finding 3): destination quoted, RFC 5259 §10's
+				// `quoted-to-mime-type` production -- matcher correction (was
+				// pinning the unquoted, non-compliant form).
+				expectLine(command("UID CONVERT", { args: /^4,8 TEXT \("text\/html"\)$/i })),
 				reply("OK UID CONVERT completed", [
 					'* CONVERTED (TAG "a1") UID 4 TEXT ("<html>...</html>")',
 					'* CONVERTED (TAG "a1") UID 8 TEXT ("<html>...</html>")',
@@ -507,12 +517,13 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("UID 4,8", "TEXT", "text/html"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("UID 4,8", "TEXT", "text/html");
 		await server.assertCompleted();
 		const uidConvert = server.commandLines.find((l) => l.verb === "UID CONVERT");
 		expect(uidConvert, "UID CONVERT must have been emitted").toBeDefined();
-		expect(uidConvert!.args).toMatch(/^4,8 TEXT \(text\/html\)$/i);
+		expect(uidConvert!.args).toMatch(/^4,8 TEXT \("text\/html"\)$/i);
 	},
 );
 
@@ -531,7 +542,6 @@ complianceTest(
 		reqs: ["RFC5259-6-6", "RFC5259-6-7"],
 		profiles: ["rev1", "rev2"],
 		title: 'CONVERT command form: CONVERT 1 HEADER (NIL (CHARSET "UTF-8")) — NIL destination, REQUIRED CHARSET',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -539,6 +549,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(
 					command("CONVERT", { args: /^1 HEADER \(NIL \(CHARSET "UTF-8"\)\)$/i }),
 				),
@@ -546,8 +557,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "HEADER", { destination: null, params: { CHARSET: "UTF-8" } }); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "HEADER", { destination: null, params: { CHARSET: "UTF-8" } });
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -565,13 +577,12 @@ complianceTest(
 // A client may emit a registered feature-tag parameter name in any case
 // combination. Exercised by pinning a non-canonical-case CHARSET param on the
 // wire and asserting the client's own construction is accepted as
-// equivalent; convert() throws today.
+// equivalent — ConvertCommand emits param names verbatim, never re-cased.
 complianceTest(
 	{
 		reqs: ["RFC5259-7-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CONVERT command form accepts a non-canonical-case conversion parameter name (ChArSeT)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -579,18 +590,22 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction, see
+				// the header's own note (RFC 5259 §10 `quoted-to-mime-type`).
 				expectLine(
-					command("CONVERT", { args: /^1 TEXT \(text\/plain \(ChArSeT "UTF-8"\)\)$/i }),
+					command("CONVERT", { args: /^1 TEXT \("text\/plain" \(ChArSeT "UTF-8"\)\)$/i }),
 				),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("hi")']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.convert("1", "TEXT", {
 			destination: "text/plain",
 			params: { ChArSeT: "UTF-8" },
-		}); // throws NotImplementedError today
+		});
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -601,17 +616,20 @@ complianceTest(
 // RFC5259-8.1-2 — TAG correlator matches CONVERTED to its command
 // (self-actualizing)
 // ═════════════════════════════════════════════════════════════════════════════
-// Two pipelined CONVERT commands with distinct tags; a conformant client
-// attributes each CONVERTED response to its originating command via the
-// '(TAG "...")' correlator, not arrival order. convert() throws today, so
-// only the first command in the pipeline is driven — pinning both tags on
-// the wire documents the duty for when pipelining exists.
+// A conformant client attributes each CONVERTED response to its originating
+// command via the '(TAG "...")' correlator, not arrival order. The library's
+// own callers await each convert() (at most one CONVERT in flight), where
+// type-based attribution is provably identical to correlator-based
+// attribution — the CONVERTED response here rides the in-flight CONVERT's
+// own exchange and must be consumed as part of that command's completion
+// (assertCompleted pins exactly that). Concurrent-pipelined TAG
+// disambiguation has no driver surface to exercise (see ConvertCommand's
+// header comment).
 complianceTest(
 	{
 		reqs: ["RFC5259-8.1-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client correlates a CONVERTED response to its command via the TAG correlator",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -619,13 +637,17 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("hi")']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "TEXT", "text/plain"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "TEXT", "text/plain");
 		await server.assertCompleted();
 	},
 );
@@ -636,14 +658,12 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // A client requesting BODYPARTSTRUCTURE with a concrete target MIME type is
 // entitled to rely on the server obeying it; a divergent returned type may
-// be treated as an error. Driven via a BODYPARTSTRUCTURE CONVERT request;
-// convert() throws today.
+// be treated as an error. Driven via a BODYPARTSTRUCTURE CONVERT request.
 complianceTest(
 	{
 		reqs: ["RFC5259-8.2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CONVERT BODYPARTSTRUCTURE request: client expects the returned MIME type to match the requested target",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -651,9 +671,12 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
 				expectLine(
 					command("CONVERT", {
-						args: /^1 BODYPARTSTRUCTURE \(image\/png\)$/i,
+						args: /^1 BODYPARTSTRUCTURE \("image\/png"\)$/i,
 					}),
 				),
 				reply("OK CONVERT completed", [
@@ -662,8 +685,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "BODYPARTSTRUCTURE", "image/png"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "BODYPARTSTRUCTURE", "image/png");
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -676,16 +700,14 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // After reconnecting (a new IMAP "session"), a compliant client re-requests
 // BINARY.SIZE for a body part it previously converted rather than reusing a
-// cached value. Driven across two separate connections; convert() throws
-// (unimplemented) on the first connection, so the transcript-level assertion
-// on the SECOND connection documents the duty — a fresh BINARY.SIZE request
-// must appear (never a bare re-use with no wire request at all).
+// cached value. Driven across two separate connections; the transcript-level
+// assertion on the SECOND connection pins the duty — a fresh BINARY.SIZE
+// request must appear (never a bare re-use with no wire request at all).
 complianceTest(
 	{
 		reqs: ["RFC5259-8.3-2"],
 		profiles: ["rev1", "rev2"],
 		title: "client re-requests BINARY.SIZE in a new session rather than reusing a cached cross-session value",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -696,14 +718,18 @@ complianceTest(
 		server1.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain \(BINARY\.SIZE\)\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain" \(BINARY\.SIZE\)\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") BINARY.SIZE 128']),
 			],
 		]);
 		const driver1 = f.newDriver();
 		await driver1.connect({ host: "127.0.0.1", port: server1.port, security: "none" });
 		try {
-			await driver1.login("user", "pass"); // throws NotImplementedError today
+			await driver1.login("user", "pass");
+			await driver1.select("INBOX");
 			await driver1.convert("1", "TEXT", {
 				destination: "text/plain",
 				params: { "BINARY.SIZE": true },
@@ -721,12 +747,16 @@ complianceTest(
 		server2.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain \(BINARY\.SIZE\)\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain" \(BINARY\.SIZE\)\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") BINARY.SIZE 256']),
 			],
 		]);
 		const driver2 = await f.connectPlain(server2);
-		await driver2.login("user", "pass"); // throws NotImplementedError today
+		await driver2.login("user", "pass");
+		await driver2.select("INBOX");
 		await driver2.convert("1", "TEXT", {
 			destination: "text/plain",
 			params: { "BINARY.SIZE": true },
@@ -746,13 +776,12 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // A client requesting AVAILABLECONVERSIONS[section-part] (typically paired
 // with NIL default conversion) must accept the corresponding response item
-// as a mimetype-list or an ERROR phrase. Driven; convert() throws today.
+// as a mimetype-list or an ERROR phrase. Driven.
 complianceTest(
 	{
 		reqs: ["RFC5259-8.4-1"],
 		profiles: ["rev1", "rev2"],
 		title: "CONVERT AVAILABLECONVERSIONS request/response acceptance",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -760,6 +789,7 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
 				expectLine(
 					command("CONVERT", { args: /^1 TEXT \(NIL \(AVAILABLECONVERSIONS\)\)$/i }),
 				),
@@ -769,11 +799,12 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.convert("1", "TEXT", {
 			destination: null,
 			params: { AVAILABLECONVERSIONS: true },
-		}); // throws NotImplementedError today
+		});
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -788,13 +819,12 @@ complianceTest(
 // failure: '(ERROR "<text>" <convert-error-code>)'. Driven via a CONVERT
 // whose response's TEXT data item carries a BADPARAMETERS ERROR phrase (the
 // NIL-source variant for a nonexistent body part) and, separately, a
-// MISSINGPARAMETERS phrase requiring CHARSET. convert() throws today.
+// MISSINGPARAMETERS phrase requiring CHARSET.
 complianceTest(
 	{
 		reqs: ["RFC5259-9-4", "RFC5259-9-5"],
 		profiles: ["rev1", "rev2"],
 		title: 'CONVERTED response carries a BADPARAMETERS ERROR phrase: (ERROR "..." BADPARAMETERS NIL text/plain (CHARSET "bogus"))',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -802,8 +832,11 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 99 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
 				expectLine(
-					command("CONVERT", { args: /^99 TEXT \(text\/plain \(CHARSET "bogus"\)\)$/i }),
+					command("CONVERT", { args: /^99 TEXT \("text\/plain" \(CHARSET "bogus"\)\)$/i }),
 				),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT (ERROR "unknown charset" BADPARAMETERS NIL text/plain (CHARSET "bogus"))',
@@ -811,8 +844,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("99", "TEXT", { destination: "text/plain", params: { CHARSET: "bogus" } }); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("99", "TEXT", { destination: "text/plain", params: { CHARSET: "bogus" } });
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -824,7 +858,6 @@ complianceTest(
 		reqs: ["RFC5259-9-4", "RFC5259-9-6"],
 		profiles: ["rev1", "rev2"],
 		title: 'CONVERTED response carries a MISSINGPARAMETERS ERROR phrase: (ERROR "..." MISSINGPARAMETERS text/plain text/html (CHARSET))',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -832,15 +865,19 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 HEADER \(text\/html\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 HEADER \("text\/html"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") HEADER (ERROR "CHARSET required" MISSINGPARAMETERS text/plain text/html (CHARSET))',
 				]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "HEADER", "text/html"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "HEADER", "text/html");
 		await server.assertCompleted();
 		const convert = server.commandLines.find((l) => l.verb === "CONVERT");
 		expect(convert, "CONVERT must have been emitted").toBeDefined();
@@ -853,14 +890,13 @@ complianceTest(
 // ═════════════════════════════════════════════════════════════════════════════
 // A CONVERTED response with one successful data item and one ERROR-phrase
 // data item followed by a tagged OK must be treated as an overall success
-// (the client must still inspect each item to know which failed). convert()
-// throws today.
+// (the client must still inspect each item to know which failed) — the
+// driven convert() resolving (never rejecting) on this exchange IS the duty.
 complianceTest(
 	{
 		reqs: ["RFC5259-9-7"],
 		profiles: ["rev1", "rev2"],
 		title: "client treats a tagged OK as meaning at least one requested conversion succeeded, despite a partial ERROR item",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -868,15 +904,19 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT ("converted ok") BINARY.SIZE (ERROR "n/a" BADPARAMETERS NIL text/plain ())',
 				]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "TEXT", "text/plain"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "TEXT", "text/plain");
 		await server.assertCompleted();
 	},
 );
@@ -888,15 +928,16 @@ complianceTest(
 // A CONVERTED data item carries an ERROR phrase with convert-error-code
 // 'TEMPFAIL 5' (5 minutes). A conformant client that retries the same
 // conversion does not do so before roughly 5 minutes have elapsed. Retrying
-// at all remains a MAY, so the script's own completion (assertCompleted) is
-// the observable: convert() throws today, so the retry step never occurs —
-// annotated unimplemented with the timing duty pinned for the future.
+// at all remains a MAY — this library never auto-retries a CONVERT (retry
+// policy is always the caller's job, spec §7.1's no-automatic-retry
+// posture), which trivially satisfies the SHOULD-wait duty: the script's
+// own completion (assertCompleted, with NO second CONVERT armed) is the
+// observable that no premature retry hit the wire.
 complianceTest(
 	{
 		reqs: ["RFC5259-9-8"],
 		profiles: ["rev1", "rev2"],
 		title: 'client does not retry sooner than the ERROR TEMPFAIL mm minutes value',
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -904,15 +945,19 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", [
 					'* CONVERTED (TAG "a1") TEXT (ERROR "try later" TEMPFAIL 5)',
 				]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
-		await driver.convert("1", "TEXT", "text/plain"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.convert("1", "TEXT", "text/plain");
 		await server.assertCompleted();
 	},
 );
@@ -924,14 +969,12 @@ complianceTest(
 // A client wanting two different target-MIME-type conversions of the same or
 // different body parts issues two SEPARATE CONVERT commands rather than
 // folding both into one convert-params clause. Driven via two convert()
-// calls; convert() throws today (the first throwing call drives the honest
-// classification).
+// calls; the anchored per-command matchers reject a combined clause.
 complianceTest(
 	{
 		reqs: ["RFC5259-6-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues two separate CONVERT commands for two different target conversions (never one combined clause)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -939,16 +982,20 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+				// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/html\)$/i })),
+				expectLine(command("CONVERT", { args: /^1 TEXT \("text\/html"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a2") TEXT ("<html/>")']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.convert("1", "TEXT", "text/plain");
-		await driver.convert("1", "TEXT", "text/html").catch(() => undefined);
+		await driver.convert("1", "TEXT", "text/html");
 		await server.assertCompleted();
 		const converts = server.commandLines.filter((l) => l.verb === "CONVERT");
 		expect(
@@ -965,13 +1012,11 @@ complianceTest(
 // After a CONVERT exchange with no accompanying STORE, a compliant client
 // does not treat the message as having been marked \Seen by CONVERT alone;
 // when \Seen is desired, an explicit STORE (+FLAGS \Seen) must follow.
-// convert() throws today.
 complianceTest(
 	{
 		reqs: ["RFC5259-6-4"],
 		profiles: ["rev1", "rev2"],
 		title: "client issues an explicit STORE +FLAGS (\\Seen) after CONVERT rather than relying on CONVERT to set it",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async (ctx) => {
@@ -979,16 +1024,20 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(convertCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("CONVERT", { args: /^1 TEXT \(text\/plain\)$/i })),
+				...selectExchange("INBOX", { profile: ctx.profile, exists: 1 }),
+				// M5.16 (Finding 3): destination quoted -- matcher correction (RFC
+			// 5259 §10 `quoted-to-mime-type`), see the header's own note.
+			expectLine(command("CONVERT", { args: /^1 TEXT \("text\/plain"\)$/i })),
 				reply("OK CONVERT completed", ['* CONVERTED (TAG "a1") TEXT ("plain")']),
 				expectLine(command("STORE", { args: /^1 \+FLAGS \(\\Seen\)$/i })),
 				reply("OK Store completed", ["* 1 FETCH (FLAGS (\\Seen))"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.login("user", "pass"); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
 		await driver.convert("1", "TEXT", "text/plain");
-		await driver.store("1", "+FLAGS", ["\\Seen"]).catch(() => undefined);
+		await driver.store("1", "+FLAGS", ["\\Seen"]);
 		await server.assertCompleted();
 		const store = server.commandLines.find((l) => l.verb === "STORE");
 		expect(

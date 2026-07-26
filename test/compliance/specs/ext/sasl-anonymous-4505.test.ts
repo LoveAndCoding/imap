@@ -26,11 +26,13 @@
  *     ANONYMOUS's initial-response argument is the RFC 9051 §6.2.2 "=" empty-
  *     literal convention, distinct from an absent argument)
  *
- * SELF-ACTUALIZATION: no AUTHENTICATE surface — driver.authenticate() throws
- * NotImplementedError, so every duty below fails 'unimplemented'. The scripted
- * server accepts the single ANONYMOUS message and the matcher decodes/
- * validates the trace-information bytes, so once an AUTHENTICATE surface
- * exists the same assertion becomes the genuine, non-vacuous check.
+ * M5.1: `AnonymousMechanism` (src/sasl/anonymous.ts) is a real, registered
+ * mechanism — every test below drives a genuine AUTHENTICATE ANONYMOUS
+ * exchange. `driver.authenticate("ANONYMOUS", trace)` threads the trace
+ * value through `SaslContext.authzid` (see driver.ts's `authenticate()` doc
+ * comment); the scripted server's tagged OK carries a `[CAPABILITY ...]`
+ * code so `authenticate()`'s post-auth capability refresh (spec §3.3 step 5)
+ * has nothing to do.
  */
 import { expect } from "vitest";
 
@@ -129,13 +131,12 @@ function anonymousMessage(expected: { trace: string; kind: "email" | "token" | "
 // ── RFC4505-2-1/-2-2/-2-3: single-message exchange, email-shaped trace ────
 // The canonical ANONYMOUS exchange with an Internet-email-address-shaped
 // trace value: exactly one client-to-server message (2-1), UTF-8 (2-2),
-// containing '@' (2-3, email form). authenticate() throws today.
+// containing '@' (2-3, email form).
 complianceTest(
 	{
 		reqs: ["RFC4505-2-1", "RFC4505-2-2", "RFC4505-2-3"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE ANONYMOUS sends a single UTF-8 email-shaped trace-information message",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -148,7 +149,12 @@ complianceTest(
 				send("+ \r\n"),
 				// Expected base64: ZnJlZEBleGFtcGxlLmNvbQ==
 				expectLine(anonymousMessage({ trace, kind: "email" })),
-				reply("OK AUTHENTICATE completed"),
+				// [CAPABILITY ...] on the tagged OK (RFC 3501/9051 §7.1) avoids an
+				// otherwise-unscripted post-auth CAPABILITY refresh: `authenticate()`
+				// (spec §3.3 step 5) only re-fetches capabilities itself when the
+				// tagged OK's own epoch didn't already change, which a bare "OK
+				// AUTHENTICATE completed" (no code) would trigger here.
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=ANONYMOUS] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -159,7 +165,11 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("ANONYMOUS"); // throws NotImplementedError today
+		// `initialResponse` doubles as ANONYMOUS's trace-information argument
+		// (see driver.ts's `authenticate()` doc comment) -- must be threaded
+		// through for the client to actually emit the `trace` value the script
+		// above expects.
+		await driver.authenticate("ANONYMOUS", trace);
 		await server.assertCompleted();
 		// When implemented: exactly one AUTHENTICATE ANONYMOUS continuation line
 		// carries the trace payload — no second data message follows it.
@@ -179,7 +189,6 @@ complianceTest(
 		reqs: ["RFC4505-2-3", "RFC4505-2-5", "RFC4505-2-6"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE ANONYMOUS accepts an opaque non-'@' token trace form within the length caps",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -192,7 +201,7 @@ complianceTest(
 				send("+ \r\n"),
 				// Expected base64: dGlt
 				expectLine(anonymousMessage({ trace, kind: "token" })),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=ANONYMOUS] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -203,7 +212,8 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("ANONYMOUS"); // throws NotImplementedError today
+		// `initialResponse` doubles as ANONYMOUS's trace-information argument.
+		await driver.authenticate("ANONYMOUS", trace);
 		await server.assertCompleted();
 	},
 );
@@ -219,7 +229,6 @@ complianceTest(
 		reqs: ["RFC4505-2-1"],
 		profiles: ["rev1", "rev2"],
 		title: "AUTHENTICATE ANONYMOUS with no trace information is still exactly one client message",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -230,7 +239,7 @@ complianceTest(
 				expectLine(command("AUTHENTICATE", { args: /^ANONYMOUS$/i })),
 				send("+ \r\n"),
 				expectLine(anonymousMessage({ trace: "", kind: "empty" })),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=ANONYMOUS] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -241,7 +250,10 @@ complianceTest(
 			ca: localhost.cert,
 			timeoutMs: 3000,
 		});
-		await driver.authenticate("ANONYMOUS"); // throws NotImplementedError today
+		// No trace information supplied -- correctly omitting the
+		// initialResponse argument entirely (an absent authzid, not an empty
+		// one).
+		await driver.authenticate("ANONYMOUS");
 		await server.assertCompleted();
 		// When implemented: exactly one continuation-response line for the whole
 		// exchange — never a second AUTHENTICATE data line after it.
@@ -262,7 +274,6 @@ complianceTest(
 		reqs: ["RFC4505-3-1", "RFC4505-3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "ANONYMOUS trace-profile preparation excludes StringPrep-prohibited characters from the wire bytes",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -289,7 +300,7 @@ complianceTest(
 						return { ok: true };
 					},
 				}),
-				reply("OK AUTHENTICATE completed"),
+				reply("OK [CAPABILITY IMAP4rev1 AUTH=ANONYMOUS] AUTHENTICATE completed"),
 			],
 		]);
 		const driver = f.newDriver();
@@ -301,9 +312,8 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		// Supply a trace value carrying a prohibited character; the client's own
-		// preparation step is the duty under test (a future implementation
-		// decides how to construct the trace argument from caller input).
-		await driver.authenticate("ANONYMOUS", rawTrace); // throws NotImplementedError today
+		// preparation step is the duty under test.
+		await driver.authenticate("ANONYMOUS", rawTrace);
 		await server.assertCompleted();
 	},
 );

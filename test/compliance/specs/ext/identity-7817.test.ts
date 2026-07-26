@@ -18,9 +18,10 @@
  *   §11.1 superseded by §3): the outcome duty is that a certificate whose
  *   presented identity does not match the reference identifiers must cause the
  *   connection to fail, not silently succeed. Wrong-host cert over Implicit TLS;
- *   CA trusted, so the only failure mode is the identity mismatch. The current
- *   client does not verify hostname (it hangs rather than cleanly rejecting) →
- *   violation. Mirrors RFC3501-11.1-3 / RFC9525-6.6-1, cited under the 7817 ids.
+ *   CA trusted, so the only failure mode is the identity mismatch. The client
+ *   verifies hostname via the connection/tls.ts policy module and rejects with
+ *   a typed error → pass. Mirrors RFC3501-11.1-3 / RFC9525-6.6-1, cited under
+ *   the 7817 ids.
  *
  * RFC7817-3-6 (DNS-ID support is REQUIRED): rule 1 of the supplemental rules
  *   mandates DNS-ID (subjectAltName dNSName) support in email client software.
@@ -39,8 +40,8 @@
  *   NOT treat the URI-ID as a usable identity, so — connecting to a target the
  *   URI-ID superficially names (localhost/127.0.0.1) — it finds no matching
  *   presented identifier and rejects. Node's verifier already ignores URI SANs,
- *   so the correct outcome is rejection. The current client does not cleanly
- *   reject (it hangs) → violation, capturing the honest current outcome.
+ *   so the correct outcome is rejection, and the client now cleanly rejects
+ *   (via connection/tls.ts) → pass.
  */
 import { expect } from "vitest";
 
@@ -65,7 +66,6 @@ complianceTest(
 		reqs: ["RFC7817-3-1", "RFC7817-A-1"],
 		profiles: ["rev1", "rev2"],
 		title: "client checks server identity against reference identifiers and rejects a mismatched certificate",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {
@@ -129,7 +129,6 @@ complianceTest(
 		reqs: ["RFC7817-3-7"],
 		profiles: ["rev1", "rev2"],
 		title: "client does not accept a URI-ID as server identity (URI-ID MUST NOT be used for verification)",
-		expectFailure: "violation",
 		timeout: 5000,
 	},
 	async () => {

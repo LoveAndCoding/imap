@@ -22,10 +22,14 @@
  *   search-key     =/ "SAVEDBEFORE" SP date / "SAVEDON" SP date /
  *                     "SAVEDSINCE" SP date / "SAVEDATESUPPORTED"
  *
- * SELF-ACTUALIZATION: there is no SAVEDATE surface — driver.fetch()/search() throw
- * NotImplementedError → unimplemented. The scripted server pins the exact FETCH
- * data item and the four SEARCH-key command forms so, once a surface exists, the
- * matchers reject a wrong spelling. The FETCH response legs additionally pin the
+ * REAL-SIGNAL STATUS (M3.5/M5.7): `driver.fetch()` is wired to the real
+ * `MailboxSession.fetch()` (spec §5.4) -- the two FETCH SAVEDATE entries
+ * below are genuine wire-form/parse assertions. `SAVEDATESUPPORTED` (a
+ * SEARCH key with no date-taking field of its own) compiles via
+ * `SearchCriteria.savedateSupported: true` (M5.7 carry-forward from the
+ * M3.11 sweep). The scripted server pins the exact FETCH data item and the
+ * four SEARCH-key command forms so a wrong spelling is rejected. The FETCH
+ * response legs additionally pin the
  * two-branch (date-time / NIL) response shape the client must accept.
  */
 import { expect } from "vitest";
@@ -34,7 +38,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import { sessionPrelude } from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -49,14 +53,14 @@ complianceTest(
 		reqs: ["RFC8514-4.2-1", "RFC8514-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH SAVEDATE command form and a date-time response value",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 998 }),
 				// fetch-att =/ "SAVEDATE" — the bare atom in the FETCH item list.
 				expectLine(command("FETCH", { args: /^998 \(SAVEDATE\)$/i })),
 				// msg-att-static =/ "SAVEDATE" SP date-time (the date-time branch).
@@ -64,7 +68,9 @@ complianceTest(
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("998", ["SAVEDATE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("998", ["SAVEDATE"]);
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
@@ -84,21 +90,23 @@ complianceTest(
 		reqs: ["RFC8514-4.2-2"],
 		profiles: ["rev1", "rev2"],
 		title: "FETCH SAVEDATE accepts a NIL value (storage without the save-date attribute)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 998 }),
 				expectLine(command("FETCH", { args: /^998 \(SAVEDATE\)$/i })),
 				// msg-att-static =/ "SAVEDATE" SP nil (the NIL branch).
 				reply("OK FETCH completed", ["* 998 FETCH (SAVEDATE NIL)"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.fetch("998", ["SAVEDATE"]); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		await driver.fetch("998", ["SAVEDATE"]);
 		await server.assertCompleted();
 		expect(server.commandLines.find((l) => l.verb === "FETCH")).toBeDefined();
 	},
@@ -121,14 +129,14 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 			reqs: [reqMap[key]],
 			profiles: ["rev1", "rev2"],
 			title: `SEARCH ${key} <date> command form`,
-			expectFailure: "unimplemented",
 			timeout: 5000,
 		},
 		async () => {
 			const server = await f.startServer();
 			server.arm([
 				[
-					...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+					...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+					...selectExchange("INBOX", { exists: 5 }),
 					// search-key =/ "<KEY>" SP date — the atom then an IMAP date.
 					expectLine(
 						command("SEARCH", { args: new RegExp(`^${key} 28-Dec-2014$`, "i") }),
@@ -137,7 +145,9 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 				],
 			]);
 			const driver = await f.connectPlain(server);
-			await driver.search({ key, date: "28-Dec-2014" }); // throws NotImplementedError today
+			await driver.login("user", "pass");
+			await driver.select("INBOX");
+			await driver.search({ key, date: "28-Dec-2014" });
 			await server.assertCompleted();
 			const search = server.commandLines.find((l) => l.verb === "SEARCH");
 			expect(search, "SEARCH must have been emitted").toBeDefined();
@@ -152,28 +162,35 @@ for (const key of ["SAVEDBEFORE", "SAVEDON", "SAVEDSINCE"] as const) {
 // RFC8514-4.3-4 — SAVEDATESUPPORTED (argument-less probe)
 // ═════════════════════════════════════════════════════════════════════════════
 // SAVEDATESUPPORTED is a boolean probe of whether the mailbox storage supports the
-// save-date attribute; it takes NO date argument. driver.search() throws today →
-// unimplemented. The scripted server pins the bare atom with no argument.
+// save-date attribute; it takes NO date argument. `SearchCriteria.savedateSupported:
+// true` (M5.7) compiles to the bare atom. The scripted server pins the bare atom
+// with no argument.
 complianceTest(
 	{
 		reqs: ["RFC8514-4.3-4"],
 		profiles: ["rev1", "rev2"],
 		title: "SEARCH SAVEDATESUPPORTED command form (argument-less probe)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(["IMAP4rev1", "SAVEDATE"]),
+				...sessionPrelude(["IMAP4rev1", "SAVEDATE"], { login: true }),
+				...selectExchange("INBOX", { exists: 4 }),
 				// search-key =/ "SAVEDATESUPPORTED" — no date argument follows.
 				expectLine(command("SEARCH", { args: /^SAVEDATESUPPORTED$/i })),
 				reply("OK SEARCH completed", ["* SEARCH 1 2 3 4"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
-		await driver.search({ key: "SAVEDATESUPPORTED" }); // throws NotImplementedError today
+		await driver.login("user", "pass");
+		await driver.select("INBOX");
+		// SAVEDATESUPPORTED has no date argument (spec §5.3's other three
+		// SAVED* keys all take one) -- `SearchCriteria.savedateSupported: true`
+		// is the dedicated field for it (M5.7 carry-forward from the M3.11
+		// sweep).
+		await driver.search({ key: "SAVEDATESUPPORTED" });
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();

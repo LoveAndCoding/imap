@@ -26,16 +26,18 @@
  *   Observable duty: when the client polls for new messages it SHOULD send NOOP, not CHECK.
  *   Script: prelude → selectExchange → then the driver "polls" by calling driver.noop().
  *   The script expects NOOP (not CHECK). If a future implementation used CHECK, the script
- *   would fail (command matcher rejects the verb). Both driver.noop() and driver.select()
- *   are unimplemented today → expectFailure: "unimplemented".
- *   The transcript guard asserting no CHECK verb adds an independent layer even today.
+ *   would fail (command matcher rejects the verb). REAL SIGNAL (M2.2): both driver.noop()
+ *   and driver.select() are wired to the public client.
+ *   The transcript guard asserting no CHECK verb adds an independent layer.
  *
  * RFC3501-6.4.2-1 (SELECT without prior CLOSE):
  *   Permission grant: the client MAY switch mailboxes without CLOSE.
  *   Script: select INBOX → select SENT with NO CLOSE step in between.
  *   The script contains no expectLine(command("CLOSE")) — any CLOSE from the client
  *   would be unscripted and fail the run.
- *   driver.select() is unimplemented today → expectFailure: "unimplemented".
+ *   REAL SIGNAL (M2.2): driver.select() is wired; a reselect (SELECT while already
+ *   selected) transitions through "authenticated" client-side (spec §3.1) without
+ *   ever sending CLOSE -- exactly the permission this requirement grants.
  *   Transcript guard confirms no CLOSE appeared.
  *
  * RFC3501-6.4.4-1 (CHARSET syntax: "SEARCH CHARSET <charset> <criteria>"):
@@ -74,7 +76,10 @@
  *   Script: select → store …SILENT… → OK + unsolicited "* 1 FETCH (FLAGS (\Seen))" → NOOP.
  *   The unsolicited FETCH rides in the reply()'s untagged list, so it is delivered
  *   with the tagged STORE OK, before the subsequent NOOP expectation.
- *   driver.store() and driver.noop() are unimplemented today → expectFailure: "unimplemented".
+ *   REAL SIGNAL (M3.6): driver.store()/driver.noop() are wired to the public client.
+ *   StoreCommand claims nothing (its own doc comment), so the unsolicited FETCH FLAGS
+ *   response flows through ImapClient's generic live-update lane untouched, same as a
+ *   fully external change would -- the client accepts it without error either way.
  *
  * RFC3501-6.4.8-5 (leading number in untagged FETCH is always a sequence number):
  *   Acceptance duty: in a UID FETCH response "* 2 FETCH (UID 47 FLAGS ())", the number
@@ -90,6 +95,7 @@
  */
 import { expect } from "vitest";
 
+import { NotImplementedError } from "../../driver/errors";
 import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -116,7 +122,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.1-1"],
 		profiles: ["rev1"],
 		title: "client uses NOOP (not CHECK) when polling for new messages in selected mailbox",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -169,7 +174,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.2-1"],
 		profiles: ["rev1"],
 		title: "client MAY switch mailboxes with SELECT without issuing a prior CLOSE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -221,7 +225,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.4-1"],
 		profiles: ["rev1"],
 		title: "SEARCH with CHARSET places the CHARSET clause before the search criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -263,12 +266,19 @@ complianceTest(
 // a protocol error (BAD). The session must remain alive and usable after the NO.
 // Observable: drive a SEARCH with an unsupported charset → server replies NO [BADCHARSET]
 // → client must not disconnect; verify the session is still live via a follow-up NOOP.
+// REAL SIGNAL for the SELECT half (M2.2): driver.select() now really selects the
+// mailbox; driver.search() itself still throws NotImplementedError (M3) WITHOUT
+// touching the wire, so the scripted SEARCH step is never satisfied -- a
+// follow-up driver.noop() in that case would send NOOP while the harness is
+// still waiting on SEARCH, an unscripted-command mismatch that tears the
+// connection down (same trap the SELECT-failure tests document elsewhere in
+// this suite). Only run the NOOP follow-up once search() genuinely reaches the
+// wire; until then this stays honestly `unimplemented`.
 complianceTest(
 	{
 		reqs: ["RFC3501-6.4.4-2"],
 		profiles: ["rev1"],
 		title: "client treats NO [BADCHARSET] response as unsupported-charset (not a protocol error) and keeps session alive",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -299,6 +309,14 @@ complianceTest(
 		}
 		// The driver must throw for the NO response, but the session stays alive.
 		expect(searchError).toBeDefined();
+		// search() is still unimplemented (M3): its NotImplementedError never
+		// touched the wire, so the scripted SEARCH step is still unsatisfied --
+		// deliberately let this propagate as the honest "unimplemented" outcome
+		// rather than racing the harness with a follow-up NOOP it isn't
+		// expecting yet (see this test's own design-note comment above).
+		if (searchError instanceof NotImplementedError) {
+			throw searchError;
+		}
 		// NOOP verifies the session is still active after the CHARSET NO.
 		await driver.noop();
 		await server.assertCompleted();
@@ -322,7 +340,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-1"],
 		profiles: ["rev1"],
 		title: "client sends BODY[] (not BODY.PEEK) when fetching body with \\Seen side-effect intended",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -374,7 +391,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-1"],
 		profiles: ["rev1"],
 		title: "client sends BODY.PEEK[] when fetching body without wanting to set \\Seen",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -423,7 +439,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-2"],
 		profiles: ["rev1"],
 		title: "client uses FETCH macros (ALL/FAST/FULL) standalone, never inside a parenthesised item list",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -479,7 +494,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.5-6"],
 		profiles: ["rev1"],
 		title: "client prefixes MIME part specifier with one or more numeric part specifiers (e.g. BODY[1.MIME])",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -535,7 +549,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.6-1"],
 		profiles: ["rev1"],
 		title: "client accepts unsolicited untagged FETCH for external flag change after .SILENT STORE",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -601,7 +614,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.8-5"],
 		profiles: ["rev1"],
 		title: "client issues UID FETCH and accepts a seq-numbered untagged FETCH with UID data (mapping assertion deferred)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -649,7 +661,6 @@ complianceTest(
 		reqs: ["RFC3501-6.4.8-6"],
 		profiles: ["rev1"],
 		title: "client accepts implicit UID data item in FETCH response caused by UID FETCH command",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {

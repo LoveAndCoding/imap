@@ -46,6 +46,7 @@
  */
 import { expect } from "vitest";
 
+import { NotImplementedError } from "../../driver/errors";
 import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
@@ -66,7 +67,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-1"],
 		profiles: ["rev2"],
 		title: "pure IMAP4rev2 client ignores a legacy untagged SEARCH response and uses ESEARCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -110,7 +110,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-2"],
 		profiles: ["rev2"],
 		title: "client accepts an item-less ESEARCH (no match) as a valid empty result",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -149,7 +148,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-3"],
 		profiles: ["rev2"],
 		title: "client accepts an ESEARCH ALL result delivered in non-ascending order (no ordering assumption)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -190,7 +188,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-4"],
 		profiles: ["rev2"],
 		title: "client completes SEARCH RETURN (SAVE) on the tagged OK alone (ESEARCH suppressed)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -231,7 +228,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-5"],
 		profiles: ["rev2"],
 		title: "SEARCH with CHARSET places the CHARSET clause before the search criteria",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -271,7 +267,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4-6"],
 		profiles: ["rev2"],
 		title: "client encodes SEARCH string criteria as UTF-8 (CHARSET UTF-8 or no CHARSET, never a legacy charset)",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -311,13 +306,17 @@ complianceTest(
 // possibly carrying BADCHARSET with a supported-charset list — as a recoverable
 // "charset unsupported" failure, not a protocol/parse error, and keep the session
 // alive. Script SEARCH → NO [BADCHARSET (UTF-8)] → NOOP to prove liveness.
-// driver.search() / driver.noop() are unimplemented today → annotated unimplemented.
+// REAL SIGNAL for the SELECT half (M2.2): driver.select() now really selects the
+// mailbox; driver.search() itself still throws NotImplementedError (M3) WITHOUT
+// touching the wire, so the scripted SEARCH step is never satisfied -- a
+// follow-up driver.noop() in that case would send NOOP while the harness is
+// still waiting on SEARCH (unscripted-command mismatch). Only run the NOOP
+// follow-up once search() genuinely reaches the wire.
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.4-7"],
 		profiles: ["rev2"],
 		title: "client treats tagged NO [BADCHARSET] as unsupported-charset (not a protocol error) and keeps the session alive",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -346,6 +345,14 @@ complianceTest(
 		}
 		// The NO must surface as an error, but not tear the session down.
 		expect(searchError, "a NO [BADCHARSET] response must surface as an error").toBeDefined();
+		// search() is still unimplemented (M3): its NotImplementedError never
+		// touched the wire, so the scripted SEARCH step is still unsatisfied --
+		// deliberately let this propagate as the honest "unimplemented" outcome
+		// rather than racing the harness with a follow-up NOOP it isn't
+		// expecting yet.
+		if (searchError instanceof NotImplementedError) {
+			throw searchError;
+		}
 		await driver.noop();
 		await server.assertCompleted();
 		// Self-actualising: CAPABILITY=0, LOGIN=1, SELECT=2, SEARCH=3, NOOP=4.
@@ -368,7 +375,6 @@ complianceTest(
 		reqs: ["RFC9051-6.4.4.2-1"],
 		profiles: ["rev2"],
 		title: "client MAY pipeline SEARCH RETURN (SAVE) with a '$'-consuming FETCH",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -403,14 +409,17 @@ complianceTest(
 // containing the NOTSAVED response code and set the search result variable to
 // the empty sequence." The client must accept the NO [NOTSAVED] as the
 // save-refused outcome and must not reuse a stale '$' afterwards. Script SEARCH
-// RETURN (SAVE) → NO [NOTSAVED] → NOOP for liveness. driver.search() / noop()
-// are unimplemented today → annotated unimplemented.
+// RETURN (SAVE) → NO [NOTSAVED] → NOOP for liveness. REAL SIGNAL for the SELECT
+// half (M2.2): driver.select() now really selects the mailbox; driver.search()
+// itself still throws NotImplementedError (M3) WITHOUT touching the wire, so
+// the scripted SEARCH step is never satisfied -- only run the NOOP follow-up
+// once search() genuinely reaches the wire (same trap as the sibling
+// BADCHARSET tests in this file).
 complianceTest(
 	{
 		reqs: ["RFC9051-6.4.4.3-1"],
 		profiles: ["rev2"],
 		title: "client accepts tagged NO [NOTSAVED] to SEARCH RETURN (SAVE) and does not reuse a stale '$'",
-		expectFailure: "unimplemented",
 		timeout: 5000,
 	},
 	async () => {
@@ -438,6 +447,14 @@ complianceTest(
 			saveError = err;
 		}
 		expect(saveError, "a NO [NOTSAVED] response must surface as an error").toBeDefined();
+		// search() is still unimplemented (M3): its NotImplementedError never
+		// touched the wire, so the scripted SEARCH step is still unsatisfied --
+		// deliberately let this propagate as the honest "unimplemented" outcome
+		// rather than racing the harness with a follow-up NOOP it isn't
+		// expecting yet.
+		if (saveError instanceof NotImplementedError) {
+			throw saveError;
+		}
 		await driver.noop();
 		await server.assertCompleted();
 		// Self-actualising: CAPABILITY=0, LOGIN=1, SELECT=2, SEARCH=3, NOOP=4.

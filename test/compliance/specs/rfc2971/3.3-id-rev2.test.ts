@@ -7,8 +7,13 @@
  * so these mirror the rev1 exemplars in `3.3-id.test.ts` under the rev2
  * preset: the greeting/CAPABILITY advertise IMAP4rev2 (+ ID), and the client
  * sends ID during connect(). Outcomes therefore track the rev1 exemplars:
- *   3.3-1 passes (30-pair cap), 3.3-2 fails as a violation (no octet-limit
- *   enforcement), 3.3-3 passes (no duplicate field names).
+ * all three pass (30-pair cap, field/value octet limits, no duplicate field
+ * names). Each script uses a BARE `* OK ready` greeting (not an inline
+ * `[CAPABILITY ...]` resp-code): spec §3.3 has the client skip the
+ * CAPABILITY round trip when the greeting carries a capability code, and
+ * these tests are about the ID duty, not greeting-code handling, so they
+ * need the round trip to happen in order to advertise IMAP4rev2 + ID via the
+ * normal CAPABILITY response.
  */
 import { expect } from "vitest";
 
@@ -44,8 +49,11 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				// rev2 greeting with inline CAPABILITY (IMAP4rev2 + ID advertised).
-				send("* OK [CAPABILITY IMAP4rev2 ID] ready\r\n"),
+				// Bare rev2 greeting (no inline CAPABILITY code): spec §3.3 only skips the
+				// CAPABILITY round trip when the greeting itself carries a resp-code, so a
+				// bare greeting still drives the normal CAPABILITY exchange before ID —
+				// this test is about the ID pair/limit duty, not greeting-code handling.
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 ID"]),
 				expectLine(command("ID")),
@@ -73,7 +81,6 @@ complianceTest(
 		reqs: ["RFC2971-3.3-2"],
 		profiles: ["rev2"],
 		title: "client enforces ID field (30) and value (1024) octet limits",
-		expectFailure: "violation",
 	},
 	async () => {
 		const oversized = {
@@ -83,7 +90,9 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 ID] ready\r\n"),
+				// Bare rev2 greeting: see the sibling test above for why this test uses
+				// the normal CAPABILITY round trip rather than an inline greeting code.
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 ID"]),
 				expectLine(command("ID")),
@@ -134,7 +143,9 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* OK [CAPABILITY IMAP4rev2 ID] ready\r\n"),
+				// Bare rev2 greeting: see the sibling test above for why this test uses
+				// the normal CAPABILITY round trip rather than an inline greeting code.
+				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				reply("OK done", ["* CAPABILITY IMAP4rev2 ID"]),
 				expectLine(command("ID")),

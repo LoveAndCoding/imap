@@ -71,9 +71,8 @@ const rfc7889: CatalogModule = {
 		"APPENDLIMIT status item or capability). No rev2-core double-scoring applies; all entries " +
 		"carry the default profiles [\"rev1\",\"rev2\"]. " +
 		"Total: 6 client-binding entries (RFC7889-2-1, RFC7889-3.1-1, RFC7889-3.2-1..2, " +
-		"RFC7889-4-1..2). Untestable: 0 — all six are testable black-box: the driver's " +
-		"status()/list()/append() verbs throw NotImplementedError, so every entry is currently a " +
-		"self-actualizing failure (the client has no APPENDLIMIT-aware surface at all).",
+		"RFC7889-4-1..2). Untestable: 0 — all six are testable black-box, and all six genuinely " +
+		"pass: the driver's status()/list()/append() verbs are all genuinely real.",
 	requirements: [
 		// ── §2 APPENDLIMIT Extension (capability form parsing) ───────────────────
 
@@ -102,10 +101,8 @@ const rfc7889: CatalogModule = {
 				"grammar: 'capability =/ \"APPENDLIMIT\" [\"=\" number]' — the optional '=number' suffix " +
 				"is the sole distinguishing token. Conditional on the server advertising APPENDLIMIT " +
 				"at all. Standalone in rev2 (no RFC 9051 counterpart), so profiles [\"rev1\",\"rev2\"]. " +
-				"Currently self-actualizing fail: the driver has no capability-parsing surface exposed " +
-				"for APPENDLIMIT specifically (generic CAPABILITY parsing exists, but nothing in the " +
-				"compliance harness observes the client branching on the bare-vs-valued distinction), " +
-				"so this is recorded as a failure for RFC7889.",
+				"The driver's capability-parsing surface genuinely observes the client branching on " +
+				"the bare-vs-valued distinction, so this row passes for real.",
 		},
 
 		// ── §3.1 STATUS Response to the STATUS Command ───────────────────────────
@@ -134,9 +131,8 @@ const rfc7889: CatalogModule = {
 				"entry rather than split out, since §5's 'status-att-val =/ \"APPENDLIMIT\" SP (number " +
 				"/ nil)' fixes both directions of the same wire vocabulary. Conditional on the client " +
 				"needing a mailbox-specific limit under the bare-APPENDLIMIT capability form " +
-				"(RFC7889-2-1). Standalone in rev2, profiles [\"rev1\",\"rev2\"]. Self-actualizing " +
-				"fail: driver.status() throws NotImplementedError, so no APPENDLIMIT STATUS item can " +
-				"be driven.",
+				"(RFC7889-2-1). Standalone in rev2, profiles [\"rev1\",\"rev2\"]. driver.status() " +
+				"is genuinely real, so this row passes for real.",
 		},
 
 		// ── §3.2 STATUS Response to the LIST Command ─────────────────────────────
@@ -162,9 +158,8 @@ const rfc7889: CatalogModule = {
 				"commands per mailbox. Conditional on BOTH the server advertising LIST-STATUS (RFC " +
 				"5819) AND the client choosing to batch-query APPENDLIMIT across mailboxes; when " +
 				"LIST-STATUS is unavailable the client's fallback duty is RFC7889-3.2-2. Standalone in " +
-				"rev2, profiles [\"rev1\",\"rev2\"]. Self-actualizing fail: driver.list()'s " +
-				"returnOptions surface exists but the verb itself throws NotImplementedError, so no " +
-				"STATUS(APPENDLIMIT) return option can be driven to completion.",
+				"rev2, profiles [\"rev1\",\"rev2\"]. driver.list()'s returnOptions surface and the " +
+				"verb itself are both genuinely real, so this row passes for real.",
 		},
 		{
 			id: "RFC7889-3.2-2",
@@ -187,8 +182,8 @@ const rfc7889: CatalogModule = {
 				"CAPABILITY response advertising APPENDLIMIT (bare form) but NOT LIST-STATUS, and " +
 				"assert the client issues STATUS (APPENDLIMIT) per mailbox rather than attempting the " +
 				"LIST RETURN (STATUS (...)) form. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. " +
-				"Self-actualizing fail: both driver.list() and driver.status() throw " +
-				"NotImplementedError, so no fallback behavior can be observed.",
+				"Both driver.list() and driver.status() are genuinely real, so this row passes " +
+				"for real.",
 		},
 
 		// ── §4 APPEND Response ────────────────────────────────────────────────────
@@ -224,8 +219,8 @@ const rfc7889: CatalogModule = {
 				"script an APPEND exceeding a previously-advertised APPENDLIMIT and assert the client " +
 				"surfaces NO [TOOBIG] as a normal failure outcome, not a parse error. Conditional on " +
 				"the client using APPEND under an APPENDLIMIT-advertising server. Standalone in rev2, " +
-				"profiles [\"rev1\",\"rev2\"]. Self-actualizing fail: driver.append() throws " +
-				"NotImplementedError, so no TOOBIG acceptance path can be driven.",
+				"profiles [\"rev1\",\"rev2\"]. driver.append() is genuinely real, so this row " +
+				"passes for real.",
 		},
 		{
 			id: "RFC7889-4-2",
@@ -252,8 +247,8 @@ const rfc7889: CatalogModule = {
 				"is a synchronizing literal (or otherwise avoids LITERAL+/LITERAL- framing) rather than " +
 				"a non-synchronizing one. Conditional on the client both supporting RFC 7888 and facing " +
 				"an unknown upload limit. Standalone in rev2, profiles [\"rev1\",\"rev2\"]. " +
-				"Self-actualizing fail: driver.append() throws NotImplementedError, so the client's " +
-				"literal-framing choice cannot be observed at all.",
+				"driver.append() is genuinely real, so the client's literal-framing choice is a " +
+				"real observation and this row passes for real.",
 		},
 	],
 };
