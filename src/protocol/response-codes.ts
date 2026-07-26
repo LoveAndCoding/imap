@@ -189,7 +189,7 @@ export type TypedResponseCode =
 	 *  is the one client-observable duty RFC 5466 itself owns: filters are
 	 *  otherwise pure RFC 5464 SETMETADATA/GETMETADATA machinery -- M5.4 adds
 	 *  both the METADATA facet and `SearchCriteria.filter` together (see
-	 *  `docs/compliance-adjudications.md`'s RFC5466 entry for the M4.14/M5.4
+	 *  `docs/guides/compliance-adjudications.md`'s RFC5466 entry for the M4.14/M5.4
 	 *  scope history); this resp-code variant predates and never depended on
 	 *  that carry-forward landing. */
 	| {

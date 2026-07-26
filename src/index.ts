@@ -1,15 +1,6 @@
-// "." export surface (spec §1.1) — no logic lives here, only re-exports.
-//
-// `Session` is removed (settled decision, proposal §6.1 — no alias); use
-// `ImapClient` instead. The lexer (`src/lexer/**`) is package-private and
-// never reaches this file. `Parser` (the transform stream) also leaves the
-// root export — only its OUTPUT classes (responses/structures, re-exported
-// below via "./parser") stay public.
-//
-// See also the sibling subpath surfaces: "./commands" (Layer 2 — `Command`
-// base, `CommandWriter`, `ResponseCollector`, built-in command classes) and
-// "./sasl" (`SaslMechanism` + built-in mechanisms).
-
+/**
+ * @module API
+ */
 export { ImapClient } from "./client/client";
 export type { ImapClientEvents } from "./client/client";
 
@@ -51,7 +42,11 @@ export type { SearchOptions, SearchResult } from "./commands/search";
 // two commands' own closed vocabularies (§5.6), and `ThreadNode` is the
 // spec-gap resolution `commands/message/thread.ts` documents (spec §5b
 // referenced `ThreadNode[]` but never defined it).
-export type { SortBase, SortKey, ThreadAlgorithm } from "./protocol/vocabularies";
+export type {
+	SortBase,
+	SortKey,
+	ThreadAlgorithm,
+} from "./protocol/vocabularies";
 export type { ThreadNode } from "./commands/message/thread";
 
 // NOTIFY (RFC 5465 §3.1/§8, M4.13): `ImapClient.notify()`'s own typed
@@ -70,7 +65,11 @@ export type {
 } from "./protocol/vocabularies";
 
 // STORE / UID STORE + addFlags/removeFlags/setFlags (spec §5b, M3.6).
-export type { StoreModifiers, StoreOperation, StoreResult } from "./commands/store";
+export type {
+	StoreModifiers,
+	StoreOperation,
+	StoreResult,
+} from "./commands/store";
 
 // FETCH / UID FETCH (spec §5.4/§5b, M3.5): the typed request shape
 // `MailboxSession.fetch()`/`.fetchOne()` (and their `.seq` mirrors) accept,
@@ -149,7 +148,10 @@ export type { LsubOptions } from "./commands/lsub";
 // shape. See `client/facets/quota.ts`'s header comment for the full facet
 // pattern every later §3.6 facet (acl/metadata/urlauth) reuses.
 export type { QuotaFacet } from "./client/facets/quota";
-export type { QuotaResourceUsage, QuotaResult } from "./commands/quota/get-quota";
+export type {
+	QuotaResourceUsage,
+	QuotaResult,
+} from "./commands/quota/get-quota";
 export type { QuotaRootResult } from "./commands/quota/get-quota-root";
 export type { QuotaLimitEntry } from "./commands/quota/set-quota";
 

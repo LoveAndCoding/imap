@@ -1,4 +1,10 @@
-import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+	createHash,
+	createHmac,
+	pbkdf2Sync,
+	randomBytes,
+	timingSafeEqual,
+} from "node:crypto";
 
 import { mechanismAuthError, SaslContext, SaslMechanism } from "./mechanism";
 
@@ -187,8 +193,12 @@ function parseAttrs(msg: string): Map<string, string> {
 	return attrs;
 }
 
-type Phase = "start" | "awaiting-server-first" | "awaiting-server-final" | "done";
+type Phase =
+	"start" | "awaiting-server-first" | "awaiting-server-final" | "done";
 
+/**
+ * ScramMechanism implements the SCRAM-SHA-1 and SCRAM-SHA-256 SASL mechanisms
+ */
 export class ScramMechanism implements SaslMechanism {
 	readonly name: string;
 	/** Never sends the password itself over the wire (a zero-knowledge-style
@@ -227,7 +237,10 @@ export class ScramMechanism implements SaslMechanism {
 
 	async start(ctx: SaslContext): Promise<Buffer> {
 		if (!ctx.pass) {
-			throw mechanismAuthError(this.name, `${this.name} requires pass (missing from SaslContext)`);
+			throw mechanismAuthError(
+				this.name,
+				`${this.name} requires pass (missing from SaslContext)`,
+			);
 		}
 		// RFC5802-3-2/-5.1-3: this library does not implement full RFC 3454
 		// stringprep/SASLprep (RFC 4013) — a genuine prohibited-character/
@@ -252,7 +265,9 @@ export class ScramMechanism implements SaslMechanism {
 		// `ctx.user` was NFKC-normalized before escaping; `ctx.authzid` was
 		// forwarded raw, an inconsistency with no principled reason (both
 		// fields share one prepare-then-escape step here).
-		const authzid = ctx.authzid ? `a=${escapeSaslname(ctx.authzid.normalize("NFKC"))}` : "";
+		const authzid = ctx.authzid
+			? `a=${escapeSaslname(ctx.authzid.normalize("NFKC"))}`
+			: "";
 		this.gs2Header = `n,${authzid},`;
 		this.clientNonce = this.nonceFactory();
 		this.clientFirstMessageBare = `n=${escapeSaslname(preparedUser)},r=${this.clientNonce}`;
@@ -266,12 +281,18 @@ export class ScramMechanism implements SaslMechanism {
 		// never leak into this one.
 		this.verificationFailure = null;
 		this.verified = false;
-		return Buffer.from(this.gs2Header + this.clientFirstMessageBare, "utf8");
+		return Buffer.from(
+			this.gs2Header + this.clientFirstMessageBare,
+			"utf8",
+		);
 	}
 
 	async step(challenge: Buffer, ctx: SaslContext): Promise<Buffer> {
 		if (!ctx.pass) {
-			throw mechanismAuthError(this.name, `${this.name} requires pass (missing from SaslContext)`);
+			throw mechanismAuthError(
+				this.name,
+				`${this.name} requires pass (missing from SaslContext)`,
+			);
 		}
 		const text = challenge.toString("utf8");
 		if (this.phase === "awaiting-server-first") {
@@ -303,7 +324,11 @@ export class ScramMechanism implements SaslMechanism {
 		const combinedNonce = attrs.get("r");
 		const saltB64 = attrs.get("s");
 		const iterText = attrs.get("i");
-		if (combinedNonce === undefined || saltB64 === undefined || iterText === undefined) {
+		if (
+			combinedNonce === undefined ||
+			saltB64 === undefined ||
+			iterText === undefined
+		) {
 			throw mechanismAuthError(
 				this.name,
 				`${this.name} server-first-message is missing a required 'r='/'s='/'i=' attribute`,
@@ -320,7 +345,11 @@ export class ScramMechanism implements SaslMechanism {
 			);
 		}
 		const iterations = Number.parseInt(iterText, 10);
-		if (!Number.isInteger(iterations) || iterations <= 0 || String(iterations) !== iterText) {
+		if (
+			!Number.isInteger(iterations) ||
+			iterations <= 0 ||
+			String(iterations) !== iterText
+		) {
 			throw mechanismAuthError(
 				this.name,
 				`${this.name} server-first-message carries an invalid iteration count '${iterText}'`,
@@ -350,7 +379,13 @@ export class ScramMechanism implements SaslMechanism {
 		// treat a string argument as UTF-8 by default) — the same disjunctive-
 		// MUST NFKC treatment `start()` applies to the username.
 		const preparedPass = pass.normalize("NFKC");
-		const saltedPassword = pbkdf2Sync(preparedPass, salt, iterations, HASH_LEN[this.algo], this.algo);
+		const saltedPassword = pbkdf2Sync(
+			preparedPass,
+			salt,
+			iterations,
+			HASH_LEN[this.algo],
+			this.algo,
+		);
 
 		// RFC5802-5.1-9/-5.1-10: 'c=' is REQUIRED and is the base64 of the
 		// client-first-message's own gs2-header (no channel-binding data
@@ -364,19 +399,30 @@ export class ScramMechanism implements SaslMechanism {
 		// as transmitted.
 		this.authMessage = `${this.clientFirstMessageBare},${text},${clientFinalWithoutProof}`;
 
-		const clientKey = createHmac(this.algo, saltedPassword).update("Client Key").digest();
+		const clientKey = createHmac(this.algo, saltedPassword)
+			.update("Client Key")
+			.digest();
 		const storedKey = createHash(this.algo).update(clientKey).digest();
-		const clientSignature = createHmac(this.algo, storedKey).update(this.authMessage).digest();
+		const clientSignature = createHmac(this.algo, storedKey)
+			.update(this.authMessage)
+			.digest();
 		const clientProof = Buffer.alloc(clientKey.length);
 		for (let i = 0; i < clientKey.length; i++) {
 			clientProof[i] = clientKey[i] ^ clientSignature[i];
 		}
 
-		const serverKey = createHmac(this.algo, saltedPassword).update("Server Key").digest();
-		this.expectedServerSignature = createHmac(this.algo, serverKey).update(this.authMessage).digest();
+		const serverKey = createHmac(this.algo, saltedPassword)
+			.update("Server Key")
+			.digest();
+		this.expectedServerSignature = createHmac(this.algo, serverKey)
+			.update(this.authMessage)
+			.digest();
 
 		this.phase = "awaiting-server-final";
-		return Buffer.from(`${clientFinalWithoutProof},p=${clientProof.toString("base64")}`, "utf8");
+		return Buffer.from(
+			`${clientFinalWithoutProof},p=${clientProof.toString("base64")}`,
+			"utf8",
+		);
 	}
 
 	private handleServerFinal(text: string): Buffer {
@@ -395,7 +441,9 @@ export class ScramMechanism implements SaslMechanism {
 			// value simply produces bytes that will not match `expected`.
 			const serverSig = Buffer.from(attrs.get("v") as string, "base64");
 			const matches =
-				expected !== null && serverSig.length === expected.length && timingSafeEqual(serverSig, expected);
+				expected !== null &&
+				serverSig.length === expected.length &&
+				timingSafeEqual(serverSig, expected);
 			if (!matches) {
 				this.verificationFailure = `${this.name} server signature does not match the client-computed ServerSignature`;
 			} else {
@@ -419,7 +467,8 @@ export class ScramMechanism implements SaslMechanism {
 			// verifiable ServerSignature must never silently resolve as if
 			// mutual authentication had actually happened. Fail closed, the
 			// same posture as an explicit 'e='/mismatched 'v='.
-			this.verificationFailure = `${this.name} server-final-message could not be parsed (no ` +
+			this.verificationFailure =
+				`${this.name} server-final-message could not be parsed (no ` +
 				"recognized 'e='/'v='/'m=' attribute) -- treated as a failed exchange, not tolerated " +
 				"as if no server-final-message had been sent at all";
 		}
@@ -515,13 +564,17 @@ export class ScramMechanism implements SaslMechanism {
 /** Factory for a fresh {@link ScramMechanism} instance keyed to SHA-1 (RFC
  *  5802 SCRAM-SHA-1). Registered under the "SCRAM-SHA-1" name by the
  *  mechanism registry (`registerMechanism()`, `sasl/mechanism.ts`). */
-export function createScramSha1Mechanism(opts?: ScramMechanismOptions): SaslMechanism {
+export function createScramSha1Mechanism(
+	opts?: ScramMechanismOptions,
+): SaslMechanism {
 	return new ScramMechanism("sha1", opts);
 }
 
 /** Factory for a fresh {@link ScramMechanism} instance keyed to SHA-256
  *  (RFC 7677 SCRAM-SHA-256). Registered under the "SCRAM-SHA-256" name by
  *  the mechanism registry (`registerMechanism()`, `sasl/mechanism.ts`). */
-export function createScramSha256Mechanism(opts?: ScramMechanismOptions): SaslMechanism {
+export function createScramSha256Mechanism(
+	opts?: ScramMechanismOptions,
+): SaslMechanism {
 	return new ScramMechanism("sha256", opts);
 }

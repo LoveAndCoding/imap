@@ -25,7 +25,11 @@
 export interface RegistryEntry {
 	/** IANA capability token, e.g. "STARTTLS", "AUTH=PLAIN", "UIDPLUS". */
 	capability: string;
-	status: "cataloged" | "no-client-requirements" | "obsoleted-by" | "out-of-scope";
+	status:
+		| "cataloged"
+		| "no-client-requirements"
+		| "obsoleted-by"
+		| "out-of-scope";
 	/** Catalog module source id backing a `cataloged` entry, e.g. "RFC3501". */
 	source?: string;
 	note?: string;
@@ -77,7 +81,12 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC4315",
 		note: "UID EXPUNGE; APPENDUID/COPYUID/UIDNOTSTICKY resp-codes (resp-codes parse for real via text.code.ts).",
 	},
-	{ capability: "MOVE", status: "cataloged", source: "RFC6851", note: "MOVE, UID MOVE." },
+	{
+		capability: "MOVE",
+		status: "cataloged",
+		source: "RFC6851",
+		note: "MOVE, UID MOVE.",
+	},
 	{
 		capability: "NAMESPACE",
 		status: "cataloged",
@@ -168,7 +177,12 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC3516",
 		note: "FETCH BINARY[]/BINARY.SIZE[]; APPEND ~{n} literal8; UNKNOWN-CTE resp-code parses for real. literal8 duties rev1-only (rev2 core).",
 	},
-	{ capability: "REPLACE", status: "cataloged", source: "RFC8508", note: "REPLACE, UID REPLACE." },
+	{
+		capability: "REPLACE",
+		status: "cataloged",
+		source: "RFC8508",
+		note: "REPLACE, UID REPLACE.",
+	},
 
 	// ---- Phase 5: search/sort/sync/events -----------------------------------
 	// Promoted from PENDING at the Phase 5 wrap: each module carries
@@ -215,7 +229,12 @@ export const registryCoverage: RegistryEntry[] = [
 		source: "RFC4731",
 		note: "SEARCH RETURN (MIN MAX ALL COUNT); * ESEARCH parses for real (mailbox/search.ts). rev2-core overlap: RFC 9051 uses the ESEARCH result format for core SEARCH — rev1-only tags adjudicated in-catalog.",
 	},
-	{ capability: "ESORT", status: "cataloged", source: "RFC5267", note: "SORT RETURN (...)." },
+	{
+		capability: "ESORT",
+		status: "cataloged",
+		source: "RFC5267",
+		note: "SORT RETURN (...).",
+	},
 	{
 		capability: "CONTEXT=SEARCH",
 		status: "cataloged",
@@ -270,7 +289,7 @@ export const registryCoverage: RegistryEntry[] = [
 			"args} fallback. SearchCriteria.filter (commands/search-criteria.ts, gated on FILTERS) and " +
 			"filter creation/management via the real METADATA facet's setmetadata() (RFC 5464 SETMETADATA " +
 			"under /private|/shared/filters/*) landed at M5.4 -- the option-(b) carry-forward from " +
-			"M4.14, docs/compliance-adjudications.md, closing all four previously-unimplemented rows " +
+			"M4.14, docs/guides/compliance-adjudications.md, closing all four previously-unimplemented rows " +
 			"(RFC5466-3.1-1, -3.2-1, -3.2-2, -4-1).",
 	},
 	{

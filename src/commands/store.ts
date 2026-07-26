@@ -50,6 +50,7 @@ export interface StoreModifiers {
  *  gate needs -- same structural-probe convention as `FetchCapabilityProbe`/
  *  `SelectCapabilityProbe`. */
 export interface StoreCapabilityProbe {
+	/** Returns true if the server has advertised the given capability. */
 	has(cap: string): boolean;
 }
 
@@ -132,7 +133,7 @@ export class StoreCommand extends Command<StoreResult> {
 		// the client" and "can not be used as an argument in a STORE or APPEND
 		// command" -- refuse (RangeError) at construction, zero bytes written.
 		// Same refuse-don't-transform posture as AppendCommand's NUL refusal;
-		// adjudicated at M3.6 (docs/compliance-adjudications.md).
+		// adjudicated at M3.6 (docs/guides/compliance-adjudications.md).
 		assertNoRecentFlag(flags, this.verb);
 		if (opts.unchangedSince !== undefined && !caps.has("CONDSTORE")) {
 			throw new CapabilityError(
@@ -146,7 +147,11 @@ export class StoreCommand extends Command<StoreResult> {
 		this.unchangedSince = opts.unchangedSince;
 		this.set = set;
 		const base =
-			operation === "add" ? "+FLAGS" : operation === "remove" ? "-FLAGS" : "FLAGS";
+			operation === "add"
+				? "+FLAGS"
+				: operation === "remove"
+					? "-FLAGS"
+					: "FLAGS";
 		this.prefixAtom = opts.silent ? `${base}.SILENT` : base;
 		this.flags = [...flags];
 	}
@@ -157,7 +162,9 @@ export class StoreCommand extends Command<StoreResult> {
 			// RFC 7162 §7 store-modifier: the modifier list rides BETWEEN the
 			// sequence set and the data item -- 'STORE <set> (UNCHANGEDSINCE
 			// <mod-sequence>) <data-item> <value>' (§3.1.3 Example 4).
-			w.list((inner) => inner.atom("UNCHANGEDSINCE").bignumber(this.unchangedSince!));
+			w.list((inner) =>
+				inner.atom("UNCHANGEDSINCE").bignumber(this.unchangedSince!),
+			);
 		}
 		w.atom(this.prefixAtom);
 		// LOW finding (second-review round, verified NOT a bug): an empty

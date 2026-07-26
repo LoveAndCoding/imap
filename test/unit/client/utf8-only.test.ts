@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
 
 import { command } from "../../compliance/harness/matchers";
-import { expectLine, reply, send, type ScriptStep } from "../../compliance/harness/script";
+import {
+	expectLine,
+	reply,
+	send,
+	type ScriptStep,
+} from "../../compliance/harness/script";
 import { ScriptedServer } from "../../compliance/harness/scripted-server";
 
 import { ImapClient } from "../../../src/client/client";
@@ -32,7 +37,7 @@ const CRLF = "\r\n";
  *
  * Pure-rev2 codec pin (the M5.13 re-decision of the M2 adjudication
  * "Pure-rev2-only mailbox-name codec direction",
- * docs/compliance-adjudications.md): the codec deliberately has NO
+ * docs/guides/compliance-adjudications.md): the codec deliberately has NO
  * server-revision-keyed raw-UTF-8 arm — against a pure-rev2-only server
  * (IMAP4rev2 advertised WITHOUT IMAP4rev1, no UTF8=ACCEPT) the client
  * still emits mUTF-7, exactly as the rev2 compliance fixtures
@@ -84,7 +89,12 @@ describe("UTF8=ONLY (RFC 6855 §6, M5.13)", () => {
 		server = await ScriptedServer.start();
 		server.arm([
 			[
-				...authScript(["IMAP4rev1", "AUTH=PLAIN", "SASL-IR", "UTF8=ONLY"]),
+				...authScript([
+					"IMAP4rev1",
+					"AUTH=PLAIN",
+					"SASL-IR",
+					"UTF8=ONLY",
+				]),
 				// The ENABLE argument is exactly UTF8=ACCEPT — the UTF8=ONLY
 				// announcement is never echoed back as an ENABLE token.
 				expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
@@ -119,7 +129,12 @@ describe("UTF8=ONLY (RFC 6855 §6, M5.13)", () => {
 		server = await ScriptedServer.start();
 		server.arm([
 			[
-				...authScript(["IMAP4rev1", "AUTH=PLAIN", "SASL-IR", "UTF8=ONLY"]),
+				...authScript([
+					"IMAP4rev1",
+					"AUTH=PLAIN",
+					"SASL-IR",
+					"UTF8=ONLY",
+				]),
 				expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
 				reply("OK ENABLE completed", ["* ENABLED UTF8=ACCEPT"]),
 			],
@@ -129,33 +144,52 @@ describe("UTF8=ONLY (RFC 6855 §6, M5.13)", () => {
 		// alongside UTF8=ACCEPT — one canonical token reaches the wire.
 		client = new ImapClient(config(server.port, []));
 		await client.connect();
-		const enabled = await client.enableExtensions(["UTF8=ONLY", "utf8=accept"]);
+		const enabled = await client.enableExtensions([
+			"UTF8=ONLY",
+			"utf8=accept",
+		]);
 		expect(enabled).toEqual(["UTF8=ACCEPT"]);
 		expect(client.enabled.has("UTF8=ACCEPT")).toBe(true);
 		await server.assertCompleted();
-		const enableLines = server.commandLines.filter((l) => l.verb === "ENABLE");
+		const enableLines = server.commandLines.filter(
+			(l) => l.verb === "ENABLE",
+		);
 		expect(enableLines).toHaveLength(1);
 		expect(enableLines[0].args).toBe("UTF8=ACCEPT");
 	});
 
 	test("extensions:false + UTF8=ONLY advertised: no ENABLE is sent, and the client detects the announcement via a logger warning (RFC6855-6-3)", async () => {
 		server = await ScriptedServer.start();
-		server.arm([[...authScript(["IMAP4rev1", "AUTH=PLAIN", "SASL-IR", "UTF8=ONLY"])]]);
+		server.arm([
+			[
+				...authScript([
+					"IMAP4rev1",
+					"AUTH=PLAIN",
+					"SASL-IR",
+					"UTF8=ONLY",
+				]),
+			],
+		]);
 		const logged: IMAPLogMessage[] = [];
-		client = new ImapClient(config(server.port, false, (info) => logged.push(info)));
+		client = new ImapClient(
+			config(server.port, false, (info) => logged.push(info)),
+		);
 		await client.connect();
 		expect(client.state).toBe("authenticated");
 		await server.assertCompleted();
 
 		// No ENABLE of any kind reached the wire (extensions: false).
 		expect(client.enabled.size).toBe(0);
-		expect(server.commandLines.some((l) => l.verb === "ENABLE")).toBe(false);
+		expect(server.commandLines.some((l) => l.verb === "ENABLE")).toBe(
+			false,
+		);
 		// ...but the UTF8=ONLY announcement was detected and surfaced
 		// through the library's user-notification channel.
 		const warning = logged.find(
 			(info) =>
 				info.level === "warn" &&
-				(info as { detail?: { code?: string } }).detail?.code === "UTF8ONLYNOTENABLED",
+				(info as { detail?: { code?: string } }).detail?.code ===
+					"UTF8ONLYNOTENABLED",
 		);
 		expect(
 			warning,
@@ -168,18 +202,27 @@ describe("UTF8=ONLY (RFC 6855 §6, M5.13)", () => {
 		server = await ScriptedServer.start();
 		server.arm([
 			[
-				...authScript(["IMAP4rev1", "AUTH=PLAIN", "SASL-IR", "UTF8=ONLY"]),
+				...authScript([
+					"IMAP4rev1",
+					"AUTH=PLAIN",
+					"SASL-IR",
+					"UTF8=ONLY",
+				]),
 				expectLine(command("ENABLE", { args: "UTF8=ACCEPT" })),
 				reply("OK ENABLE completed", ["* ENABLED UTF8=ACCEPT"]),
 			],
 		]);
 		const logged: IMAPLogMessage[] = [];
-		client = new ImapClient(config(server.port, "auto", (info) => logged.push(info)));
+		client = new ImapClient(
+			config(server.port, "auto", (info) => logged.push(info)),
+		);
 		await client.connect();
 		await server.assertCompleted();
 		expect(
 			logged.filter(
-				(info) => (info as { detail?: { code?: string } }).detail?.code === "UTF8ONLYNOTENABLED",
+				(info) =>
+					(info as { detail?: { code?: string } }).detail?.code ===
+					"UTF8ONLYNOTENABLED",
 			),
 		).toHaveLength(0);
 	});
@@ -204,7 +247,12 @@ describe("pure-rev2-only codec direction (M5.13 settled decision — no raw-UTF-
 				// fixtures (`IMAP4rev2 LITERAL-`, no IMAP4rev1 token). Nothing
 				// in AUTO_ENABLE_SET is advertised, so extensions:"auto" sends
 				// no ENABLE at all (zero bytes, advertisement filter).
-				...authScript(["IMAP4rev2", "LITERAL-", "AUTH=PLAIN", "SASL-IR"]),
+				...authScript([
+					"IMAP4rev2",
+					"LITERAL-",
+					"AUTH=PLAIN",
+					"SASL-IR",
+				]),
 				// The settled rule: server revision alone NEVER flips the
 				// codec — the name goes out as mUTF-7 (always-ASCII, so it
 				// rides inline, never as a literal), exactly as the rev2

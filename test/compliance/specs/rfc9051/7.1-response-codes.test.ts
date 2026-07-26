@@ -92,7 +92,8 @@ defineAcceptanceTable({
 	rows: [
 		{
 			req: "RFC9051-7-1",
-			variant: "untagged NO with a rev2 CLIENTBUG response code mid-command",
+			variant:
+				"untagged NO with a rev2 CLIENTBUG response code mid-command",
 			line: "* NO [CLIENTBUG] Command sequence error",
 		},
 		{
@@ -107,7 +108,8 @@ defineAcceptanceTable({
 		},
 		{
 			req: "RFC9051-7-1",
-			variant: "unsolicited ESEARCH response mid-command (rev2 search result form)",
+			variant:
+				"unsolicited ESEARCH response mid-command (rev2 search result form)",
 			line: '* ESEARCH (TAG "unsolicited") ALL 1:3',
 		},
 	],
@@ -124,7 +126,10 @@ defineAcceptanceTable({
 				expectLine(command("CAPABILITY", { args: null })),
 				// The unsolicited line arrives BEFORE the requested data — truly
 				// mid-command, never asked for by the client.
-				reply("OK CAPABILITY completed", [row.line, "* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					row.line,
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -163,7 +168,8 @@ defineAcceptanceTable({
 		},
 		{
 			req: "RFC9051-7.1-8",
-			variant: "unknown code with arguments on an untagged OK mid-command",
+			variant:
+				"unknown code with arguments on an untagged OK mid-command",
 			untagged: "* OK [XUNKNOWN 42 abc] informational",
 		},
 		{
@@ -237,7 +243,13 @@ complianceTest(
 		// client skip the CAPABILITY round trip entirely, so scripting one here
 		// would stall forever. The witness for "accepted the greeting" is the
 		// consumed capability set plus the Not-Authenticated state below.
-		server.arm([[send("* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n")]]);
+		server.arm([
+			[
+				send(
+					"* OK [CAPABILITY IMAP4rev2 LITERAL-] IMAP4rev2 service ready\r\n",
+				),
+			],
+		]);
 		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
@@ -271,9 +283,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				send("* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in as user\r\n"),
+				send(
+					"* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in as user\r\n",
+				),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -330,9 +346,13 @@ complianceTest(
 				// The server keeps the connection OPEN and stands ready for a
 				// normal exchange, so `active` reflects the CLIENT's close
 				// decision, never a server-side socket close.
-				send("* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in (cleartext)\r\n"),
+				send(
+					"* PREAUTH [CAPABILITY IMAP4rev2 LITERAL-] logged in (cleartext)\r\n",
+				),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -367,7 +387,12 @@ complianceTest(
 	},
 	async () => {
 		const server = await f.startServer();
-		server.arm([[send("* BYE server not willing to accept the connection\r\n"), close()]]);
+		server.arm([
+			[
+				send("* BYE server not willing to accept the connection\r\n"),
+				close(),
+			],
+		]);
 		const driver = f.newDriver();
 		const ok = await driver.connect({
 			host: "127.0.0.1",
@@ -391,8 +416,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1.5-2"],
 		profiles: ["rev2"],
-		title:
-			"client continues reading responses after an unsolicited BYE (server does not close)",
+		title: "client continues reading responses after an unsolicited BYE (server does not close)",
 		timeout: 5000,
 	},
 	async () => {
@@ -406,9 +430,13 @@ complianceTest(
 				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
 				// BYE mid-exchange; the server does NOT close the connection.
-				send("* BYE server going down for maintenance in 10 minutes\r\n"),
+				send(
+					"* BYE server going down for maintenance in 10 minutes\r\n",
+				),
 				// Pending responses follow the BYE — the client SHOULD read them.
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev2 LITERAL-"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev2 LITERAL-",
+				]),
 			],
 		]);
 		const driver = f.newDriver();
@@ -439,8 +467,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7-2"],
 		profiles: ["rev2"],
-		title:
-			"client remembers every critical data item (FLAGS, EXISTS, EXPUNGE) delivered in one burst",
+		title: "client remembers every critical data item (FLAGS, EXISTS, EXPUNGE) delivered in one burst",
 		timeout: 5000,
 	},
 	async () => {
@@ -494,8 +521,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1-3"],
 		profiles: ["rev2"],
-		title:
-			"client presents ALERT text through its logger channel after TLS confidentiality is established",
+		title: "client presents ALERT text through its logger channel after TLS confidentiality is established",
 		timeout: 5000,
 	},
 	async () => {
@@ -518,7 +544,10 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		expect(ok).toBe(true);
-		expect(driver.secure, "the connection must be confidential before the ALERT").toBe(true);
+		expect(
+			driver.secure,
+			"the connection must be confidential before the ALERT",
+		).toBe(true);
 		await server.assertCompleted();
 		// Give the event/log pipeline a bounded window to flush after close.
 		await new Promise<void>((r) => setTimeout(r, 100));
@@ -555,7 +584,7 @@ complianceTest(
 // honest measurement that the graded behaviour is unimplemented. This test's
 // pass is therefore currently VACUOUS by construction and is documented as such;
 // it becomes a genuine SHOULD-ignore witness once 7.1-3 is satisfied.
-// ADJUDICATED DEVIATION (docs/compliance-adjudications.md, RFC9051-7.1-1): the
+// ADJUDICATED DEVIATION (docs/guides/compliance-adjudications.md, RFC9051-7.1-1): the
 // modern-API spec (invariant I-7 + §10.6) deliberately chooses
 // display-with-untrusted-marking for pre-confidentiality ALERTs — the alert
 // text always reaches the logger at warn grade with a structural
@@ -570,8 +599,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1-1"],
 		profiles: ["rev2"],
-		title:
-			"client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
+		title: "client does not surface a plaintext-connection ALERT at any log level (SHOULD ignore)",
 		expectFailure: "violation",
 		timeout: 5000,
 	},
@@ -593,13 +621,18 @@ complianceTest(
 			security: "none",
 		});
 		expect(ok).toBe(true);
-		expect(driver.secure, "the connection must be unprotected for this leg").toBe(false);
+		expect(
+			driver.secure,
+			"the connection must be unprotected for this leg",
+		).toBe(false);
 		await server.assertCompleted();
 		// Bounded flush window, then assert absence (no positive event to poll for).
 		await new Promise<void>((r) => setTimeout(r, 100));
 		// Scan the FULL log stream at any level — the ALERT content must not leak
 		// through anywhere (not just at attention grade), per the catalog caveat.
-		const alertSurfaced = driver.logs.some((entry) => entry.message.includes(alertText));
+		const alertSurfaced = driver.logs.some((entry) =>
+			entry.message.includes(alertText),
+		);
 		expect(
 			alertSurfaced,
 			"a plaintext-connection ALERT must not be surfaced at any log level (SHOULD ignore)",
@@ -625,8 +658,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1-2"],
 		profiles: ["rev2"],
-		title:
-			"a surfaced unprotected-connection ALERT is structurally marked as potentially suspicious",
+		title: "a surfaced unprotected-connection ALERT is structurally marked as potentially suspicious",
 		timeout: 5000,
 	},
 	async () => {
@@ -651,7 +683,9 @@ complianceTest(
 		await server.assertCompleted();
 		await new Promise<void>((r) => setTimeout(r, 100));
 		// Find any log entry that surfaced the ALERT body at all.
-		const surfaced = driver.logs.filter((entry) => entry.message.includes(alertBody));
+		const surfaced = driver.logs.filter((entry) =>
+			entry.message.includes(alertBody),
+		);
 		// The duty only bites IF the client displays the alert. If nothing is
 		// surfaced, the duty is not triggered — but the graded ALERT contract as a
 		// whole is unimplemented (7.1-3 fails), so we assert the STRUCTURAL marker
@@ -714,14 +748,18 @@ complianceTest(
 		await driver.login("user", "pass");
 		const session = await driver.select("INBOX");
 		await server.assertCompleted();
-		expect(new Set(session.permanentFlags), "permanentFlags must be exactly {\\Deleted, \\Seen}").toEqual(
-			new Set(["\\Deleted", "\\Seen"]),
-		);
+		expect(
+			new Set(session.permanentFlags),
+			"permanentFlags must be exactly {\\Deleted, \\Seen}",
+		).toEqual(new Set(["\\Deleted", "\\Seen"]));
 		expect(
 			session.permanentFlags?.has("\\Flagged"),
 			"\\Flagged is in FLAGS but NOT in PERMANENTFLAGS -- must not be treated as durable",
 		).toBe(false);
-		expect(session.canCreateKeywords, "no \\* means new keywords cannot be created").toBe(false);
+		expect(
+			session.canCreateKeywords,
+			"no \\* means new keywords cannot be created",
+		).toBe(false);
 	},
 );
 
@@ -736,8 +774,7 @@ complianceTest(
 	{
 		reqs: ["RFC9051-7.1-6"],
 		profiles: ["rev2"],
-		title:
-			"client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional in rev2)",
+		title: "client surfaces NO [TRYCREATE] APPEND failure (retry via CREATE is optional in rev2)",
 		timeout: 5000,
 	},
 	async () => {
@@ -757,7 +794,10 @@ complianceTest(
 		await driver.login("user", "pass");
 		let appendError: unknown;
 		try {
-			await driver.append("Archive/2026", Buffer.from("Subject: hi\r\n\r\nbody\r\n"));
+			await driver.append(
+				"Archive/2026",
+				Buffer.from("Subject: hi\r\n\r\nbody\r\n"),
+			);
 		} catch (err) {
 			// NotImplementedError = today's honest 'unimplemented' outcome.
 			if (err instanceof NotImplementedError) throw err;

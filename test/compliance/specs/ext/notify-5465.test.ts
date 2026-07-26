@@ -31,7 +31,7 @@
  *   RFC5465-5.3-2   MSN prohibition — comply by refusal: seq-grain refused,
  *                   UID-grain (caller-supplied UIDs) unrestricted. *** REAL —
  *                   genuine pass, SF4/M4-phase-boundary review; see
- *                   docs/compliance-adjudications.md ***
+ *                   docs/guides/compliance-adjudications.md ***
  *   RFC5465-5.4-1   Accept unsolicited LIST with \Nonexistent. *** REAL ***
  *   RFC5465-5.4-2   Accept extended LIST with OLDNAME. *** REAL VIOLATION —
  *                   probed: listing.ts throws on the trailing extended-data
@@ -99,7 +99,8 @@ const f = useComplianceFixture();
 
 // ── shared event-shape helpers (condstore-7162 pattern) ─────────────────────
 function contentOf<T>(ev: ObservedEvent): T {
-	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as T;
+	return ((ev.detail as { content?: unknown } | undefined)?.content ??
+		{}) as T;
 }
 interface StatusContent {
 	status?: string;
@@ -108,7 +109,11 @@ interface StatusContent {
 function statusEvents(driver: { events: ObservedEvent[] }): StatusContent[] {
 	return driver.events
 		.filter((e) => e.type === "serverStatus")
-		.map((e) => (e.detail as { content?: StatusContent } | undefined)?.content ?? {});
+		.map(
+			(e) =>
+				(e.detail as { content?: StatusContent } | undefined)
+					?.content ?? {},
+		);
 }
 interface TaggedContent {
 	tag?: { id?: string };
@@ -208,7 +213,9 @@ complianceTest(
 			await waitForUntagged(driver, "EXPUNGE"),
 		);
 		expect(expunge.sequenceNumber).toBe(2);
-		const fetch = contentOf<ParsedFetch>(await waitForUntagged(driver, "FETCH"));
+		const fetch = contentOf<ParsedFetch>(
+			await waitForUntagged(driver, "FETCH"),
+		);
 		expect(fetch.sequenceNumber).toBe(2);
 		expect(fetch.flags?.has("\\Answered")).toBe(true);
 		const existsCounts = driver.events
@@ -236,8 +243,12 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(["* 99 FETCH (UID 9999 FLAGS ($Junk))"]);
-		const fetch = contentOf<ParsedFetch>(await waitForUntagged(driver, "FETCH"));
+		const driver = await unsolicited([
+			"* 99 FETCH (UID 9999 FLAGS ($Junk))",
+		]);
+		const fetch = contentOf<ParsedFetch>(
+			await waitForUntagged(driver, "FETCH"),
+		);
 		await waitForUntagged(driver, "EXISTS");
 		expect(fetch.sequenceNumber).toBe(99);
 		expect(fetch.uid?.id).toBe(9999);
@@ -259,8 +270,13 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(["* 444 EXISTS", "* 444 FETCH (UID 9999)"]);
-		const fetch = contentOf<ParsedFetch>(await waitForUntagged(driver, "FETCH"));
+		const driver = await unsolicited([
+			"* 444 EXISTS",
+			"* 444 FETCH (UID 9999)",
+		]);
+		const fetch = contentOf<ParsedFetch>(
+			await waitForUntagged(driver, "FETCH"),
+		);
 		expect(fetch.sequenceNumber).toBe(444);
 		expect(fetch.uid?.id).toBe(9999);
 		const existsCounts = driver.events
@@ -292,7 +308,9 @@ complianceTest(
 		const driver = await unsolicited([
 			'* STATUS "Lists/Lemonade" (UIDNEXT 10002 MESSAGES 503)',
 		]);
-		const status = contentOf<ParsedStatus>(await waitForUntagged(driver, "STATUS"));
+		const status = contentOf<ParsedStatus>(
+			await waitForUntagged(driver, "STATUS"),
+		);
 		await waitForUntagged(driver, "EXISTS");
 		// (The client currently surfaces the name with its quoting intact — the
 		// values are the acceptance observable.)
@@ -344,8 +362,12 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(['* LIST (\\NoAccess) "/" "SharedStuff"']);
-		const list = contentOf<ParsedList>(await waitForUntagged(driver, "LIST"));
+		const driver = await unsolicited([
+			'* LIST (\\NoAccess) "/" "SharedStuff"',
+		]);
+		const list = contentOf<ParsedList>(
+			await waitForUntagged(driver, "LIST"),
+		);
 		await waitForUntagged(driver, "EXISTS");
 		expect(list.name).toBe("SharedStuff");
 		expect(list.flags?.has("\\NoAccess")).toBe(true);
@@ -366,8 +388,12 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(['* LIST (\\NonExistent) "." "INBOX.DeletedMailbox"']);
-		const list = contentOf<ParsedList>(await waitForUntagged(driver, "LIST"));
+		const driver = await unsolicited([
+			'* LIST (\\NonExistent) "." "INBOX.DeletedMailbox"',
+		]);
+		const list = contentOf<ParsedList>(
+			await waitForUntagged(driver, "LIST"),
+		);
 		await waitForUntagged(driver, "EXISTS");
 		expect(list.name).toBe("INBOX.DeletedMailbox");
 		expect(list.separator).toBe(".");
@@ -388,8 +414,12 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(['* LIST (\\Subscribed) "/" SubscribedMailbox']);
-		const list = contentOf<ParsedList>(await waitForUntagged(driver, "LIST"));
+		const driver = await unsolicited([
+			'* LIST (\\Subscribed) "/" SubscribedMailbox',
+		]);
+		const list = contentOf<ParsedList>(
+			await waitForUntagged(driver, "LIST"),
+		);
 		await waitForUntagged(driver, "EXISTS");
 		expect(list.name).toBe("SubscribedMailbox");
 		expect(list.flags?.has("\\Subscribed")).toBe(true);
@@ -421,7 +451,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				// RFC 5465 §5.4's rename response shape.
-				send('* LIST () "/" "NewMailbox" ("OLDNAME" ("OldMailbox"))\r\n'),
+				send(
+					'* LIST () "/" "NewMailbox" ("OLDNAME" ("OldMailbox"))\r\n',
+				),
 				send("* 7 EXISTS\r\n"),
 				close(),
 			],
@@ -435,12 +467,12 @@ complianceTest(
 		expect(ok).toBe(true);
 		await server.assertCompleted();
 		// SPEC: the extended LIST must be parsed and surfaced for the NEW name.
-		const listEvent = await waitForUntagged(driver, "LIST", { timeoutMs: 600 }).catch(
-			() => undefined,
-		);
+		const listEvent = await waitForUntagged(driver, "LIST", {
+			timeoutMs: 600,
+		}).catch(() => undefined);
 		expect(
 			listEvent,
-			"a '* LIST () \"/\" \"NewMailbox\" (\"OLDNAME\" (\"OldMailbox\"))' response must be " +
+			'a \'* LIST () "/" "NewMailbox" ("OLDNAME" ("OldMailbox"))\' response must be ' +
 				"accepted (RFC 5465 §5.4 / RFC 5258) — the client currently throws ParsingError " +
 				"on the extended data item and drops the line",
 		).toBeDefined();
@@ -448,9 +480,9 @@ complianceTest(
 		expect(parsed.name).toBe("NewMailbox");
 		// SPEC: the response stream must survive the line — the client must not go
 		// deaf. Probed: the trailing EXISTS is currently lost too.
-		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
-			() => undefined,
-		);
+		const exists = await waitForUntagged(driver, "EXISTS", {
+			timeoutMs: 400,
+		}).catch(() => undefined);
 		expect(
 			exists,
 			"the response stream must survive an extended LIST response — responses after it must still parse",
@@ -473,7 +505,9 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(["a1 NO [NOTIFICATIONOVERFLOW] Too much"]);
+		const driver = await unsolicited([
+			"a1 NO [NOTIFICATIONOVERFLOW] Too much",
+		]);
 		const found = await pollFor(() =>
 			taggedEvents(driver).some(
 				(t) =>
@@ -505,10 +539,14 @@ complianceTest(
 		timeout: 5000,
 	},
 	async () => {
-		const driver = await unsolicited(["* OK [NOTIFICATIONOVERFLOW] Notifications disabled"]);
+		const driver = await unsolicited([
+			"* OK [NOTIFICATIONOVERFLOW] Notifications disabled",
+		]);
 		const found = await pollFor(() =>
 			statusEvents(driver).some(
-				(c) => c.status === "OK" && c.text?.code?.kind === "NOTIFICATIONOVERFLOW",
+				(c) =>
+					c.status === "OK" &&
+					c.text?.code?.kind === "NOTIFICATIONOVERFLOW",
 			),
 		);
 		expect(
@@ -542,7 +580,10 @@ complianceTest(
 		expect(no.status?.status).toBe("NO");
 		expect(no.status?.text?.code?.kind).toBe("BADEVENT");
 		// The supported-event list must be exposed, not dropped.
-		expect(no.status?.text?.code?.contents).toEqual(["MessageNew", "MessageExpunge"]);
+		expect(no.status?.text?.code?.contents).toEqual([
+			"MessageNew",
+			"MessageExpunge",
+		]);
 		await waitForUntagged(driver, "EXISTS");
 	},
 );
@@ -565,7 +606,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("NOTIFY", {
 						args: /^SET \(SELECTED \(MessageNew MessageExpunge\)\) \(personal \(MessageNew MessageExpunge MailboxName SubscriptionChange\)\)$/i,
@@ -578,10 +622,18 @@ complianceTest(
 		await driver.login("user", "pass");
 		await driver.notify({
 			set: [
-				{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] },
+				{
+					mailboxes: "SELECTED",
+					events: ["MessageNew", "MessageExpunge"],
+				},
 				{
 					mailboxes: "personal",
-					events: ["MessageNew", "MessageExpunge", "MailboxName", "SubscriptionChange"],
+					events: [
+						"MessageNew",
+						"MessageExpunge",
+						"MailboxName",
+						"SubscriptionChange",
+					],
 				},
 			],
 		});
@@ -609,7 +661,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("NOTIFY", { args: /^NONE$/i })),
 				reply("OK NOTIFY completed"),
 			],
@@ -643,7 +698,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("NOTIFY", {
 						args: /^SET STATUS \(personal \(MessageNew MessageExpunge\)\)$/i,
@@ -660,14 +718,20 @@ complianceTest(
 		await driver.login("user", "pass");
 		await driver.notify({
 			status: true,
-			set: [{ mailboxes: "personal", events: ["MessageNew", "MessageExpunge"] }],
+			set: [
+				{
+					mailboxes: "personal",
+					events: ["MessageNew", "MessageExpunge"],
+				},
+			],
 		});
 		await server.assertCompleted();
 		const notify = server.commandLines.find((l) => l.verb === "NOTIFY");
 		expect(notify, "NOTIFY must have been emitted").toBeDefined();
-		expect(notify!.args, "the STATUS indicator rides between SET and the groups").toMatch(
-			/^SET STATUS \(/i,
-		);
+		expect(
+			notify!.args,
+			"the STATUS indicator rides between SET and the groups",
+		).toMatch(/^SET STATUS \(/i);
 	},
 );
 
@@ -690,7 +754,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("NOTIFY", {
 						args: /^SET \(SELECTED \(MessageNew MessageExpunge FlagChange\)\)$/i,
@@ -704,7 +771,12 @@ complianceTest(
 		// The caller asks for flag-change monitoring; the client's emitted list
 		// must carry the mandatory message-event companions.
 		await driver.notify({
-			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge", "FlagChange"] }],
+			set: [
+				{
+					mailboxes: "SELECTED",
+					events: ["MessageNew", "MessageExpunge", "FlagChange"],
+				},
+			],
 		});
 		await server.assertCompleted();
 		const lines = server.transcript.clientLines();
@@ -732,7 +804,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("NOTIFY", {
 						args: /^SET \(SELECTED \(MessageNew MessageExpunge\)\)$/i,
@@ -744,7 +819,12 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.notify({
-			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
+			set: [
+				{
+					mailboxes: "SELECTED",
+					events: ["MessageNew", "MessageExpunge"],
+				},
+			],
 		});
 		await server.assertCompleted();
 		const lines = server.transcript.clientLines();
@@ -772,7 +852,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("NOTIFY", {
 						args: /^SET \(SELECTED NONE\) \(personal \(MessageNew MessageExpunge\)\)$/i,
@@ -786,15 +869,19 @@ complianceTest(
 		await driver.notify({
 			set: [
 				{ mailboxes: "SELECTED", events: "NONE" },
-				{ mailboxes: "personal", events: ["MessageNew", "MessageExpunge"] },
+				{
+					mailboxes: "personal",
+					events: ["MessageNew", "MessageExpunge"],
+				},
 			],
 		});
 		await server.assertCompleted();
 		const notify = server.commandLines.find((l) => l.verb === "NOTIFY");
 		expect(notify, "NOTIFY must have been emitted").toBeDefined();
-		expect(notify!.args, "NONE is a bare specifier inside the group").toMatch(
-			/\(SELECTED NONE\)/i,
-		);
+		expect(
+			notify!.args,
+			"NONE is a bare specifier inside the group",
+		).toMatch(/\(SELECTED NONE\)/i);
 	},
 );
 
@@ -817,7 +904,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				// If the client (compliantly) proceeds with a reduced NOTIFY, accept it.
 				expectLine(command("NOTIFY")),
 				reply("OK NOTIFY completed"),
@@ -828,13 +918,20 @@ complianceTest(
 		await driver
 			.notify({
 				set: [
-					{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] },
-					{ mailboxes: "SELECTED-DELAYED", events: ["MessageNew", "MessageExpunge"] },
+					{
+						mailboxes: "SELECTED",
+						events: ["MessageNew", "MessageExpunge"],
+					},
+					{
+						mailboxes: "SELECTED-DELAYED",
+						events: ["MessageNew", "MessageExpunge"],
+					},
 				],
 			})
 			.catch(() => undefined);
 		const lines = server.transcript.clientLines();
-		const both = /\(SELECTED /i.test(lines) && /\(SELECTED-DELAYED /i.test(lines);
+		const both =
+			/\(SELECTED /i.test(lines) && /\(SELECTED-DELAYED /i.test(lines);
 		expect(
 			both,
 			"a single NOTIFY command may name at most one selected-family specifier (RFC 5465 §6.1)",
@@ -860,7 +957,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("NOTIFY")),
 				reply("OK NOTIFY completed"),
 			],
@@ -905,7 +1005,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(command("NOTIFY")),
 				reply("OK NOTIFY completed"),
 			],
@@ -918,7 +1021,10 @@ complianceTest(
 					{
 						mailboxes: "personal",
 						events: [
-							{ event: "MessageNew", fetchAtts: ["UID", "FLAGS"] },
+							{
+								event: "MessageNew",
+								fetchAtts: ["UID", "FLAGS"],
+							},
 							"MessageExpunge",
 						],
 					},
@@ -952,7 +1058,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				// §3.1's example fetch-att list (safe: peeked header fields only).
 				expectLine(
 					command("NOTIFY", {
@@ -1010,7 +1119,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 3, profile: ctx.profile }),
 				expectLine(
 					command("NOTIFY", {
@@ -1027,7 +1139,12 @@ complianceTest(
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.notify({
-			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
+			set: [
+				{
+					mailboxes: "SELECTED",
+					events: ["MessageNew", "MessageExpunge"],
+				},
+			],
 		});
 		// The caller asks for a '*'-terminated range — it must not hit the wire.
 		await driver.fetch("3:*", ["FLAGS"]).catch(() => undefined);
@@ -1040,7 +1157,7 @@ complianceTest(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // RFC5465-5.3-2 — MSN prohibition: comply by refusal (SF4, M4-phase-boundary
-// review — see docs/compliance-adjudications.md's "RFC5465-5.3-2" entry)
+// review — see docs/guides/compliance-adjudications.md's "RFC5465-5.3-2" entry)
 // ═════════════════════════════════════════════════════════════════════════════
 // §5.3: with immediate expunge notifications the meaning of an MSN can change
 // between composing and parsing a command — 'such a client cannot use FETCH,
@@ -1051,7 +1168,7 @@ complianceTest(
 // `assertSequenceGrainSafeUnderNotify`'s doc comment, `src/client/
 // mailbox.ts`) rather than silently reinterpreting the caller's MSNs as
 // UIDs — the same refuse-don't-transform posture already adjudicated for
-// `\Recent` (`docs/compliance-adjudications.md`). "Cannot use FETCH, has to
+// `\Recent` (`docs/guides/compliance-adjudications.md`). "Cannot use FETCH, has to
 // use UID FETCH" is genuinely satisfied: the UID-grain method remains fully
 // available, with NO seq-grain-derived restriction at all, for a caller that
 // supplies its own known UIDs — this is a real pass, not `expectFailure`.
@@ -1059,15 +1176,17 @@ complianceTest(
 	{
 		reqs: ["RFC5465-5.3-2"],
 		profiles: ["rev1", "rev2"],
-		title:
-			"comply by refusal: seq-grain FETCH is refused, UID FETCH with caller-supplied UIDs succeeds, while SELECTED MessageExpunge is active",
+		title: "comply by refusal: seq-grain FETCH is refused, UID FETCH with caller-supplied UIDs succeeds, while SELECTED MessageExpunge is active",
 		timeout: 5000,
 	},
 	async (ctx) => {
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(notifyCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(notifyCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 5, profile: ctx.profile }),
 				expectLine(
 					command("NOTIFY", {
@@ -1078,26 +1197,37 @@ complianceTest(
 				// Only the UID-grain call ever reaches the wire — the seq-grain
 				// call below is refused client-side, zero bytes written.
 				expectLine(command("UID FETCH", { args: /\(FLAGS\)$/i })),
-				reply("OK Fetch completed", ["* 1 FETCH (UID 1 FLAGS (\\Seen))"]),
+				reply("OK Fetch completed", [
+					"* 1 FETCH (UID 1 FLAGS (\\Seen))",
+				]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.notify({
-			set: [{ mailboxes: "SELECTED", events: ["MessageNew", "MessageExpunge"] }],
+			set: [
+				{
+					mailboxes: "SELECTED",
+					events: ["MessageNew", "MessageExpunge"],
+				},
+			],
 		});
 		// The seq-grain (bare FETCH) call is refused outright — comply by
 		// refusal, never a silent MSN->UID re-addressing of the caller's own
 		// numbers.
-		await expect(driver.fetch("1:5", ["FLAGS"])).rejects.toThrow(/RFC5465-5\.3-2/);
+		await expect(driver.fetch("1:5", ["FLAGS"])).rejects.toThrow(
+			/RFC5465-5\.3-2/,
+		);
 		// The UID-grain call, with the caller's OWN known UID, is completely
 		// unrestricted — this is the "has to use UID FETCH" alternative RFC
 		// 5465 §5.3 names, and it works.
 		await driver.uidFetch("1", ["FLAGS"]);
 		await server.assertCompleted();
 		// Non-vacuous: a UID FETCH was recorded and no bare FETCH ever was.
-		expect(server.commandLines.some((l) => l.verb === "UID FETCH")).toBe(true);
+		expect(server.commandLines.some((l) => l.verb === "UID FETCH")).toBe(
+			true,
+		);
 		expect(server.commandLines.some((l) => l.verb === "FETCH")).toBe(false);
 	},
 );
@@ -1138,20 +1268,24 @@ complianceTest(
 						args: /^RETURN \(COUNT UPDATE \(UID BODY\.PEEK\[HEADER\.FIELDS \(TO FROM SUBJECT\)\]\)\) FROM (?:"boss"|boss)$/i,
 					}),
 				),
-				reply("OK SEARCH completed", ["* ESEARCH (TAG \"a4\") COUNT 4"]),
+				reply("OK SEARCH completed", ['* ESEARCH (TAG "a4") COUNT 4']),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX");
 		await driver.search([{ from: "boss" }], {
-			return: ["COUNT", "UPDATE (UID BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT)])"],
+			return: [
+				"COUNT",
+				"UPDATE (UID BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT)])",
+			],
 		});
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
-		expect(search!.args, "fetch-atts ride inside the UPDATE parenthesis").toMatch(
-			/UPDATE \(/i,
-		);
+		expect(
+			search!.args,
+			"fetch-atts ride inside the UPDATE parenthesis",
+		).toMatch(/UPDATE \(/i);
 	},
 );

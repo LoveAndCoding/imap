@@ -73,13 +73,13 @@
  *    UNDEFINED-FILTER a dedicated typed variant (`{name: "UNDEFINED-FILTER",
  *    filterName}`) instead of the generic `{name, args}` fallback the public
  *    SDK surface used to render it through — registry-coverage.ts's note is
- *    updated to match (see `docs/compliance-adjudications.md` for the
+ *    updated to match (see `docs/guides/compliance-adjudications.md` for the
  *    SearchCriteria.filter deferral this milestone also records, option (b)).
  *  - Command-emission duties: REAL as of M5.4. `SearchCriteria.filter`
  *    (`commands/search-criteria.ts`, gated on `FILTERS`) and the METADATA
  *    facet's real `setmetadata()` land together, closing the four rows this
  *    milestone carried forward from M4.14 (RFC5466-3.1-1, RFC5466-3.2-1,
- *    RFC5466-3.2-2, RFC5466-4-1) — see docs/compliance-adjudications.md for
+ *    RFC5466-3.2-2, RFC5466-4-1) — see docs/guides/compliance-adjudications.md for
  *    the M4.14/M5.4 scope history. Each test below now drives the real
  *    `search()`/`setmetadata()` wire exchange and asserts on the exact
  *    scripted wire form, rather than catching an expected
@@ -265,12 +265,19 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(filtersCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(filtersCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
-				expectLine(command("SEARCH", { args: /^FILTER on-vacation$/i })),
+				expectLine(
+					command("SEARCH", { args: /^FILTER on-vacation$/i }),
+				),
 				reply(
 					"OK SEARCH completed",
-					ctx.profile === "rev2" ? ['* ESEARCH (TAG "a3") ALL 2,10'] : ["* SEARCH 2 10"],
+					ctx.profile === "rev2"
+						? ['* ESEARCH (TAG "a3") ALL 2,10']
+						: ["* SEARCH 2 10"],
 				),
 			],
 		]);
@@ -281,9 +288,10 @@ complianceTest(
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
-		expect(search!.args, "the sole legal form is 'FILTER' SP filter-name").toMatch(
-			/^FILTER on-vacation$/i,
-		);
+		expect(
+			search!.args,
+			"the sole legal form is 'FILTER' SP filter-name",
+		).toMatch(/^FILTER on-vacation$/i);
 	},
 );
 
@@ -310,7 +318,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(filtersCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(filtersCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
 				// If the client (compliantly) proceeds with a corrected SEARCH, accept it.
 				expectLine(command(/^(SEARCH|UID|NOOP)$/)),
@@ -373,7 +384,10 @@ complianceTest(
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.setmetadata("", [
-			{ entry: "/private/filters/values/on-vacation", value: "FLAGGED UNDELETED" },
+			{
+				entry: "/private/filters/values/on-vacation",
+				value: "FLAGGED UNDELETED",
+			},
 		]);
 		await server.assertCompleted();
 		const set = server.commandLines.find((l) => l.verb === "SETMETADATA");
@@ -383,7 +397,9 @@ complianceTest(
 			"the mailbox argument is the empty string (server annotation) and the entry " +
 				"lives under the reserved /private/filters/values hierarchy",
 		).toMatch(/^"" \("?\/private\/filters\/values\/on-vacation"? /i);
-		expect(set!.args, "a definition stores a non-NIL value").not.toMatch(/\bNIL\)$/i);
+		expect(set!.args, "a definition stores a non-NIL value").not.toMatch(
+			/\bNIL\)$/i,
+		);
 	},
 );
 
@@ -479,10 +495,14 @@ complianceTest(
 					login: true,
 				}),
 				...selectExchange("INBOX", { exists: 4, profile: ctx.profile }),
-				expectLine(command("SEARCH", { args: /^FILTER Q1-2024\.important$/i })),
+				expectLine(
+					command("SEARCH", { args: /^FILTER Q1-2024\.important$/i }),
+				),
 				reply(
 					"OK SEARCH completed",
-					ctx.profile === "rev2" ? ['* ESEARCH (TAG "a4") ALL 7'] : ["* SEARCH 7"],
+					ctx.profile === "rev2"
+						? ['* ESEARCH (TAG "a4") ALL 7']
+						: ["* SEARCH 7"],
 				),
 				expectLine(
 					command("SETMETADATA", {
@@ -497,14 +517,20 @@ complianceTest(
 		await driver.select("INBOX");
 		await driver.search([`FILTER ${name}`]);
 		await driver.setmetadata("", [
-			{ entry: `/private/filters/values/${name}`, value: "SUBJECT quarterly" },
+			{
+				entry: `/private/filters/values/${name}`,
+				value: "SUBJECT quarterly",
+			},
 		]);
 		await server.assertCompleted();
 		// Site 1: the FILTER search-key argument.
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
 		const searchName = search!.args.replace(/^FILTER /i, "");
-		expect(searchName, "the FILTER argument carries the name verbatim").toBe(name);
+		expect(
+			searchName,
+			"the FILTER argument carries the name verbatim",
+		).toBe(name);
 		expect(
 			searchName,
 			"the FILTER argument must be 1*ATOM-CHAR excluding '/' (RFC 5466 §4)",
@@ -512,8 +538,13 @@ complianceTest(
 		// Site 2: the <filter_name> segment of the reserved entry name.
 		const set = server.commandLines.find((l) => l.verb === "SETMETADATA");
 		expect(set, "SETMETADATA must have been emitted").toBeDefined();
-		const segment = /\/private\/filters\/values\/([^ )"]+)/i.exec(set!.args)?.[1];
-		expect(segment, "the entry name carries the filter-name segment verbatim").toBe(name);
+		const segment = /\/private\/filters\/values\/([^ )"]+)/i.exec(
+			set!.args,
+		)?.[1];
+		expect(
+			segment,
+			"the entry name carries the filter-name segment verbatim",
+		).toBe(name);
 		expect(
 			segment,
 			"the entry's <filter_name> segment must be 1*ATOM-CHAR excluding '/' (RFC 5466 §4)",

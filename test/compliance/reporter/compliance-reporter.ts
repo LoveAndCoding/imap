@@ -1,7 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Reporter, SerializedError, TestModule, TestRunEndReason } from "vitest/node";
+import type {
+	Reporter,
+	SerializedError,
+	TestModule,
+	TestRunEndReason,
+} from "vitest/node";
 
 import { allCatalogModules } from "../catalog";
 import { aggregate, type TestRecord } from "./aggregate";
@@ -29,7 +34,8 @@ export default class ComplianceReporter implements Reporter {
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 				const full = path.join(dir, entry.name);
 				if (entry.isDirectory()) walk(full);
-				else if (entry.name.endsWith(".test.ts")) out.push(path.resolve(full));
+				else if (entry.name.endsWith(".test.ts"))
+					out.push(path.resolve(full));
 			}
 		};
 		walk(specsDir);
@@ -63,8 +69,12 @@ export default class ComplianceReporter implements Reporter {
 		// may rewrite the report files. A filtered `vitest run <file>` (or an
 		// interrupted run) would otherwise overwrite compliance.json/COMPLIANCE.md
 		// with almost-everything-untested data.
-		const ranFiles = new Set(testModules.map((m) => path.resolve(m.moduleId)));
-		const missing = this.listSpecTestFiles().filter((f) => !ranFiles.has(f));
+		const ranFiles = new Set(
+			testModules.map((m) => path.resolve(m.moduleId)),
+		);
+		const missing = this.listSpecTestFiles().filter(
+			(f) => !ranFiles.has(f),
+		);
 		if (reason === "interrupted" || missing.length > 0) {
 			console.error(
 				`compliance-reporter: partial run detected (${
@@ -114,7 +124,10 @@ export default class ComplianceReporter implements Reporter {
 				path.join(this.outDir, "compliance.json"),
 				JSON.stringify(data, null, "\t"),
 			);
-			fs.writeFileSync(path.join(this.outDir, "COMPLIANCE.md"), renderMarkdown(data));
+			fs.writeFileSync(
+				path.join(this.outDir, "compliance.md"),
+				renderMarkdown(data),
+			);
 		} catch (err) {
 			console.error(
 				`compliance-reporter: failed to write reports to ${this.outDir}: ${err instanceof Error ? err.message : String(err)}`,

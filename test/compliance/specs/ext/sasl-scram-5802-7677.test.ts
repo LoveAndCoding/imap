@@ -33,7 +33,7 @@
  *     RFC7677-3-1     SCRAM-SHA-256(-PLUS) = SCRAM-SHA-1(-PLUS) with SHA-256 substituted for HMAC()/H().
  *
  * NOT cited here (M5.16 adjudication, untestable/capability-inventory — see
- * docs/compliance-adjudications.md and each id's catalog untestableRationale):
+ * docs/guides/compliance-adjudications.md and each id's catalog untestableRationale):
  * RFC5802-5.1-11, RFC5802-6-2, RFC5802-6.1-1, RFC5802-6.1-2, RFC7677-4-1. All
  * five are conditional on this client supporting/using SCRAM channel binding
  * (the -PLUS mechanism variants), which is a permanent design non-goal (spec
@@ -98,7 +98,7 @@
  * variant), an antecedent this library permanently cannot satisfy (spec §13
  * non-goal) — reclassified untestable/capability-inventory in rfc5802.ts/
  * rfc7677.ts (RFC5802-6-1 at M5.1; the other five at M5.16, see
- * docs/compliance-adjudications.md and the in-file notes where their tests
+ * docs/guides/compliance-adjudications.md and the in-file notes where their tests
  * used to live).
  *
  * The forged-ServerSignature duty (RFC5802-5-3/-5.1-13) passes genuinely:
@@ -136,7 +136,12 @@ function xorBuf(a: Buffer, b: Buffer): Buffer {
 	for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i];
 	return out;
 }
-function hi(algo: ScramAlgo, password: string, salt: Buffer, iterations: number): Buffer {
+function hi(
+	algo: ScramAlgo,
+	password: string,
+	salt: Buffer,
+	iterations: number,
+): Buffer {
 	const dkLen = algo === "sha1" ? 20 : 32;
 	return pbkdf2Sync(password, salt, iterations, dkLen, algo);
 }
@@ -190,7 +195,8 @@ function computeScram(
 ) {
 	const clientFirstBare = `n=${v.username},r=${v.cnonce}`;
 	const serverFirstMessage =
-		serverFirstMessageOverride ?? `r=${combinedNonce},s=${v.salt.toString("base64")},i=${v.iterations}`;
+		serverFirstMessageOverride ??
+		`r=${combinedNonce},s=${v.salt.toString("base64")},i=${v.iterations}`;
 	const channelBindingB64 = Buffer.from(gs2Header, "utf8").toString("base64");
 	const clientFinalWithoutProof = `c=${channelBindingB64},r=${combinedNonce}`;
 	const authMessage = `${clientFirstBare},${serverFirstMessage},${clientFinalWithoutProof}`;
@@ -219,7 +225,10 @@ function computeScram(
  * (RFC5802-5.1-4), and 'r=' composed of printable-ASCII excluding ','
  * (RFC5802-5.1-6), unique across calls (checked by the caller, RFC5802-5.1-7).
  */
-function scramClientFirstMessage(expected: { username: string; expectFlag: "n" | "y" | "p" }) {
+function scramClientFirstMessage(expected: {
+	username: string;
+	expectFlag: "n" | "y" | "p";
+}) {
 	return {
 		description: `SCRAM client-first-message (gs2-cbind-flag '${expected.expectFlag}', n=${expected.username})`,
 		match: (wireLine: string) => {
@@ -227,11 +236,16 @@ function scramClientFirstMessage(expected: { username: string; expectFlag: "n" |
 			// base64 encoding of the SASL exchange, RFC 4959 §3) -- decode before
 			// applying the plaintext gs2-header/client-first-message-bare grammar.
 			if (!/^[A-Za-z0-9+/]+=*$/.test(wireLine)) {
-				return { ok: false, reason: `expected a base64 client-first-message, got: '${wireLine}'` };
+				return {
+					ok: false,
+					reason: `expected a base64 client-first-message, got: '${wireLine}'`,
+				};
 			}
 			const line = Buffer.from(wireLine, "base64").toString("utf8");
 			// RFC5802-5-1 / RFC5802-7-1: leading gs2-cbind-flag byte MUST be n/y/p.
-			const flagMatch = /^(n|y|p=[A-Za-z0-9.-]+),([^,]*),(.*)$/.exec(line);
+			const flagMatch = /^(n|y|p=[A-Za-z0-9.-]+),([^,]*),(.*)$/.exec(
+				line,
+			);
 			if (!flagMatch) {
 				return {
 					ok: false,
@@ -256,7 +270,9 @@ function scramClientFirstMessage(expected: { username: string; expectFlag: "n" |
 			}
 			const [, nField, rField] = bareMatch;
 			// RFC5802-5.1-4: ',' and '=' in the username are escaped as '=2C'/'=3D'.
-			const expectedEscaped = expected.username.replace(/=/g, "=3D").replace(/,/g, "=2C");
+			const expectedEscaped = expected.username
+				.replace(/=/g, "=3D")
+				.replace(/,/g, "=2C");
 			if (nField !== expectedEscaped) {
 				return {
 					ok: false,
@@ -266,8 +282,13 @@ function scramClientFirstMessage(expected: { username: string; expectFlag: "n" |
 			// Reject an unescaped raw comma/equals slipping through (n= must not
 			// itself contain a literal ',' after the split above already enforces
 			// no bare comma; additionally guard literal '=' not part of =2C/=3D).
-			const strippedEscapes = nField.replace(/=2C/g, "").replace(/=3D/g, "");
-			if (strippedEscapes.includes("=") || strippedEscapes.includes(",")) {
+			const strippedEscapes = nField
+				.replace(/=2C/g, "")
+				.replace(/=3D/g, "");
+			if (
+				strippedEscapes.includes("=") ||
+				strippedEscapes.includes(",")
+			) {
 				return {
 					ok: false,
 					reason: `n= value '${nField}' contains an unescaped ',' or '=' (RFC5802-5.1-4 violation)`,
@@ -298,15 +319,22 @@ function scramClientFinalMessage(expected: {
 	expectedProofB64: string;
 }) {
 	return {
-		description: "SCRAM client-final-message c=<gs2-header b64>,r=<combined nonce>,p=<ClientProof b64>",
+		description:
+			"SCRAM client-final-message c=<gs2-header b64>,r=<combined nonce>,p=<ClientProof b64>",
 		match: (wireLine: string) => {
 			// The wire line is base64 (see scramClientFirstMessage's identical note).
 			if (!/^[A-Za-z0-9+/]+=*$/.test(wireLine)) {
-				return { ok: false, reason: `expected a base64 client-final-message, got: '${wireLine}'` };
+				return {
+					ok: false,
+					reason: `expected a base64 client-final-message, got: '${wireLine}'`,
+				};
 			}
 			const line = Buffer.from(wireLine, "base64").toString("utf8");
 			// RFC5802-5-2/-7-2: fixed order c= then r= then p=.
-			const m = /^c=([A-Za-z0-9+/=]+),r=([^,]*),p=([A-Za-z0-9+/=]+)$/.exec(line);
+			const m =
+				/^c=([A-Za-z0-9+/=]+),r=([^,]*),p=([A-Za-z0-9+/=]+)$/.exec(
+					line,
+				);
 			if (!m) {
 				return {
 					ok: false,
@@ -370,9 +398,18 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
 				// AUTHENTICATIONFAILED (RFC 5530), not a bare NO: this leg only cares
 				// about the outgoing client-first-message shape and ends the
 				// exchange as quickly as possible -- a bare NO reads as a mechanism-
@@ -393,13 +430,21 @@ complianceTest(
 		});
 		let authError: unknown;
 		try {
-			await driver.authenticate("SCRAM-SHA-1", undefined, { user: v.username, pass: v.password });
+			await driver.authenticate("SCRAM-SHA-1", undefined, {
+				user: v.username,
+				pass: v.password,
+			});
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "AUTHENTICATIONFAILED must reject authenticate()").toBeDefined();
+		expect(
+			authError,
+			"AUTHENTICATIONFAILED must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
-		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
+		const authLine = server.commandLines.find(
+			(l) => l.verb === "AUTHENTICATE",
+		);
 		expect(authLine).toBeDefined();
 	},
 );
@@ -421,9 +466,18 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: rawUsername, expectFlag: "n" })),
+				expectLine(
+					scramClientFirstMessage({
+						username: rawUsername,
+						expectFlag: "n",
+					}),
+				),
 				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
 			],
 		]);
@@ -437,11 +491,16 @@ complianceTest(
 		});
 		let authError: unknown;
 		try {
-			await driver.authenticate("SCRAM-SHA-1", undefined, { user: rawUsername });
+			await driver.authenticate("SCRAM-SHA-1", undefined, {
+				user: rawUsername,
+			});
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "AUTHENTICATIONFAILED must reject authenticate()").toBeDefined();
+		expect(
+			authError,
+			"AUTHENTICATIONFAILED must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );
@@ -471,22 +530,36 @@ complianceTest(
 				const decoded = /^[A-Za-z0-9+/]+=*$/.test(wireLine)
 					? Buffer.from(wireLine, "base64").toString("utf8")
 					: "";
-				const m = /^(?:n|y|p=[A-Za-z0-9.-]+),[^,]*,n=[^,]*,r=([^,]*)$/.exec(decoded);
+				const m =
+					/^(?:n|y|p=[A-Za-z0-9.-]+),[^,]*,n=[^,]*,r=([^,]*)$/.exec(
+						decoded,
+					);
 				if (m) capturedNonces.push(m[1]);
-				return scramClientFirstMessage({ username: v.username, expectFlag: "n" }).match(wireLine);
+				return scramClientFirstMessage({
+					username: v.username,
+					expectFlag: "n",
+				}).match(wireLine);
 			},
 		};
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
 				expectLine(captureNonce),
 				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
 			],
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
 				expectLine(captureNonce),
 				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
@@ -501,7 +574,10 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		await expect(
-			driver1.authenticate("SCRAM-SHA-1", undefined, { user: v.username, pass: v.password }),
+			driver1.authenticate("SCRAM-SHA-1", undefined, {
+				user: v.username,
+				pass: v.password,
+			}),
 		).rejects.toThrow();
 		const driver2 = f.newDriver();
 		await driver2.connect({
@@ -512,7 +588,10 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		await expect(
-			driver2.authenticate("SCRAM-SHA-1", undefined, { user: v.username, pass: v.password }),
+			driver2.authenticate("SCRAM-SHA-1", undefined, {
+				user: v.username,
+				pass: v.password,
+			}),
 		).rejects.toThrow();
 		await server.assertCompleted();
 		// When implemented: capturedNonces has two entries and they differ.
@@ -541,9 +620,18 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
 				// Server-first-message with a nonce that does NOT extend the client's
 				// c-nonce as a prefix — this is a nonce-substitution/injection attempt.
 				send(
@@ -557,7 +645,8 @@ complianceTest(
 				// A compliant client detects the mismatch and MUST abort with '*'
 				// rather than emit a client-final-message computed against it.
 				expectLine({
-					description: "'*' abort (nonce-echo mismatch detected) — NOT a client-final-message",
+					description:
+						"'*' abort (nonce-echo mismatch detected) — NOT a client-final-message",
 					match: (line: string) => ({
 						ok: line === "*",
 						reason: `expected '*' abort on nonce mismatch, got: '${line}'`,
@@ -575,7 +664,10 @@ complianceTest(
 			timeoutMs: 3000,
 		});
 		await expect(
-			driver.authenticate("SCRAM-SHA-1", undefined, { user: v.username, pass: v.password }),
+			driver.authenticate("SCRAM-SHA-1", undefined, {
+				user: v.username,
+				pass: v.password,
+			}),
 		).rejects.toThrow();
 		await server.assertCompleted();
 		// When implemented: no client-final-message (c=/r=/p=) was ever sent.
@@ -591,7 +683,13 @@ complianceTest(
 // full RFC 5802 §5 worked example, reproduced byte-for-byte (see header).
 complianceTest(
 	{
-		reqs: ["RFC5802-5.1-9", "RFC5802-5.1-10", "RFC5802-5.1-12", "RFC5802-5-2", "RFC5802-7-2"],
+		reqs: [
+			"RFC5802-5.1-9",
+			"RFC5802-5.1-10",
+			"RFC5802-5.1-12",
+			"RFC5802-5-2",
+			"RFC5802-7-2",
+		],
 		profiles: ["rev1", "rev2"],
 		title: "SCRAM-SHA-1 client-final-message matches the RFC 5802 §5 worked example byte-for-byte",
 		timeout: 5000,
@@ -600,17 +698,36 @@ complianceTest(
 		const v = VECTORS.sha1;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage, expectedProofB64 } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage, expectedProofB64 } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 		expect(expectedProofB64).toBe(v.expectedProofB64); // sanity: matches RFC 5802 §5 verbatim
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				expectLine(
 					scramClientFinalMessage({
 						gs2Header,
@@ -625,7 +742,12 @@ complianceTest(
 				// Every worked-example/wire-form leg in this suite must present
 				// one to keep exercising a genuinely RFC-compliant exchange.
 				send(
-					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+					"+ " +
+						Buffer.from(
+							`v=${v.expectedServerSigB64}`,
+							"utf8",
+						).toString("base64") +
+						"\r\n",
 				),
 				expectLine({
 					description: "empty reply concluding the SASL exchange",
@@ -637,7 +759,9 @@ complianceTest(
 				// [CAPABILITY ...] avoids an unscripted post-auth CAPABILITY refresh
 				// (spec §3.3 step 5) -- see the ANONYMOUS compliance spec's identical
 				// note.
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = f.newDriver();
@@ -680,10 +804,16 @@ complianceTest(
 		const v = VECTORS.sha1;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 		// A syntactically valid but WRONG ServerSignature (right shape, wrong bytes;
 		// specifically NOT equal to VECTORS.sha1.expectedServerSigB64).
-		const wrongServerSignatureB64 = Buffer.alloc(20, 0x42).toString("base64");
+		const wrongServerSignatureB64 = Buffer.alloc(20, 0x42).toString(
+			"base64",
+		);
 		expect(wrongServerSignatureB64).not.toBe(v.expectedServerSigB64);
 
 		const server = await f.startServer({ tlsImplicit: localhost });
@@ -693,11 +823,30 @@ complianceTest(
 				// fell through to a weaker mechanism (or LOGIN) after the forged
 				// signature would emit bytes this script never expects, failing
 				// assertCompleted() — the no-downgrade half of the duty.
-				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1", "AUTH=PLAIN"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				...sessionPrelude([
+					"IMAP4rev1",
+					"AUTH=SCRAM-SHA-1",
+					"AUTH=PLAIN",
+				]),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				expectLine(
 					scramClientFinalMessage({
 						gs2Header,
@@ -706,7 +855,14 @@ complianceTest(
 					}),
 				),
 				// Server claims success but its v= is forged/wrong.
-				send("+ " + Buffer.from(`v=${wrongServerSignatureB64}`, "utf8").toString("base64") + "\r\n"),
+				send(
+					"+ " +
+						Buffer.from(
+							`v=${wrongServerSignatureB64}`,
+							"utf8",
+						).toString("base64") +
+						"\r\n",
+				),
 				// The client concludes the wire exchange with an empty reply (its
 				// verdict on the signature is rendered by finish(), post-OK).
 				expectLine({
@@ -776,16 +932,35 @@ complianceTest(
 		const v = VECTORS.sha1;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				// scramClientFinalMessage's gs2Header equality check IS the cbind-data-
 				// absence assertion: any trailing byte after "n,," would fail the
 				// strict equality against expected.gs2Header.
@@ -799,7 +974,12 @@ complianceTest(
 				// PR #18 review fix (Critical #1): see the worked-example test's
 				// identical note above -- a genuine 'v=' is now required.
 				send(
-					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+					"+ " +
+						Buffer.from(
+							`v=${v.expectedServerSigB64}`,
+							"utf8",
+						).toString("base64") +
+						"\r\n",
 				),
 				expectLine({
 					description: "empty reply concluding the SASL exchange",
@@ -808,7 +988,9 @@ complianceTest(
 						reason: `expected an empty concluding reply, got: '${line}'`,
 					}),
 				}),
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = f.newDriver();
@@ -844,17 +1026,36 @@ complianceTest(
 		const v = VECTORS.sha256;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage, expectedProofB64 } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage, expectedProofB64 } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 		expect(expectedProofB64).toBe(v.expectedProofB64); // sanity: matches RFC 7677 §3 verbatim
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-256"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-256(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-256(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				expectLine(
 					scramClientFinalMessage({
 						gs2Header,
@@ -865,7 +1066,12 @@ complianceTest(
 				// PR #18 review fix (Critical #1): see the SHA-1 worked-example
 				// test's identical note above -- a genuine 'v=' is now required.
 				send(
-					"+ " + Buffer.from(`v=${v.expectedServerSigB64}`, "utf8").toString("base64") + "\r\n",
+					"+ " +
+						Buffer.from(
+							`v=${v.expectedServerSigB64}`,
+							"utf8",
+						).toString("base64") +
+						"\r\n",
 				),
 				expectLine({
 					description: "empty reply concluding the SASL exchange",
@@ -874,7 +1080,9 @@ complianceTest(
 						reason: `expected an empty concluding reply, got: '${line}'`,
 					}),
 				}),
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-256] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-256] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = f.newDriver();
@@ -891,7 +1099,9 @@ complianceTest(
 			scramNonce: () => v.cnonce,
 		});
 		await server.assertCompleted();
-		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
+		const authLine = server.commandLines.find(
+			(l) => l.verb === "AUTHENTICATE",
+		);
 		expect(authLine).toBeDefined();
 	},
 );
@@ -915,16 +1125,35 @@ complianceTest(
 		const v = VECTORS.sha1;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				expectLine(
 					scramClientFinalMessage({
 						gs2Header,
@@ -934,7 +1163,13 @@ complianceTest(
 				),
 				// Server rejects with an 'e=' server-error-value (closed vocabulary the
 				// client only needs to accept-and-report, per the catalog's §7 notes).
-				send("+ " + Buffer.from("e=other-error", "utf8").toString("base64") + "\r\n"),
+				send(
+					"+ " +
+						Buffer.from("e=other-error", "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				// AUTHENTICATIONFAILED (RFC 5530): the tagged NO settles the exchange
 				// directly (this leg never reaches a tagged OK, so `finish()` never
 				// runs at all) -- same LOGIN-fallback-avoidance rationale as every
@@ -980,16 +1215,24 @@ complianceTest(
 	async () => {
 		const v = VECTORS.sha1;
 		const rawAuthzid = "admin=x,y";
-		const expectedEscapedAuthzid = rawAuthzid.replace(/=/g, "=3D").replace(/,/g, "=2C");
+		const expectedEscapedAuthzid = rawAuthzid
+			.replace(/=/g, "=3D")
+			.replace(/,/g, "=2C");
 		const authzidMatcher = {
 			description: `SCRAM client-first-message with escaped authzid 'a=${expectedEscapedAuthzid}'`,
 			match: (wireLine: string) => {
 				if (!/^[A-Za-z0-9+/]+=*$/.test(wireLine)) {
-					return { ok: false, reason: `expected a base64 client-first-message, got: '${wireLine}'` };
+					return {
+						ok: false,
+						reason: `expected a base64 client-first-message, got: '${wireLine}'`,
+					};
 				}
 				const line = Buffer.from(wireLine, "base64").toString("utf8");
 				// gs2-header = gs2-cbind-flag "," [ "a=" authzid ] ","
-				const m = /^(n|y|p=[A-Za-z0-9.-]+),a=([^,]*),n=([^,]*),r=([^,]*)$/.exec(line);
+				const m =
+					/^(n|y|p=[A-Za-z0-9.-]+),a=([^,]*),n=([^,]*),r=([^,]*)$/.exec(
+						line,
+					);
 				if (!m) {
 					return {
 						ok: false,
@@ -1004,7 +1247,9 @@ complianceTest(
 					};
 				}
 				// Reject a raw, unescaped ',' or '=' slipping through.
-				const stripped = authzidField.replace(/=2C/g, "").replace(/=3D/g, "");
+				const stripped = authzidField
+					.replace(/=2C/g, "")
+					.replace(/=3D/g, "");
 				if (stripped.includes("=") || stripped.includes(",")) {
 					return {
 						ok: false,
@@ -1012,7 +1257,10 @@ complianceTest(
 					};
 				}
 				if (nField !== v.username) {
-					return { ok: false, reason: `n= '${nField}' != expected username '${v.username}'` };
+					return {
+						ok: false,
+						reason: `n= '${nField}' != expected username '${v.username}'`,
+					};
 				}
 				return { ok: true };
 			},
@@ -1021,7 +1269,11 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
 				expectLine(authzidMatcher),
 				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
@@ -1047,7 +1299,10 @@ complianceTest(
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "AUTHENTICATIONFAILED must reject authenticate()").toBeDefined();
+		expect(
+			authError,
+			"AUTHENTICATIONFAILED must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );
@@ -1075,28 +1330,45 @@ complianceTest(
 			Buffer.from(u, "utf8")
 				.toString("latin1")
 				.split("")
-				.map((c) => (c.charCodeAt(0) > 0x7e ? `\\x${c.charCodeAt(0).toString(16)}` : c))
+				.map((c) =>
+					c.charCodeAt(0) > 0x7e
+						? `\\x${c.charCodeAt(0).toString(16)}`
+						: c,
+				)
 				.join("");
 		const notRawNonAscii = {
-			description: "SCRAM client-first-message 'n=' is NOT the raw, unprepared non-ASCII username",
+			description:
+				"SCRAM client-first-message 'n=' is NOT the raw, unprepared non-ASCII username",
 			match: (wireLine: string) => {
 				if (!/^[A-Za-z0-9+/]+=*$/.test(wireLine)) {
-					return { ok: false, reason: `expected a base64 client-first-message, got: '${wireLine}'` };
+					return {
+						ok: false,
+						reason: `expected a base64 client-first-message, got: '${wireLine}'`,
+					};
 				}
 				const line = Buffer.from(wireLine, "base64").toString("utf8");
 				// gs2-header = gs2-cbind-flag "," [ authzid ] "," -- the trailing
 				// comma is unconditional (RFC 5802 §7), so an absent authzid still
 				// leaves TWO commas before 'n=' ("n,,n=...", not "n,n=...").
-				const m = /^(?:n|y|p=[A-Za-z0-9.-]+),(?:a=[^,]*)?,n=([^,]*),r=(.*)$/.exec(line);
+				const m =
+					/^(?:n|y|p=[A-Za-z0-9.-]+),(?:a=[^,]*)?,n=([^,]*),r=(.*)$/.exec(
+						line,
+					);
 				if (!m) {
-					return { ok: false, reason: `not a well-formed client-first-message-bare: '${line}'` };
+					return {
+						ok: false,
+						reason: `not a well-formed client-first-message-bare: '${line}'`,
+					};
 				}
 				const [, nField] = m;
 				// A compliant client must NOT emit the untouched raw UTF-8 bytes of
 				// U+00BD as the 'n=' value — it must either SASLprep-normalize it
 				// (producing a different byte sequence) or abort before reaching
 				// this line at all (RFC5802-5.1-3's SHOULD-abort branch).
-				if (nField === nonAsciiUsername || nField === encodeURIComponent(nonAsciiUsername)) {
+				if (
+					nField === nonAsciiUsername ||
+					nField === encodeURIComponent(nonAsciiUsername)
+				) {
 					return {
 						ok: false,
 						reason: `n= '${rawUtf8Escaped(nField)}' is the raw, unprepared non-ASCII username — client must SASLprep or abort (RFC5802-3-2/-5.1-3)`,
@@ -1109,7 +1381,11 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
 				expectLine(notRawNonAscii),
 				reply("NO [AUTHENTICATIONFAILED] AUTHENTICATE failed"),
@@ -1125,11 +1401,16 @@ complianceTest(
 		});
 		let authError: unknown;
 		try {
-			await driver.authenticate("SCRAM-SHA-1", undefined, { user: nonAsciiUsername });
+			await driver.authenticate("SCRAM-SHA-1", undefined, {
+				user: nonAsciiUsername,
+			});
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "AUTHENTICATIONFAILED must reject authenticate()").toBeDefined();
+		expect(
+			authError,
+			"AUTHENTICATIONFAILED must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 	},
 );
@@ -1156,9 +1437,18 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
 				// server-first-message carries an 'm=' mandatory-extension attribute
 				// this version of SCRAM defines none of — by definition unsupported.
 				send(
@@ -1172,7 +1462,8 @@ complianceTest(
 				// A compliant client MUST fail rather than emit a client-final-message
 				// computed against this server-first-message.
 				expectLine({
-					description: "'*' abort (unsupported mandatory 'm=' extension) — NOT a client-final-message",
+					description:
+						"'*' abort (unsupported mandatory 'm=' extension) — NOT a client-final-message",
 					match: (line: string) => ({
 						ok: line === "*",
 						reason: `expected '*' abort on unsupported 'm=' extension, got: '${line}'`,
@@ -1222,8 +1513,7 @@ complianceTest(
 		const combinedNonce = v.cnonce + v.snonce;
 		// Unknown optional extension 'x=foo' appended per the 'extensions' ABNF
 		// production ([",", extensions]) — MUST be ignored, not fatal.
-		const serverFirstWithExtension =
-			`r=${combinedNonce},s=${v.salt.toString("base64")},i=${v.iterations},x=foo`;
+		const serverFirstWithExtension = `r=${combinedNonce},s=${v.salt.toString("base64")},i=${v.iterations},x=foo`;
 		// AuthMessage is the LITERAL server-first-message bytes, extension
 		// included (see computeScram's doc comment) — the expected proof AND
 		// ServerSignature MUST both be computed against the extended message,
@@ -1244,10 +1534,25 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstWithExtension, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstWithExtension, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				// A compliant client ignores 'x=foo' for PARSING purposes (never
 				// fails/misparses on it) but still folds its literal bytes into
 				// the AuthMessage/proof computation (RFC5802-5.1-16 + §3).
@@ -1259,7 +1564,11 @@ complianceTest(
 					}),
 				),
 				send(
-					"+ " + Buffer.from(`v=${serverSignatureB64}`, "utf8").toString("base64") + "\r\n",
+					"+ " +
+						Buffer.from(`v=${serverSignatureB64}`, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
 				),
 				expectLine({
 					description: "empty reply concluding the SASL exchange",
@@ -1268,7 +1577,9 @@ complianceTest(
 						reason: `expected an empty concluding reply, got: '${line}'`,
 					}),
 				}),
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=SCRAM-SHA-1] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = f.newDriver();
@@ -1316,16 +1627,35 @@ complianceTest(
 		const v = VECTORS.sha1;
 		const gs2Header = "n,,";
 		const combinedNonce = v.cnonce + v.snonce;
-		const { serverFirstMessage } = computeScram(v, gs2Header, combinedNonce);
+		const { serverFirstMessage } = computeScram(
+			v,
+			gs2Header,
+			combinedNonce,
+		);
 
 		const server = await f.startServer({ tlsImplicit: localhost });
 		server.arm([
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=SCRAM-SHA-1"]),
-				expectLine(command("AUTHENTICATE", { args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i })),
+				expectLine(
+					command("AUTHENTICATE", {
+						args: /^SCRAM-SHA-1(?: [A-Za-z0-9+/=]+)?$/i,
+					}),
+				),
 				send("+ \r\n"),
-				expectLine(scramClientFirstMessage({ username: v.username, expectFlag: "n" })),
-				send("+ " + Buffer.from(serverFirstMessage, "utf8").toString("base64") + "\r\n"),
+				expectLine(
+					scramClientFirstMessage({
+						username: v.username,
+						expectFlag: "n",
+					}),
+				),
+				send(
+					"+ " +
+						Buffer.from(serverFirstMessage, "utf8").toString(
+							"base64",
+						) +
+						"\r\n",
+				),
 				expectLine(
 					scramClientFinalMessage({
 						gs2Header,
@@ -1378,7 +1708,7 @@ complianceTest(
 // non-channel-binding clients. The conditional can never fire for a
 // conformant deployment of this client, so all four rows are classified
 // untestable/capability-inventory (see rfc5802.ts's/rfc7677.ts's
-// untestableRationale on each; docs/compliance-adjudications.md's M5.16
+// untestableRationale on each; docs/guides/compliance-adjudications.md's M5.16
 // entry) — the same never-reachable-affordance reasoning as RFC5802-6-1
 // above. A prior version of this file scripted hypothetical
 // AUTH=SCRAM-SHA-1-PLUS/SCRAM-SHA-256-PLUS exchanges and asserted the

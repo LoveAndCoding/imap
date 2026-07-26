@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 import ComplianceReporter from "./reporter/compliance-reporter";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const documentationDir = path.join(here, "..", "..", "docs", "guides");
 
 export default defineConfig({
 	root: here,
@@ -18,7 +19,12 @@ export default defineConfig({
 		],
 		testTimeout: 15000,
 		hookTimeout: 15000,
-		reporters: ["default", new ComplianceReporter()],
+		reporters: [
+			"default",
+			new ComplianceReporter({
+				outDir: documentationDir,
+			}),
+		],
 		// Known client bugs surface as process-level errors during honest
 		// compliance failures (tracked in the catalog/report — not suite bugs).
 		// Suppress ONLY these signatures; anything else still fails the run.

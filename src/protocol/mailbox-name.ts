@@ -18,7 +18,7 @@ import { imap } from "utf7";
  * already accepts raw UTF-8 (`UTF8=ACCEPT` genuinely ENABLEd by this
  * session — RFC 6855 §3). SETTLED at M5.13 (re-deciding the M2
  * adjudication "Pure-rev2-only mailbox-name codec direction",
- * docs/compliance-adjudications.md): there is deliberately NO third,
+ * docs/guides/compliance-adjudications.md): there is deliberately NO third,
  * server-revision-keyed arm — a server advertising IMAP4rev2 (with or
  * without IMAP4rev1) does not, by advertisement alone, flip this codec to
  * raw UTF-8. One codec rule for every session: mUTF-7 until THIS client's

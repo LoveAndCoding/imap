@@ -223,7 +223,7 @@ function assertWireExpressibleYear(d: Date, method: string): void {
 	if (year < 0 || year > 9999) {
 		throw new RangeError(
 			`${method}: ${d.toISOString()} has a year (${year}) outside the wire-` +
-				'expressible range 0000-9999 (RFC 3501/9051 §9 date-year is exactly 4DIGIT)',
+				"expressible range 0000-9999 (RFC 3501/9051 §9 date-year is exactly 4DIGIT)",
 		);
 	}
 }
@@ -451,12 +451,16 @@ export class CommandWriter {
 	 *  funnel their non-quotable fallback through here, so this one check
 	 *  covers every caller uniformly rather than needing one refusal per
 	 *  public method. */
-	private emitLiteral(data: Buffer, binary: boolean, forceSync = false): void {
+	private emitLiteral(
+		data: Buffer,
+		binary: boolean,
+		forceSync = false,
+	): void {
 		if (!binary && data.includes(0x00)) {
 			throw new RangeError(
 				"literal: data contains a NUL byte (0x00), which CHAR8 (RFC 3501/9051 " +
 					'§9\'s plain-literal octet grammar, "%x01-ff") excludes -- pass ' +
-					"{ binary: true } for the RFC 3516 literal8 (\"~{n}\") framing that " +
+					'{ binary: true } for the RFC 3516 literal8 ("~{n}") framing that ' +
 					"legitimately carries NUL octets, on a BINARY-capable server",
 			);
 		}
@@ -552,7 +556,7 @@ export class CommandWriter {
 
 	/**
 	 * astring (spec §7.2): all-ATOM-CHAR → bare atom; quotable → quoted with
-	 * `\"`/`\\` escaping; else → literal with `Buffer.byteLength` (never
+	 * `\"` / `\\` escaping; else → literal with `Buffer.byteLength` (never
 	 * `.length` — the historical `encoding.ts` defect this module fixes).
 	 * Never throws on *content* grounds: a literal is always a safe fallback
 	 * for any string, including one containing raw CR/LF or 8-bit octets.
@@ -618,12 +622,19 @@ export class CommandWriter {
 	 *  otherwise pick (see `emitLiteral()`'s doc comment for why a caller
 	 *  would want that override). A synchronizing literal ends the current
 	 *  wire segment (see `segments()`). */
-	literal(data: Buffer, opts?: { binary?: boolean; forceSync?: boolean }): this {
+	literal(
+		data: Buffer,
+		opts?: { binary?: boolean; forceSync?: boolean },
+	): this {
 		return this.atomic(() => {
 			if (!Buffer.isBuffer(data)) {
 				throw new RangeError("literal: expected a Buffer");
 			}
-			this.emitLiteral(data, opts?.binary === true, opts?.forceSync === true);
+			this.emitLiteral(
+				data,
+				opts?.binary === true,
+				opts?.forceSync === true,
+			);
 			return this;
 		});
 	}
@@ -717,7 +728,9 @@ export class CommandWriter {
 			if (isValidListMailboxToken(encoded)) {
 				this.emitValue(Buffer.from(encoded, "ascii"));
 			} else if (isQuotable(encoded)) {
-				this.emitValue(Buffer.from(`"${quoteEscape(encoded)}"`, "ascii"));
+				this.emitValue(
+					Buffer.from(`"${quoteEscape(encoded)}"`, "ascii"),
+				);
 			} else {
 				this.emitLiteral(Buffer.from(encoded, "utf8"), false);
 			}

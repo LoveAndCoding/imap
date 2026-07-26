@@ -82,7 +82,12 @@ import { performAuthSelection } from "./auth";
 import { CapabilityRegistry } from "./capabilities";
 import type { CapabilityView } from "./capabilities";
 import { validateConfig } from "./config";
-import type { ImapAuthConfig, ImapClientConfig, ResolvedConfig, TlsMode } from "./config";
+import type {
+	ImapAuthConfig,
+	ImapClientConfig,
+	ResolvedConfig,
+	TlsMode,
+} from "./config";
 import { AclFacetImpl } from "./facets/acl";
 import type { AclFacet } from "./facets/acl";
 import type { FacetDriver } from "./facets/driver";
@@ -145,7 +150,12 @@ import type { ClientState } from "./state";
  * facet against a UIDONLY-advertising server opts out via an explicit
  * `extensions` array (or `false`), exactly the escape hatch §3.4 defines.
  */
-const AUTO_ENABLE_SET: readonly string[] = ["UTF8=ACCEPT", "CONDSTORE", "QRESYNC", "UIDONLY"];
+const AUTO_ENABLE_SET: readonly string[] = [
+	"UTF8=ACCEPT",
+	"CONDSTORE",
+	"QRESYNC",
+	"UIDONLY",
+];
 
 const TLS_MODE_TO_CONNECTION: Record<TlsMode, TLSSetting> = {
 	on: TLSSetting.DEFAULT,
@@ -188,7 +198,11 @@ export interface ImapClientEvents {
 	 *  never reached this event at all, with no error/log surfacing them to
 	 *  a consumer either. */
 	unhandled: (
-		response: ContinueResponse | TaggedResponse | UnknownResponse | UntaggedResponse,
+		response:
+			| ContinueResponse
+			| TaggedResponse
+			| UnknownResponse
+			| UntaggedResponse,
 	) => void;
 	/** Fires once the connection has fully torn down, from ANY cause
 	 *  (`logout()`/`close()`, a server BYE, or an unexpected socket drop).
@@ -196,7 +210,11 @@ export interface ImapClientEvents {
 	 *  connection-level error was pending; `info.error` carries that pending
 	 *  `ImapError` when there was one; `info.bye` carries the server's BYE
 	 *  text (see `extractByeText()`) when the close was preceded by one. */
-	close: (info: { graceful: boolean; error?: ImapError; bye?: string }) => void;
+	close: (info: {
+		graceful: boolean;
+		error?: ImapError;
+		bye?: string;
+	}) => void;
 	/** Fires for a connection-level error that isn't tied to a specific
 	 *  in-flight command's own promise rejection (e.g. an async socket
 	 *  error) — see `wireConnectionEvents()`'s `connectionError` bridge and
@@ -247,7 +265,8 @@ function computeSelectedMessageEventState(spec: NotifySpec): {
 			continue;
 		}
 		for (const entry of group.events) {
-			const name: string = typeof entry === "string" ? entry : entry.event;
+			const name: string =
+				typeof entry === "string" ? entry : entry.event;
 			if (name === "MessageNew") {
 				selectedMessageNew = true;
 			} else if (name === "MessageExpunge") {
@@ -368,7 +387,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * §5.3), rather than collapsing them into one flag that would obscure
 	 * which requirement a given guard is enforcing.
 	 */
-	private _notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+	private _notifyState = {
+		selectedMessageNew: false,
+		selectedMessageExpunge: false,
+	};
 
 	/** Backing field for the lazy `quota` facet property (spec §3.6, M5.2) —
 	 *  `null` until the first read of `this.quota`; see that getter's own
@@ -396,6 +418,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	/** Layer 1 escape hatch (spec §3.2). */
 	public readonly connection: Connection;
 
+	/**
+	 *
+	 * @param {ImapClientConfig} config Configuration for the client
+	 */
 	constructor(config: ImapClientConfig) {
 		super();
 		// Validates synchronously (RangeError/TypeError) and deep-copies —
@@ -425,7 +451,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// `effectiveCapability()`, not the registry directly -- see that
 		// method's doc comment for why UTF8=ACCEPT specifically must NOT be
 		// decided by advertisement alone.
-		this.connection.setCapabilityProbe((cap) => this.effectiveCapability(cap));
+		this.connection.setCapabilityProbe((cap) =>
+			this.effectiveCapability(cap),
+		);
 		this.wireConnectionEvents();
 	}
 
@@ -470,7 +498,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		if (this.stateMachine.current !== "disconnected") {
 			throw new StateError(
 				'connect() requires the client to be "disconnected"',
-				{ state: this.stateMachine.current, required: ["disconnected"] },
+				{
+					state: this.stateMachine.current,
+					required: ["disconnected"],
+				},
 			);
 		}
 		// ST1 (M4-phase-boundary review): defensive belt-and-braces reset,
@@ -482,7 +513,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// `wireConnectionEvents()`'s own `disconnected` handler still starts
 		// its next `connect()` from a genuinely clean slate.
 		this._enabled.clear();
-		this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+		this._notifyState = {
+			selectedMessageNew: false,
+			selectedMessageExpunge: false,
+		};
 		this.stateMachine.transition("connecting");
 
 		let connected: boolean;
@@ -493,7 +527,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		}
 		if (!connected) {
 			throw await this.abortConnect(
-				new ConnectionError("Connection attempt failed", { phase: "connect" }),
+				new ConnectionError("Connection attempt failed", {
+					phase: "connect",
+				}),
 			);
 		}
 
@@ -510,7 +546,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// internal transition error to the public typed one before
 			// tearing down, rather than letting `IllegalStateTransitionError`
 			// leak through `connect()`'s public promise.
-			throw await this.abortConnect(this.mapLogoutRaceError(err, "connecting", "connect"));
+			throw await this.abortConnect(
+				this.mapLogoutRaceError(err, "connecting", "connect"),
+			);
 		}
 
 		try {
@@ -550,7 +588,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// and surface as a nested `IllegalStateTransitionError`; map it the
 			// same way as the post-greeting transition above rather than
 			// leaking the internal class through a different code path.
-			throw await this.abortConnect(this.mapLogoutRaceError(err, "connecting", "connect"));
+			throw await this.abortConnect(
+				this.mapLogoutRaceError(err, "connecting", "connect"),
+			);
 		}
 	}
 
@@ -605,7 +645,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// point had no equivalent mapping and would leak that internal class
 			// straight through its promise. Map it the same way `connect()`
 			// does, rather than duplicating a second, subtly different mapping.
-			throw this.mapLogoutRaceError(err, "not-authenticated", "authenticate");
+			throw this.mapLogoutRaceError(
+				err,
+				"not-authenticated",
+				"authenticate",
+			);
 		}
 	}
 
@@ -801,14 +845,21 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	public async enableExtensions(caps: string[]): Promise<string[]> {
 		const canonicalized: string[] = [];
 		for (const cap of caps) {
-			const mapped = cap.toUpperCase() === "UTF8=ONLY" ? "UTF8=ACCEPT" : cap;
+			const mapped =
+				cap.toUpperCase() === "UTF8=ONLY" ? "UTF8=ACCEPT" : cap;
 			// Dedup post-rewrite (case-insensitively) so "UTF8=ONLY" alongside
 			// "UTF8=ACCEPT" in one request doesn't emit the token twice.
-			if (!canonicalized.some((c) => c.toUpperCase() === mapped.toUpperCase())) {
+			if (
+				!canonicalized.some(
+					(c) => c.toUpperCase() === mapped.toUpperCase(),
+				)
+			) {
 				canonicalized.push(mapped);
 			}
 		}
-		const advertised = canonicalized.filter((cap) => this.isEnableAdvertised(cap));
+		const advertised = canonicalized.filter((cap) =>
+			this.isEnableAdvertised(cap),
+		);
 		if (advertised.length === 0) {
 			return [];
 		}
@@ -889,7 +940,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 */
 	private effectiveCapability(cap: string): boolean {
 		const upper = cap.toUpperCase();
-		if (upper === "UTF8=ACCEPT" || upper === "QRESYNC" || upper === "UIDONLY") {
+		if (
+			upper === "UTF8=ACCEPT" ||
+			upper === "QRESYNC" ||
+			upper === "UIDONLY"
+		) {
 			return this._enabled.has(upper);
 		}
 		return this.capabilityRegistry.view.has(cap);
@@ -911,12 +966,18 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 * `specialUse` was given) so a caller reaching the command directly via
 	 * the `run()` escape hatch is still caught by `run()`'s generic gate.
 	 */
-	public async create(mailbox: string, opts?: CreateMailboxOptions): Promise<void> {
+	public async create(
+		mailbox: string,
+		opts?: CreateMailboxOptions,
+	): Promise<void> {
 		// Construct first: argument validation (e.g. an empty specialUse
 		// array -> RangeError) precedes the capability probe, and a
 		// constructor throw writes zero bytes by definition.
 		const command = new CreateCommand(mailbox, opts);
-		if (command.capability && !this.capabilityRegistry.view.has(command.capability)) {
+		if (
+			command.capability &&
+			!this.capabilityRegistry.view.has(command.capability)
+		) {
 			throw new CapabilityError(
 				"create: the USE parameter (specialUse) requires the " +
 					"CREATE-SPECIAL-USE capability, which the server hasn't " +
@@ -986,7 +1047,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				// APPENDLIMIT has no ENABLE story at all).
 				has: (cap) => this.effectiveCapability(cap),
 				knownAppendLimit: () =>
-					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
+					[...view.all()].some((cap) =>
+						cap.startsWith("APPENDLIMIT="),
+					),
 			}),
 		);
 	}
@@ -1016,7 +1079,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		messages: AppendMessageEntry[],
 	): Promise<AppendResult[]> {
 		if (!Array.isArray(messages) || messages.length === 0) {
-			throw new RangeError("appendMany: messages must be a non-empty array");
+			throw new RangeError(
+				"appendMany: messages must be a non-empty array",
+			);
 		}
 		if (messages.length === 1) {
 			const [entry] = messages;
@@ -1032,7 +1097,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			new MultiAppendCommand(mailbox, messages, {
 				has: (cap) => this.effectiveCapability(cap),
 				knownAppendLimit: () =>
-					[...view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
+					[...view.all()].some((cap) =>
+						cap.startsWith("APPENDLIMIT="),
+					),
 			}),
 		);
 	}
@@ -1146,7 +1213,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	): Promise<MailboxStatusResult> {
 		// Constructed first: validates the item list (RangeError) AND the
 		// per-item capability gate (CapabilityError) — both zero bytes (I-9).
-		const command = new StatusCommand(mailbox, items, this.capabilityRegistry.view);
+		const command = new StatusCommand(
+			mailbox,
+			items,
+			this.capabilityRegistry.view,
+		);
 		const session = this._mailboxSession;
 		if (
 			session &&
@@ -1159,7 +1230,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 					"§6.3.11, incl. the MUST NOT-as-new-message-check rule) — read " +
 					"the live `client.mailbox` session instead, or use NOOP to " +
 					"solicit updates",
-				{ state: this.stateMachine.current, required: ["authenticated"] },
+				{
+					state: this.stateMachine.current,
+					required: ["authenticated"],
+				},
 			);
 		}
 		return this.run(command);
@@ -1259,7 +1333,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		pattern: string,
 		opts?: LsubOptions,
 	): Promise<MailboxInfo[]> {
-		return this.run(new LsubCommand(ref, pattern, opts, this.capabilityRegistry.view));
+		return this.run(
+			new LsubCommand(ref, pattern, opts, this.capabilityRegistry.view),
+		);
 	}
 
 	/** SELECT (spec §3.2/§3.1, RFC 3501/9051 §6.3.1/§6.3.2). See
@@ -1270,10 +1346,15 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  aware hard-ENABLE gate `SelectOrExamineCommand`'s own doc comment
 	 *  requires (RFC 7162 §3.2.3/§3.2.4) — see `effectiveCapability()`'s own
 	 *  doc comment. */
-	public async select(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+	public async select(
+		mailbox: string,
+		opts?: SelectOptions,
+	): Promise<MailboxSession> {
 		return this.selectOrExamine(
 			mailbox,
-			new SelectCommand(mailbox, opts, { has: (cap) => this.effectiveCapability(cap) }),
+			new SelectCommand(mailbox, opts, {
+				has: (cap) => this.effectiveCapability(cap),
+			}),
 		);
 	}
 
@@ -1281,10 +1362,15 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	 *  choreography to `select()`; the returned session's `readOnly` is
 	 *  always `true` (enforced by `ExamineCommand.accept()`). Same
 	 *  `effectiveCapability()` probe as `select()` above, same rationale. */
-	public async examine(mailbox: string, opts?: SelectOptions): Promise<MailboxSession> {
+	public async examine(
+		mailbox: string,
+		opts?: SelectOptions,
+	): Promise<MailboxSession> {
 		return this.selectOrExamine(
 			mailbox,
-			new ExamineCommand(mailbox, opts, { has: (cap) => this.effectiveCapability(cap) }),
+			new ExamineCommand(mailbox, opts, {
+				has: (cap) => this.effectiveCapability(cap),
+			}),
 		);
 	}
 
@@ -1403,7 +1489,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		// `mailbox` is already the caller's plain Unicode string (never mUTF-7
 		// wire bytes), so no mUTF-7 decode step is appropriate.
 		const name = decodeMailboxName(mailbox, { utf8Accepted: true });
-		const session = new MailboxSession(name, result, this.mailboxSessionDriver());
+		const session = new MailboxSession(
+			name,
+			result,
+			this.mailboxSessionDriver(),
+		);
 
 		const staleAtPublish = this._mailboxSession;
 		const stateAtPublish = this.stateMachine.current;
@@ -1469,15 +1559,20 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// prohibition (RFC5465-5.3-2) for sequence-number-grain calls while
 			// a SELECTED NOTIFY registration is active. See `notify()`'s own doc
 			// comment and `_notifyState`'s field comment for the full rationale.
-			hasActiveNotifySelectedMessageNew: () => this._notifyState.selectedMessageNew,
-			hasActiveNotifySelectedMessageExpunge: () => this._notifyState.selectedMessageExpunge,
+			hasActiveNotifySelectedMessageNew: () =>
+				this._notifyState.selectedMessageNew,
+			hasActiveNotifySelectedMessageExpunge: () =>
+				this._notifyState.selectedMessageExpunge,
 			// M4.3 (spec §3.7): `updates()`'s NOOP-poll fallback cadence.
-			noopFallbackIntervalMs: () => this.config.timeouts.noopFallbackInterval,
+			noopFallbackIntervalMs: () =>
+				this.config.timeouts.noopFallbackInterval,
 			// M5.6 (RFC 8508 REPLACE, RFC 7889 §4): identical logic to
 			// `append()`'s own inline `knownAppendLimit` probe above -- `true`
 			// only for the global valued `APPENDLIMIT=<number>` capability form.
 			knownAppendLimit: () =>
-				[...this.capabilityRegistry.view.all()].some((cap) => cap.startsWith("APPENDLIMIT=")),
+				[...this.capabilityRegistry.view.all()].some((cap) =>
+					cap.startsWith("APPENDLIMIT="),
+				),
 		};
 	}
 
@@ -1596,12 +1691,18 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	private wireConnectionEvents(): void {
-		this.connection.on("serverStatus", (resp) => this.handleServerStatus(resp));
+		this.connection.on("serverStatus", (resp) =>
+			this.handleServerStatus(resp),
+		);
 		this.connection.on("untaggedResponse", (resp) =>
 			this.handleUntaggedResponse(resp),
 		);
-		this.connection.on("taggedResponse", (resp) => this.handleTaggedResponse(resp));
-		this.connection.on("alert", (text, meta) => this.emit("alert", text, meta));
+		this.connection.on("taggedResponse", (resp) =>
+			this.handleTaggedResponse(resp),
+		);
+		this.connection.on("alert", (text, meta) =>
+			this.emit("alert", text, meta),
+		);
 		// MEDIUM finding (I-2 capability epoch gap): STARTTLS never invalidated
 		// THIS client's own capability registry -- only `Connection`'s separate
 		// precursor one. A cleartext greeting's `[CAPABILITY ...]` code (see
@@ -1688,7 +1789,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			// NOTIFY registration no longer active on the new connection ever
 			// actually armed.
 			this._enabled.clear();
-			this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+			this._notifyState = {
+				selectedMessageNew: false,
+				selectedMessageExpunge: false,
+			};
 			// HIGH finding #9: `_logoutPromise` is per-CONNECTION de-dup
 			// bookkeeping, same category as everything else reset in this
 			// handler -- left uncleared, a second `connect()` -> `logout()`
@@ -1760,7 +1864,12 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 					message:
 						`UIDVALIDITY changed for mailbox "${session.name}": ` +
 						`${prev} -> ${next} (client MUST treat cached UIDs as invalid)`,
-					detail: { code: "UIDVALIDITYCHANGED", mailbox: session.name, prev, next },
+					detail: {
+						code: "UIDVALIDITYCHANGED",
+						mailbox: session.name,
+						prev,
+						next,
+					},
 				});
 			}
 			return;
@@ -1858,7 +1967,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		} else if (content instanceof Expunge) {
 			MailboxSession.applyExpunge(session, content.sequenceNumber);
 		} else if (content instanceof VanishedResponse) {
-			MailboxSession.applyVanished(session, expandUidSet(content.uids), content.earlier);
+			MailboxSession.applyVanished(
+				session,
+				expandUidSet(content.uids),
+				content.earlier,
+			);
 		} else if (content instanceof Fetch && content.flags) {
 			const uid = content.uid?.id;
 			MailboxSession.applyFlagsUpdate(session, {
@@ -1912,7 +2025,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 	}
 
 	private async ensureCapabilities(): Promise<void> {
-		if (this.capabilityRegistry.isValid && this.capabilityRegistry.view.all().size > 0) {
+		if (
+			this.capabilityRegistry.isValid &&
+			this.capabilityRegistry.view.all().size > 0
+		) {
 			return;
 		}
 		const caps = await this.connection.runCommand(new CapabilityCommand());
@@ -1925,7 +2041,9 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			return;
 		}
 		const values = id ? sanitizeIdValues(id) : undefined;
-		this._serverId = await this.connection.runCommand(new IdCommand(values));
+		this._serverId = await this.connection.runCommand(
+			new IdCommand(values),
+		);
 	}
 
 	/**
@@ -1952,7 +2070,8 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		}
 		const extensions = this.config.extensions;
 		if (extensions !== false) {
-			const requested = extensions === "auto" ? AUTO_ENABLE_SET : extensions;
+			const requested =
+				extensions === "auto" ? AUTO_ENABLE_SET : extensions;
 			if (requested.length > 0) {
 				await this.enableExtensions([...requested]);
 			}
@@ -1995,7 +2114,7 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				"support and will reject legacy non-UTF-8 behavior), but UTF8=ACCEPT " +
 				"was not enabled for this session -- clients MUST use ENABLE " +
 				"UTF8=ACCEPT before using such a server; expect NO [CANNOT] " +
-				"rejections. Use the default extensions: \"auto\" (or include " +
+				'rejections. Use the default extensions: "auto" (or include ' +
 				"UTF8=ACCEPT in the extensions list) to comply",
 			detail: { code: "UTF8ONLYNOTENABLED" },
 		});
@@ -2076,7 +2195,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 				`compress() requires a live connection (state is "${current}")`,
 				{
 					state: current,
-					required: ["not-authenticated", "authenticated", "selected"],
+					required: [
+						"not-authenticated",
+						"authenticated",
+						"selected",
+					],
 				},
 			);
 		}
@@ -2335,7 +2458,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		this.stateMachine.transition("not-authenticated");
 
 		this._enabled.clear();
-		this._notifyState = { selectedMessageNew: false, selectedMessageExpunge: false };
+		this._notifyState = {
+			selectedMessageNew: false,
+			selectedMessageExpunge: false,
+		};
 
 		if (this.capabilityRegistry.view.epoch === epochBefore) {
 			// No [CAPABILITY ...] code accompanied the tagged OK -- the
@@ -2366,7 +2492,10 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 		}
 		if (err instanceof ConnectionTimeout) {
 			if (err.phase === "Greeting") {
-				return new ConnectionError(err.message, { phase: "greeting", cause: err });
+				return new ConnectionError(err.message, {
+					phase: "greeting",
+					cause: err,
+				});
 			}
 			if (err.phase === "TLS Negotiation") {
 				return new TlsError(err.message, {
@@ -2375,20 +2504,32 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 					cause: err,
 				});
 			}
-			return new ConnectionError(err.message, { phase: "connect", cause: err });
-		}
-		const bye = extractByeText(err);
-		if (bye !== undefined) {
-			return new ConnectionError(err instanceof Error ? err.message : String(err), {
-				phase: "greeting",
-				bye,
+			return new ConnectionError(err.message, {
+				phase: "connect",
 				cause: err,
 			});
 		}
-		if (err instanceof Error) {
-			return new ConnectionError(err.message, { phase: "connect", cause: err });
+		const bye = extractByeText(err);
+		if (bye !== undefined) {
+			return new ConnectionError(
+				err instanceof Error ? err.message : String(err),
+				{
+					phase: "greeting",
+					bye,
+					cause: err,
+				},
+			);
 		}
-		return new ConnectionError(String(err), { phase: "connect", cause: err });
+		if (err instanceof Error) {
+			return new ConnectionError(err.message, {
+				phase: "connect",
+				cause: err,
+			});
+		}
+		return new ConnectionError(String(err), {
+			phase: "connect",
+			cause: err,
+		});
 	}
 
 	/**
@@ -2424,7 +2565,11 @@ export class ImapClient extends TypedEmitter<ImapClientEvents> {
 			return new StateError(
 				`${caller}() lost a race with a concurrent logout(): the client's ` +
 					`state changed before ${caller}() could complete`,
-				{ state: this.stateMachine.current, required: [requiredState], cause: err },
+				{
+					state: this.stateMachine.current,
+					required: [requiredState],
+					cause: err,
+				},
 			);
 		}
 		return err;

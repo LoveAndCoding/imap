@@ -61,11 +61,7 @@ export type SpecialUse =
  * M3 `addFlags`/`removeFlags`/`setFlags` trio) takes the same `Flag[]`.
  */
 export type SystemFlag =
-	| "\\Seen"
-	| "\\Answered"
-	| "\\Flagged"
-	| "\\Deleted"
-	| "\\Draft";
+	"\\Seen" | "\\Answered" | "\\Flagged" | "\\Deleted" | "\\Draft";
 /** The open grade (§5.6) every flag-taking parameter actually takes: one of
  *  the five `SystemFlag`s, or any server-defined keyword (open by design --
  *  `\*` in `PERMANENTFLAGS` licenses client-invented keywords). */
@@ -84,13 +80,16 @@ export type Flag = SystemFlag | (string & {}); // keywords are open by design
  * refusal (RFC 3501/9051 §4.3.1): the one conformance promise the library
  * can keep without transforming caller data is to never transmit the
  * prohibited form at all. Adjudicated at M3.6 (see
- * docs/compliance-adjudications.md), superseding M2.11's earlier
+ * docs/guides/compliance-adjudications.md), superseding M2.11's earlier
  * pass-through posture for `AppendOptions.flags`.
  *
  * `context` prefixes the error message with the refusing verb (e.g.
  * `"STORE"`, `"APPEND"`).
  */
-export function assertNoRecentFlag(flags: readonly string[], context: string): void {
+export function assertNoRecentFlag(
+	flags: readonly string[],
+	context: string,
+): void {
 	for (const flag of flags) {
 		if (typeof flag === "string" && flag.toUpperCase() === "\\RECENT") {
 			throw new RangeError(
@@ -169,10 +168,7 @@ export type ThreadAlgorithm = "ORDEREDSUBJECT" | "REFERENCES";
  * SELECTED/SELECTED-DELAYED event-group, RFC5465-6.1-2/-8-1).
  */
 export type NotifyMessageEvent =
-	| "MessageNew"
-	| "MessageExpunge"
-	| "FlagChange"
-	| "AnnotationChange";
+	"MessageNew" | "MessageExpunge" | "FlagChange" | "AnnotationChange";
 /** The four `event` names (RFC 5465 §8) that may NOT appear in a
  *  SELECTED/SELECTED-DELAYED event-group (RFC5465-6.1-2/-8-1) -- they only
  *  make sense against non-selected mailboxes. */

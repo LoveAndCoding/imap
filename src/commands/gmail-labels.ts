@@ -36,7 +36,7 @@ import type { CommandWriter } from "./writer";
  * ordinary astring/literal encoding already provides") — rather than
  * widening `flagList()`'s validation to accept both shapes under one name.
  * One consequence, documented rather than special-cased: a flag-style
- * system label (`\Inbox`, `\Sent`, ...) contains a quoted-special (`\`),
+ * system label (`\Inbox`, `\Sent`, ...) contains a quoted-special (`\\`),
  * which `astring()` cannot emit as a bare atom, so it goes to the wire as
  * the quoted spelling of the same ASTRING value (`"\\Inbox"`) — a legal,
  * semantically identical ASTRING form per the vendor doc's own
@@ -74,7 +74,12 @@ export class GmailLabelsStoreCommand extends Command<void> {
 	private readonly prefixAtom: string;
 	private readonly labels: readonly string[];
 
-	constructor(uid: boolean, set: SequenceSet, operation: GmailLabelsOperation, labels: string[]) {
+	constructor(
+		uid: boolean,
+		set: SequenceSet,
+		operation: GmailLabelsOperation,
+		labels: string[],
+	) {
 		super();
 		this.verb = uid ? "UID STORE" : "STORE";
 		this.set = set;

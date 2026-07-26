@@ -24,7 +24,7 @@
  *                                                    *** REAL — ModifiedTextCode ***
  *   RFC7162-3.1.3-5   On MODIFIED without explanatory FETCH, SHOULD probe via
  *                     FETCH or NOOP (driven scenario; self-act.) -- ADJUDICATED
- *                     DEVIATION (permanent, docs/compliance-adjudications.md):
+ *                     DEVIATION (permanent, docs/guides/compliance-adjudications.md):
  *                     this is a client-internal conflict-resolution POLICY
  *                     (spec §13 non-goals: "Auto-reconnect/retry (consumers
  *                     own it)"), not a wire form -- there is no single
@@ -100,7 +100,7 @@
  *    each row's test above once it genuinely passed (stale-annotation
  *    sweep). RFC7162-3.1.3-5/-6 remain the one adjudicated-permanent-violation
  *    pair (see their own catalog-id entries above for why, and
- *    docs/compliance-adjudications.md for the adjudication record).
+ *    docs/guides/compliance-adjudications.md for the adjudication record).
  */
 import { expect } from "vitest";
 
@@ -117,7 +117,8 @@ const f = useComplianceFixture();
 // ── shared event-shape helpers ───────────────────────────────────────────────
 // Parsed content of an untaggedResponse event.
 function contentOf<T>(ev: ObservedEvent): T {
-	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as T;
+	return ((ev.detail as { content?: unknown } | undefined)?.content ??
+		{}) as T;
 }
 // serverStatus events carry UntaggedResponse{content: StatusResponse}; a
 // recognized resp-code exposes {kind, value?/uids?/contents?} at text.code.
@@ -127,7 +128,9 @@ interface StatusContent {
 		code?: {
 			kind?: string;
 			value?: number | bigint;
-			uids?: { set?: Array<{ id?: number; startId?: number; endId?: number }> };
+			uids?: {
+				set?: Array<{ id?: number; startId?: number; endId?: number }>;
+			};
 		};
 		content?: string;
 	};
@@ -135,7 +138,11 @@ interface StatusContent {
 function statusEvents(driver: { events: ObservedEvent[] }): StatusContent[] {
 	return driver.events
 		.filter((e) => e.type === "serverStatus")
-		.map((e) => (e.detail as { content?: StatusContent } | undefined)?.content ?? {});
+		.map(
+			(e) =>
+				(e.detail as { content?: StatusContent } | undefined)
+					?.content ?? {},
+		);
 }
 // taggedResponse events carry TaggedResponse{tag, status: StatusResponse}.
 interface TaggedContent {
@@ -162,7 +169,11 @@ async function pollFor(
 // Mod-sequence values may lex as number or bigint depending on magnitude;
 // normalize before comparing so assertions pin the VALUE, not the JS type.
 function asBigInt(v: unknown): bigint | undefined {
-	return typeof v === "bigint" ? v : typeof v === "number" ? BigInt(v) : undefined;
+	return typeof v === "bigint"
+		? v
+		: typeof v === "number"
+			? BigInt(v)
+			: undefined;
 }
 
 interface ParsedFetch {
@@ -253,7 +264,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				// §3.1.2.1 example value — exceeds 32-bit range on purpose.
-				send("* OK [HIGHESTMODSEQ 715194045007] Highest mailbox mod-sequence\r\n"),
+				send(
+					"* OK [HIGHESTMODSEQ 715194045007] Highest mailbox mod-sequence\r\n",
+				),
 				send("* 7 EXISTS\r\n"),
 				close(),
 			],
@@ -297,7 +310,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				// §3.1.2.2 example text, verbatim shape.
-				send("* OK [NOMODSEQ] Sorry, this mailbox format doesn't support modsequences\r\n"),
+				send(
+					"* OK [NOMODSEQ] Sorry, this mailbox format doesn't support modsequences\r\n",
+				),
 				send("* 7 EXISTS\r\n"),
 				close(),
 			],
@@ -412,14 +427,21 @@ complianceTest(
 		await server.assertCompleted();
 		// Both tagged lines must parse into MODIFIED codes with exact sets.
 		const found = await pollFor(() => taggedEvents(driver).length >= 2);
-		expect(found, "both tagged [MODIFIED ...] completions must surface").toBe(true);
+		expect(
+			found,
+			"both tagged [MODIFIED ...] completions must surface",
+		).toBe(true);
 		const [okResp, noResp] = taggedEvents(driver);
 		expect(okResp.status?.status).toBe("OK");
 		expect(okResp.status?.text?.code?.kind).toBe("MODIFIED");
-		expect(okResp.status?.text?.code?.uids?.set?.map((u) => u.id)).toEqual([7, 9]);
+		expect(okResp.status?.text?.code?.uids?.set?.map((u) => u.id)).toEqual([
+			7, 9,
+		]);
 		expect(noResp.status?.status).toBe("NO");
 		expect(noResp.status?.text?.code?.kind).toBe("MODIFIED");
-		expect(noResp.status?.text?.code?.uids?.set?.map((u) => u.id)).toEqual([12]);
+		expect(noResp.status?.text?.code?.uids?.set?.map((u) => u.id)).toEqual([
+			12,
+		]);
 		// Stream survives past both tagged completions.
 		await waitForUntagged(driver, "EXISTS");
 	},
@@ -499,7 +521,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				// §3.1.5 Example 15's response, verbatim.
-				send("* SEARCH 2 5 6 7 11 12 18 19 20 23 (MODSEQ 917162500)\r\n"),
+				send(
+					"* SEARCH 2 5 6 7 11 12 18 19 20 23 (MODSEQ 917162500)\r\n",
+				),
 				send("* 7 EXISTS\r\n"),
 				close(),
 			],
@@ -559,9 +583,9 @@ complianceTest(
 		expect(ok).toBe(true);
 		await server.assertCompleted();
 		// SPEC: the extended SORT response must be parsed and surfaced.
-		const sortEvent = await waitForUntagged(driver, "SORT", { timeoutMs: 600 }).catch(
-			() => undefined,
-		);
+		const sortEvent = await waitForUntagged(driver, "SORT", {
+			timeoutMs: 600,
+		}).catch(() => undefined);
 		expect(
 			sortEvent,
 			"a '* SORT 2 8 10 (MODSEQ 917162500)' response must be accepted (RFC 7162 §3.1.9)",
@@ -569,9 +593,9 @@ complianceTest(
 		const parsed = contentOf<ParsedSort>(sortEvent!);
 		expect(parsed.ids).toEqual([2, 8, 10]);
 		// SPEC: the response stream must survive the line (the client must not go deaf).
-		const exists = await waitForUntagged(driver, "EXISTS", { timeoutMs: 400 }).catch(
-			() => undefined,
-		);
+		const exists = await waitForUntagged(driver, "EXISTS", {
+			timeoutMs: 400,
+		}).catch(() => undefined);
 		expect(
 			exists,
 			"the response stream must survive an extended SORT response — responses after it must still parse",
@@ -599,7 +623,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				// §3.1.7 Example 17's response (64-bit value), then a 0-valued one.
-				send("* STATUS blurdybloop (MESSAGES 231 UIDNEXT 44292 HIGHESTMODSEQ 7011231777)\r\n"),
+				send(
+					"* STATUS blurdybloop (MESSAGES 231 UIDNEXT 44292 HIGHESTMODSEQ 7011231777)\r\n",
+				),
 				send("* STATUS plainbox (MESSAGES 12 HIGHESTMODSEQ 0)\r\n"),
 				send("* 7 EXISTS\r\n"),
 				close(),
@@ -653,7 +679,10 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				expectLine(
 					command("STATUS", {
 						args: /^"?blurdybloop"? \(UIDNEXT MESSAGES HIGHESTMODSEQ\)$/i,
@@ -666,13 +695,18 @@ complianceTest(
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
-		await driver.status("blurdybloop", ["UIDNEXT", "MESSAGES", "HIGHESTMODSEQ"]);
+		await driver.status("blurdybloop", [
+			"UIDNEXT",
+			"MESSAGES",
+			"HIGHESTMODSEQ",
+		]);
 		await server.assertCompleted();
 		const status = server.commandLines.find((l) => l.verb === "STATUS");
 		expect(status, "STATUS must have been emitted").toBeDefined();
-		expect(status!.args, "HIGHESTMODSEQ must ride inside the attribute list").toMatch(
-			/\([^)]*HIGHESTMODSEQ[^)]*\)$/i,
-		);
+		expect(
+			status!.args,
+			"HIGHESTMODSEQ must ride inside the attribute list",
+		).toMatch(/\([^)]*HIGHESTMODSEQ[^)]*\)$/i);
 	},
 );
 
@@ -695,8 +729,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX \(CONDSTORE\)$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX \(CONDSTORE\)$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 7 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -710,9 +749,10 @@ complianceTest(
 		await server.assertCompleted();
 		const select = server.commandLines.find((l) => l.verb === "SELECT");
 		expect(select, "SELECT must have been emitted").toBeDefined();
-		expect(select!.args, "the CONDSTORE parameter must be parenthesized").toMatch(
-			/\(CONDSTORE\)$/i,
-		);
+		expect(
+			select!.args,
+			"the CONDSTORE parameter must be parenthesized",
+		).toMatch(/\(CONDSTORE\)$/i);
 	},
 );
 
@@ -734,8 +774,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 2 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -785,8 +830,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 4 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -811,9 +861,10 @@ complianceTest(
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
-		expect(fetch!.args, "CHANGEDSINCE must be a parenthesized trailing modifier").toMatch(
-			/\(CHANGEDSINCE 12345\)$/i,
-		);
+		expect(
+			fetch!.args,
+			"CHANGEDSINCE must be a parenthesized trailing modifier",
+		).toMatch(/\(CHANGEDSINCE 12345\)$/i);
 	},
 );
 
@@ -835,8 +886,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 3 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -858,7 +914,9 @@ complianceTest(
 		await server.assertCompleted();
 		const fetch = server.commandLines.find((l) => l.verb === "FETCH");
 		expect(fetch, "FETCH must have been emitted").toBeDefined();
-		expect(fetch!.args, "MODSEQ is a bare atom in the item list").toMatch(/\(MODSEQ\)$/i);
+		expect(fetch!.args, "MODSEQ is a bare atom in the item list").toMatch(
+			/\(MODSEQ\)$/i,
+		);
 	},
 );
 
@@ -883,8 +941,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 23 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -908,14 +971,21 @@ complianceTest(
 		await driver.select("INBOX", { condstore: true });
 		// Structured criterion payload; the wire form above is what matters.
 		await driver.search([
-			{ modseq: { entryName: "/flags/\\draft", entryType: "all", value: 620162338n } },
+			{
+				modseq: {
+					entryName: "/flags/\\draft",
+					entryType: "all",
+					value: 620162338n,
+				},
+			},
 		]);
 		await server.assertCompleted();
 		const search = server.commandLines.find((l) => l.verb === "SEARCH");
 		expect(search, "SEARCH must have been emitted").toBeDefined();
-		expect(search!.args, "entry-name must be a quoted string with escaped backslash").toMatch(
-			/"\/flags\/\\\\draft"/,
-		);
+		expect(
+			search!.args,
+			"entry-name must be a quoted string with escaped backslash",
+		).toMatch(/"\/flags\/\\\\draft"/);
 	},
 );
 
@@ -928,7 +998,7 @@ complianceTest(
 // watched items really changed — not a blind re-STORE, not silence. The script
 // pins that next step; store() itself is real (M4.5) and succeeds, but the
 // library deliberately does not auto-probe (adjudicated deviation, see
-// docs/compliance-adjudications.md), so this fails honestly as a violation.
+// docs/guides/compliance-adjudications.md), so this fails honestly as a violation.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.3-5"],
@@ -941,8 +1011,13 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 9 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -950,26 +1025,39 @@ complianceTest(
 				]),
 				// Example 9's b105 exchange: conditional STORE fails on message 9,
 				// server sends NO explanatory unsolicited FETCH.
-				expectLine(command("STORE", { args: /^9 \(UNCHANGEDSINCE 320172338\) /i })),
+				expectLine(
+					command("STORE", {
+						args: /^9 \(UNCHANGEDSINCE 320172338\) /i,
+					}),
+				),
 				reply("OK [MODIFIED 9] Conditional STORE failed"),
 				// SPEC (SHOULD): the client's next command probes the conflict — a
 				// FETCH naming the failed message (Example 9's b106 'FETCH 9 (FLAGS)')
 				// or a NOOP. A blind re-STORE or LOGOUT here fails the match. ("UID"
 				// is accepted as the first token of a UID FETCH probe.)
 				expectLine(command(/^(FETCH|NOOP|UID)$/, {})),
-				reply("OK Fetch complete", ["* 9 FETCH (MODSEQ (320172342) FLAGS (\\Seen))"]),
+				reply("OK Fetch complete", [
+					"* 9 FETCH (MODSEQ (320172342) FLAGS (\\Seen))",
+				]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
-		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
+		await driver.store("9", "+FLAGS", ["\\Deleted"], {
+			unchangedSince: 320172338n,
+		});
 		await server.assertCompleted();
 		// The library does not auto-probe (adjudicated deviation), so no FETCH/NOOP
 		// reaches the wire here; this assertion documents the observable and fails.
 		// (A UID FETCH probe records verb "UID" under the single-token matcher.)
-		const probe = server.commandLines.find((l) => /^(FETCH|NOOP|UID)$/.test(l.verb));
-		expect(probe, "a FETCH or NOOP probe must follow the MODIFIED conflict").toBeDefined();
+		const probe = server.commandLines.find((l) =>
+			/^(FETCH|NOOP|UID)$/.test(l.verb),
+		);
+		expect(
+			probe,
+			"a FETCH or NOOP probe must follow the MODIFIED conflict",
+		).toBeDefined();
 	},
 );
 
@@ -982,7 +1070,7 @@ complianceTest(
 // matcher pins the NEW value, so a stale-value retry (320172338) or an
 // immediate give-up fails. store() itself is real (M4.5) and succeeds, but the
 // library deliberately does not auto-retry (adjudicated deviation, see
-// docs/compliance-adjudications.md), so this fails honestly as a violation.
+// docs/guides/compliance-adjudications.md), so this fails honestly as a violation.
 complianceTest(
 	{
 		reqs: ["RFC7162-3.1.3-6"],
@@ -995,35 +1083,55 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 9 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
 					"* OK [HIGHESTMODSEQ 320172338] Highest",
 				]),
 				// First conditional STORE: fails with MODIFIED, no explanatory FETCH.
-				expectLine(command("STORE", { args: /^9 \(UNCHANGEDSINCE 320172338\) /i })),
+				expectLine(
+					command("STORE", {
+						args: /^9 \(UNCHANGEDSINCE 320172338\) /i,
+					}),
+				),
 				reply("OK [MODIFIED 9] Conditional STORE failed"),
 				// Probe: flags unchanged, but the mod-sequence moved to 320172342
 				// (some OTHER metadata item changed — the spurious-MODIFIED case).
 				expectLine(command(/^(FETCH|NOOP|UID)$/, {})),
-				reply("OK Fetch complete", ["* 9 FETCH (MODSEQ (320172342) FLAGS ())"]),
+				reply("OK Fetch complete", [
+					"* 9 FETCH (MODSEQ (320172342) FLAGS ())",
+				]),
 				// SPEC (SHOULD): retry with the NEW mod-sequence. A retry carrying the
 				// stale 320162338/320172338 value does not match.
-				expectLine(command("STORE", { args: /^9 \(UNCHANGEDSINCE 320172342\) /i })),
+				expectLine(
+					command("STORE", {
+						args: /^9 \(UNCHANGEDSINCE 320172342\) /i,
+					}),
+				),
 				reply("OK Store completed", ["* 9 FETCH (MODSEQ (320172345))"]),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.login("user", "pass");
 		await driver.select("INBOX", { condstore: true });
-		await driver.store("9", "+FLAGS", ["\\Deleted"], { unchangedSince: 320172338n });
+		await driver.store("9", "+FLAGS", ["\\Deleted"], {
+			unchangedSince: 320172338n,
+		});
 		await server.assertCompleted();
 		// The library does not auto-retry (adjudicated deviation), so only the
 		// first STORE reaches the wire here; this assertion documents that gap.
 		const stores = server.commandLines.filter((l) => l.verb === "STORE");
-		expect(stores.length, "the STORE must be retried after the probe").toBeGreaterThanOrEqual(2);
+		expect(
+			stores.length,
+			"the STORE must be retried after the probe",
+		).toBeGreaterThanOrEqual(2);
 		expect(
 			stores[stores.length - 1].args,
 			"the retry must carry the newly learned mod-sequence",
@@ -1049,7 +1157,8 @@ complianceTest(
 		timeout: 5000,
 	},
 	async (ctx) => {
-		const caps = ctx.profile === "rev2" ? ["IMAP4rev2", "LITERAL-"] : ["IMAP4rev1"];
+		const caps =
+			ctx.profile === "rev2" ? ["IMAP4rev2", "LITERAL-"] : ["IMAP4rev1"];
 		const server = await f.startServer();
 		server.arm([
 			[
@@ -1064,7 +1173,9 @@ complianceTest(
 		await driver.login("user", "pass");
 		// Caller asks for CONDSTORE against a server that never advertised it —
 		// the client must not put the parameter (or any CONDSTORE form) on the wire.
-		await driver.select("INBOX", { condstore: true }).catch(() => undefined);
+		await driver
+			.select("INBOX", { condstore: true })
+			.catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"no CONDSTORE protocol change may be emitted absent a CONDSTORE/QRESYNC capability",
@@ -1091,9 +1202,14 @@ complianceTest(
 		const server = await f.startServer();
 		server.arm([
 			[
-				...sessionPrelude(condstoreCaps(ctx.profile), { profile: ctx.profile, login: true }),
+				...sessionPrelude(condstoreCaps(ctx.profile), {
+					profile: ctx.profile,
+					login: true,
+				}),
 				// §3.1.2.2 Example 2: the SELECT stream carries NOMODSEQ.
-				expectLine(command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i })),
+				expectLine(
+					command("SELECT", { args: /^INBOX(?: \(CONDSTORE\))?$/i }),
+				),
 				reply("OK [READ-WRITE] SELECT completed", [
 					"* 1 EXISTS",
 					"* OK [UIDVALIDITY 3857529045] UIDs valid",
@@ -1110,7 +1226,9 @@ complianceTest(
 		await driver.select("INBOX", { condstore: true });
 		// The caller asks for CHANGEDSINCE on the NOMODSEQ mailbox — the client
 		// must refuse locally or strip the modifier.
-		await driver.fetch("1:*", ["FLAGS"], { changedSince: 12345n }).catch(() => undefined);
+		await driver
+			.fetch("1:*", ["FLAGS"], { changedSince: 12345n })
+			.catch(() => undefined);
 		expect(
 			server.transcript.clientLines(),
 			"no CHANGEDSINCE/UNCHANGEDSINCE/MODSEQ may be emitted while a NOMODSEQ mailbox is selected",

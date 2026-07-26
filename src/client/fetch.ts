@@ -223,7 +223,7 @@ export type FetchRequest = string | FetchItems;
  *
  * `partial` is real as of the M5 CONTEXT-machinery carry-forward (RFC 9394
  * §3.3, resolving the RFC9394-3.3-1 adjudicated deferral -- see
- * `docs/compliance-adjudications.md`): the `(PARTIAL m:n)` FETCH modifier,
+ * `docs/guides/compliance-adjudications.md`): the `(PARTIAL m:n)` FETCH modifier,
  * paging the RESULT SET of the FETCH itself (which messages are reported) --
  * distinct from `BodyPartRequest.partial`'s `<start.length>` octet window
  * (which bytes of one message's part are returned). The `{ from, to }` shape
@@ -334,7 +334,8 @@ export interface FetchEnvelope {
  *  raw"). Reuses the parser's own structure classes directly rather than a
  *  parallel type -- they already satisfy that contract (`additionalExtensionData`
  *  on both variants). */
-export type BodyStructure = MessageBodyMultipartStructure | MessageBodyStructure;
+export type BodyStructure =
+	MessageBodyMultipartStructure | MessageBodyStructure;
 
 /**
  * One FETCH body/BINARY part (spec §5.4). BACKPRESSURE CONTRACT for a LIVE
@@ -563,8 +564,18 @@ class FetchedPartImpl implements FetchedPart {
 		}
 	}
 
-	static fromBuffer(section: string, binary: boolean, data: Buffer): FetchedPartImpl {
-		return new FetchedPartImpl(section, binary, BigInt(data.length), data, undefined);
+	static fromBuffer(
+		section: string,
+		binary: boolean,
+		data: Buffer,
+	): FetchedPartImpl {
+		return new FetchedPartImpl(
+			section,
+			binary,
+			BigInt(data.length),
+			data,
+			undefined,
+		);
 	}
 
 	static fromLiveStream(
@@ -634,7 +645,11 @@ class FetchedPartImpl implements FetchedPart {
 	 *  abandoned-iterator drain path (`MailboxSession.fetch()`). A no-op for
 	 *  an already-buffered/already-ended part. */
 	destroy(): void {
-		if (this.cached === undefined && this.liveStream && !this.liveStream.destroyed) {
+		if (
+			this.cached === undefined &&
+			this.liveStream &&
+			!this.liveStream.destroyed
+		) {
 			this.liveStream.destroy();
 		}
 	}
@@ -685,7 +700,12 @@ function toEnvelopeAddresses(list: ParserAddressList): FetchEnvelopeAddress[] {
 }
 
 function toEnvelopeAddress(addr: ParserAddress): FetchEnvelopeAddress {
-	return { name: addr.name, route: addr.route, mailbox: addr.mailbox, host: addr.host };
+	return {
+		name: addr.name,
+		route: addr.route,
+		mailbox: addr.mailbox,
+		host: addr.host,
+	};
 }
 
 function toEnvelope(env: ParserEnvelope): FetchEnvelope {
@@ -796,11 +816,19 @@ export async function buildFetchedMessage(
 			const forceStream = opts.forcedStreamSections.has(key);
 			if (!forceStream && stream.length <= opts.maxInlineSize) {
 				const buf = await drainReadableAsync(stream.stream);
-				parts.set(key, FetchedPartImpl.fromBuffer(section, binary, buf));
+				parts.set(
+					key,
+					FetchedPartImpl.fromBuffer(section, binary, buf),
+				);
 			} else {
 				parts.set(
 					key,
-					FetchedPartImpl.fromLiveStream(section, binary, BigInt(stream.length), stream.stream),
+					FetchedPartImpl.fromLiveStream(
+						section,
+						binary,
+						BigInt(stream.length),
+						stream.stream,
+					),
 				);
 			}
 		} else {
@@ -828,7 +856,12 @@ export async function buildFetchedMessage(
 				section.kind,
 				false,
 				section.contents,
-				section.stream ? { stream: section.stream.stream, length: section.stream.length } : undefined,
+				section.stream
+					? {
+							stream: section.stream.stream,
+							length: section.stream.length,
+						}
+					: undefined,
 			);
 		}
 	}
@@ -838,7 +871,9 @@ export async function buildFetchedMessage(
 				bin.section,
 				true,
 				bin.contents,
-				bin.stream ? { stream: bin.stream.stream, length: bin.stream.length } : undefined,
+				bin.stream
+					? { stream: bin.stream.stream, length: bin.stream.length }
+					: undefined,
 			);
 		}
 	}
@@ -859,7 +894,8 @@ export async function buildFetchedMessage(
 	const gmMsgId = ext?.get("X-GM-MSGID") as GmailMessageId | undefined;
 	const gmThrId = ext?.get("X-GM-THRID") as GmailThreadId | undefined;
 	const gmLabels = ext?.get("X-GM-LABELS") as GmailLabels | undefined;
-	let gmail: { msgId?: string; threadId?: string; labels?: string[] } | undefined;
+	let gmail:
+		{ msgId?: string; threadId?: string; labels?: string[] } | undefined;
 	if (gmMsgId || gmThrId || gmLabels) {
 		gmail = {};
 		if (gmMsgId) gmail.msgId = String(gmMsgId.id);
@@ -879,7 +915,9 @@ export async function buildFetchedMessage(
 				: fetch.uid?.id === "*"
 					? undefined
 					: fetch.uid?.id,
-		flags: fetch.flags ? new Set(fetch.flags.flags.map((f) => f.name)) : undefined,
+		flags: fetch.flags
+			? new Set(fetch.flags.flags.map((f) => f.name))
+			: undefined,
 		envelope: fetch.envelope ? toEnvelope(fetch.envelope) : undefined,
 		internalDate: fetch.date,
 		size: fetch.size !== undefined ? toBigInt(fetch.size) : undefined,
@@ -908,7 +946,11 @@ export class FetchedMessageImpl implements FetchedMessage {
 	public readonly threadId?: string;
 	public readonly saveDate?: Date | null;
 	public readonly preview?: string;
-	public readonly gmail?: { msgId?: string; threadId?: string; labels?: string[] };
+	public readonly gmail?: {
+		msgId?: string;
+		threadId?: string;
+		labels?: string[];
+	};
 	public readonly binarySizes?: ReadonlyMap<string, bigint>;
 	private readonly partsMap: Map<string, FetchedPartImpl>;
 
@@ -946,7 +988,10 @@ export class FetchedMessageImpl implements FetchedMessage {
 		this.partsMap = fields.parts;
 	}
 
-	part(section: string, opts?: { binary?: boolean }): FetchedPart | undefined {
+	part(
+		section: string,
+		opts?: { binary?: boolean },
+	): FetchedPart | undefined {
 		// C3 fix: normalize the LOOKUP argument too, so `part("text")` and
 		// `part("TEXT")` resolve the same entry regardless of which case the
 		// caller used -- `partsMap`'s own keys are always the canonical

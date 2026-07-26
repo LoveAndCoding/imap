@@ -18,7 +18,7 @@
  *               message sizes.
  *
  * A-1 CLASSIFICATION (ADJUDICATED DEVIATION, expectFailure: "violation" —
- * see docs/compliance-adjudications.md): `driver.enable()` IS implemented
+ * see docs/guides/compliance-adjudications.md): `driver.enable()` IS implemented
  * (`ImapClient.enableExtensions`), but the modern-API spec's §3.4 settled
  * decision permanently excludes IMAP4rev2 from the `connect()` ritual's
  * auto-ENABLE set (src/client/client.ts's `AUTO_ENABLE_SET` comment: "rev2
@@ -64,14 +64,15 @@ interface ParsedFetchSize {
 	size?: number | bigint;
 }
 function contentOf<T>(ev: ObservedEvent): T {
-	return ((ev.detail as { content?: unknown } | undefined)?.content ?? {}) as T;
+	return ((ev.detail as { content?: unknown } | undefined)?.content ??
+		{}) as T;
 }
 
 // ── RFC9051-A-1: ENABLE IMAP4rev2 when both revisions advertised ──────────
 // The server greeting/CAPABILITY advertises BOTH IMAP4rev1 and IMAP4rev2. A
 // client that "wants to use IMAP4rev2" MUST issue "ENABLE IMAP4rev2" before
 // relying on rev2-only behavior. ADJUDICATED DEVIATION (see the file header
-// note and docs/compliance-adjudications.md): the modern-API spec §3.4
+// note and docs/guides/compliance-adjudications.md): the modern-API spec §3.4
 // deliberately excludes IMAP4rev2 from the client's auto-ENABLE set, so the
 // connect() ritual never issues it — a genuine, permanent violation of this
 // MUST, not an unimplemented gap.
@@ -92,7 +93,9 @@ complianceTest(
 			[
 				send("* OK ready\r\n"),
 				expectLine(command("CAPABILITY", { args: null })),
-				reply("OK CAPABILITY completed", ["* CAPABILITY IMAP4rev1 IMAP4rev2"]),
+				reply("OK CAPABILITY completed", [
+					"* CAPABILITY IMAP4rev1 IMAP4rev2",
+				]),
 				// A conformant client would enable rev2 before relying on rev2-only
 				// behavior — but see the ADJUDICATED DEVIATION note above: this is
 				// deliberately never scripted as a requirement here.
@@ -112,8 +115,10 @@ complianceTest(
 		// fails today, honestly recording the adjudicated deviation as a real
 		// violation rather than a vacuous "absence of the unimplemented verb" pass.
 		expect(
-			server.commandLines.some((l) => l.verb === "ENABLE" && /IMAP4rev2/i.test(l.args)),
-			"the client MUST issue ENABLE IMAP4rev2 when both revisions are advertised — adjudicated deviation, see docs/compliance-adjudications.md",
+			server.commandLines.some(
+				(l) => l.verb === "ENABLE" && /IMAP4rev2/i.test(l.args),
+			),
+			"the client MUST issue ENABLE IMAP4rev2 when both revisions are advertised — adjudicated deviation, see docs/guides/compliance-adjudications.md",
 		).toBe(true);
 	},
 );
@@ -142,7 +147,9 @@ complianceTest(
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
 				// The exact conformant modified UTF-7 form (quoted or atom).
 				expectLine(
-					command("CREATE", { args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/ }),
+					command("CREATE", {
+						args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/,
+					}),
 				),
 				reply("OK CREATE completed"),
 			],
@@ -185,7 +192,9 @@ complianceTest(
 		server.arm([
 			[
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
-				expectLine(command("CREATE", { args: /^(?:caf&AOk-|"caf&AOk-")$/ })),
+				expectLine(
+					command("CREATE", { args: /^(?:caf&AOk-|"caf&AOk-")$/ }),
+				),
 				reply("OK CREATE completed"),
 			],
 		]);
@@ -293,7 +302,9 @@ complianceTest(
 			[
 				...sessionPrelude(undefined, { login: true, profile: "rev2" }),
 				expectLine(
-					command("CREATE", { args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/ }),
+					command("CREATE", {
+						args: /^(?:R&AOk-sum&AOk-|"R&AOk-sum&AOk-")$/,
+					}),
 				),
 				reply("OK CREATE completed"),
 			],
@@ -308,7 +319,10 @@ complianceTest(
 		expect(createLine).toBeDefined();
 		const name = createLine!.args.replace(/^"|"$/g, "");
 		expect(name).toBe("R&AOk-sum&AOk-");
-		expect(name, "no null shift '-&' permitted in modified UTF-7").not.toContain("-&");
+		expect(
+			name,
+			"no null shift '-&' permitted in modified UTF-7",
+		).not.toContain("-&");
 	},
 );
 

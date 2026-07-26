@@ -1,11 +1,15 @@
-// SASL package surface (spec §1.1's future "./sasl" export subpath) + the
-// built-in mechanism REGISTRATION side effect. `mechanism.ts`'s registry is
-// module-level state that starts empty; something has to actually call
-// `registerMechanism()` for each built-in before the selection algorithm's
-// `createMechanism("PLAIN")` (spec §9.3) can find them. Importing this
-// module (directly, or transitively — `client/auth.ts` does) is what runs
-// that registration, exactly once (subsequent imports hit Node's module
-// cache, not a re-run).
+/**
+ * SASL package surface (spec §1.1's future "./sasl" export subpath) + the
+ * built-in mechanism REGISTRATION side effect. `mechanism.ts`'s registry is
+ * module-level state that starts empty; something has to actually call
+ * `registerMechanism()` for each built-in before the selection algorithm's
+ * `createMechanism("PLAIN")` (spec §9.3) can find them. Importing this
+ * module (directly, or transitively — `client/auth.ts` does) is what runs
+ * that registration, exactly once (subsequent imports hit Node's module
+ * cache, not a re-run).
+ *
+ * @module SASL
+ */
 
 import { createAnonymousMechanism } from "./anonymous";
 import { createCramMd5Mechanism } from "./cram-md5";

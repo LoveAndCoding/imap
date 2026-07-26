@@ -1,3 +1,6 @@
+/**
+ * @module Commands
+ */
 export * from "./append";
 export * from "./authenticate";
 export * from "./base";

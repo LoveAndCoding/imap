@@ -138,7 +138,7 @@ export interface AppendOptions {
 	 *  command's own NUL-byte refusal above. HISTORY: M2.11 originally
 	 *  documented the opposite (pass-through, "the server may reject") --
 	 *  that posture was SUPERSEDED at the M3.6 adjudication (see
-	 *  docs/compliance-adjudications.md): the catalog rows are client-side
+	 *  docs/guides/compliance-adjudications.md): the catalog rows are client-side
 	 *  MUST NOTs operationalized as "no such attempt appears in the
 	 *  client's command stream", and the earlier pass-through reading was
 	 *  never actually exercised against a `\Recent` flag (the passing
@@ -230,7 +230,10 @@ export interface AppendCapabilityProbe {
  * default its own constructor's capability-probe parameter identically to
  * `AppendCommand`'s, rather than redefining an equivalent object.
  */
-export const NO_CAPS: AppendCapabilityProbe = { has: () => false, knownAppendLimit: () => false };
+export const NO_CAPS: AppendCapabilityProbe = {
+	has: () => false,
+	knownAppendLimit: () => false,
+};
 
 /** `true` when `data` contains at least one octet outside 7-bit US-ASCII. */
 export function hasNonAsciiOctet(data: Buffer): boolean {
@@ -255,7 +258,10 @@ export function hasNonAsciiOctet(data: Buffer): boolean {
  * (`commands/replace.ts`, RFC 8508) can reuse it -- see `NO_CAPS`'s doc
  * comment for the shared-machinery rationale.
  */
-export function toMessageBuffer(message: AppendSource, context: string): Buffer {
+export function toMessageBuffer(
+	message: AppendSource,
+	context: string,
+): Buffer {
 	if (Buffer.isBuffer(message)) {
 		return message;
 	}
@@ -271,7 +277,11 @@ export function toMessageBuffer(message: AppendSource, context: string): Buffer 
  * true }` opt-out (RFC 3516 literal8), skipping the check entirely. Exported
  * (M5.6) for `ReplaceCommand`'s reuse -- see `NO_CAPS`'s doc comment.
  */
-export function assertNoUnencodedNul(data: Buffer, binary: boolean, context: string): void {
+export function assertNoUnencodedNul(
+	data: Buffer,
+	binary: boolean,
+	context: string,
+): void {
 	if (!binary && data.includes(0x00)) {
 		throw new RangeError(
 			`${context}: message contains a NUL byte (0x00) -- binary content must be ` +
@@ -297,7 +307,10 @@ export function assertNoUnencodedNul(data: Buffer, binary: boolean, context: str
  * Exported (M5.6-style) so `ReplaceCommand` can reuse it -- see `NO_CAPS`'s
  * doc comment for the shared-machinery rationale.
  */
-export function assertBinaryCapability(caps: AppendCapabilityProbe, context: string): void {
+export function assertBinaryCapability(
+	caps: AppendCapabilityProbe,
+	context: string,
+): void {
 	if (!caps.has("BINARY") && !caps.has("IMAP4rev2")) {
 		throw new CapabilityError(
 			`${context}: { binary: true } (RFC 3516 literal8 framing) requires the ` +
@@ -380,16 +393,25 @@ export function validateCatenateParts(
 	return catenate.map((part, i): ValidatedCatenatePart => {
 		if (part.type === "URL") {
 			if (typeof part.url !== "string") {
-				throw new RangeError(`${context}: catenate[${i}] (URL) must carry a string url`);
+				throw new RangeError(
+					`${context}: catenate[${i}] (URL) must carry a string url`,
+				);
 			}
 			return { type: "URL", url: part.url };
 		}
-		const data = toMessageBuffer(part.message, `${context} (CATENATE TEXT part ${i + 1})`);
+		const data = toMessageBuffer(
+			part.message,
+			`${context} (CATENATE TEXT part ${i + 1})`,
+		);
 		// RFC 4469's `text-literal` is a plain literal, never literal8 --
 		// neither this class nor `ReplaceCommand` offers a `{ binary: true }`
 		// escape hatch for a CATENATE TEXT part, so the NUL refusal always
 		// applies here.
-		assertNoUnencodedNul(data, false, `${context} (CATENATE TEXT part ${i + 1})`);
+		assertNoUnencodedNul(
+			data,
+			false,
+			`${context} (CATENATE TEXT part ${i + 1})`,
+		);
 		return { type: "TEXT", data };
 	});
 }
@@ -527,7 +549,11 @@ export class AppendCommand extends Command<AppendResult> {
 		// M5.6: catenate-part validation factored into the shared
 		// `validateCatenateParts()` (below `NO_CAPS`'s doc comment) so
 		// `ReplaceCommand` applies IDENTICAL rules rather than a second copy.
-		this.catenateParts = validateCatenateParts(this.opts.catenate, this.caps, "APPEND");
+		this.catenateParts = validateCatenateParts(
+			this.opts.catenate,
+			this.caps,
+			"APPEND",
+		);
 		if (!this.catenateParts) {
 			// RFC 3501/9051 §4.3.1: binary (NUL-bearing) data MUST be encoded into
 			// a textual form before transmission; this client never transmits a
@@ -536,7 +562,11 @@ export class AppendCommand extends Command<AppendResult> {
 			// caller's explicit opt-out, requesting the RFC 3516 literal8
 			// (`~{n}`) wire form that legitimately carries NUL octets to a
 			// BINARY-capable server.
-			assertNoUnencodedNul(this.data, this.opts.binary === true, "APPEND");
+			assertNoUnencodedNul(
+				this.data,
+				this.opts.binary === true,
+				"APPEND",
+			);
 			// RFC 3516 §3: the literal8 (`~{n}`) framing `{ binary: true }`
 			// requests is itself an optional extension -- gate it BEFORE any
 			// byte reaches the wire (I-9), same as every other optional
@@ -553,7 +583,7 @@ export class AppendCommand extends Command<AppendResult> {
 		// client-sent flag list; §2.3.2 names APPEND explicitly. Refuse
 		// (RangeError, zero bytes) at construction -- see AppendOptions.flags's
 		// doc comment for the M3.6 adjudication that superseded M2.11's
-		// original pass-through posture (docs/compliance-adjudications.md).
+		// original pass-through posture (docs/guides/compliance-adjudications.md).
 		if (this.opts.flags) {
 			assertNoRecentFlag(this.opts.flags, this.verb);
 		}
@@ -565,7 +595,13 @@ export class AppendCommand extends Command<AppendResult> {
 		// literal) is now shared with `ReplaceCommand` via `writeAppendMessageBody()`
 		// (see that function's doc comment) -- this class's own former inline
 		// logic moved there verbatim, no behavior change.
-		writeAppendMessageBody(w, this.data, this.catenateParts, this.opts, this.caps);
+		writeAppendMessageBody(
+			w,
+			this.data,
+			this.catenateParts,
+			this.opts,
+			this.caps,
+		);
 	}
 
 	protected accept(c: ResponseCollector): AppendResult {
@@ -649,7 +685,9 @@ export class MultiAppendCommand extends Command<AppendResult[]> {
 	) {
 		super();
 		if (typeof mailboxName !== "string") {
-			throw new RangeError("APPEND (MULTIAPPEND): mailbox must be a string");
+			throw new RangeError(
+				"APPEND (MULTIAPPEND): mailbox must be a string",
+			);
 		}
 		if (!Array.isArray(messages) || messages.length === 0) {
 			throw new RangeError(

@@ -8,7 +8,7 @@
  * \Recent in a STORE flags-list or an APPEND flags parameter, and must never
  * attempt to set or clear \Recent via any command.
  *
- * Design choice (adjudicated at M3.6, docs/compliance-adjudications.md): the
+ * Design choice (adjudicated at M3.6, docs/guides/compliance-adjudications.md): the
  * client REFUSES a \Recent-bearing flag list — RangeError at command
  * construction, zero bytes written — for both STORE (StoreCommand,
  * src/commands/store.ts) and APPEND (AppendCommand, src/commands/append.ts;
@@ -24,10 +24,7 @@ import { command } from "../../harness/matchers";
 import { expectLine, reply } from "../../harness/script";
 import { complianceTest } from "../../runner/compliance-test";
 import { useComplianceFixture } from "../../runner/fixture";
-import {
-	selectExchange,
-	sessionPrelude,
-} from "../../runner/state";
+import { selectExchange, sessionPrelude } from "../../runner/state";
 
 const f = useComplianceFixture();
 
@@ -39,7 +36,7 @@ const f = useComplianceFixture();
 // is unsatisfiable by a spec-compliant client that refuses before the wire
 // gets rescripted to assert the refusal): the original script armed a STORE
 // expectLine/reply, but the adjudicated client behavior
-// (docs/compliance-adjudications.md, RFC3501-2.3.2-1/-2 entry) is to REFUSE
+// (docs/guides/compliance-adjudications.md, RFC3501-2.3.2-1/-2 entry) is to REFUSE
 // the \Recent-bearing flag list with a RangeError at command construction,
 // zero bytes written -- a refusing client never sends any STORE line, so
 // the armed script now ends at the selected state and the test asserts the
@@ -78,13 +75,16 @@ complianceTest(
 		// Adjudicated client duty: refuse \Recent before any bytes are written
 		// (RangeError from StoreCommand's constructor, via the public
 		// MailboxSession.seq.addFlags path the driver delegates to).
-		await expect(driver.store("1", "+FLAGS", ["\\Recent"])).rejects.toThrow(RangeError);
+		await expect(driver.store("1", "+FLAGS", ["\\Recent"])).rejects.toThrow(
+			RangeError,
+		);
 		await server.assertCompleted();
 
 		// Per the RFC: no client-sent command may include \Recent in its args —
 		// the client cannot set or clear \Recent via STORE (or any command).
 		// Note: args excludes the verb, so we assert across all command lines.
-		for (const l of server.commandLines) expect(l.args).not.toMatch(/\\Recent\b/i);
+		for (const l of server.commandLines)
+			expect(l.args).not.toMatch(/\\Recent\b/i);
 	},
 );
 
@@ -111,13 +111,17 @@ complianceTest(
 		// scripted exchange above already arms a LOGIN step (`login: true`);
 		// this call actually drives it.
 		await driver.login("user", "pass");
-		await driver.append("INBOX", Buffer.from("Subject: test\r\n\r\nBody\r\n"));
+		await driver.append(
+			"INBOX",
+			Buffer.from("Subject: test\r\n\r\nBody\r\n"),
+		);
 		await server.assertCompleted();
 
 		// No client-sent command may include \Recent in its args — the client
 		// cannot include \Recent in the APPEND flags parameter (or any
 		// command). Note: args excludes the verb, so we assert across all
 		// command lines.
-		for (const l of server.commandLines) expect(l.args).not.toMatch(/\\Recent\b/i);
+		for (const l of server.commandLines)
+			expect(l.args).not.toMatch(/\\Recent\b/i);
 	},
 );

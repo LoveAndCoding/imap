@@ -1,5 +1,14 @@
-import type { BodyPartRequest, FetchedMessage, FetchItems, FetchRequest } from "../client/fetch";
-import { buildFetchedMessage, normalizeSectionSpec, sectionPartKey } from "../client/fetch";
+import type {
+	BodyPartRequest,
+	FetchedMessage,
+	FetchItems,
+	FetchRequest,
+} from "../client/fetch";
+import {
+	buildFetchedMessage,
+	normalizeSectionSpec,
+	sectionPartKey,
+} from "../client/fetch";
 import { CapabilityError } from "../errors";
 import { Fetch, UidFetch } from "../parser";
 import type { UntaggedResponse } from "../parser";
@@ -23,14 +32,20 @@ import { CommandWriter } from "./writer";
  *  structurally satisfied by `CapabilityView`/`MailboxSessionDriver.
  *  hasCapability` alike (same shape as `SearchCapabilityProbe`). */
 export interface FetchCapabilityProbe {
+	/** Returns true if the server has advertised the given capability. */
 	has(cap: string): boolean;
 }
 
-export const NO_FETCH_CAPS: FetchCapabilityProbe = { has: () => false };
+const NO_FETCH_CAPS: FetchCapabilityProbe = { has: () => false };
 
 const MACROS = new Set(["FAST", "ALL", "FULL"]);
 
-function assertCap(caps: FetchCapabilityProbe, cap: string, field: string, rfc: string): void {
+function assertCap(
+	caps: FetchCapabilityProbe,
+	cap: string,
+	field: string,
+	rfc: string,
+): void {
 	if (!caps.has(cap)) {
 		throw new CapabilityError(
 			`FetchItems.${field} requires the ${cap} capability (${rfc}), which the ` +
@@ -70,7 +85,9 @@ const ATOM_SAFE_FIELD = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function composeAstringToken(s: string): string {
 	if (typeof s !== "string" || s.length === 0) {
-		throw new RangeError("BodyPartRequest.fields: each field name must be a non-empty string");
+		throw new RangeError(
+			"BodyPartRequest.fields: each field name must be a non-empty string",
+		);
 	}
 	if (ATOM_SAFE_FIELD.test(s)) {
 		return s;
@@ -106,7 +123,10 @@ function resolveHeaderFieldsNot(part: BodyPartRequest): boolean {
 	let isNot = part.not === true;
 	if (part.section !== undefined) {
 		const normalized = normalizeSectionSpec(part.section);
-		if (normalized !== "HEADER.FIELDS" && normalized !== "HEADER.FIELDS.NOT") {
+		if (
+			normalized !== "HEADER.FIELDS" &&
+			normalized !== "HEADER.FIELDS.NOT"
+		) {
 			throw new RangeError(
 				`BodyPartRequest: 'section' (${JSON.stringify(part.section)}) conflicts with ` +
 					"'fields' -- when 'fields' is set, 'section' (if also given) must be " +
@@ -187,7 +207,9 @@ function composeSectionSpec(part: BodyPartRequest): string {
 					"HEADER.FIELDS/HEADER.FIELDS.NOT",
 			);
 		}
-		const keyword = resolveHeaderFieldsNot(part) ? "HEADER.FIELDS.NOT" : "HEADER.FIELDS";
+		const keyword = resolveHeaderFieldsNot(part)
+			? "HEADER.FIELDS.NOT"
+			: "HEADER.FIELDS";
 		const list = part.fields.map(composeAstringToken).join(" ");
 		return `${keyword} (${list})`;
 	}
@@ -223,15 +245,25 @@ function writeBodyPartItem(
 	}
 	const peek = part.peek === undefined ? true : part.peek;
 	const spec = composeSectionSpec(part);
-	const keyword = part.binary ? (peek ? "BINARY.PEEK" : "BINARY") : peek ? "BODY.PEEK" : "BODY";
+	const keyword = part.binary
+		? peek
+			? "BINARY.PEEK"
+			: "BINARY"
+		: peek
+			? "BODY.PEEK"
+			: "BODY";
 	let token = `${keyword}[${spec}]`;
 	if (part.partial) {
 		const { start, length } = part.partial;
 		if (!Number.isInteger(start) || start < 0) {
-			throw new RangeError("BodyPartRequest.partial.start must be a non-negative integer");
+			throw new RangeError(
+				"BodyPartRequest.partial.start must be a non-negative integer",
+			);
 		}
 		if (!Number.isInteger(length) || length <= 0) {
-			throw new RangeError("BodyPartRequest.partial.length must be a positive integer");
+			throw new RangeError(
+				"BodyPartRequest.partial.length must be a positive integer",
+			);
 		}
 		token += `<${start}.${length}>`;
 	}
@@ -248,7 +280,12 @@ function writeBodyPartItem(
  * both scripted verbatim), so the only order that satisfies both is
  * "whatever order the request itself was built in".
  */
-function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean, caps: FetchCapabilityProbe): void {
+function writeFetchItems(
+	w: CommandWriter,
+	items: FetchItems,
+	uidGrain: boolean,
+	caps: FetchCapabilityProbe,
+): void {
 	for (const key of Object.keys(items) as Array<keyof FetchItems>) {
 		const value = items[key];
 		if (value === undefined || value === false) {
@@ -298,7 +335,10 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 				assertCap(caps, "PREVIEW", "preview", "RFC8970");
 				w.atom("PREVIEW");
 				const previewValue = value as boolean | { lazy?: boolean };
-				const lazy = typeof previewValue === "object" && previewValue !== null && previewValue.lazy;
+				const lazy =
+					typeof previewValue === "object" &&
+					previewValue !== null &&
+					previewValue.lazy;
 				if (lazy) {
 					w.list((inner) => inner.atom("LAZY"));
 				}
@@ -308,11 +348,15 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 				assertBinaryCap(caps, "binarySize");
 				const sections = value as string[];
 				if (!Array.isArray(sections) || sections.length === 0) {
-					throw new RangeError("FetchItems.binarySize must be a non-empty string[]");
+					throw new RangeError(
+						"FetchItems.binarySize must be a non-empty string[]",
+					);
 				}
 				for (const section of sections) {
 					if (typeof section !== "string") {
-						throw new RangeError("FetchItems.binarySize: each entry must be a string");
+						throw new RangeError(
+							"FetchItems.binarySize: each entry must be a string",
+						);
 					}
 					// M1 fix (second-review): same grammar validation
 					// `composeSectionSpec()` applies to `bodyParts[].section` --
@@ -330,7 +374,11 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 			}
 			case "gmail": {
 				assertCap(caps, "X-GM-EXT-1", "gmail", "X-GM-EXT-1");
-				const g = value as { msgId?: boolean; threadId?: boolean; labels?: boolean };
+				const g = value as {
+					msgId?: boolean;
+					threadId?: boolean;
+					labels?: boolean;
+				};
 				if (g.msgId) w.atom("X-GM-MSGID");
 				if (g.threadId) w.atom("X-GM-THRID");
 				if (g.labels) w.atom("X-GM-LABELS");
@@ -339,7 +387,9 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 			case "bodyParts": {
 				const parts = value as BodyPartRequest[];
 				if (!Array.isArray(parts) || parts.length === 0) {
-					throw new RangeError("FetchItems.bodyParts must be a non-empty array");
+					throw new RangeError(
+						"FetchItems.bodyParts must be a non-empty array",
+					);
 				}
 				for (const part of parts) {
 					writeBodyPartItem(w, part, caps);
@@ -359,7 +409,9 @@ function writeFetchItems(w: CommandWriter, items: FetchItems, uidGrain: boolean,
 /** Collects every `BodyPartRequest.section` string marked `stream: true` --
  *  used by `buildFetchedMessage()` (spec §5.4) to force a live stream for
  *  that section regardless of its declared size vs. `maxInlineSize`. */
-function collectForcedStreamSections(request: FetchRequest): ReadonlySet<string> {
+function collectForcedStreamSections(
+	request: FetchRequest,
+): ReadonlySet<string> {
 	const out = new Set<string>();
 	if (typeof request === "object" && request.bodyParts) {
 		for (const part of request.bodyParts) {
@@ -418,10 +470,18 @@ function compileFetchWire(
 			);
 		}
 		w.atom(macro);
-	} else if (typeof request !== "object" || request === null || Array.isArray(request)) {
-		throw new RangeError("FETCH request must be a macro string or a FetchItems object");
+	} else if (
+		typeof request !== "object" ||
+		request === null ||
+		Array.isArray(request)
+	) {
+		throw new RangeError(
+			"FETCH request must be a macro string or a FetchItems object",
+		);
 	} else if (Object.keys(request).length === 0) {
-		throw new RangeError("FETCH requires at least one data item (empty FetchItems object)");
+		throw new RangeError(
+			"FETCH requires at least one data item (empty FetchItems object)",
+		);
 	} else {
 		w.list((inner) => writeFetchItems(inner, request, uidGrain, caps));
 	}
@@ -496,7 +556,10 @@ function compileFetchWire(
 						{ capability: "PARTIAL", rfc: "RFC9394" },
 					);
 				}
-				const range = validatePartialRange(partial, "FetchModifiers.partial");
+				const range = validatePartialRange(
+					partial,
+					"FetchModifiers.partial",
+				);
 				inner.atom("PARTIAL");
 				inner.atom(`${range.from}:${range.to}`);
 			}
@@ -599,7 +662,9 @@ export class FetchCommand extends Command<AsyncIterable<FetchedMessage>> {
 		this.vanished = vanished;
 		this.partial = partial;
 		this.forcedStreamSections =
-			typeof request === "object" ? collectForcedStreamSections(request) : new Set();
+			typeof request === "object"
+				? collectForcedStreamSections(request)
+				: new Set();
 		// Pre-compile once against a throwaway writer purely to surface any
 		// CapabilityError/RangeError synchronously, before this command is ever
 		// submitted (I-9) -- SearchCommand's own established precedent.

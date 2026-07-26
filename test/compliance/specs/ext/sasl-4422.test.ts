@@ -17,7 +17,7 @@
  * authzid semantics — user-intent-policy), RFC4422-6.1.2-1 (minimum security
  * policy — user-intent-policy), RFC4422-6.1.5-1 (blind-allocation — an
  * internal memory strategy), and (M5.16 adjudication, see
- * docs/compliance-adjudications.md) RFC4422-3.6-1, RFC4422-3.7-1, RFC4422-3.7-2,
+ * docs/guides/compliance-adjudications.md) RFC4422-3.6-1, RFC4422-3.7-1, RFC4422-3.7-2,
  * RFC4422-3.7-3, RFC4422-6.1.1-1, RFC4422-6.1.5-2 — every one of this client's
  * SASL mechanisms negotiates no security layer, so the whole family's
  * security-layer-install/encode/decode/integrity/oversized-buffer duties are
@@ -58,7 +58,9 @@ complianceTest(
 			[
 				...sessionPrelude(["IMAP4rev1", "AUTH=PLAIN"]),
 				// Mechanism token MUST match the SASL mechanism-name grammar.
-				expectLine(command("AUTHENTICATE", { args: /^[A-Z0-9_-]{1,20}$/ })),
+				expectLine(
+					command("AUTHENTICATE", { args: /^[A-Z0-9_-]{1,20}$/ }),
+				),
 				send("+ \r\n"),
 				expectLine({
 					match: (line) => ({
@@ -67,7 +69,9 @@ complianceTest(
 					}),
 					description: "base64 SASL response",
 				}),
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -75,7 +79,9 @@ complianceTest(
 		await server.assertCompleted();
 		// The mechanism token the client places on the wire is drawn from the
 		// CAPABILITY AUTH= list and matches the mechanism-name ABNF.
-		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
+		const authLine = server.commandLines.find(
+			(l) => l.verb === "AUTHENTICATE",
+		);
 		expect(authLine).toBeDefined();
 		expect(authLine!.args).toMatch(/^[A-Z0-9_-]{1,20}$/);
 	},
@@ -101,7 +107,9 @@ complianceTest(
 				// Even with SASL-IR advertised, a server-first mechanism carries NO
 				// initial response: the AUTHENTICATE line is the mechanism name only.
 				expectLine(command("AUTHENTICATE", { args: /^CRAM-MD5$/i })),
-				send("+ PDE4OTYuNjk3MTcwOTUyQHBvc3RvZmZpY2UucmVzdG9uLm1jaS5uZXQ+\r\n"),
+				send(
+					"+ PDE4OTYuNjk3MTcwOTUyQHBvc3RvZmZpY2UucmVzdG9uLm1jaS5uZXQ+\r\n",
+				),
 				expectLine({
 					match: (line) => ({
 						ok: /^[A-Za-z0-9+/=]+$/.test(line),
@@ -112,18 +120,23 @@ complianceTest(
 				// [CAPABILITY ...] on the OK avoids an unscripted follow-up
 				// CAPABILITY round trip (RFC3501/9051-6.2.2-4) that this test isn't
 				// about.
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=CRAM-MD5 SASL-IR] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=CRAM-MD5 SASL-IR] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = await f.connectPlain(server);
 		await driver.authenticate("CRAM-MD5");
 		await server.assertCompleted();
 		// No IR argument accompanies a server-first mechanism.
-		const authLine = server.commandLines.find((l) => l.verb === "AUTHENTICATE");
-		expect(authLine).toBeDefined();
-		expect(authLine!.args, "server-first mechanism carries no initial response").toMatch(
-			/^CRAM-MD5$/i,
+		const authLine = server.commandLines.find(
+			(l) => l.verb === "AUTHENTICATE",
 		);
+		expect(authLine).toBeDefined();
+		expect(
+			authLine!.args,
+			"server-first mechanism carries no initial response",
+		).toMatch(/^CRAM-MD5$/i);
 	},
 );
 
@@ -162,10 +175,16 @@ complianceTest(
 	async () => {
 		const server = await f.startServer();
 		const seenLines: string[] = [];
-		const captureLine = (description: string, ok: (line: string) => boolean) => ({
+		const captureLine = (
+			description: string,
+			ok: (line: string) => boolean,
+		) => ({
 			match: (line: string) => {
 				seenLines.push(line);
-				return { ok: ok(line), reason: `unexpected continuation line: '${line}'` };
+				return {
+					ok: ok(line),
+					reason: `unexpected continuation line: '${line}'`,
+				};
 			},
 			description,
 		});
@@ -177,14 +196,18 @@ complianceTest(
 				// Leg 1: PLAIN answers the first (expected) challenge with its
 				// initial response — the "respond" leg of 3.4-1.
 				expectLine(
-					captureLine("base64 initial response", (line) => /^[A-Za-z0-9+/=]+$/.test(line)),
+					captureLine("base64 initial response", (line) =>
+						/^[A-Za-z0-9+/=]+$/.test(line),
+					),
 				),
 				// A second, superfluous challenge: PLAIN's step() has no legal
 				// answer for this and must abort.
 				send("+ \r\n"),
 				// Leg 2: the ONLY legal continuation now is the bare '*' abort —
 				// this is the genuine 3.5-1 witness.
-				expectLine(captureLine("'*' abort line", (line) => line === "*")),
+				expectLine(
+					captureLine("'*' abort line", (line) => line === "*"),
+				),
 				// AUTHENTICATIONFAILED (RFC 5530), not a bare BAD: spec §9.3 step 3
 				// only treats a failure as "credentials wrong, stop" with this code —
 				// a bare BAD reads as mechanism-negotiation failure and would make
@@ -200,12 +223,18 @@ complianceTest(
 		} catch (err) {
 			authError = err;
 		}
-		expect(authError, "an aborted AUTHENTICATE must reject authenticate()").toBeDefined();
+		expect(
+			authError,
+			"an aborted AUTHENTICATE must reject authenticate()",
+		).toBeDefined();
 		await server.assertCompleted();
 		// Exactly two continuation lines were sent: a legal base64 response to
 		// the first challenge, then the '*' abort to the illegal second one —
 		// never a bare CRLF, another command, or silence.
-		expect(seenLines).toEqual([expect.stringMatching(/^[A-Za-z0-9+/=]+$/), "*"]);
+		expect(seenLines).toEqual([
+			expect.stringMatching(/^[A-Za-z0-9+/=]+$/),
+			"*",
+		]);
 	},
 );
 
@@ -232,9 +261,14 @@ complianceTest(
 				expectLine({
 					match: (line) => {
 						if (!/^[A-Za-z0-9+/=]+$/.test(line)) {
-							return { ok: false, reason: `expected base64, got: '${line}'` };
+							return {
+								ok: false,
+								reason: `expected base64, got: '${line}'`,
+							};
 						}
-						const decoded = Buffer.from(line, "base64").toString("latin1");
+						const decoded = Buffer.from(line, "base64").toString(
+							"latin1",
+						);
 						// PLAIN = [authzid] NUL authcid NUL passwd → exactly two NULs.
 						// eslint-disable-next-line no-control-regex -- \x00 NUL delimiter is intentional (SASL PLAIN wire format)
 						const nulCount = (decoded.match(/\x00/g) ?? []).length;
@@ -243,9 +277,12 @@ complianceTest(
 							reason: `PLAIN message must have exactly 2 NUL delimiters, got ${nulCount}`,
 						};
 					},
-					description: "PLAIN message with exactly two structural NUL delimiters",
+					description:
+						"PLAIN message with exactly two structural NUL delimiters",
 				}),
-				reply("OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed"),
+				reply(
+					"OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] AUTHENTICATE completed",
+				),
 			],
 		]);
 		const driver = await f.connectPlain(server);
@@ -267,7 +304,7 @@ complianceTest(
 // this client's confidentiality/integrity comes from TLS (spec §10) instead.
 // The conditional can never fire for a conformant deployment of this client,
 // so all six rows are classified untestable/capability-inventory (see
-// rfc4422.ts's untestableRationale on each; docs/compliance-adjudications.md's
+// rfc4422.ts's untestableRationale on each; docs/guides/compliance-adjudications.md's
 // M5.16 entry) — the same never-reachable-affordance reasoning as
 // RFC5802-6-1. A prior version of this file scripted a hypothetical
 // AUTH=GSSAPI exchange and asserted the driver's post-throw

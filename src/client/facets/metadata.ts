@@ -1,11 +1,18 @@
 import { CapabilityError } from "../../errors";
 import { GetMetadataCommand } from "../../commands/metadata/get-metadata";
-import type { GetMetadataOptions, MetadataResult } from "../../commands/metadata/get-metadata";
+import type {
+	GetMetadataOptions,
+	MetadataResult,
+} from "../../commands/metadata/get-metadata";
 import { SetMetadataCommand } from "../../commands/metadata/set-metadata";
 import type { MetadataSetEntry } from "../../commands/metadata/set-metadata";
 import type { FacetDriver } from "./driver";
 
-export type { GetMetadataOptions, MetadataEntryResult, MetadataResult } from "../../commands/metadata/get-metadata";
+export type {
+	GetMetadataOptions,
+	MetadataEntryResult,
+	MetadataResult,
+} from "../../commands/metadata/get-metadata";
 export type { MetadataSetEntry } from "../../commands/metadata/set-metadata";
 
 /**
@@ -42,14 +49,18 @@ export type { MetadataSetEntry } from "../../commands/metadata/set-metadata";
  * encoded on the wire per RFC5466-3.2-1) and then references it with
  * `criteria.filter = "<name>"` in a subsequent `search()`/`sort()`. Nothing
  * in this API creates a named filter beyond this ordinary `metadata.set()`
- * call — see `docs/compliance-adjudications.md`'s RFC5466 entry for the
+ * call — see `docs/guides/compliance-adjudications.md`'s RFC5466 entry for the
  * M4.14/M5.4 scope history.
  */
 export interface MetadataFacet {
 	/** GETMETADATA (RFC 5464 §4.2). `opts` carries the MAXSIZE/DEPTH options
 	 *  (§4.2.1/§4.2.2); the result's `longEntries` is populated only when the
 	 *  tagged OK carried `[METADATA LONGENTRIES n]` (RFC5464-4.2.1-1). */
-	get(mailbox: string, entries: string[], opts?: GetMetadataOptions): Promise<MetadataResult>;
+	get(
+		mailbox: string,
+		entries: string[],
+		opts?: GetMetadataOptions,
+	): Promise<MetadataResult>;
 	/** SETMETADATA (RFC 5464 §4.3). An entry's `value: null` removes it
 	 *  (NIL-to-remove, RFC5464-4.3-2) — distinct from `value: ""`, which
 	 *  sets a genuine zero-length value. Resolves with no payload: per
@@ -66,7 +77,11 @@ const METADATA_RFC = "RFC5464";
 export class MetadataFacetImpl implements MetadataFacet {
 	constructor(private readonly driver: FacetDriver) {}
 
-	async get(mailbox: string, entries: string[], opts?: GetMetadataOptions): Promise<MetadataResult> {
+	async get(
+		mailbox: string,
+		entries: string[],
+		opts?: GetMetadataOptions,
+	): Promise<MetadataResult> {
 		this.assertMetadataCapability("metadata.get");
 		return this.driver.run(new GetMetadataCommand(mailbox, entries, opts));
 	}
@@ -82,7 +97,10 @@ export class MetadataFacetImpl implements MetadataFacet {
 	 *  statement of every public method above. Accepts EITHER `METADATA` or
 	 *  `METADATA-SERVER` — see this class's header comment for why. */
 	private assertMetadataCapability(method: string): void {
-		if (!this.driver.hasCapability("METADATA") && !this.driver.hasCapability("METADATA-SERVER")) {
+		if (
+			!this.driver.hasCapability("METADATA") &&
+			!this.driver.hasCapability("METADATA-SERVER")
+		) {
 			throw new CapabilityError(
 				`${method}() requires the METADATA or METADATA-SERVER capability (RFC 5464 §1), which ` +
 					"the server hasn't advertised",
